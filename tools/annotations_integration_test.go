@@ -5,6 +5,7 @@
 package tools
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -70,6 +71,30 @@ func TestAnnotationTools(t *testing.T) {
 			Tags: []string{"updated"},
 		})
 		require.NoError(t, err)
+	})
+
+	// create then delete an annotation.
+	t.Run("create and delete annotation", func(t *testing.T) {
+		resp, err := createAnnotation(ctx, CreateAnnotationInput{
+			DashboardUID: *newUID,
+			Time:         time.Now().UnixMilli(),
+			Text:         "integration-test-delete",
+			Tags:         []string{"delete-me"},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+
+		created, ok := resp.(*annotations.PostAnnotationOK)
+		require.True(t, ok)
+		id := created.Payload.ID // *int64
+
+		_, err = deleteAnnotation(ctx, DeleteAnnotationInput{ID: *id})
+		require.NoError(t, err)
+
+		// The annotation is really gone, not just reported as deleted.
+		c := mcpgrafana.GrafanaClientFromContext(ctx)
+		_, err = c.Annotations.GetAnnotationByID(strconv.FormatInt(*id, 10))
+		require.Error(t, err, "annotation %d is still retrievable after deletion", *id)
 	})
 
 	// create graphite annotation via merged tool.

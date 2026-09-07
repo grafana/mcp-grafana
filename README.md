@@ -221,7 +221,7 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **Generate deeplinks:** Create accurate deeplink URLs for Grafana resources instead of relying on LLM URL guessing.
   - **Dashboard links:** Generate direct links to dashboards using their UID (e.g., `http://localhost:3000/d/dashboard-uid`)
   - **Panel links:** Create links to specific panels within dashboards with viewPanel parameter (e.g., `http://localhost:3000/d/dashboard-uid?viewPanel=5`)
-  - **Explore links:** Generate links to Grafana Explore with pre-configured datasources (e.g., `http://localhost:3000/explore?left={"datasource":"prometheus-uid"}`)
+  - **Explore links:** Generate links to Grafana Explore with pre-configured datasources (e.g., `http://localhost:3000/explore?schemaVersion=1&panes={"a":{"datasource":"prometheus-uid"}}`). Grafana below 10.2 does not understand `panes`, so the legacy `?left={...}` format is emitted for those versions instead.
   - **Time range support:** Add time range parameters to links (`from=now-1h&to=now`)
   - **Custom parameters:** Include additional query parameters like dashboard variables or refresh intervals
 
@@ -232,6 +232,7 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **Create Graphite Annotation:** Create annotations using Graphite format (`what`, `when`, `tags`, `data`).
 - **Update Annotation:** Replace all fields of an existing annotation (full update).
 - **Patch Annotation:** Update only specific fields of an annotation (partial update).
+- **Delete Annotation:** Permanently delete an annotation by ID.
 - **Get Annotation Tags:** List available annotation tags with optional filtering.
 
 ### Snapshots
@@ -364,6 +365,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_cloudwatch_namespaces`      | CloudWatch*               | List available AWS CloudWatch namespaces                                                                     | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_cloudwatch_metrics`         | CloudWatch*               | List metrics in a namespace                                                                                  | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_cloudwatch_dimensions`      | CloudWatch*               | List dimensions for a metric                                                                                 | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `list_cloudwatch_dimension_values`| CloudWatch*               | List values for a dimension key                                                                              | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `query_cloudwatch`                | CloudWatch*               | Execute CloudWatch metric queries                                                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_athena_catalogs`            | Athena*                   | List available Athena data catalogs                                                                          | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_athena_databases`           | Athena*                   | List databases in an Athena catalog                                                                          | `datasources:query`                                    | `datasources:uid:*`                                 |
@@ -409,6 +411,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_annotations`                 | Annotations               | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
 | `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
 | `update_annotation`               | Annotations               | Update specific fields of an annotation (partial update)                                                     | `annotations:write`                                    | `annotations:*`                                     |
+| `delete_annotation`               | Annotations               | Delete an annotation by ID                                                                                   | `annotations:delete`                                    | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations               | List annotation tags with optional filtering                                                                 | `annotations:read`                                     | `annotations:*`                                     |
 | `list_snapshots`                  | Snapshot                  | List dashboard snapshots with optional query and limit filters                                               | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_snapshot`                    | Snapshot                  | Get snapshot metadata and dashboard payload by snapshot key                                                  | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
@@ -438,7 +441,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 `Host`/`Origin` validation is enforced on *every* route on the MCP listener — `/sse`, `/mcp`, and `/healthz` / `/metrics` when they share that listener — so a DNS-rebinding browser cannot reach any of them. Stdio transport is unaffected. `--healthz-address` and `--metrics-address` start a separate listener that is not wrapped.
 
-- `--allowed-hosts`: Comma-separated allowlist of `Host` header values. Defaults to loopback variants of `--address` (e.g. `localhost:8000,127.0.0.1:8000,[::1]:8000`). A value that parses to empty (unset, `,`, ` , `, etc.) also falls back to the defaults so a typo cannot silently disable the check. Requests with a `Host` header outside the allowlist are rejected with `403`. Pass `*` to disable the check — only safe when running behind a trusted reverse proxy that rewrites `Host`, or in an isolated network. K8s `httpGet` probes and external `/metrics` scrapes will need either an explicit hostname in this list, `*`, a `tcpSocket` probe, or a separate port (`--healthz-address` / `--metrics-address`).
+- `--allowed-hosts`: Comma-separated allowlist of `Host` header values. Defaults to loopback variants of `--address` (e.g. `localhost:8000,127.0.0.1:8000,[::1]:8000`). A value that parses to empty (unset, `,`, ` , `, etc.) also falls back to the defaults so a typo cannot silently disable the check. Requests with a `Host` header outside the allowlist are rejected with `403`. Pass `*` to disable `Host` validation — only safe when a trusted reverse proxy validates `Host`. K8s `httpGet` probes and external `/metrics` scrapes will need either an explicit hostname in this list, `*`, a `tcpSocket` probe, or a separate port (`--healthz-address` / `--metrics-address`).
 - `--allowed-origins`: Comma-separated allowlist of `Origin` header values. Empty by default — any request that carries an `Origin` header is rejected (browsers always send one for cross-origin requests, and no browser should be calling this server directly). Set to an explicit list to permit browser-based clients, or `*` to disable the check.
 
 **Caller Authentication (SSE / streamable-http only):**
@@ -540,6 +543,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Annotation Tools:**
 - `create_annotation`
 - `update_annotation`
+- `delete_annotation`
 
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)

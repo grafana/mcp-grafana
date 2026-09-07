@@ -153,7 +153,11 @@ func (b *prometheusBackend) LabelNames(ctx context.Context, matchers []string, s
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus label names: %w", err)
 	}
-	return names, nil
+	result := make([]string, len(names))
+	for i, n := range names {
+		result[i] = string(n)
+	}
+	return result, nil
 }
 
 func (b *prometheusBackend) LabelValues(ctx context.Context, labelName string, matchers []string, start, end time.Time) ([]string, error) {
