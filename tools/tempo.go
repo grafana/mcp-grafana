@@ -67,7 +67,7 @@ func (b *tempoBackend) doGet(ctx context.Context, path string, query url.Values)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -99,7 +99,7 @@ func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (st
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

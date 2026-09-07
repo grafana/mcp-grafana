@@ -48,7 +48,6 @@ func newSessionMetrics(mp metric.MeterProvider) sessionMetrics {
 // SessionState holds the state for a single client session.
 type SessionState struct {
 	lastActivity time.Time
-	mutex        sync.RWMutex
 }
 
 func newSessionState() *SessionState {
