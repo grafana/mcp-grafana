@@ -161,7 +161,8 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 // fetchData is a generic method to fetch data from Loki API. matcher, when
 // non-empty, is forwarded as the "query" parameter to narrow the label
 // search to streams selected by a LogQL stream selector (e.g. `{app="foo"}`),
-// per Loki's /labels and /label/<name>/values API.
+// per Loki's /labels and /label/<name>/values API. It is also how enforced
+// matchers are applied to label enumeration.
 func (c *Client) fetchData(ctx context.Context, urlPath, matcher, startRFC3339, endRFC3339 string) ([]string, error) {
 	params := url.Values{}
 	if matcher != "" {

@@ -194,6 +194,15 @@ type grafanaConfig struct {
 	// call via an optional orgId argument. Off by default; startup-time
 	// multi-org (GRAFANA_ORG_ID / X-Grafana-Org-Id) is unaffected.
 	dynamicMultiOrg bool
+
+	// lokiEnforcedMatchers, when non-empty, is a LogQL label-matcher expression
+	// (e.g. `namespace!~"vault|payments"`) AND-ed into every native-Loki query.
+	lokiEnforcedMatchers string
+
+	// lokiLabelEnumerationFallback controls list_loki_label_names /
+	// list_loki_label_values behaviour when the enforced matchers cannot scope
+	// them (purely-negative matchers only): "reject" or "unfiltered".
+	lokiLabelEnumerationFallback string
 }
 
 func (dt *disabledTools) addFlags() {
@@ -255,6 +264,10 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode for query_loki_logs: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run; still pays the index/stats round trip), or 'enforce' (reject blocked queries with rewrite guidance). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.lokiGuardrailMaxBytes, "loki-guardrail-max-bytes", 100<<30, "Maximum bytes a single query_loki_logs call may scan, estimated via Loki's index/stats API before running the query. 0 disables the byte-budget check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_BYTES environment variable when the flag is not set.")
 	flag.DurationVar(&gc.lokiGuardrailMaxRange, "loki-guardrail-max-range", 24*time.Hour, "Maximum effective time range for a single query_loki_logs call, including range-vector durations like [30d]. Accepts Go duration strings, e.g. 24h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
+
+	// Loki stream-access enforcement flags
+	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
+	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
 
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
 	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
@@ -442,7 +455,17 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+// appendInstructions appends operator-supplied text to the generated server
+// instructions, so every connecting agent sees it on initialize.
+// Empty/whitespace extra is a no-op.
+func appendInstructions(base, extra string) string {
+	if extra = strings.TrimSpace(extra); extra != "" {
+		return base + "\n" + extra + "\n"
+	}
+	return base
+}
+
+func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int, instructionsAppend string) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute),
 		mcpgrafana.WithSessionMeterProvider(obs.MeterProvider()),
@@ -510,7 +533,7 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 	// of enabled categories, so we need a temporary nil server reference first.
 	// Instead, we split: compute instructions from flags, then create server,
 	// then register tools.
-	instructions := dt.buildInstructions()
+	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)
 
 	serverOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
@@ -642,6 +665,50 @@ func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy
 	}
 }
 
+// warnLokiEnforcementBypasses logs, at startup, every enabled tool through which
+// an LLM could reach Loki log data WITHOUT going through the enforced Loki
+// backend — so --loki-enforced-matchers would not apply. Each line names the
+// mechanism and the flag that closes it. Proxied tools get an informational
+// note rather than a warning because they currently expose only Tempo (traces),
+// not Loki logs, so they are not a bypass today.
+func warnLokiEnforcementBypasses(dt disabledTools) {
+	// A category is only a live bypass if it is actually active, which depends on
+	// BOTH the --enabled-tools allowlist and its per-category --disable-* flag
+	// (see isCategoryEnabled) — not the disable flag alone.
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	type bypass struct {
+		category string
+		disabled bool
+		flag     string
+		reason   string
+	}
+	for _, b := range []bypass{
+		{"api", dt.api, "--disable-api", "grafana_api_request can query the Loki datasource proxy directly, fully bypassing enforcement"},
+		{"rendering", dt.rendering, "--disable-rendering", "get_panel_image renders Loki panels server-side via the Grafana renderer, producing images that contain unrestricted log lines"},
+		{"sift", dt.sift, "--disable-sift", "Sift investigations (e.g. find_error_pattern_logs) analyze Loki logs server-side across all streams; enforced matchers are not applied to that analysis"},
+	} {
+		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
+			slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
+				"disable_with", b.flag, "reason", b.reason)
+		}
+	}
+	// The assistant category is write-gated: AddAssistantTools registers
+	// ask_assistant only when write tools are enabled, so it is a bypass only
+	// then. Keying the warning on the category alone would fire when no
+	// assistant tool is actually registered.
+	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
+		slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
+			"disable_with", "--disable-assistant",
+			"reason", "ask_assistant delegates to Grafana Assistant, which reads Loki server-side across all streams; enforced matchers are not applied to what it reports back")
+	}
+	if isCategoryEnabled(enabledTools, dt.proxied, "proxied") {
+		slog.Info("Loki label-matcher enforcement: proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today — this would change if proxying is extended to log datasources (disable with --disable-proxied)")
+	}
+	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
+		slog.Info("Loki label-matcher enforcement: dashboard snapshots can return log-panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted logs")
+	}
+}
+
 func (hsc httpSecurityConfig) corsOrigins() []string {
 	if origins := splitAndTrim(hsc.allowedOrigins); len(origins) > 0 {
 		for i, o := range origins {
@@ -756,7 +823,7 @@ func runOpsServer(addr string, h http.Handler) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int, healthzAddress string) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int, healthzAddress, instructionsAppend string) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -804,7 +871,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes)
+	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes, instructionsAppend)
 	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
@@ -947,6 +1014,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
+	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
@@ -1042,6 +1110,25 @@ func main() {
 		}
 	}
 
+	// Parse enforced Loki label matchers once at startup so bad configuration
+	// fails fast rather than silently disabling the restriction.
+	enforcedMatchers, err := tools.ParseEnforcedMatchers(gc.lokiEnforcedMatchers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid --loki-enforced-matchers: %v\n", err)
+		os.Exit(2)
+	}
+	if len(enforcedMatchers) > 0 {
+		grafanaConfig.LokiEnforcedMatchers = enforcedMatchers
+		switch gc.lokiLabelEnumerationFallback {
+		case tools.LabelEnumFallbackReject, tools.LabelEnumFallbackUnfiltered:
+			grafanaConfig.LokiLabelEnumerationFallback = gc.lokiLabelEnumerationFallback
+		default:
+			fmt.Fprintf(os.Stderr, "invalid --loki-label-enumeration-fallback %q: must be %q or %q\n", gc.lokiLabelEnumerationFallback, tools.LabelEnumFallbackReject, tools.LabelEnumFallbackUnfiltered)
+			os.Exit(2)
+		}
+		warnLokiEnforcementBypasses(dt)
+	}
+
 	// Set OTel resource identity
 	obs.ServerName = serverName
 	obs.ServerVersion = mcpgrafana.Version()
@@ -1059,7 +1146,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes, *healthzAddress); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes, *healthzAddress, *instructionsAppend); err != nil {
 		panic(err)
 	}
 }
