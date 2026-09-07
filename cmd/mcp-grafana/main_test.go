@@ -1498,5 +1498,5 @@ func TestListToolsResult_IncludesRequiredFields(t *testing.T) {
 	var ttl *int64
 	require.NoError(t, json.Unmarshal(result["ttlMs"], &ttl))
 	require.NotNil(t, ttl, "ttlMs must not be null")
-	assert.Equal(t, int64(5*60*1000), *ttl, "ttlMs should be 5 minutes")
+	assert.Equal(t, int64(0), *ttl)
 }

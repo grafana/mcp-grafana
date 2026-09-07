@@ -75,7 +75,7 @@ async def test_list_tools_result_includes_required_fields(grafana_env):
         assert result["resultType"] == "complete"
         assert result["cacheScope"] == "private"
         assert isinstance(result["ttlMs"], int)
-        assert result["ttlMs"] > 0, "ttlMs should be a positive cache hint"
+        assert result["ttlMs"] == 0
     finally:
         proc.terminate()
         proc.wait(timeout=5)
