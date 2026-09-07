@@ -1216,6 +1216,7 @@ var metadataToolNames = []string{
 	"list_cloudwatch_namespaces",
 	"list_cloudwatch_metrics",
 	"list_cloudwatch_dimensions",
+	"list_cloudwatch_dimension_values",
 	"list_pyroscope_label_names",
 	"list_pyroscope_label_values",
 	"list_pyroscope_profile_types",
