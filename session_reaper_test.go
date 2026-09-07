@@ -3,7 +3,6 @@ package mcpgrafana
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -63,47 +62,6 @@ func TestSessionManager_ReaperKeepsActiveSessions(t *testing.T) {
 		require.True(t, exists, "Active session should not be reaped (iteration %d)", i)
 		require.NotNil(t, state)
 	}
-}
-
-func TestSessionManager_ReaperCleansUpProxiedClients(t *testing.T) {
-	sm := NewSessionManager(WithSessionTTL(100 * time.Millisecond))
-	defer sm.Close()
-
-	// Wire a ToolManager with an injected set builder so the session attaches to
-	// a shared proxied tool set without any real discovery or network I/O. When
-	// the reaper removes the idle session, it must release that shared set.
-	tm := NewToolManager(sm, nil, WithProxiedTools(true))
-	tm.buildSet = func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
-		return builtProxiedTools{
-			clients: map[string]*ProxiedClient{
-				"tempo_test-uid": {DatasourceUID: "test-uid", DatasourceName: "Test", DatasourceType: "tempo"},
-			},
-			toolToDatasources: map[string][]string{},
-		}, nil
-	}
-
-	session := &testClientSession{id: "cleanup-session"}
-	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: "http://grafana", APIKey: "secret"})
-	sm.CreateSession(ctx, session)
-	tm.InitializeAndRegisterProxiedTools(ctx, session)
-
-	tm.proxiedSetsMu.Lock()
-	require.Len(t, tm.proxiedSets, 1)
-	tm.proxiedSetsMu.Unlock()
-
-	// Wait for reaper
-	time.Sleep(500 * time.Millisecond)
-
-	sm.mutex.RLock()
-	_, exists := sm.sessions["cleanup-session"]
-	sm.mutex.RUnlock()
-	assert.False(t, exists, "Session should have been reaped")
-
-	// Reaping the last session for the key must release its shared set.
-	tm.proxiedSetsMu.Lock()
-	setCount := len(tm.proxiedSets)
-	tm.proxiedSetsMu.Unlock()
-	assert.Equal(t, 0, setCount, "Reaper should release the session's shared proxied tool set")
 }
 
 func TestSessionManager_Close(t *testing.T) {

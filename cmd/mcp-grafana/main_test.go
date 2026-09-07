@@ -50,7 +50,7 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+		_, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 		defer sm.Close()
 
 		session := &testClientSession{id: "should-persist"}
@@ -114,7 +114,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		{
 			name:         "empty enabled list shows no capabilities",
 			enabledTools: "",
-			disableFlags: map[string]bool{"proxied": true},
+			disableFlags: map[string]bool{"tempo": true},
 			wantContains: []string{
 				"No tool categories are currently enabled.",
 			},
@@ -124,7 +124,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "agento11y excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -152,7 +152,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "assistant excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -265,8 +265,8 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				if tc.disableFlags["prometheus"] {
 					dt.prometheus = true
 				}
-				if tc.disableFlags["proxied"] {
-					dt.proxied = true
+				if tc.disableFlags["tempo"] {
+					dt.tempo = true
 				}
 				if tc.disableFlags["agento11y"] {
 					dt.agento11y = true
@@ -402,7 +402,7 @@ func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 1, "")
+		_, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 1, "")
 		defer sm.Close()
 
 		session := &testClientSession{id: "custom-ttl"}
@@ -801,7 +801,7 @@ func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
 					port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 					require.NoError(t, listener.Close())
 					addr := "127.0.0.1:" + port
-					args := []string{"--transport=" + transport, "--address=0.0.0.0:" + port, "--enabled-tools=", "--disable-proxied"}
+					args := []string{"--transport=" + transport, "--address=0.0.0.0:" + port, "--enabled-tools=", "--disable-tempo"}
 					args = append(args, tc.flags...)
 					cmd := exec.CommandContext(t.Context(), bin, args...)
 					cmd.Env = env
@@ -1089,7 +1089,7 @@ func TestValidateServerName(t *testing.T) {
 
 func TestNewServer_DefaultServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1098,7 +1098,7 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 
 func TestNewServer_CustomServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1108,9 +1108,9 @@ func TestNewServer_CustomServerName(t *testing.T) {
 func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 	obs := newTestObservability(t)
 
-	sAlpha, _, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	sAlpha, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer smAlpha.Close()
-	sBeta, _, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	sBeta, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer smBeta.Close()
 
 	nameAlpha := getServerNameFromInitialize(t, sAlpha)
@@ -1123,7 +1123,7 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 
 func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1566,7 +1566,7 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 // error (-32603) with a bare Go unmarshal message. See issue #830.
 func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, 0, "")
+	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, 0, "")
 	defer sm.Close()
 
 	c, err := client.NewInProcessClient(s)
@@ -1589,4 +1589,45 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 	require.NoError(t, err, "a schema type mismatch must not surface as a JSON-RPC protocol error")
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "a schema type mismatch must surface as a structured tool error")
+}
+
+// TestListToolsResult_IncludesRequiredFields verifies that tools/list responses
+// always include resultType, cacheScope, and ttlMs, even when the client uses a
+// legacy protocol version (no _meta.protocolVersion). The Python MCP SDK
+// (mcp>=2.0.0) requires these fields regardless of protocol version, and their
+// absence causes a ValidationError that silently drops all tools in proxy
+// setups. See #1140.
+func TestListToolsResult_IncludesRequiredFields(t *testing.T) {
+	obs := newTestObservability(t)
+	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	defer sm.Close()
+
+	// Send a legacy-protocol tools/list request (no _meta.protocolVersion).
+	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	raw, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	// Parse the raw JSON to check for the specific fields. Using a raw map
+	// instead of mcp.ListToolsResult to verify the wire format.
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &envelope))
+	require.NotNil(t, envelope.Result)
+
+	var result map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(envelope.Result, &result))
+
+	assert.Contains(t, result, "resultType", "resultType must be present in tools/list response")
+	assert.Contains(t, result, "cacheScope", "cacheScope must be present in tools/list response")
+	assert.Contains(t, result, "ttlMs", "ttlMs must be present in tools/list response")
+
+	// Verify the actual values.
+	assert.JSONEq(t, `"complete"`, string(result["resultType"]))
+	assert.JSONEq(t, `"private"`, string(result["cacheScope"]))
+
+	var ttl *int64
+	require.NoError(t, json.Unmarshal(result["ttlMs"], &ttl))
+	require.NotNil(t, ttl, "ttlMs must not be null")
+	assert.Equal(t, int64(0), *ttl)
 }
