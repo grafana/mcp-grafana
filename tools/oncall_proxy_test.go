@@ -218,6 +218,11 @@ func TestExtractUserIDs(t *testing.T) {
 			input: []any{},
 			want:  []string{},
 		},
+		{
+			name:  "any slice of user objects",
+			input: []any{map[string]any{"username": "jdoe", "pk": "U1A2B3C4D5E6F"}},
+			want:  []string{"U1A2B3C4D5E6F"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -499,7 +499,8 @@ func proxyGetCurrentOnCallUsers(ctx context.Context, scheduleID string) (*Curren
 }
 
 // extractUserIDs extracts user ID strings from the on_call_now field,
-// which can be []string or []any depending on the API.
+// which can be []string or []any depending on the API. Each []any entry may
+// itself be a plain ID string or a user object with a "pk" field.
 func extractUserIDs(onCallNow any) []string {
 	switch v := onCallNow.(type) {
 	case []string:
@@ -507,8 +508,13 @@ func extractUserIDs(onCallNow any) []string {
 	case []any:
 		ids := make([]string, 0, len(v))
 		for _, item := range v {
-			if s, ok := item.(string); ok {
-				ids = append(ids, s)
+			switch t := item.(type) {
+			case string:
+				ids = append(ids, t)
+			case map[string]any:
+				if pk, ok := t["pk"].(string); ok {
+					ids = append(ids, pk)
+				}
 			}
 		}
 		return ids
