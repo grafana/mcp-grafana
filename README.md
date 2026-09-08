@@ -41,7 +41,7 @@ _The following features are currently available in MCP server. This list is for 
 
 ### Dashboards
 
-- **Search for dashboards:** Find dashboards by title or other metadata
+- **Search for dashboards:** Find dashboards by title, folder UID, tag, or starred status
 - **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier. _Warning: Large dashboards can consume significant context window space._
 - **Get dashboard summary:** Get a compact overview of a dashboard including title, panel count, panel types, variables, and metadata without the full JSON to minimize context window usage
 - **Get dashboard property:** Extract specific parts of a dashboard using JSONPath expressions (e.g., `$.title`, `$.panels[*].title`) to fetch only needed data and reduce context window consumption
@@ -329,7 +329,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_resource_permissions`        | Admin                     | List permissions for a resource                                                                              | `permissions:read`                                     | `dashboards:uid:abcd1234`                           |
 | `get_resource_description`        | Admin                     | Describe a Grafana resource type                                                                             | `permissions:read`                                     | `dashboards:*`                                      |
 | `user_info`                       | User                      | Current identity, capabilities, and accessible organizations                                                 | None (signed-in user)                                  | —                                                   |
-| `search_dashboards`               | Search                    | Search for dashboards                                                                                        | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
+| `search_dashboards`               | Search                    | Search for dashboards by query, folder UID, tag, or starred                                                 | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_dashboard_by_uid`            | Dashboard                 | Get a dashboard by uid                                                                                       | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard                 | Update or create a new dashboard                                                                             | `dashboards:create`, `dashboards:write`                | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
 | `get_dashboard_panel_queries`     | Dashboard                 | Get panel title, queries, datasource UID and type from a dashboard                                           | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
