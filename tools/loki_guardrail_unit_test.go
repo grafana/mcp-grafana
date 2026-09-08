@@ -108,6 +108,32 @@ func TestInjectLokiCAPMatchAllFilter(t *testing.T) {
 	}
 }
 
+func TestRequireLokiLineFilters(t *testing.T) {
+	for _, query := range []string{
+		`{app="api"} |= "error"`,
+		`{app="api"} |~ "(?i)error|warn"`,
+		`{app="api"} != "healthcheck"`,
+		`count_over_time({app="api"} |= ` + "`timeout`" + `[5m])`,
+		`rate({app="api"} |= "error" [5m]) / rate({app="worker"} |~ "warn" [5m])`,
+	} {
+		require.NoError(t, requireLokiLineFilters(query), query)
+	}
+
+	for _, query := range []string{
+		`{app="api"}`,
+		`{app="api"} |= ""`,
+		`{app="api"} | json`,
+		`{app="api"} | json | level != "error"`,
+		`count_over_time({app="api"}[5m])`,
+		`rate({app="api"} |= "error" [5m]) / rate({app="worker"}[5m])`,
+	} {
+		err := requireLokiLineFilters(query)
+		require.Error(t, err, query)
+		assert.Contains(t, err.Error(), "add a non-empty line filter")
+		assert.Contains(t, err.Error(), "retry")
+	}
+}
+
 func TestMaxVectorDuration(t *testing.T) {
 	tests := []struct {
 		name  string

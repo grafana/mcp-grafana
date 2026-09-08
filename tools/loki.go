@@ -773,6 +773,9 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	logql := args.LogQL
 	if mcpgrafana.GrafanaConfigFromContext(ctx).LokiGuardrailMode == mcpgrafana.LokiGuardrailStrict {
 		if _, native := backend.(*lokiNativeBackend); native {
+			if err := requireLokiLineFilters(logql); err != nil {
+				return nil, err
+			}
 			logql, err = injectLokiCAPMatchAllFilter(logql)
 			if err != nil {
 				return nil, err

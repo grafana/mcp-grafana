@@ -33,6 +33,99 @@ var warnUnknownGuardrailModeOnce sync.Once
 // applies instead of the filterless log-query path.
 const lokiCAPMatchAllLineFilter = ` |~ "(?s).*"`
 
+// requireLokiLineFilters makes strict-mode failures actionable for an LLM
+// caller. Each selector must have a non-empty line filter in its own pipeline;
+// otherwise the caller receives examples it can adapt to the investigation.
+// The match-all injection below remains defense in depth for CAP routing, but
+// is not used to silently turn a filterless request into an admitted query.
+func requireLokiLineFilters(query string) error {
+	spans, scan, err := findStreamSelectors(query)
+	if err != nil {
+		return fmt.Errorf("strict Loki line-filter validation failed: %w", err)
+	}
+	if len(spans) == 0 {
+		return fmt.Errorf("strict Loki line-filter validation failed: no stream selector found")
+	}
+
+	for i, span := range spans {
+		end := len(scan)
+		if i+1 < len(spans) {
+			end = spans[i+1].start
+		}
+		if !hasNonEmptyLokiLineFilter(scan[span.end:end]) {
+			selector := query[span.start:span.end]
+			return fmt.Errorf("filterless Loki query blocked: add a non-empty line filter after %s and retry, for example %s |= \"error\" for a literal or %s |~ \"(?i)error|warn\" for a regex; choose a term relevant to the investigation and start with a short time range", selector, selector, selector)
+		}
+	}
+	return nil
+}
+
+// hasNonEmptyLokiLineFilter recognizes Loki line-filter operators with a
+// non-empty quoted operand. The input has comments blanked by
+// findStreamSelectors, which also ensures braces and quoted content cannot
+// introduce phantom selectors. A range vector ends the current log pipeline.
+func hasNonEmptyLokiLineFilter(s string) bool {
+	var inStr byte
+	seenPipelineSyntax := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr != 0 {
+			if c == '\\' && inStr != '`' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if c == inStr {
+				inStr = 0
+			}
+			continue
+		}
+		if c == '[' {
+			return false
+		}
+		if c == '"' || c == '`' {
+			inStr = c
+			seenPipelineSyntax = true
+			continue
+		}
+		isLineFilterOp := i+1 < len(s) && (c == '|' || c == '!') && (s[i+1] == '=' || s[i+1] == '~')
+		if !isLineFilterOp {
+			if !unicode.IsSpace(rune(c)) {
+				seenPipelineSyntax = true
+			}
+			continue
+		}
+		// Negative line filters have no leading pipe, so only accept them as
+		// the first pipeline operation. This avoids mistaking a parsed-label
+		// expression such as "| json | level != \"error\"" for a line filter.
+		if c == '!' && seenPipelineSyntax {
+			continue
+		}
+
+		j := i + 2
+		for j < len(s) && unicode.IsSpace(rune(s[j])) {
+			j++
+		}
+		if j >= len(s) || (s[j] != '"' && s[j] != '`') {
+			continue
+		}
+		quote := s[j]
+		j++
+		contentStart := j
+		for j < len(s) {
+			if s[j] == '\\' && quote != '`' && j+1 < len(s) {
+				j += 2
+				continue
+			}
+			if s[j] == quote {
+				return j > contentStart
+			}
+			j++
+		}
+		return false
+	}
+	return false
+}
+
 // injectLokiCAPMatchAllFilter inserts the match-all filter immediately after
 // every stream selector. This works for log and metric LogQL and leaves the
 // user's remaining pipeline unchanged. Scanning and selector validation fail
