@@ -525,6 +525,30 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 		}
 	}
 
+	// Ensure ListToolsResult always includes resultType, cacheScope, and ttlMs.
+	// The mcp-go SDK only populates these fields for the "modern" protocol
+	// (2026-07-28+), but the Python MCP SDK (mcp>=2.0.0) requires them
+	// regardless of protocol version. Without this hook, tools/list responses
+	// to legacy-protocol clients omit the fields, causing validation errors in
+	// cross-SDK proxy setups (see #1140).
+	hooks.OnAfterListTools = append(hooks.OnAfterListTools,
+		func(_ context.Context, _ any, _ *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+			if result == nil {
+				return
+			}
+			if result.ResultType == "" {
+				result.ResultType = mcp.ResultTypeComplete
+			}
+			if result.CacheScope == "" {
+				result.CacheScope = mcp.CacheScopePrivate
+			}
+			if result.TTLMs == nil {
+				ttl := int64(0)
+				result.TTLMs = &ttl
+			}
+		},
+	)
+
 	// Merge observability hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 

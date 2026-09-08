@@ -1459,3 +1459,44 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "a schema type mismatch must surface as a structured tool error")
 }
+
+// TestListToolsResult_IncludesRequiredFields verifies that tools/list responses
+// always include resultType, cacheScope, and ttlMs, even when the client uses a
+// legacy protocol version (no _meta.protocolVersion). The Python MCP SDK
+// (mcp>=2.0.0) requires these fields regardless of protocol version, and their
+// absence causes a ValidationError that silently drops all tools in proxy
+// setups. See #1140.
+func TestListToolsResult_IncludesRequiredFields(t *testing.T) {
+	obs := newTestObservability(t)
+	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	defer sm.Close()
+
+	// Send a legacy-protocol tools/list request (no _meta.protocolVersion).
+	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	raw, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	// Parse the raw JSON to check for the specific fields. Using a raw map
+	// instead of mcp.ListToolsResult to verify the wire format.
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &envelope))
+	require.NotNil(t, envelope.Result)
+
+	var result map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(envelope.Result, &result))
+
+	assert.Contains(t, result, "resultType", "resultType must be present in tools/list response")
+	assert.Contains(t, result, "cacheScope", "cacheScope must be present in tools/list response")
+	assert.Contains(t, result, "ttlMs", "ttlMs must be present in tools/list response")
+
+	// Verify the actual values.
+	assert.JSONEq(t, `"complete"`, string(result["resultType"]))
+	assert.JSONEq(t, `"private"`, string(result["cacheScope"]))
+
+	var ttl *int64
+	require.NoError(t, json.Unmarshal(result["ttlMs"], &ttl))
+	require.NotNil(t, ttl, "ttlMs must not be null")
+	assert.Equal(t, int64(0), *ttl)
+}
