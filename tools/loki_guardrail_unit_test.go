@@ -348,6 +348,24 @@ func TestLokiGuardrailReasonsByteCheckSkippedWithoutWindow(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestLokiGuardrailReasonsStrictRequiresCompleteByteEvaluation(t *testing.T) {
+	config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+
+	t.Run("missing query window", func(t *testing.T) {
+		outcome := lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo"}`, "instant", time.Time{}, time.Time{}, func(context.Context, string, time.Time, time.Time) (*Stats, error) {
+			t.Fatal("stats must not be called without a window")
+			return nil, nil
+		})
+		assert.Equal(t, guardrailCauseEstimateFailed, outcome.failOpen)
+	})
+
+	t.Run("non-native backend", func(t *testing.T) {
+		end := time.Now()
+		outcome := lokiGuardrailReasons(context.Background(), config, false, `{namespace="foo"}`, "range", end.Add(-time.Hour), end, nil)
+		assert.Equal(t, guardrailCauseEstimateFailed, outcome.failOpen)
+	})
+}
+
 func TestLokiGuardrailReasonsStatsFailureFailsOpen(t *testing.T) {
 	config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
 	end := time.Now()
@@ -445,6 +463,30 @@ func TestGuardLokiQueryModes(t *testing.T) {
 		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 0, 24*time.Hour)
 		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
 		assert.NoError(t, guardLokiQuery(ctx, nil, `{namespace="foo", app="bar"}`, "", start, end))
+	})
+
+	t.Run("strict rejects unparseable query", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		err := guardLokiQuery(ctx, newStatsBackend(t, 0, new(int)), `{app=="x"}`, "range", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unable to verify")
+	})
+
+	t.Run("strict rejects failed estimate", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		err := guardLokiQuery(ctx, newBrokenStatsBackend(t), `{namespace="foo", app="bar"}`, "range", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "estimate_failed")
+	})
+
+	t.Run("strict rejects backend without a cheap estimate", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		err := guardLokiQuery(ctx, &fakeLokiBackend{}, `{namespace="foo", app="bar"}`, "range", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unable to verify")
 	})
 }
 

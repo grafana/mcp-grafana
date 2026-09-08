@@ -123,11 +123,18 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 ## Configure tool limits
 
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call.
-- `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs`: `off` (default), `shadow` (log queries that would be blocked, but let them run), or `enforce` (reject them with rewrite guidance). The guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. On VictoriaLogs it applies only to selector-shaped (`{...}`) queries — brace-less LogsQL passes through entirely and the byte-budget check never applies. Falls back to the `GRAFANA_LOKI_GUARDRAIL_MODE` environment variable.
-- `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API. Defaults to 100 GiB; `0` disables the byte-budget check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
-- `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+- `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` and `query_loki_patterns`: `off` (default), `shadow` (log queries that would be blocked, but let them run), `enforce` (reject known violations but fail open when parsing or estimation fails), or `strict` (also reject incomplete evaluations and unsafe startup configurations). The guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. On VictoriaLogs, `shadow` and `enforce` apply only to selector-shaped (`{...}`) queries; `strict` rejects content queries because no cheap byte estimate is available. Falls back to the `GRAFANA_LOKI_GUARDRAIL_MODE` environment variable.
+- `--loki-guardrail-max-bytes`: Maximum estimated bytes a single guarded Loki content query may scan, based on Loki's index/stats API. Defaults to 100 GiB; `0` disables the byte-budget check, except that `strict` requires a positive value. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-max-range`: Maximum effective time range for a single guarded Loki content query, including range-vector durations. Defaults to `24h`; `0` disables the range check, except that `strict` requires a positive value. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+
+{{< admonition type="warning" >}}
+Strict mode is fail-closed at the MCP layer, but its byte decision uses Loki's index/stats estimate. The estimate can be approximate and can omit data still held by ingesters, so it is not an exact backend-enforced byte ceiling. Configure headroom below the operational byte limit and retain a short range cap.
+
+Strict mode refuses to start while `api`, `rendering`, `sift`, `assistant`, or proxied tools could provide another route to Loki content. Disable those categories or omit them from `--enabled-tools`. `run_panel_query` is allowed because its Loki path delegates to `query_loki_logs`.
+{{< /admonition >}}
 
 The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
+
 - `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 ## Run without query execution

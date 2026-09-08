@@ -231,6 +231,9 @@ const (
 	// LokiGuardrailEnforce rejects blocked queries with a tool error
 	// containing rewrite guidance.
 	LokiGuardrailEnforce = "enforce"
+	// LokiGuardrailStrict behaves like enforce, but rejects queries whenever
+	// parsing or cost estimation cannot produce a complete verdict.
+	LokiGuardrailStrict = "strict"
 )
 
 // GrafanaConfig represents the full configuration for Grafana clients.
@@ -295,8 +298,9 @@ type GrafanaConfig struct {
 	MaxLokiLogLimit int
 
 	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs.
-	// One of LokiGuardrailOff (default), LokiGuardrailShadow, or
-	// LokiGuardrailEnforce. Loki does not enforce max_query_bytes_read on log
+	// One of LokiGuardrailOff (default), LokiGuardrailShadow,
+	// LokiGuardrailEnforce, or LokiGuardrailStrict. Loki does not enforce
+	// max_query_bytes_read on log
 	// queries without a line filter, so the guardrail requires selective
 	// stream selectors, bounds the effective time range, and pre-checks the
 	// byte estimate from Loki's index/stats API before admitting a query.

@@ -261,7 +261,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 
 	// Loki query cost guardrail flags
-	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode for query_loki_logs: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run; still pays the index/stats round trip), or 'enforce' (reject blocked queries with rewrite guidance). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
+	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run), 'enforce' (reject known violations), or 'strict' (also reject queries that cannot be parsed or cost-estimated). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.lokiGuardrailMaxBytes, "loki-guardrail-max-bytes", 100<<30, "Maximum bytes a single query_loki_logs call may scan, estimated via Loki's index/stats API before running the query. 0 disables the byte-budget check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_BYTES environment variable when the flag is not set.")
 	flag.DurationVar(&gc.lokiGuardrailMaxRange, "loki-guardrail-max-range", 24*time.Hour, "Maximum effective time range for a single query_loki_logs call, including range-vector durations like [30d]. Accepts Go duration strings, e.g. 24h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
 
@@ -322,15 +322,23 @@ func socks5ProxyFromEnv() (string, error) {
 // validation is unit-testable.
 func (gc *grafanaConfig) validateLokiGuardrail() error {
 	switch gc.lokiGuardrailMode {
-	case mcpgrafana.LokiGuardrailOff, mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce:
+	case mcpgrafana.LokiGuardrailOff, mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce, mcpgrafana.LokiGuardrailStrict:
 	default:
-		return fmt.Errorf("invalid Loki guardrail mode %q (--loki-guardrail-mode or GRAFANA_LOKI_GUARDRAIL_MODE): must be one of off, shadow, enforce", gc.lokiGuardrailMode)
+		return fmt.Errorf("invalid Loki guardrail mode %q (--loki-guardrail-mode or GRAFANA_LOKI_GUARDRAIL_MODE): must be one of off, shadow, enforce, strict", gc.lokiGuardrailMode)
 	}
 	if gc.lokiGuardrailMaxBytes < 0 {
 		return fmt.Errorf("invalid Loki guardrail max bytes %d (--loki-guardrail-max-bytes or GRAFANA_LOKI_GUARDRAIL_MAX_BYTES): must be >= 0 (0 disables the byte-budget check)", gc.lokiGuardrailMaxBytes)
 	}
 	if gc.lokiGuardrailMaxRange < 0 {
 		return fmt.Errorf("invalid Loki guardrail max range %s (--loki-guardrail-max-range or GRAFANA_LOKI_GUARDRAIL_MAX_RANGE): must be >= 0 (0 disables the range check)", gc.lokiGuardrailMaxRange)
+	}
+	if gc.lokiGuardrailMode == mcpgrafana.LokiGuardrailStrict {
+		if gc.lokiGuardrailMaxBytes == 0 {
+			return fmt.Errorf("strict Loki guardrail mode requires a positive --loki-guardrail-max-bytes")
+		}
+		if gc.lokiGuardrailMaxRange == 0 {
+			return fmt.Errorf("strict Loki guardrail mode requires a positive --loki-guardrail-max-range")
+		}
 	}
 	return nil
 }
@@ -709,6 +717,43 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 	}
 }
 
+// validateStrictLokiIsolation rejects configurations that expose a path to
+// Loki without passing through the native guardrail. Strict mode is intended
+// to be safe by construction, rather than depending on startup warnings.
+func validateStrictLokiIsolation(mode string, dt disabledTools) error {
+	if mode != mcpgrafana.LokiGuardrailStrict {
+		return nil
+	}
+
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	type bypass struct {
+		category string
+		disabled bool
+	}
+	var active []string
+	for _, b := range []bypass{
+		{category: "api", disabled: dt.api},
+		{category: "rendering", disabled: dt.rendering},
+		{category: "sift", disabled: dt.sift},
+	} {
+		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
+			active = append(active, b.category)
+		}
+	}
+	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
+		active = append(active, "assistant")
+	}
+	// Proxied tools are initialized outside the normal category registration
+	// path, so require the explicit disable flag in strict mode.
+	if !dt.proxied {
+		active = append(active, "proxied")
+	}
+	if len(active) > 0 {
+		return fmt.Errorf("strict Loki guardrail mode cannot start while bypass-capable tool categories are enabled: %s", strings.Join(active, ", "))
+	}
+	return nil
+}
+
 func (hsc httpSecurityConfig) corsOrigins() []string {
 	if origins := splitAndTrim(hsc.allowedOrigins); len(origins) > 0 {
 		for i, o := range origins {
@@ -1073,6 +1118,10 @@ func main() {
 		os.Exit(2)
 	}
 	if err := gc.validateLokiGuardrail(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if err := validateStrictLokiIsolation(gc.lokiGuardrailMode, dt); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}

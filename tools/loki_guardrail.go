@@ -3,7 +3,8 @@
 // range-vector durations). The scanner is deliberate: importing
 // grafana/loki/v3/pkg/logql/syntax would pull in a very large dependency
 // tree for a few hundred lines of scanning, and any query shape the scanner
-// does not understand fails open by design.
+// does not understand is rejected in strict mode and fails open in the
+// compatibility modes.
 package tools
 
 import (
@@ -43,11 +44,12 @@ type guardrailReason struct {
 
 // guardrailOutcome is the guardrail's verdict on one query. Exactly one of
 // three states holds: reasons is non-empty (the query failed a check),
-// failOpen is set (the guardrail could not reach a verdict and admits the
-// query), or both are zero (the query passed every enabled check).
+// failOpen is set (the guardrail could not reach a verdict), or both are zero
+// (the query passed every enabled check). The caller decides whether an
+// incomplete verdict is admitted or rejected based on the configured mode.
 type guardrailOutcome struct {
 	reasons  []guardrailReason
-	failOpen string // "" unless the guardrail admitted without a verdict
+	failOpen string // "" unless the guardrail could not reach a verdict
 }
 
 // messages returns the human-readable reason strings, for logging and for
@@ -60,8 +62,8 @@ func (o guardrailOutcome) messages() []string {
 	return out
 }
 
-// guardLokiQuery applies the opt-in Loki query cost guardrail to a
-// query_loki_logs call before it reaches the datasource. Loki's own
+// guardLokiQuery applies the opt-in Loki query cost guardrail to Loki content
+// queries before they reach the datasource. Loki's own
 // max_query_bytes_read limit is not enforced on log queries without a line
 // filter, so a broad selector over a wide range can scan terabytes while
 // passing every server-side check. The guardrail closes that gap: it
@@ -69,9 +71,11 @@ func (o guardrailOutcome) messages() []string {
 // (including range-vector durations like [30d]), and asks Loki's index/stats
 // API for a byte estimate before admitting the query.
 //
-// In shadow mode violations are logged but the query proceeds; in enforce
-// mode a plain error is returned, which ConvertTool surfaces to the client
-// as a tool result with isError=true so LLM callers can rewrite and retry.
+// In shadow mode violations are logged but the query proceeds. Enforce rejects
+// known violations while preserving historical fail-open behavior when a
+// verdict cannot be reached. Strict rejects both violations and incomplete
+// evaluations. ConvertTool surfaces those errors to the client with
+// isError=true so LLM callers can rewrite and retry.
 func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType string, start, end time.Time) error {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
 	mode := config.LokiGuardrailMode
@@ -82,7 +86,7 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 	// so library embedders that set the mode programmatically get a signal.
 	// The CLI validates the mode at startup and never reaches this path.
 	switch mode {
-	case mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce:
+	case mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce, mcpgrafana.LokiGuardrailStrict:
 	default:
 		warnUnknownGuardrailModeOnce.Do(func() {
 			config.LoggerOrDefault().WarnContext(ctx, "unrecognized Loki guardrail mode; treating as enforce", "mode", mode)
@@ -108,6 +112,11 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 
 	outcome := lokiGuardrailReasons(ctx, config, native, logql, queryType, start, end, statsFn)
 	if outcome.failOpen != "" {
+		if mode == mcpgrafana.LokiGuardrailStrict {
+			metrics.recordBlocked(ctx, true, backendLabel, guardrailReasonEvaluation)
+			config.LoggerOrDefault().WarnContext(ctx, "loki guardrail blocked query because evaluation was incomplete", "cause", outcome.failOpen)
+			return fmt.Errorf("query blocked by the strict Loki cost guardrail: unable to verify that the query is within budget (%s); retry with a valid selective LogQL query and a bounded time range", outcome.failOpen)
+		}
 		metrics.recordFailOpen(ctx, backendLabel, outcome.failOpen)
 		return nil
 	}
@@ -145,16 +154,14 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 }
 
 // lokiGuardrailReasons returns the guardrail's verdict on a query: the block
-// reasons (empty when allowed) or the fail-open cause. logql must already
+// reasons (empty when allowed) or the incomplete-evaluation cause. logql must already
 // have # comments stripped (guardLokiQuery does this once for both the checks
-// and the logging). Queries with no parseable stream selector pass through:
-// invalid syntax is rejected by Loki with a proper error, and guessing here
-// risks blocking legitimate syntax the parser doesn't know. The fail-open is
-// logged at warn on native Loki so shadow-mode rollouts can spot query shapes
-// the parser misses; on other backends (VictoriaLogs), where brace-less
-// queries are the normal shape, it logs at debug to avoid per-query noise —
-// the fail_open counter is recorded either way, since a dashboard cannot tell
-// "nothing would be blocked" from "the guardrail is not looking" without it.
+// and the logging). Queries with no parseable stream selector are an incomplete
+// evaluation: compatibility modes pass them through, while strict mode rejects
+// them. The condition is logged at warn on native Loki so shadow-mode rollouts
+// can spot query shapes the parser misses; on other backends (VictoriaLogs),
+// where brace-less queries are the normal shape, it logs at debug to avoid
+// per-query noise.
 func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, native bool, logql, queryType string, start, end time.Time, statsFn lokiStatsFunc) guardrailOutcome {
 	selectors := parseLogQLSelectors(logql)
 	if len(selectors) == 0 {
@@ -207,11 +214,17 @@ func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, 
 	}
 
 	// Only spend the index-stats round trips on queries that pass the static
-	// checks. Estimate failures are fail-open: the guardrail must never
-	// block users because of its own (or Loki's) availability problems.
+	// checks. Estimate failures are fail-open in shadow/enforce and fail-closed
+	// in strict mode.
 	// Line filters and parsers do not reduce bytes scanned, so the
 	// selector-only estimates are accurate for exactly the queries that hurt.
-	if len(reasons) == 0 && config.LokiGuardrailMaxBytes > 0 && statsFn != nil {
+	if len(reasons) == 0 && config.LokiGuardrailMaxBytes > 0 {
+		if statsFn == nil {
+			if config.LokiGuardrailMode == mcpgrafana.LokiGuardrailStrict {
+				return guardrailOutcome{failOpen: guardrailCauseEstimateFailed}
+			}
+			return guardrailOutcome{}
+		}
 		if statsStart, statsEnd, ok := guardrailStatsWindow(instant, start, end, vecDur); ok {
 			total, ok := sumSelectorBytes(ctx, config, selectors, statsStart, statsEnd, statsFn)
 			switch {
@@ -226,6 +239,8 @@ func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, 
 						humanizeBytes(total), humanizeBytes(config.LokiGuardrailMaxBytes)),
 				})
 			}
+		} else if config.LokiGuardrailMode == mcpgrafana.LokiGuardrailStrict {
+			return guardrailOutcome{failOpen: guardrailCauseEstimateFailed}
 		}
 	}
 	return guardrailOutcome{reasons: reasons}
@@ -261,7 +276,8 @@ func guardrailStatsWindow(instant bool, start, end time.Time, vecDur time.Durati
 // selectors (both sides of a binary metric expression are scanned, so the
 // sum is the true cost). Identical selectors are fetched once but their
 // estimate is multiplied by the occurrence count — each leg of a binary
-// expression scans independently. Any estimate failure fails open.
+// expression scans independently. An estimate failure produces an incomplete
+// verdict; strict mode rejects it and compatibility modes fail open.
 func sumSelectorBytes(ctx context.Context, config mcpgrafana.GrafanaConfig, selectors []parsedSelector, start, end time.Time, statsFn lokiStatsFunc) (int64, bool) {
 	counts := make(map[string]int64, len(selectors))
 	for _, sel := range selectors {

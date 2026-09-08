@@ -602,6 +602,9 @@ func TestValidateLokiGuardrail(t *testing.T) {
 		{name: "off is valid", gc: grafanaConfig{lokiGuardrailMode: "off"}},
 		{name: "shadow with limits is valid", gc: grafanaConfig{lokiGuardrailMode: "shadow", lokiGuardrailMaxBytes: 100 << 30, lokiGuardrailMaxRange: 24 * time.Hour}},
 		{name: "zero limits disable checks", gc: grafanaConfig{lokiGuardrailMode: "enforce"}},
+		{name: "strict with limits is valid", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxBytes: 4 << 30, lokiGuardrailMaxRange: time.Hour}},
+		{name: "strict requires byte limit", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxRange: time.Hour}, wantErrSubstr: "positive --loki-guardrail-max-bytes"},
+		{name: "strict requires range limit", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxBytes: 4 << 30}, wantErrSubstr: "positive --loki-guardrail-max-range"},
 		{name: "unknown mode rejected", gc: grafanaConfig{lokiGuardrailMode: "Enforce"}, wantErrSubstr: "invalid Loki guardrail mode"},
 		{name: "negative max bytes rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxBytes: -1}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_BYTES"},
 		{name: "negative max range rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxRange: -time.Hour}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_RANGE"},
@@ -617,6 +620,43 @@ func TestValidateLokiGuardrail(t *testing.T) {
 			assert.NoError(t, err)
 		})
 	}
+}
+
+func TestValidateStrictLokiIsolation(t *testing.T) {
+	safe := disabledTools{
+		enabledTools: "search,datasource,prometheus,loki,dashboard",
+		proxied:      true,
+	}
+	assert.NoError(t, validateStrictLokiIsolation(mcpgrafana.LokiGuardrailStrict, safe))
+
+	tests := []struct {
+		name   string
+		mutate func(*disabledTools)
+		want   string
+	}{
+		{name: "api", mutate: func(dt *disabledTools) { dt.enabledTools += ",api" }, want: "api"},
+		{name: "rendering", mutate: func(dt *disabledTools) { dt.enabledTools += ",rendering" }, want: "rendering"},
+		{name: "sift", mutate: func(dt *disabledTools) { dt.enabledTools += ",sift" }, want: "sift"},
+		{name: "assistant", mutate: func(dt *disabledTools) { dt.enabledTools += ",assistant" }, want: "assistant"},
+		{name: "proxied", mutate: func(dt *disabledTools) { dt.proxied = false }, want: "proxied"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dt := safe
+			tc.mutate(&dt)
+			err := validateStrictLokiIsolation(mcpgrafana.LokiGuardrailStrict, dt)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	unsafe := safe
+	unsafe.enabledTools += ",api"
+	assert.NoError(t, validateStrictLokiIsolation(mcpgrafana.LokiGuardrailEnforce, unsafe), "existing modes retain their current compatibility behavior")
+
+	panelQuery := safe
+	panelQuery.enabledTools += ",runpanelquery"
+	assert.NoError(t, validateStrictLokiIsolation(mcpgrafana.LokiGuardrailStrict, panelQuery), "run_panel_query delegates Loki requests to queryLokiLogs")
 }
 
 func TestSplitAndTrim(t *testing.T) {

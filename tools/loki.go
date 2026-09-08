@@ -1005,6 +1005,9 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pat
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
+	if err := guardLokiQuery(ctx, backend, args.LogQL, "range", startTime, endTime); err != nil {
+		return nil, err
+	}
 
 	return backend.QueryPatterns(ctx, args.LogQL, args.Step, startTime, endTime)
 }
