@@ -316,6 +316,11 @@ type GrafanaConfig struct {
 	// [30d]. Zero disables the range check.
 	LokiGuardrailMaxRange time.Duration
 
+	// LokiAllowedDatasourceUIDs, when non-empty, limits every Loki tool to the
+	// listed datasource UIDs. Strict guardrail mode requires this allowlist so
+	// callers cannot select an unrestricted datasource by UID.
+	LokiAllowedDatasourceUIDs []string
+
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server
 	// issues (query, stats, patterns, and label enumeration). It lets an

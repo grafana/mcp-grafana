@@ -251,6 +251,24 @@ func TestQueryLokiLogsFormatValidation(t *testing.T) {
 	}
 }
 
+func TestLokiDatasourceAllowlistRejectsUnknownUID(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		LokiAllowedDatasourceUIDs: []string{"limited-loki"},
+	})
+	_, err := lokiBackendForDatasource(ctx, "unrestricted-loki")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not in the configured datasource allowlist")
+}
+
+func TestStrictLokiGuardrailRequiresDatasourceAllowlistAtRuntime(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		LokiGuardrailMode: mcpgrafana.LokiGuardrailStrict,
+	})
+	_, err := lokiBackendForDatasource(ctx, "unrestricted-loki")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires a datasource allowlist")
+}
+
 func TestQueryLokiPatternsUsesCostGuardrail(t *testing.T) {
 	var patternRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +296,7 @@ func TestQueryLokiPatternsUsesCostGuardrail(t *testing.T) {
 	config.LokiGuardrailMode = mcpgrafana.LokiGuardrailStrict
 	config.LokiGuardrailMaxBytes = 5_000_000_000
 	config.LokiGuardrailMaxRange = time.Hour
+	config.LokiAllowedDatasourceUIDs = []string{"loki"}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, config)
 
 	_, err = queryLokiPatterns(ctx, QueryLokiPatternsParams{
@@ -285,6 +304,6 @@ func TestQueryLokiPatternsUsesCostGuardrail(t *testing.T) {
 		LogQL:         `{cluster=~".+"}`,
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "selective")
+	assert.Contains(t, err.Error(), "patterns endpoint")
 	assert.Zero(t, patternRequests, "a rejected pattern query must not reach the datasource")
 }

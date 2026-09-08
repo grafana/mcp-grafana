@@ -27,6 +27,43 @@ import (
 // reset it.
 var warnUnknownGuardrailModeOnce sync.Once
 
+// lokiCAPMatchAllLineFilter is a non-empty Loki line-filter expression that
+// preserves every log line, including empty and multiline entries. Grafana
+// Cloud treats it as a filtered query, so CAP maxQueryBytesRead enforcement
+// applies instead of the filterless log-query path.
+const lokiCAPMatchAllLineFilter = ` |~ "(?s).*"`
+
+// injectLokiCAPMatchAllFilter inserts the match-all filter immediately after
+// every stream selector. This works for log and metric LogQL and leaves the
+// user's remaining pipeline unchanged. Scanning and selector validation fail
+// closed because forwarding a partially rewritten query could bypass the CAP
+// byte limit.
+func injectLokiCAPMatchAllFilter(query string) (string, error) {
+	spans, scan, err := findStreamSelectors(query)
+	if err != nil {
+		return "", fmt.Errorf("strict Loki CAP filter injection failed: %w", err)
+	}
+	if len(spans) == 0 {
+		return "", fmt.Errorf("strict Loki CAP filter injection failed: no stream selector found")
+	}
+
+	var b strings.Builder
+	prev := 0
+	for _, span := range spans {
+		if _, err := promqlParser.ParseMetricSelector(scan[span.start:span.end]); err != nil {
+			return "", fmt.Errorf("strict Loki CAP filter injection failed: invalid stream selector %q: %w", query[span.start:span.end], err)
+		}
+		b.WriteString(query[prev:span.end])
+		b.WriteString(lokiCAPMatchAllLineFilter)
+		if span.end < len(query) && !unicode.IsSpace(rune(query[span.end])) {
+			b.WriteByte(' ')
+		}
+		prev = span.end
+	}
+	b.WriteString(query[prev:])
+	return b.String(), nil
+}
+
 // lokiStatsFunc matches lokiBackend.QueryStats. The guardrail takes it as a
 // parameter so the byte-budget check can be exercised in unit tests without
 // a real backend.

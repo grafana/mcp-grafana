@@ -82,6 +82,32 @@ func TestParseLogQLSelectorsSelectivity(t *testing.T) {
 	}
 }
 
+func TestInjectLokiCAPMatchAllFilter(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{name: "selector only", query: `{app="api"}`, want: `{app="api"} |~ "(?s).*"`},
+		{name: "existing line filter", query: `{app="api"} |= "error"`, want: `{app="api"} |~ "(?s).*" |= "error"`},
+		{name: "metric range", query: `count_over_time({app="api"}[5m])`, want: `count_over_time({app="api"} |~ "(?s).*" [5m])`},
+		{name: "binary metric query", query: `rate({app="api"}[5m]) / rate({app="worker"}[5m])`, want: `rate({app="api"} |~ "(?s).*" [5m]) / rate({app="worker"} |~ "(?s).*" [5m])`},
+		{name: "braces in filter and comment", query: "{app=\"api\"} |= `{json}` # {ignored=\"selector\"}\n", want: "{app=\"api\"} |~ \"(?s).*\" |= `{json}` # {ignored=\"selector\"}\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := injectLokiCAPMatchAllFilter(tc.query)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	for _, query := range []string{"", "not LogQL", `{app="api"`, `{app=="api"}`} {
+		_, err := injectLokiCAPMatchAllFilter(query)
+		assert.Error(t, err, "query %q must fail closed", query)
+	}
+}
+
 func TestMaxVectorDuration(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -770,8 +770,17 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
+	logql := args.LogQL
+	if mcpgrafana.GrafanaConfigFromContext(ctx).LokiGuardrailMode == mcpgrafana.LokiGuardrailStrict {
+		if _, native := backend.(*lokiNativeBackend); native {
+			logql, err = injectLokiCAPMatchAllFilter(logql)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 
-	if err := guardLokiQuery(ctx, backend, args.LogQL, args.QueryType, startTime, endTime); err != nil {
+	if err := guardLokiQuery(ctx, backend, logql, args.QueryType, startTime, endTime); err != nil {
 		return nil, err
 	}
 
@@ -784,7 +793,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	}
 
 	result, err := backend.QueryLogs(ctx, lokiQueryParams{
-		Query:       args.LogQL,
+		Query:       logql,
 		QueryType:   args.QueryType,
 		Start:       startTime,
 		End:         endTime,
@@ -994,6 +1003,9 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pat
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
+	}
+	if mcpgrafana.GrafanaConfigFromContext(ctx).LokiGuardrailMode == mcpgrafana.LokiGuardrailStrict {
+		return nil, fmt.Errorf("query_loki_patterns is unavailable in strict Loki guardrail mode because CAP byte-limit enforcement has not been verified for the patterns endpoint")
 	}
 
 	startTimeStr, endTimeStr := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)

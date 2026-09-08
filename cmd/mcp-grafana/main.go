@@ -180,9 +180,10 @@ type grafanaConfig struct {
 	maxLokiLogLimit int
 
 	// Loki query cost guardrail configuration
-	lokiGuardrailMode     string
-	lokiGuardrailMaxBytes int64
-	lokiGuardrailMaxRange time.Duration
+	lokiGuardrailMode         string
+	lokiGuardrailMaxBytes     int64
+	lokiGuardrailMaxRange     time.Duration
+	lokiAllowedDatasourceUIDs string
 
 	// includeArgsInSpans enables logging of tool arguments in OpenTelemetry spans.
 	includeArgsInSpans bool
@@ -264,6 +265,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run), 'enforce' (reject known violations), or 'strict' (also reject queries that cannot be parsed or cost-estimated). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.lokiGuardrailMaxBytes, "loki-guardrail-max-bytes", 100<<30, "Maximum bytes a single query_loki_logs call may scan, estimated via Loki's index/stats API before running the query. 0 disables the byte-budget check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_BYTES environment variable when the flag is not set.")
 	flag.DurationVar(&gc.lokiGuardrailMaxRange, "loki-guardrail-max-range", 24*time.Hour, "Maximum effective time range for a single query_loki_logs call, including range-vector durations like [30d]. Accepts Go duration strings, e.g. 24h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
+	flag.StringVar(&gc.lokiAllowedDatasourceUIDs, "loki-allowed-datasource-uids", "", "Comma-separated Loki datasource UIDs the Loki tools may use. Strict guardrail mode requires at least one UID. Falls back to GRAFANA_LOKI_ALLOWED_DATASOURCE_UIDS when the flag is not set.")
 
 	// Loki stream-access enforcement flags
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
@@ -297,6 +299,9 @@ func (gc *grafanaConfig) applyLokiGuardrailEnv(setFlags map[string]bool) error {
 			return fmt.Errorf("invalid GRAFANA_LOKI_GUARDRAIL_MAX_RANGE %q: %w", v, err)
 		}
 		gc.lokiGuardrailMaxRange = d
+	}
+	if v := os.Getenv("GRAFANA_LOKI_ALLOWED_DATASOURCE_UIDS"); v != "" && !setFlags["loki-allowed-datasource-uids"] {
+		gc.lokiAllowedDatasourceUIDs = v
 	}
 	return nil
 }
@@ -338,6 +343,9 @@ func (gc *grafanaConfig) validateLokiGuardrail() error {
 		}
 		if gc.lokiGuardrailMaxRange == 0 {
 			return fmt.Errorf("strict Loki guardrail mode requires a positive --loki-guardrail-max-range")
+		}
+		if len(splitAndTrim(gc.lokiAllowedDatasourceUIDs)) == 0 {
+			return fmt.Errorf("strict Loki guardrail mode requires --loki-allowed-datasource-uids")
 		}
 	}
 	return nil
@@ -1141,14 +1149,15 @@ func main() {
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
-		Debug:                   gc.debug,
-		MaxLokiLogLimit:         gc.maxLokiLogLimit,
-		LokiGuardrailMode:       gc.lokiGuardrailMode,
-		LokiGuardrailMaxBytes:   gc.lokiGuardrailMaxBytes,
-		LokiGuardrailMaxRange:   gc.lokiGuardrailMaxRange,
-		IncludeArgumentsInSpans: gc.includeArgsInSpans,
-		Timeout:                 gc.timeout,
-		SOCKS5ProxyURL:          socks5Proxy,
+		Debug:                     gc.debug,
+		MaxLokiLogLimit:           gc.maxLokiLogLimit,
+		LokiGuardrailMode:         gc.lokiGuardrailMode,
+		LokiGuardrailMaxBytes:     gc.lokiGuardrailMaxBytes,
+		LokiGuardrailMaxRange:     gc.lokiGuardrailMaxRange,
+		LokiAllowedDatasourceUIDs: splitAndTrim(gc.lokiAllowedDatasourceUIDs),
+		IncludeArgumentsInSpans:   gc.includeArgsInSpans,
+		Timeout:                   gc.timeout,
+		SOCKS5ProxyURL:            socks5Proxy,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
