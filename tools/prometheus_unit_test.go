@@ -2,11 +2,13 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -474,4 +476,89 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errMsg)
 		})
 	}
+}
+
+func TestRunPrometheusQueryBatch_IsolatesPerKeyResults(t *testing.T) {
+	t.Parallel()
+	queries := map[string]QueryPrometheusParams{
+		"ok":    {Expr: "up"},
+		"fails": {Expr: "broken"},
+	}
+	query := func(_ context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
+		if args.Expr == "broken" {
+			return nil, fmt.Errorf("boom")
+		}
+		return &QueryPrometheusResult{Data: model.Vector{}}, nil
+	}
+
+	got := runPrometheusQueryBatch(context.Background(), queries, 4, query)
+
+	require.Len(t, got, 2)
+	require.NotNil(t, got["ok"].Data)
+	assert.Empty(t, got["ok"].Error, "a succeeding query must not carry an error")
+	assert.Nil(t, got["fails"].Data, "a failing query must not carry data")
+	assert.Equal(t, "boom", got["fails"].Error, "a failing query's error must not leak onto other keys")
+}
+
+func TestRunPrometheusQueryBatch_ReturnsExactlyOneResultPerInputKey(t *testing.T) {
+	t.Parallel()
+	queries := map[string]QueryPrometheusParams{
+		"a": {Expr: "a"}, "b": {Expr: "b"}, "c": {Expr: "c"},
+	}
+	query := func(_ context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
+		return &QueryPrometheusResult{Data: model.Vector{}}, nil
+	}
+
+	got := runPrometheusQueryBatch(context.Background(), queries, 2, query)
+
+	require.Len(t, got, len(queries))
+	for k := range queries {
+		assert.Contains(t, got, k)
+	}
+}
+
+func TestRunPrometheusQueryBatch_BoundsConcurrency(t *testing.T) {
+	t.Parallel()
+	const limit = 2
+	queries := make(map[string]QueryPrometheusParams, 6)
+	for i := range 6 {
+		queries[fmt.Sprintf("q%d", i)] = QueryPrometheusParams{Expr: fmt.Sprintf("q%d", i)}
+	}
+
+	var current, max atomic.Int32
+	query := func(_ context.Context, _ QueryPrometheusParams) (*QueryPrometheusResult, error) {
+		n := current.Add(1)
+		for {
+			m := max.Load()
+			if n <= m || max.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+		current.Add(-1)
+		return &QueryPrometheusResult{Data: model.Vector{}}, nil
+	}
+
+	got := runPrometheusQueryBatch(context.Background(), queries, limit, query)
+
+	require.Len(t, got, len(queries))
+	assert.LessOrEqual(t, max.Load(), int32(limit), "never more than the configured limit should run at once")
+	assert.Equal(t, int32(limit), max.Load(), "with more queries than the limit, it should actually reach the limit, not serialize")
+}
+
+func TestQueryPrometheusBatched_RejectsEmptyAndOversizedBatches(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	_, err := queryPrometheusBatched(ctx, QueryPrometheusBatchedParams{Queries: map[string]QueryPrometheusParams{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be empty")
+
+	oversized := make(map[string]QueryPrometheusParams, maxBatchedPrometheusQueries+1)
+	for i := range maxBatchedPrometheusQueries + 1 {
+		oversized[fmt.Sprintf("q%d", i)] = QueryPrometheusParams{Expr: "up"}
+	}
+	_, err = queryPrometheusBatched(ctx, QueryPrometheusBatchedParams{Queries: oversized})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too many queries")
 }

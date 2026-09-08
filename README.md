@@ -340,6 +340,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_datasource`                  | Datasources               | Get a datasource by UID or name                                                                              | `datasources:read`                                     | `datasources:uid:prometheus-uid`                    |
 | `get_query_examples`              | Examples*                 | Get example queries for a datasource type                                                                    | `datasources:read`                                     | `datasources:*`                                     |
 | `query_prometheus`                | Prometheus                | Execute a query against a Prometheus datasource                                                              | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
+| `query_prometheus_batched`        | Prometheus                | Run multiple `query_prometheus`-shaped queries in one call                                                   | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_metadata` | Prometheus                | List metric metadata                                                                                         | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_names`    | Prometheus                | List available metric names                                                                                  | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_names`     | Prometheus                | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
@@ -589,6 +590,7 @@ When `--disable-query` is enabled, the following tools are not registered:
 
 **Prometheus Tools:**
 - `query_prometheus`
+- `query_prometheus_batched`
 - `query_prometheus_histogram`
 
 **Loki Tools:**

@@ -15,6 +15,7 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -182,6 +183,88 @@ var QueryPrometheus = mcpgrafana.MustTool(
 	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now'\\, 'now-1h'.",
 	queryPrometheusWithHints,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+// maxBatchedPrometheusQueries caps a single query_prometheus_batched call, so
+// one request can't fan out into an unbounded number of upstream queries.
+const maxBatchedPrometheusQueries = 20
+
+// batchedPrometheusQueryConcurrency bounds how many of a batch's queries run
+// at once, so a large batch doesn't open dozens of simultaneous connections
+// to the same datasource.
+const batchedPrometheusQueryConcurrency = 8
+
+type QueryPrometheusBatchedParams struct {
+	Queries map[string]QueryPrometheusParams `json:"queries" jsonschema:"required,description=A map from a caller-chosen key to a query_prometheus-shaped query. Each key's result (or error) is returned under that same key\\, so keys should be short and distinct (e.g. 'cpu'\\, 'memory')\\, not reused across the batch."`
+}
+
+// QueryPrometheusBatchResult carries exactly one of Data or Error for a
+// single query in a batch: a failing query does not fail the whole batch,
+// it just reports its own error under its own key.
+type QueryPrometheusBatchResult struct {
+	Data  *QueryPrometheusResult `json:"data,omitempty"`
+	Error string                 `json:"error,omitempty"`
+}
+
+// runPrometheusQueryBatch runs one query per key in queries, at up to
+// concurrency at a time, via the given query func. It isolates each query's
+// result: a panic-free failure in one never affects another's result, and
+// the returned map always has exactly one entry per input key.
+func runPrometheusQueryBatch(
+	ctx context.Context,
+	queries map[string]QueryPrometheusParams,
+	concurrency int,
+	query func(context.Context, QueryPrometheusParams) (*QueryPrometheusResult, error),
+) map[string]QueryPrometheusBatchResult {
+	keys := make([]string, 0, len(queries))
+	for k := range queries {
+		keys = append(keys, k)
+	}
+
+	// Each goroutine writes to its own index only, so this needs no locking.
+	results := make([]QueryPrometheusBatchResult, len(keys))
+
+	var g errgroup.Group
+	g.SetLimit(concurrency)
+	for i, k := range keys {
+		g.Go(func() error {
+			data, err := query(ctx, queries[k])
+			if err != nil {
+				results[i] = QueryPrometheusBatchResult{Error: err.Error()}
+				return nil
+			}
+			results[i] = QueryPrometheusBatchResult{Data: data}
+			return nil
+		})
+	}
+	_ = g.Wait() // every goroutine above always returns nil; errors are captured per-key instead
+
+	out := make(map[string]QueryPrometheusBatchResult, len(keys))
+	for i, k := range keys {
+		out[k] = results[i]
+	}
+	return out
+}
+
+func queryPrometheusBatched(ctx context.Context, args QueryPrometheusBatchedParams) (map[string]QueryPrometheusBatchResult, error) {
+	if len(args.Queries) == 0 {
+		return nil, fmt.Errorf("queries must not be empty")
+	}
+	if len(args.Queries) > maxBatchedPrometheusQueries {
+		return nil, fmt.Errorf("too many queries in one batch: got %d, max %d", len(args.Queries), maxBatchedPrometheusQueries)
+	}
+	return runPrometheusQueryBatch(ctx, args.Queries, batchedPrometheusQueryConcurrency, queryPrometheusWithHints), nil
+}
+
+var QueryPrometheusBatched = mcpgrafana.MustTool(
+	"query_prometheus_batched",
+	fmt.Sprintf("Run multiple query_prometheus-shaped queries in one call instead of one tool call per query, cutting round-trip latency when several PromQL queries are needed together (e.g. CPU and memory for the same panel). Takes a map from a caller-chosen key to a query. Returns a map keyed the same way; each entry holds either that query's result or its own error, so one failing query does not fail the others. Capped at %d queries per batch.", maxBatchedPrometheusQueries),
+	queryPrometheusBatched,
+	mcp.WithTitleAnnotation("Query Prometheus metrics (batched)"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
@@ -597,6 +680,7 @@ func AddPrometheusTools(mcp *server.MCPServer, enableQueryTools bool) {
 	ListPrometheusMetricMetadata.Register(mcp)
 	if enableQueryTools {
 		QueryPrometheus.Register(mcp)
+		QueryPrometheusBatched.Register(mcp)
 		QueryPrometheusHistogram.Register(mcp)
 	}
 	ListPrometheusMetricNames.Register(mcp)
