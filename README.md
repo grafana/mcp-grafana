@@ -485,6 +485,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) registered even under `--disable-write`
+- `--enable-sift-investigations`: Keep the Sift investigation-creation tools (`find_error_pattern_logs`, `find_slow_requests`) registered even under `--disable-write`
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -548,6 +549,8 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)
 - `find_slow_requests` (creates investigations)
+
+These only create ephemeral Sift investigation records via the Sift API — they never touch a Grafana dashboard, alert, or datasource. Without them, `list_sift_investigations`/`get_sift_investigation`/`get_sift_analysis` have nothing to list or get. Pass `--enable-sift-investigations` to keep them registered under `--disable-write`.
 
 **Snapshot Tools:**
 - `create_snapshot`

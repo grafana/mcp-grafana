@@ -159,7 +159,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write, query, enableQuery,
+	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write, query, enableQuery, enableSiftInvestigations,
 	snapshot, examples, clickhouse, snowflake, graphite,
 	runpanelquery, athena, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -228,6 +228,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_clickhouse, query_snowflake, query_athena, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set.")
+	flag.BoolVar(&dt.enableSiftInvestigations, "enable-sift-investigations", false, "Keep the Sift investigation-creation tools (find_error_pattern_logs, find_slow_requests) registered even under --disable-write. They only create ephemeral Sift investigation records via the Sift API, never Grafana dashboards/alerts/datasources, so this is safe to set even when write access to Grafana itself is not wanted. Without it, --disable-write leaves the other Sift tools (list_sift_investigations, get_sift_investigation, get_sift_analysis) with nothing to list or get.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
@@ -363,7 +364,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
 		{func(mcp *server.MCPServer) { tools.AddOnCallTools(mcp, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
-		{func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, dt.sift, "sift"},
+		{func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools || dt.enableSiftInvestigations) }, dt.sift, "sift"},
 		{tools.AddAdminTools, dt.admin, "admin"},
 		{func(mcp *server.MCPServer) { tools.AddPyroscopeTools(mcp, enableQueryTools) }, dt.pyroscope, "pyroscope"},
 		{func(mcp *server.MCPServer) { tools.AddNavigationTools(mcp, enableWriteTools) }, dt.navigation, "navigation"},
@@ -392,6 +393,9 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 func (dt *disabledTools) processTools(s *server.MCPServer) {
 	if dt.query && dt.enableQuery {
 		slog.Warn("--enable-query has no effect because --disable-query is set; no query tools will be registered")
+	}
+	if dt.sift && dt.enableSiftInvestigations {
+		slog.Warn("--enable-sift-investigations has no effect because --disable-sift is set; no sift tools will be registered")
 	}
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, e := range dt.toolEntries() {

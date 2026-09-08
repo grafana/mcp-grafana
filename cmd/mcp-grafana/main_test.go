@@ -1346,6 +1346,39 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	}
 }
 
+// See issue #744: --disable-write left the Sift read tools (list/get) with
+// nothing to list or get, since the investigation-creation tools were gated
+// by the same flag. --enable-sift-investigations restores just those two.
+func TestProcessTools_DisableWriteRemovesSiftInvestigationTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true})
+	assert.False(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be gone with --disable-write")
+	assert.False(t, names["find_slow_requests"], "find_slow_requests should be gone with --disable-write")
+	assert.True(t, names["list_sift_investigations"], "read-only sift tools should survive --disable-write")
+	assert.True(t, names["get_sift_investigation"], "read-only sift tools should survive --disable-write")
+	assert.True(t, names["get_sift_analysis"], "read-only sift tools should survive --disable-write")
+}
+
+func TestProcessTools_EnableSiftInvestigationsOverridesDisableWrite(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, enableSiftInvestigations: true})
+	assert.True(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be restored by --enable-sift-investigations")
+	assert.True(t, names["find_slow_requests"], "find_slow_requests should be restored by --enable-sift-investigations")
+	// The override is scoped to Sift investigation creation: real write tools stay gone.
+	assert.False(t, names["update_dashboard"], "--enable-sift-investigations must not re-enable write tools")
+	assert.False(t, names["create_folder"], "--enable-sift-investigations must not re-enable write tools")
+}
+
+func TestProcessTools_EnableSiftInvestigationsAloneChangesNothing(t *testing.T) {
+	defaults := registerAllCategories(t, disabledTools{})
+	names := registerAllCategories(t, disabledTools{enableSiftInvestigations: true})
+	assert.Equal(t, defaults, names, "--enable-sift-investigations on its own should be a no-op")
+}
+
+func TestProcessTools_DisableSiftBeatsEnableSiftInvestigations(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{sift: true, enableSiftInvestigations: true})
+	assert.False(t, names["find_error_pattern_logs"], "sift should be gone: --disable-sift wins over --enable-sift-investigations")
+	assert.False(t, names["list_sift_investigations"], "sift should be gone: --disable-sift wins over --enable-sift-investigations")
+}
+
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
