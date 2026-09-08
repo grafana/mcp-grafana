@@ -10,8 +10,6 @@ A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
 This provides access to your Grafana instance and the surrounding ecosystem.
 
-Apollo maintainers should also read [Apollo fork operations](APOLLO_FORK.md) before upgrading or deploying this fork.
-
 ## Quick Start
 
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the following to your MCP client configuration (e.g. Claude Desktop, Cursor):
