@@ -140,9 +140,9 @@ func blankLogQLComments(query string) string {
 //
 // The string-aware scanning primitives are shared with the query cost
 // guardrail (see loki_guardrail.go), but the policy on top of them is the
-// opposite: the guardrail skips what it cannot parse and fails open, because a
-// missed cost estimate is not a correctness problem. Enforcement is a security
-// control, so anything unrecognised has to become an error here.
+// opposite in compatibility modes: the guardrail skips what it cannot parse
+// and fails open. Strict guardrail mode and matcher enforcement both reject
+// anything unrecognised.
 func findStreamSelectors(query string) ([]selectorSpan, string, error) {
 	scan := blankLogQLComments(query)
 

@@ -3,14 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"testing"
-	"time"
 
-	"github.com/grafana/grafana-openapi-client-go/client"
-	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -269,41 +263,15 @@ func TestStrictLokiGuardrailRequiresDatasourceAllowlistAtRuntime(t *testing.T) {
 	assert.Contains(t, err.Error(), "requires a datasource allowlist")
 }
 
-func TestQueryLokiPatternsUsesCostGuardrail(t *testing.T) {
-	var patternRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/datasources/uid/loki":
-			_ = json.NewEncoder(w).Encode(&models.DataSource{ID: 1, UID: "loki", Name: "Loki", Type: "loki"})
-		default:
-			patternRequests++
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": []any{}})
-		}
-	}))
-	defer server.Close()
+func TestQueryLokiPatternsRejectedInStrictMode(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		LokiGuardrailMode: mcpgrafana.LokiGuardrailStrict,
+	})
 
-	serverURL, err := url.Parse(server.URL)
-	require.NoError(t, err)
-	transportConfig := client.DefaultTransportConfig()
-	transportConfig.Host = serverURL.Host
-	transportConfig.Schemes = []string{"http"}
-	transportConfig.APIKey = "test"
-	grafanaClient := client.NewHTTPClientWithConfig(nil, transportConfig)
-	ctx := mcpgrafana.WithGrafanaClient(context.Background(), &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: grafanaClient})
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfig{URL: server.URL})
-	config := mcpgrafana.GrafanaConfigFromContext(ctx)
-	config.LokiGuardrailMode = mcpgrafana.LokiGuardrailStrict
-	config.LokiGuardrailMaxBytes = 5_000_000_000
-	config.LokiGuardrailMaxRange = time.Hour
-	config.LokiAllowedDatasourceUIDs = []string{"loki"}
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, config)
-
-	_, err = queryLokiPatterns(ctx, QueryLokiPatternsParams{
+	_, err := queryLokiPatterns(ctx, QueryLokiPatternsParams{
 		DatasourceUID: "loki",
 		LogQL:         `{cluster=~".+"}`,
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "patterns endpoint")
-	assert.Zero(t, patternRequests, "a rejected pattern query must not reach the datasource")
 }

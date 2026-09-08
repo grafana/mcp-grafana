@@ -82,55 +82,41 @@ func TestParseLogQLSelectorsSelectivity(t *testing.T) {
 	}
 }
 
-func TestInjectLokiCAPMatchAllFilter(t *testing.T) {
+func TestPrepareStrictLokiQuery(t *testing.T) {
 	tests := []struct {
-		name  string
-		query string
-		want  string
+		name    string
+		query   string
+		want    string
+		wantErr string
 	}{
-		{name: "selector only", query: `{app="api"}`, want: `{app="api"} |~ "(?s).*"`},
 		{name: "existing line filter", query: `{app="api"} |= "error"`, want: `{app="api"} |~ "(?s).*" |= "error"`},
-		{name: "metric range", query: `count_over_time({app="api"}[5m])`, want: `count_over_time({app="api"} |~ "(?s).*" [5m])`},
-		{name: "binary metric query", query: `rate({app="api"}[5m]) / rate({app="worker"}[5m])`, want: `rate({app="api"} |~ "(?s).*" [5m]) / rate({app="worker"} |~ "(?s).*" [5m])`},
+		{name: "negative line filter", query: `{app="api"} != "healthcheck"`, want: `{app="api"} |~ "(?s).*" != "healthcheck"`},
+		{name: "metric range", query: `count_over_time({app="api"} |= "timeout" [5m])`, want: `count_over_time({app="api"} |~ "(?s).*" |= "timeout" [5m])`},
+		{name: "binary metric query", query: `rate({app="api"} |= "error" [5m]) / rate({app="worker"} |~ "warn" [5m])`, want: `rate({app="api"} |~ "(?s).*" |= "error" [5m]) / rate({app="worker"} |~ "(?s).*" |~ "warn" [5m])`},
 		{name: "braces in filter and comment", query: "{app=\"api\"} |= `{json}` # {ignored=\"selector\"}\n", want: "{app=\"api\"} |~ \"(?s).*\" |= `{json}` # {ignored=\"selector\"}\n"},
+		{name: "empty query", wantErr: "no stream selector found"},
+		{name: "not LogQL", query: "not LogQL", wantErr: "no stream selector found"},
+		{name: "unterminated selector", query: `{app="api"`, wantErr: "unterminated stream selector"},
+		{name: "invalid selector", query: `{app=="api"}`, wantErr: "invalid stream selector"},
+		{name: "selector only", query: `{app="api"}`, wantErr: "add a non-empty line filter"},
+		{name: "empty filter", query: `{app="api"} |= ""`, wantErr: "add a non-empty line filter"},
+		{name: "empty raw filter", query: "{app=\"api\"} |= ``", wantErr: "add a non-empty line filter"},
+		{name: "parser only", query: `{app="api"} | json`, wantErr: "add a non-empty line filter"},
+		{name: "parsed-label filter is not a line filter", query: `{app="api"} | json | level != "error"`, wantErr: "add a non-empty line filter"},
+		{name: "filterless metric", query: `count_over_time({app="api"}[5m])`, wantErr: "add a non-empty line filter"},
+		{name: "one filterless binary leg", query: `rate({app="api"} |= "error" [5m]) / rate({app="worker"}[5m])`, wantErr: "add a non-empty line filter"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := injectLokiCAPMatchAllFilter(tc.query)
+			got, err := prepareStrictLokiQuery(tc.query)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
-	}
-
-	for _, query := range []string{"", "not LogQL", `{app="api"`, `{app=="api"}`} {
-		_, err := injectLokiCAPMatchAllFilter(query)
-		assert.Error(t, err, "query %q must fail closed", query)
-	}
-}
-
-func TestRequireLokiLineFilters(t *testing.T) {
-	for _, query := range []string{
-		`{app="api"} |= "error"`,
-		`{app="api"} |~ "(?i)error|warn"`,
-		`{app="api"} != "healthcheck"`,
-		`count_over_time({app="api"} |= ` + "`timeout`" + `[5m])`,
-		`rate({app="api"} |= "error" [5m]) / rate({app="worker"} |~ "warn" [5m])`,
-	} {
-		require.NoError(t, requireLokiLineFilters(query), query)
-	}
-
-	for _, query := range []string{
-		`{app="api"}`,
-		`{app="api"} |= ""`,
-		`{app="api"} | json`,
-		`{app="api"} | json | level != "error"`,
-		`count_over_time({app="api"}[5m])`,
-		`rate({app="api"} |= "error" [5m]) / rate({app="worker"}[5m])`,
-	} {
-		err := requireLokiLineFilters(query)
-		require.Error(t, err, query)
-		assert.Contains(t, err.Error(), "add a non-empty line filter")
-		assert.Contains(t, err.Error(), "retry")
 	}
 }
 

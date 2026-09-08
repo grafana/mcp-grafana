@@ -300,10 +300,9 @@ type GrafanaConfig struct {
 	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs.
 	// One of LokiGuardrailOff (default), LokiGuardrailShadow,
 	// LokiGuardrailEnforce, or LokiGuardrailStrict. Loki does not enforce
-	// max_query_bytes_read on log
-	// queries without a line filter, so the guardrail requires selective
-	// stream selectors, bounds the effective time range, and pre-checks the
-	// byte estimate from Loki's index/stats API before admitting a query.
+	// max_query_bytes_read on log queries without a line filter, so the guardrail
+	// requires selective stream selectors, bounds the effective time range, and
+	// pre-checks the byte estimate from Loki's index/stats API before admitting a query.
 	LokiGuardrailMode string
 
 	// LokiGuardrailMaxBytes is the maximum number of bytes a single

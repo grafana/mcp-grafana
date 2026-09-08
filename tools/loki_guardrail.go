@@ -33,31 +33,43 @@ var warnUnknownGuardrailModeOnce sync.Once
 // applies instead of the filterless log-query path.
 const lokiCAPMatchAllLineFilter = ` |~ "(?s).*"`
 
-// requireLokiLineFilters makes strict-mode failures actionable for an LLM
-// caller. Each selector must have a non-empty line filter in its own pipeline;
-// otherwise the caller receives examples it can adapt to the investigation.
-// The match-all injection below remains defense in depth for CAP routing, but
-// is not used to silently turn a filterless request into an admitted query.
-func requireLokiLineFilters(query string) error {
+// prepareStrictLokiQuery validates and rewrites a native Loki query in one
+// scan. Each selector must have a non-empty line filter in its own pipeline;
+// otherwise the LLM caller receives examples it can adapt and retry. Valid
+// queries get a match-all filter after every selector as defense in depth so
+// CAP routing does not depend only on recognizing the caller's filter.
+func prepareStrictLokiQuery(query string) (string, error) {
 	spans, scan, err := findStreamSelectors(query)
 	if err != nil {
-		return fmt.Errorf("strict Loki line-filter validation failed: %w", err)
+		return "", fmt.Errorf("strict Loki query preparation failed: %w", err)
 	}
 	if len(spans) == 0 {
-		return fmt.Errorf("strict Loki line-filter validation failed: no stream selector found")
+		return "", fmt.Errorf("strict Loki query preparation failed: no stream selector found")
 	}
 
+	var b strings.Builder
+	prev := 0
 	for i, span := range spans {
+		if _, err := promqlParser.ParseMetricSelector(scan[span.start:span.end]); err != nil {
+			return "", fmt.Errorf("strict Loki query preparation failed: invalid stream selector %q: %w", query[span.start:span.end], err)
+		}
 		end := len(scan)
 		if i+1 < len(spans) {
 			end = spans[i+1].start
 		}
 		if !hasNonEmptyLokiLineFilter(scan[span.end:end]) {
 			selector := query[span.start:span.end]
-			return fmt.Errorf("filterless Loki query blocked: add a non-empty line filter after %s and retry, for example %s |= \"error\" for a literal or %s |~ \"(?i)error|warn\" for a regex; choose a term relevant to the investigation and start with a short time range", selector, selector, selector)
+			return "", fmt.Errorf("filterless Loki query blocked: add a non-empty line filter after %s and retry, for example %s |= \"error\" for a literal or %s |~ \"(?i)error|warn\" for a regex; choose a term relevant to the investigation and start with a short time range", selector, selector, selector)
 		}
+		b.WriteString(query[prev:span.end])
+		b.WriteString(lokiCAPMatchAllLineFilter)
+		if span.end < len(query) && !unicode.IsSpace(rune(query[span.end])) {
+			b.WriteByte(' ')
+		}
+		prev = span.end
 	}
-	return nil
+	b.WriteString(query[prev:])
+	return b.String(), nil
 }
 
 // hasNonEmptyLokiLineFilter recognizes Loki line-filter operators with a
@@ -124,37 +136,6 @@ func hasNonEmptyLokiLineFilter(s string) bool {
 		return false
 	}
 	return false
-}
-
-// injectLokiCAPMatchAllFilter inserts the match-all filter immediately after
-// every stream selector. This works for log and metric LogQL and leaves the
-// user's remaining pipeline unchanged. Scanning and selector validation fail
-// closed because forwarding a partially rewritten query could bypass the CAP
-// byte limit.
-func injectLokiCAPMatchAllFilter(query string) (string, error) {
-	spans, scan, err := findStreamSelectors(query)
-	if err != nil {
-		return "", fmt.Errorf("strict Loki CAP filter injection failed: %w", err)
-	}
-	if len(spans) == 0 {
-		return "", fmt.Errorf("strict Loki CAP filter injection failed: no stream selector found")
-	}
-
-	var b strings.Builder
-	prev := 0
-	for _, span := range spans {
-		if _, err := promqlParser.ParseMetricSelector(scan[span.start:span.end]); err != nil {
-			return "", fmt.Errorf("strict Loki CAP filter injection failed: invalid stream selector %q: %w", query[span.start:span.end], err)
-		}
-		b.WriteString(query[prev:span.end])
-		b.WriteString(lokiCAPMatchAllLineFilter)
-		if span.end < len(query) && !unicode.IsSpace(rune(query[span.end])) {
-			b.WriteByte(' ')
-		}
-		prev = span.end
-	}
-	b.WriteString(query[prev:])
-	return b.String(), nil
 }
 
 // lokiStatsFunc matches lokiBackend.QueryStats. The guardrail takes it as a

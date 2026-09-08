@@ -347,6 +347,9 @@ func (gc *grafanaConfig) validateLokiGuardrail() error {
 		if len(splitAndTrim(gc.lokiAllowedDatasourceUIDs)) == 0 {
 			return fmt.Errorf("strict Loki guardrail mode requires --loki-allowed-datasource-uids")
 		}
+		if gc.dynamicMultiOrg {
+			return fmt.Errorf("strict Loki guardrail mode is incompatible with --dynamic-multi-org because datasource UIDs are organization-scoped")
+		}
 	}
 	return nil
 }
@@ -733,6 +736,10 @@ func validateStrictLokiIsolation(mode string, dt disabledTools) error {
 		return nil
 	}
 
+	if !dt.write {
+		return fmt.Errorf("strict Loki guardrail mode requires --disable-write so the allowed datasource cannot be modified through MCP")
+	}
+
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	type bypass struct {
 		category string
@@ -742,19 +749,11 @@ func validateStrictLokiIsolation(mode string, dt disabledTools) error {
 	for _, b := range []bypass{
 		{category: "api", disabled: dt.api},
 		{category: "rendering", disabled: dt.rendering},
-		{category: "sift", disabled: dt.sift},
+		{category: "runpanelquery", disabled: dt.runpanelquery},
 	} {
 		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
 			active = append(active, b.category)
 		}
-	}
-	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
-		active = append(active, "assistant")
-	}
-	// Proxied tools are initialized outside the normal category registration
-	// path, so require the explicit disable flag in strict mode.
-	if !dt.proxied {
-		active = append(active, "proxied")
 	}
 	if len(active) > 0 {
 		return fmt.Errorf("strict Loki guardrail mode cannot start while bypass-capable tool categories are enabled: %s", strings.Join(active, ", "))
