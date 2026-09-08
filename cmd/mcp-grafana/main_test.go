@@ -1346,6 +1346,58 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	}
 }
 
+// See issue #744: --disable-write left the Sift read tools (list/get) with
+// nothing to list or get, since the investigation-creation tools were gated
+// by the same flag. --enable-write-tools restores just those two, by name.
+func TestProcessTools_DisableWriteRemovesSiftInvestigationTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true})
+	assert.False(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be gone with --disable-write")
+	assert.False(t, names["find_slow_requests"], "find_slow_requests should be gone with --disable-write")
+	assert.True(t, names["list_sift_investigations"], "read-only sift tools should survive --disable-write")
+	assert.True(t, names["get_sift_investigation"], "read-only sift tools should survive --disable-write")
+	assert.True(t, names["get_sift_analysis"], "read-only sift tools should survive --disable-write")
+}
+
+func TestProcessTools_EnableWriteToolsRestoresSiftInvestigationTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	assert.True(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be restored by --enable-write-tools")
+	assert.True(t, names["find_slow_requests"], "find_slow_requests should be restored by --enable-write-tools")
+	// The override is scoped by name: real write tools stay gone.
+	assert.False(t, names["update_dashboard"], "--enable-write-tools must not re-enable unrelated write tools")
+	assert.False(t, names["create_folder"], "--enable-write-tools must not re-enable unrelated write tools")
+}
+
+// AddSiftTools only exposes one bool for both investigation-creation tools,
+// so naming just one of them in --enable-write-tools restores both.
+func TestProcessTools_EnableWriteToolsPartialSiftListRestoresBoth(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs"})
+	assert.True(t, names["find_error_pattern_logs"])
+	assert.True(t, names["find_slow_requests"])
+}
+
+func TestProcessTools_EnableWriteToolsAloneChangesNothing(t *testing.T) {
+	defaults := registerAllCategories(t, disabledTools{})
+	names := registerAllCategories(t, disabledTools{writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	assert.Equal(t, defaults, names, "--enable-write-tools on its own should be a no-op")
+}
+
+func TestProcessTools_DisableSiftBeatsEnableWriteTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{sift: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	assert.False(t, names["find_error_pattern_logs"], "sift should be gone: --disable-sift wins over --enable-write-tools")
+	assert.False(t, names["list_sift_investigations"], "sift should be gone: --disable-sift wins over --enable-write-tools")
+}
+
+// --enable-query is documented as a shorthand for naming the four raw-SQL
+// query tools in --enable-write-tools; this pins that equivalence.
+func TestProcessTools_EnableQueryIsAliasForEnableWriteTools(t *testing.T) {
+	viaEnableQuery := registerAllCategories(t, disabledTools{write: true, enableQuery: true})
+	viaWriteTools := registerAllCategories(t, disabledTools{
+		write:              true,
+		writeToolOverrides: "query_clickhouse,query_snowflake,query_athena,query_influxdb",
+	})
+	assert.Equal(t, viaEnableQuery, viaWriteTools)
+}
+
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
