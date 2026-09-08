@@ -27,7 +27,7 @@ You ask your assistant to find dashboards or to summarize a dashboard, list its 
 
 ## Search for dashboards
 
-Ask the assistant to search for dashboards by title or other criteria. The server’s search tool returns matching dashboards with metadata. Use this to find the UID or folder of the dashboard you want.
+Ask the assistant to search for dashboards by title, folder, tag, or starred status. The server’s search tool returns matching dashboards with metadata. Use this to find the UID or folder of the dashboard you want.
 
 ## Get a dashboard summary or panel queries
 

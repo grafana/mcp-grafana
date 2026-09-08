@@ -146,3 +146,89 @@ func TestSearchDashboards_Pagination(t *testing.T) {
 		assert.Len(t, result.Dashboards, 5)
 	})
 }
+
+func TestSearchDashboards_Filters(t *testing.T) {
+	t.Run("folderUid tag and starred are forwarded to Grafana search", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/search", r.URL.Path)
+			q := r.URL.Query()
+			assert.Equal(t, "dash-db", q.Get("type"))
+			assert.Equal(t, []string{"folder-abc"}, q["folderUIDs"])
+			assert.Equal(t, []string{"prod", "alerts"}, q["tag"])
+			assert.Equal(t, "true", q.Get("starred"))
+			assert.Equal(t, "cpu", q.Get("query"))
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(models.HitList{})
+		}))
+		defer server.Close()
+
+		ctx := mockSearchCtx(server)
+		_, err := searchDashboards(ctx, SearchDashboardsParams{
+			Query:     "cpu",
+			FolderUID: "folder-abc",
+			Tag:       []string{"prod", "alerts"},
+			Starred:   true,
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("folderUid without query still restricts to dashboards", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			assert.Equal(t, "dash-db", q.Get("type"))
+			assert.Equal(t, []string{"folder-abc"}, q["folderUIDs"])
+			assert.Empty(t, q.Get("query"))
+			assert.Empty(t, q["tag"])
+			assert.Empty(t, q.Get("starred"))
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(models.HitList{})
+		}))
+		defer server.Close()
+
+		ctx := mockSearchCtx(server)
+		_, err := searchDashboards(ctx, SearchDashboardsParams{FolderUID: "folder-abc"})
+		require.NoError(t, err)
+	})
+
+	t.Run("omitted filters are not sent", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			assert.Empty(t, q["folderUIDs"])
+			assert.Empty(t, q["tag"])
+			assert.Empty(t, q.Get("starred"))
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(models.HitList{})
+		}))
+		defer server.Close()
+
+		ctx := mockSearchCtx(server)
+		_, err := searchDashboards(ctx, SearchDashboardsParams{Query: "test"})
+		require.NoError(t, err)
+	})
+
+	t.Run("empty params still restrict to dashboards", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			assert.Equal(t, "dash-db", q.Get("type"))
+			assert.Empty(t, q.Get("query"))
+			assert.Empty(t, q["folderUIDs"])
+			assert.Empty(t, q["tag"])
+			assert.Empty(t, q.Get("starred"))
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(models.HitList{})
+		}))
+		defer server.Close()
+
+		ctx := mockSearchCtx(server)
+		_, err := searchDashboards(ctx, SearchDashboardsParams{})
+		require.NoError(t, err)
+	})
+}
