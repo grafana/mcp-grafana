@@ -44,7 +44,7 @@ _The following features are currently available in MCP server. This list is for 
 - **Search for dashboards:** Find dashboards by title, folder UID, tag, or starred status
 - **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier. _Warning: Large dashboards can consume significant context window space._
 - **Get dashboard summary:** Get a compact overview of a dashboard including title, panel count, panel types, variables, and metadata without the full JSON to minimize context window usage
-- **Get dashboard property:** Extract specific parts of a dashboard using JSONPath expressions (e.g., `$.title`, `$.panels[*].title`) to fetch only needed data and reduce context window consumption
+- **Get dashboard property:** Extract specific parts of a dashboard using JSONPath. Optional semantic selectors address a panel by ID, query by panel ID and ref ID, or variable by name across classic, legacy-row, and v2 dashboards without discovering physical array paths
 - **Update or create a dashboard:** Modify existing dashboards or create new ones. _Warning: Requires full dashboard JSON which can consume large amounts of context window space._
 - **Patch dashboard:** Apply specific changes to a dashboard without requiring the full JSON, significantly reducing context window usage for targeted modifications
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
@@ -60,7 +60,7 @@ _The following features are currently available in MCP server. This list is for 
 The dashboard tools now include several strategies to manage context window usage effectively ([issue #101](https://github.com/grafana/mcp-grafana/issues/101)):
 
 - **Use `get_dashboard_summary`** for dashboard overview and planning modifications
-- **Use `get_dashboard_property`** with JSONPath when you only need specific dashboard parts
+- **Use `get_dashboard_property`** with a semantic selector and relative JSONPath for stable, bounded partial reads; native-schema JSONPath remains available when needed
 - **Avoid `get_dashboard_by_uid`** unless you specifically need the complete dashboard JSON
 
 ### Datasources

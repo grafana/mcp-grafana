@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -12,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/PaesslerAG/gval"
-	"github.com/PaesslerAG/jsonpath"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -765,8 +762,9 @@ var GetDashboardPanelQueries = mcpgrafana.MustTool(
 
 // GetDashboardPropertyParams defines parameters for getting specific dashboard properties
 type GetDashboardPropertyParams struct {
-	UID      string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
-	JSONPath string `json:"jsonPath" jsonschema:"required,description=JSONPath expression to extract specific data (e.g.\\, '$.panels[0].title' for first panel title\\, '$.panels[*].title' for all panel titles\\, '$.templating.list' for variables\\, '$.annotations.list' for saved dashboard annotation queries/definitions)"`
+	UID      string             `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	JSONPath string             `json:"jsonPath" jsonschema:"required,description=JSONPath expression to extract specific data. Without selector it is rooted at the dashboard (e.g.\\, '$.panels[*].title'). With selector it is relative to the selected object (e.g.\\, '$.fieldConfig.defaults' for a panel or '$.rawSql' for a query)"`
+	Selector *DashboardSelector `json:"selector,omitempty" jsonschema:"description=Optional semantic selector for a dashboard\\, panel\\, query\\, or variable. Avoids schema-specific array indices and works across classic\\, legacy-row\\, and v2 dashboards"`
 }
 
 // getDashboardProperty retrieves specific parts of a dashboard using JSONPath expressions.
@@ -776,37 +774,12 @@ func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) 
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
-
-	// Convert dashboard to JSON for JSONPath processing. The spec is in its
-	// native schema (classic v1 or v2), so v2 paths target elements/layout.
-	dashboardJSON, err := json.Marshal(res.Spec)
-	if err != nil {
-		return nil, fmt.Errorf("marshal dashboard to JSON: %w", err)
-	}
-
-	var dashboardData interface{}
-	if err := json.Unmarshal(dashboardJSON, &dashboardData); err != nil {
-		return nil, fmt.Errorf("unmarshal dashboard JSON: %w", err)
-	}
-
-	// Apply JSONPath expression
-	builder := gval.Full(jsonpath.Language())
-	path, err := builder.NewEvaluable(args.JSONPath)
-	if err != nil {
-		return nil, fmt.Errorf("create JSONPath evaluable '%s': %w", args.JSONPath, err)
-	}
-
-	result, err := path(ctx, dashboardData)
-	if err != nil {
-		return nil, fmt.Errorf("apply JSONPath '%s': %w", args.JSONPath, err)
-	}
-
-	return result, nil
+	return readDashboardProperty(ctx, res, args)
 }
 
 var GetDashboardProperty = mcpgrafana.MustTool(
 	"get_dashboard_property",
-	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. JSONPath targets the dashboard's native schema. Classic v1 paths: '$.title' (title)\\, '$.panels[*].title' (all panel titles)\\, '$.panels[0]' (first panel)\\, '$.templating.list' (variables)\\, '$.annotations.list' (saved dashboard annotation queries/definitions)\\, '$.tags' (tags)\\, '$.panels[*].targets[*].expr' (all queries). v2 dashboards (see isV2 from get_dashboard_by_uid) use different paths: '$.title'\\, '$.elements' (panels\\, keyed by name)\\, '$.variables' (variables)\\, '$.annotations'. Use this instead of get_dashboard_by_uid when you only need specific dashboard properties.",
+	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. For stable addressing across classic\\, legacy-row\\, and v2 dashboards\\, provide a semantic selector: dashboard by kind; panel by panelId; query by panelId + refId; or variable by name. With a selector\\, JSONPath is relative to that object (for example '$.fieldConfig.defaults' on a panel or '$.rawSql' on a query) and the bounded response includes value\\, revision\\, isV2\\, and selector. Without a selector\\, existing native-schema JSONPath behavior and raw-value output are unchanged. Selector responses over 32 KiB are rejected; use a narrower JSONPath instead.",
 	getDashboardProperty,
 	mcp.WithTitleAnnotation("Get dashboard property"),
 	mcp.WithIdempotentHintAnnotation(true),
