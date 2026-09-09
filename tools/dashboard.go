@@ -34,7 +34,8 @@ const dashboardAPIGroup = "dashboard.grafana.app"
 const dashboardReadVersion = "v1beta1"
 
 type GetDashboardByUIDParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	UID     string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	Version *int64 `json:"version,omitempty" jsonschema:"description=Optional saved version. Omit for the current dashboard"`
 }
 
 // dashboardResult is the internal representation of a fetched dashboard. The
@@ -67,6 +68,9 @@ type DashboardResponse struct {
 }
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*DashboardResponse, error) {
+	if args.Version != nil {
+		return fetchDashboardVersion(ctx, args.UID, *args.Version)
+	}
 	res, err := fetchDashboard(ctx, args.UID)
 	if err != nil {
 		return nil, err
@@ -666,7 +670,7 @@ func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, 
 
 var GetDashboardByUID = mcpgrafana.MustTool(
 	"get_dashboard_by_uid",
-	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID. The response includes 'apiVersion' and 'isV2': when 'isV2' is true the dashboard uses the v2 schema (panels live under 'elements' keyed by name, arranged by 'layout'; variables under 'variables'), otherwise it is classic v1 ('panels[]' with 'templating.list'). WARNING: Large dashboards can consume significant context window space. Consider using get_dashboard_summary for overview or get_dashboard_property for specific data instead.",
+	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID. Pass optional version to load a saved snapshot instead of the current dashboard. The response includes 'apiVersion' and 'isV2': when 'isV2' is true the dashboard uses the v2 schema (panels live under 'elements' keyed by name, arranged by 'layout'; variables under 'variables'), otherwise it is classic v1 ('panels[]' with 'templating.list'). WARNING: Large dashboards can consume significant context window space. Consider using get_dashboard_summary for overview or get_dashboard_property for specific data instead.",
 	getDashboardByUID,
 	mcp.WithTitleAnnotation("Get dashboard details"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -1220,6 +1224,7 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 
 func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetDashboardByUID.Register(mcp)
+	ListDashboardVersions.Register(mcp)
 	if enableWriteTools {
 		UpdateDashboard.Register(mcp)
 	}

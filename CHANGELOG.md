@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional `version` on `get_dashboard_by_uid` to fetch a saved snapshot via Grafana's dashboard versions API. New `list_dashboard_versions` tool returns compact version metadata (version, author, timestamp, message)
 - Optional `folderUid`, `tag`, and `starred` filters on `search_dashboards`, forwarded to Grafana `/api/search`. Empty-query searches now always restrict results to dashboards (`type=dash-db`) ([#1154](https://github.com/grafana/mcp-grafana/pull/1154))
 - Optional `matcher` parameter on `list_loki_label_names` and `list_loki_label_values` to narrow label discovery to a subset of streams (a LogQL stream selector on Loki, LogsQL on VictoriaLogs) ([#382](https://github.com/grafana/mcp-grafana/issues/382))
 - `delete_annotation` tool (write-gated) to permanently delete a Grafana annotation by ID, completing the annotation CRUD surface — the API was already wired up in the client but never exposed ([#1134](https://github.com/grafana/mcp-grafana/pull/1134))
