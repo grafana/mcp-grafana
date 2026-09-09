@@ -484,7 +484,8 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
-- `--enable-query`: Keep the raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) registered even under `--disable-write`
+- `--enable-query`: Keep the raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_clickhouse,query_snowflake,query_athena,query_influxdb`; kept as a shorthand for that common case.
+- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently (e.g. `find_error_pattern_logs,find_slow_requests`). Has no effect on a tool whose whole category is disabled, e.g. via `--disable-sift`.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -548,6 +549,8 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)
 - `find_slow_requests` (creates investigations)
+
+These only create ephemeral Sift investigation records via the Sift API — they never touch a Grafana dashboard, alert, or datasource. Without them, `list_sift_investigations`/`get_sift_investigation`/`get_sift_analysis` have nothing to list or get. Pass `--enable-write-tools=find_error_pattern_logs,find_slow_requests` to keep them registered under `--disable-write`.
 
 **Snapshot Tools:**
 - `create_snapshot`
