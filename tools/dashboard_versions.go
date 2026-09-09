@@ -1,11 +1,14 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
+	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -48,7 +51,7 @@ func listDashboardVersions(ctx context.Context, args ListDashboardVersionsParams
 		params.SetStart(&start)
 	}
 
-	resp, err := c.Dashboards.GetDashboardVersionsByUID(params)
+	resp, err := c.Dashboards.GetDashboardVersionsByUID(params, withDashboardVersionsDualFormatReader())
 	if err != nil {
 		return nil, fmt.Errorf("list dashboard versions for %q: %w", args.UID, err)
 	}
@@ -116,8 +119,6 @@ func fetchDashboardVersion(ctx context.Context, uid string, version int64) (*Das
 			Version:   v.Version,
 			CreatedBy: v.CreatedBy,
 			Created:   v.Created,
-			UpdatedBy: v.CreatedBy,
-			Updated:   v.Created,
 		},
 		IsV2: isV2DashboardJSON(spec),
 	}, nil
@@ -144,4 +145,55 @@ func formatDashboardVersionTime(created strfmt.DateTime) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+func withDashboardVersionsDualFormatReader() dashboards.ClientOption {
+	return func(op *runtime.ClientOperation) {
+		op.Reader = dashboardVersionsDualFormatReader{}
+	}
+}
+
+// dashboardVersionsDualFormatReader accepts both Grafana 12+
+// {versions:[...]} and Grafana 11's bare JSON array.
+type dashboardVersionsDualFormatReader struct{}
+
+func (dashboardVersionsDualFormatReader) ReadResponse(response runtime.ClientResponse, consumer runtime.Consumer) (interface{}, error) {
+	if response.Code() != 200 {
+		var reader dashboards.GetDashboardVersionsByUIDReader
+		return reader.ReadResponse(response, consumer)
+	}
+	body, err := io.ReadAll(response.Body())
+	if err != nil {
+		return nil, err
+	}
+	versions, err := decodeDashboardVersionList(body)
+	if err != nil {
+		return nil, fmt.Errorf("decode dashboard versions: %w", err)
+	}
+	return &dashboards.GetDashboardVersionsByUIDOK{
+		Payload: &models.DashboardVersionResponseMeta{Versions: versions},
+	}, nil
+}
+
+func decodeDashboardVersionList(body []byte) ([]*models.DashboardVersionMeta, error) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return nil, fmt.Errorf("empty response")
+	}
+	switch body[0] {
+	case '[':
+		var versions []*models.DashboardVersionMeta
+		if err := json.Unmarshal(body, &versions); err != nil {
+			return nil, err
+		}
+		return versions, nil
+	case '{':
+		var wrapped models.DashboardVersionResponseMeta
+		if err := json.Unmarshal(body, &wrapped); err != nil {
+			return nil, err
+		}
+		return wrapped.Versions, nil
+	default:
+		return nil, fmt.Errorf("unexpected dashboard versions payload")
+	}
 }

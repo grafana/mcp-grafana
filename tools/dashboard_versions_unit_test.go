@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,8 @@ func TestGetDashboardByUID_Version(t *testing.T) {
 		require.NotNil(t, result.Meta)
 		assert.Equal(t, int64(3), result.Meta.Version)
 		assert.Equal(t, "alice", result.Meta.CreatedBy)
+		assert.Empty(t, result.Meta.UpdatedBy)
+		assert.True(t, time.Time(result.Meta.Updated).IsZero())
 		dash, ok := result.Dashboard.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "Historical Dashboard", dash["title"])
@@ -130,7 +133,7 @@ func TestListDashboardVersions(t *testing.T) {
 					{
 						"version":       3,
 						"createdBy":     "alice",
-						"created":       "0001-01-01T00:00:00.000Z",
+						"created":       "2024-06-08T17:24:33Z",
 						"message":       "add new panel",
 						"parentVersion": 2,
 						"restoredFrom":  0,
@@ -139,7 +142,7 @@ func TestListDashboardVersions(t *testing.T) {
 					{
 						"version":   2,
 						"createdBy": "bob",
-						"created":   "0001-01-01T00:00:00.000Z",
+						"created":   "2024-06-07T09:00:00Z",
 						"message":   "",
 					},
 				},
@@ -157,6 +160,7 @@ func TestListDashboardVersions(t *testing.T) {
 
 		assert.Equal(t, int64(3), result[0].Version)
 		assert.Equal(t, "alice", result[0].CreatedBy)
+		assert.Equal(t, "2024-06-08T17:24:33Z", result[0].Created)
 		assert.Equal(t, "add new panel", result[0].Message)
 		raw, err := json.Marshal(result[0])
 		require.NoError(t, err)
@@ -165,6 +169,34 @@ func TestListDashboardVersions(t *testing.T) {
 
 		assert.Equal(t, int64(2), result[1].Version)
 		assert.Equal(t, "bob", result[1].CreatedBy)
+		assert.Equal(t, "2024-06-07T09:00:00Z", result[1].Created)
+	})
+
+	t.Run("accepts Grafana 11 array payload", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/dashboards/uid/my-uid/versions", r.URL.Path)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{
+					"version":   2,
+					"createdBy": "admin",
+					"created":   "2024-06-08T17:24:33Z",
+					"message":   "Updated panel title",
+				},
+			})
+		}))
+		defer server.Close()
+
+		ctx := mockSearchCtx(server)
+		result, err := listDashboardVersions(ctx, ListDashboardVersionsParams{UID: "my-uid"})
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, int64(2), result[0].Version)
+		assert.Equal(t, "admin", result[0].CreatedBy)
+		assert.Equal(t, "2024-06-08T17:24:33Z", result[0].Created)
+		assert.Equal(t, "Updated panel title", result[0].Message)
 	})
 
 	t.Run("forwards limit query parameter", func(t *testing.T) {
@@ -223,5 +255,23 @@ func TestListDashboardVersions(t *testing.T) {
 		ctx := mockSearchCtx(server)
 		_, err := listDashboardVersions(ctx, ListDashboardVersionsParams{UID: "my-uid", Limit: 0, Start: 0})
 		require.NoError(t, err)
+	})
+}
+
+func TestDecodeDashboardVersionList(t *testing.T) {
+	t.Run("wrapped object", func(t *testing.T) {
+		versions, err := decodeDashboardVersionList([]byte(`{"versions":[{"version":3,"createdBy":"alice"}]}`))
+		require.NoError(t, err)
+		require.Len(t, versions, 1)
+		assert.Equal(t, int64(3), versions[0].Version)
+		assert.Equal(t, "alice", versions[0].CreatedBy)
+	})
+
+	t.Run("bare array", func(t *testing.T) {
+		versions, err := decodeDashboardVersionList([]byte(`[{"version":2,"createdBy":"admin"}]`))
+		require.NoError(t, err)
+		require.Len(t, versions, 1)
+		assert.Equal(t, int64(2), versions[0].Version)
+		assert.Equal(t, "admin", versions[0].CreatedBy)
 	})
 }
