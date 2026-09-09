@@ -149,6 +149,9 @@ var enableQueryToolNames = []string{"query_clickhouse", "query_snowflake", "quer
 // case.
 func (dt *disabledTools) writeToolOverridden(names ...string) bool {
 	overrides := strings.Split(dt.writeToolOverrides, ",")
+	for i, o := range overrides {
+		overrides[i] = strings.TrimSpace(o)
+	}
 	if dt.enableQuery {
 		overrides = append(overrides, enableQueryToolNames...)
 	}

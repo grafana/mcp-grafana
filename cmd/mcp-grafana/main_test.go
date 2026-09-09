@@ -1367,6 +1367,18 @@ func TestProcessTools_EnableWriteToolsRestoresSiftInvestigationTools(t *testing.
 	assert.False(t, names["create_folder"], "--enable-write-tools must not re-enable unrelated write tools")
 }
 
+// A space after the comma (a natural way to write the flag by hand) must not
+// prevent the match. Exercised directly against writeToolOverridden with a
+// single name, since AddSiftTools ORs both Sift tool names together and
+// would pass even if only one of them matched.
+func TestWriteToolOverridden_TrimsWhitespaceAroundNames(t *testing.T) {
+	dt := &disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs, find_slow_requests"}
+	assert.True(t, dt.writeToolOverridden("find_slow_requests"), "trailing name after a space-separated comma should still match")
+
+	dt = &disabledTools{write: true, writeToolOverrides: " find_error_pattern_logs"}
+	assert.True(t, dt.writeToolOverridden("find_error_pattern_logs"), "leading whitespace before a name should still match")
+}
+
 // AddSiftTools only exposes one bool for both investigation-creation tools,
 // so naming just one of them in --enable-write-tools restores both.
 func TestProcessTools_EnableWriteToolsPartialSiftListRestoresBoth(t *testing.T) {
