@@ -449,8 +449,7 @@ func newTempoReadOnlyTool(name string, opts ...mcp.ToolOption) mcp.Tool {
 }
 
 // AddTempoTools registers all Tempo tools on the MCP server. Tools call
-// Tempo's REST API through the Grafana datasource proxy, replacing the
-// MCP-over-MCP proxy layer.
+// Tempo's REST API through the Grafana datasource proxy.
 //
 // Doc tools (docs-traceql, docs-config) are not included here because they
 // serve embedded markdown content that lives inside the Tempo binary. They

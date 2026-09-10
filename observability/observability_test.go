@@ -1032,10 +1032,9 @@ func TestToolMetricDimensions(t *testing.T) {
 }
 
 func TestToolMetricDimensionsPhaseIsBounded(t *testing.T) {
-	// Phase comes from the result's _meta, and a proxied tool's result is
-	// produced by a remote MCP server rather than by this repo — so the phase
-	// must be bounded by the allowlist exactly like the argument-derived
-	// dimensions, not trusted to be low-cardinality.
+	// Phase comes from the result's _meta and must be bounded by the
+	// allowlist exactly like the argument-derived dimensions, not trusted
+	// to be low-cardinality.
 	mkResult := func(meta map[string]any) *mcp.CallToolResult {
 		r := mcp.NewToolResultText("{}")
 		if meta != nil {

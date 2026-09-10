@@ -1366,9 +1366,8 @@ How it works:
 > - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too.
 >
 > The server logs a warning at startup naming each of these that is still enabled.
-> `run_panel_query` is safe (it reuses the enforced query path). Proxied tools
-> currently expose only Tempo (traces), not Loki logs, so they are not a bypass
-> today — but disable them (`--disable-proxied`) if that ever changes. Dashboard
+> `run_panel_query` is safe (it reuses the enforced query path). Tempo tools
+> query traces, not Loki logs, so they are not a bypass. Dashboard
 > snapshots (`--disable-snapshot`) can also embed log-panel data captured outside
 > enforcement.
 

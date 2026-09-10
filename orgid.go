@@ -62,9 +62,7 @@ func injectOrgIDProperty(properties map[string]any) {
 // non-positive value leaves the connection-level OrgID untouched.
 //
 // The orgId argument is stripped from the request before the handler runs so it
-// never propagates downstream — in particular, proxied tools forward all
-// arguments to upstream datasource MCP servers, which must not receive a
-// Grafana-only orgId.
+// never propagates downstream to tool handlers.
 func OrgIDOverrideMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if args := request.GetArguments(); args != nil {
