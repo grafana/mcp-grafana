@@ -388,7 +388,7 @@ func TestTempoToolResult_HasMeta(t *testing.T) {
 
 func TestAddTempoTools_RegistersAllTools(t *testing.T) {
 	s := server.NewMCPServer("test", "0.1.0")
-	AddTempoTools(s)
+	AddTempoTools(s, true)
 
 	expectedTools := []string{
 		"tempo_traceql-search",
@@ -404,6 +404,16 @@ func TestAddTempoTools_RegistersAllTools(t *testing.T) {
 	for _, name := range expectedTools {
 		_, ok := tools[name]
 		assert.True(t, ok, "expected tool %q to be registered", name)
+	}
+}
+
+func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
+	s := server.NewMCPServer("test", "0.1.0")
+	AddTempoTools(s, false)
+
+	tools := s.ListTools()
+	for name := range tools {
+		assert.False(t, strings.HasPrefix(name, "tempo_"), "no tempo tools should be registered when query disabled, found %q", name)
 	}
 }
 

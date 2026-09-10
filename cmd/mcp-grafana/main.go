@@ -125,7 +125,7 @@ var categoryDescriptionNoQuery = map[string]string{
 
 // queryOnlyCategories register no tools at all when their query tools are
 // disabled, because every tool they contain executes a query.
-var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery"}
+var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo"}
 
 // mutatingQueryCategories hold query tools that pass raw SQL or InfluxQL to the
 // datasource unfiltered: query_clickhouse can run DROP TABLE, query_influxdb can
@@ -421,7 +421,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddAdminTools, dt.admin, "admin"},
 		{func(mcp *server.MCPServer) { tools.AddPyroscopeTools(mcp, enableQueryTools) }, dt.pyroscope, "pyroscope"},
 		{func(mcp *server.MCPServer) { tools.AddNavigationTools(mcp, enableWriteTools) }, dt.navigation, "navigation"},
-		{tools.AddTempoTools, dt.tempo, "tempo"},
+		{func(mcp *server.MCPServer) { tools.AddTempoTools(mcp, enableQueryTools) }, dt.tempo, "tempo"},
 		{func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, dt.annotations, "annotations"},
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
 		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},

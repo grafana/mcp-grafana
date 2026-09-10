@@ -456,7 +456,10 @@ func newTempoReadOnlyTool(name string, opts ...mcp.ToolOption) mcp.Tool {
 // Doc tools (docs-traceql, docs-config) are not included here because they
 // serve embedded markdown content that lives inside the Tempo binary. They
 // can be added once Tempo publishes a shared tools library.
-func AddTempoTools(s *server.MCPServer) {
+func AddTempoTools(s *server.MCPServer, enableQueryTools bool) {
+	if !enableQueryTools {
+		return
+	}
 	dsUidParam := mcp.WithString("datasourceUid", mcp.Required(), mcp.Description("UID of the tempo datasource to query"))
 
 	s.AddTool(
