@@ -311,41 +311,12 @@ func parseLabelSelector(selector string) ([]siftInput, error) {
 	return inputs, nil
 }
 
-// labelsMapToInputs converts a simple key=value label map into siftInput entries (exact match).
-func labelsMapToInputs(lbls map[string]string) []siftInput {
-	inputs := make([]siftInput, 0, len(lbls))
-	for k, v := range lbls {
-		inputs = append(inputs, siftInput{
-			Type: "label",
-			LabelMatcher: &siftLabelMatcher{
-				Name:  k,
-				Value: v,
-				Type:  labels.MatchEqual,
-			},
-		})
-	}
-	return inputs
-}
-
-// resolveSiftInputs resolves label inputs from either a selector string or a labels map.
-// LabelSelector takes precedence when both are provided.
-func resolveSiftInputs(labelSelector string, lbls map[string]string) ([]siftInput, error) {
-	if labelSelector != "" {
-		return parseLabelSelector(labelSelector)
-	}
-	if len(lbls) == 0 {
-		return nil, fmt.Errorf("either labelSelector or labels must be provided")
-	}
-	return labelsMapToInputs(lbls), nil
-}
-
 // FindErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
 type FindErrorPatternLogsParams struct {
-	Name          string            `json:"name" jsonschema:"required,description=The name of the investigation"`
-	LabelSelector string            `json:"labelSelector,omitempty" jsonschema:"description=A PromQL/LogQL stream selector to scope the analysis. Supports all match operators: = (exact)\\, != (not equal)\\, =~ (regex)\\, !~ (negative regex). Example: {namespace=~\"prod.*\"\\, cluster=\"us-east-1\"}. Takes precedence over labels if both are provided."`
-	Labels        map[string]string `json:"labels,omitempty" jsonschema:"description=Labels to scope the analysis (exact match only). Prefer labelSelector for pattern matching."`
-	Start         time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
-	End           time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
+	Name          string    `json:"name" jsonschema:"required,description=The name of the investigation"`
+	LabelSelector string    `json:"labelSelector" jsonschema:"required,description=A PromQL/LogQL stream selector to scope the analysis. Supports all match operators: = (exact)\\, != (not equal)\\, =~ (regex)\\, !~ (negative regex). Example: {namespace=~\"prod.*\"\\, cluster=\"us-east-1\"}"`
+	Start         time.Time `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End           time.Time `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
 }
 
 // findErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
@@ -356,7 +327,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 		return nil, fmt.Errorf("creating Sift client: %w", err)
 	}
 
-	siftInputs, err := resolveSiftInputs(args.LabelSelector, args.Labels)
+	siftInputs, err := parseLabelSelector(args.LabelSelector)
 	if err != nil {
 		return nil, err
 	}
@@ -439,11 +410,10 @@ var FindErrorPatternLogs = mcpgrafana.MustTool(
 
 // FindSlowRequestsParams defines the parameters for running an SlowRequests check
 type FindSlowRequestsParams struct {
-	Name          string            `json:"name" jsonschema:"required,description=The name of the investigation"`
-	LabelSelector string            `json:"labelSelector,omitempty" jsonschema:"description=A PromQL/LogQL stream selector to scope the analysis. Supports all match operators: = (exact)\\, != (not equal)\\, =~ (regex)\\, !~ (negative regex). Example: {namespace=~\"prod.*\"\\, cluster=\"us-east-1\"}. Takes precedence over labels if both are provided."`
-	Labels        map[string]string `json:"labels,omitempty" jsonschema:"description=Labels to scope the analysis (exact match only). Prefer labelSelector for pattern matching."`
-	Start         time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
-	End           time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
+	Name          string    `json:"name" jsonschema:"required,description=The name of the investigation"`
+	LabelSelector string    `json:"labelSelector" jsonschema:"required,description=A PromQL/LogQL stream selector to scope the analysis. Supports all match operators: = (exact)\\, != (not equal)\\, =~ (regex)\\, !~ (negative regex). Example: {namespace=~\"prod.*\"\\, cluster=\"us-east-1\"}"`
+	Start         time.Time `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End           time.Time `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
 }
 
 // findSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
@@ -454,7 +424,7 @@ func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analys
 		return nil, fmt.Errorf("creating Sift client: %w", err)
 	}
 
-	siftInputs, err := resolveSiftInputs(args.LabelSelector, args.Labels)
+	siftInputs, err := parseLabelSelector(args.LabelSelector)
 	if err != nil {
 		return nil, err
 	}
