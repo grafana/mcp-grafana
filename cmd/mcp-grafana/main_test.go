@@ -1043,7 +1043,6 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 	obs := newTestObservability(t)
 	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, "")
 
-
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "mcp-grafana", name)
 }
@@ -1051,7 +1050,6 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 func TestNewServer_CustomServerName(t *testing.T) {
 	obs := newTestObservability(t)
 	s := newServer("my-custom-server", disabledTools{enabledTools: "search"}, obs, "")
-
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-server", name)
@@ -1064,7 +1062,6 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 
 	sBeta := newServer("instance-beta", disabledTools{enabledTools: "search"}, obs, "")
 
-
 	nameAlpha := getServerNameFromInitialize(t, sAlpha)
 	nameBeta := getServerNameFromInitialize(t, sBeta)
 
@@ -1076,7 +1073,6 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
 	obs := newTestObservability(t)
 	s := newServer("my-custom-instance", disabledTools{enabledTools: "search"}, obs, "")
-
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-instance", name)
@@ -1519,7 +1515,6 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
 	obs := newTestObservability(t)
 	s := newServer(defaultServerName, disabledTools{enabledTools: "datasource"}, obs, "")
-
 
 	c, err := client.NewInProcessClient(s)
 	require.NoError(t, err)
