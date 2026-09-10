@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -1596,6 +1597,47 @@ func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
 
 		assert.Empty(t, capturedHeaders.Get(grafana_client.OrgIDHeader))
 	})
+}
+
+func TestStdioTokenFileRotation(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "service-account-token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("token-a"), 0o600))
+
+	var mu sync.Mutex
+	var authHeaders []string
+	ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	t.Setenv("GRAFANA_URL", ts.URL)
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", tokenFile)
+
+	ctx := ExtractGrafanaClientFromEnv(context.Background())
+	c := GrafanaClientFromContext(ctx)
+	require.NotNil(t, c)
+
+	// First request uses the token loaded at startup.
+	_, _ = c.Search.Search(nil, nil)
+
+	// Rotate the token file on disk without rebuilding the client.
+	require.NoError(t, os.WriteFile(tokenFile, []byte("token-b"), 0o600))
+
+	// Second request must use the freshly re-read token, mirroring the HTTP/SSE
+	// transports (see #987).
+	_, _ = c.Search.Search(nil, nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.GreaterOrEqual(t, len(authHeaders), 2)
+	assert.Equal(t, "Bearer token-b", authHeaders[len(authHeaders)-1])
+	assert.Contains(t, authHeaders, "Bearer token-a")
 }
 
 func newTestHTTPServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
