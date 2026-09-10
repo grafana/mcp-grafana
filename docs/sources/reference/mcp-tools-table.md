@@ -31,7 +31,7 @@ You can verify that a service account has the right permissions before you enabl
 
 ## Review the tools table
 
-The following table lists MCP tools, required RBAC permissions, and typical scopes. Categories marked with `*` are off until you add them to `--enabled-tools` (refer to [Command-line flags](../../configure/command-line-flags/)). The table does not include [proxied tools](../../configure/proxied-tools/) from external MCP servers (for example Grafana Tempo).
+The following table lists MCP tools, required RBAC permissions, and typical scopes. Categories marked with `*` are off until you add them to `--enabled-tools` (refer to [Command-line flags](../../configure/command-line-flags/)). For [Tempo tools](../../configure/proxied-tools/), refer to the dedicated page.
 
 | Tool                              | Category       | Description                                                                                                  | Required RBAC Permissions                              | Required Scopes                                     |
 | --------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ | --------------------------------------------------- |

@@ -1,44 +1,47 @@
 ---
-title: Proxied tools
-menuTitle: Proxied tools
-description: Additional MCP tools loaded through Grafana’s datasource proxy; today only Grafana Tempo.
+title: Tempo tools
+menuTitle: Tempo tools
+description: Trace search, metrics, and attribute exploration tools for Grafana Tempo datasources.
 keywords:
   - MCP
-  - proxied
   - Tempo
+  - TraceQL
+  - traces
   - datasource
 weight: 4
 aliases:
   - /docs/grafana-cloud/machine-learning/mcp/configure/proxied-tools/
 ---
 
-# Proxied tools
+# Tempo tools
 
-Proxied tools are additional MCP tools that this server does not implement itself. It loads them from an MCP server that sits behind a Grafana datasource, using Grafana’s datasource proxy. Your client still talks only to this MCP server; the extra tools show up alongside the built-in ones.
+Tempo tools let you search traces, compute trace-derived metrics, fetch and diff traces, and explore trace attributes through any Tempo datasource configured in Grafana. The tools call Tempo's REST API through the Grafana datasource proxy.
 
-Today only the [Grafana Tempo MCP server](https://grafana.com/docs/tempo/latest/api_docs/mcp-server/) is supported as a proxied source. Adding another datasource type for proxied tools requires a change to this server, not Grafana configuration alone.
+All Tempo tool names are prefixed with `tempo_` and require a `datasourceUid` parameter to identify which Tempo datasource to query.
 
-## What you'll achieve
+## Prerequisites
 
-Enable the MCP server in Grafana Tempo and use `--disable-proxied` when you want proxied tools disabled.
-
-## Proxy the Grafana Tempo MCP Server
-
-Complete [authentication](../authentication/) to Grafana (`GRAFANA_URL` and credentials). Do not pass `--disable-proxied` if you want proxied tools loaded.
-
-Enable Tempo’s MCP server so the proxy path responds (for example `query_frontend.mcp_server.enabled` in YAML or flag `query-frontend.mcp-server.enabled`). Refer to the [Tempo MCP server](https://grafana.com/docs/tempo/latest/api_docs/mcp-server/#configuration) documentation.
+Complete [authentication](../authentication/) to Grafana (`GRAFANA_URL` and credentials).
 
 Add a Tempo datasource in Grafana if you do not already have one.
 
-Tools appear as `tempo_<remote-tool-name>`. They are not listed in the static [MCP tools reference](../../reference/mcp-tools-table/). Use your MCP client to list tools from the server.
+## Available tools
 
-## Disable proxied tools
+| Tool | Description |
+|------|-------------|
+| `tempo_traceql-search` | Search for traces using TraceQL queries |
+| `tempo_traceql-metrics-instant` | Compute a single metric value from trace data |
+| `tempo_traceql-metrics-range` | Compute a metric time series from trace data |
+| `tempo_get-trace` | Fetch a complete trace by ID |
+| `tempo_trace-diff` | Compare two traces |
+| `tempo_get-attribute-names` | List available trace attribute names |
+| `tempo_get-attribute-values` | Get values for a specific attribute |
 
-Proxied tools are enabled by default on this server. Pass `--disable-proxied` to disable them. The `proxied` token in `--enabled-tools` does not gate proxied tools; only `--disable-proxied` does. Omitting `proxied` from `--enabled-tools` does not disable them.
+## Disable Tempo tools
 
-With stdio transport, proxied tools are discovered once at startup. With SSE or streamable-http, discovery runs per MCP session when tools are listed or called.
+Tempo tools are enabled by default. Pass `--disable-tempo` to disable them, or remove `tempo` from `--enabled-tools`.
 
-When [`--dynamic-multi-org`](../multi-organization-and-headers/) is enabled, discovery runs across every organization the credential can access (not just the default org), and proxied tools accept an optional `orgId` argument alongside `datasourceUid` to target a datasource in a specific organization.
+Tempo tools respect `--disable-query` — when query tools are disabled, no Tempo tools are registered.
 
 ## Next steps
 

@@ -944,9 +944,6 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		cf := mcpgrafana.ComposedStdioContextFunc(gc)
 		srv.SetContextFunc(cf)
 
-		// POC: No proxied tool initialization needed — Tempo tools are registered
-		// statically and route through the Grafana datasource proxy at call time.
-
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())
 
 		err := srv.Listen(ctx, os.Stdin, os.Stdout)
