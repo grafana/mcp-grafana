@@ -5,20 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-09-10
 
 ### Added
 
+- Unified SQL datasource tools (`query_athena`, `query_clickhouse`, `query_snowflake`, `query_mssql`, `query_postgresql`) into a shared dialect system, reducing duplication and making it easier to add new SQL datasources ([#1126](https://github.com/grafana/mcp-grafana/pull/1126))
+- `--enable-write-tools` flag to selectively re-enable specific tools under `--disable-write`, so operators can allow individual write tools (e.g. Sift investigation tools) without enabling all writes. `--enable-query` is now shorthand for naming the raw-SQL query tools in this list ([#1157](https://github.com/grafana/mcp-grafana/pull/1157))
 - Optional `folderUid`, `tag`, and `starred` filters on `search_dashboards`, forwarded to Grafana `/api/search`. Empty-query searches now always restrict results to dashboards (`type=dash-db`) ([#1154](https://github.com/grafana/mcp-grafana/pull/1154))
-- Optional `matcher` parameter on `list_loki_label_names` and `list_loki_label_values` to narrow label discovery to a subset of streams (a LogQL stream selector on Loki, LogsQL on VictoriaLogs) ([#382](https://github.com/grafana/mcp-grafana/issues/382))
-- `delete_annotation` tool (write-gated) to permanently delete a Grafana annotation by ID, completing the annotation CRUD surface — the API was already wired up in the client but never exposed ([#1134](https://github.com/grafana/mcp-grafana/pull/1134))
-- `list_cloudwatch_dimension_values` tool to list the values available for a CloudWatch dimension key, rather than requiring an LLM to guess them ([#849](https://github.com/grafana/mcp-grafana/issues/849))
+- Optional `matcher` parameter on `list_loki_label_names` and `list_loki_label_values` to narrow label discovery to a subset of streams (a LogQL stream selector on Loki, LogsQL on VictoriaLogs) ([#1135](https://github.com/grafana/mcp-grafana/pull/1135))
+- `delete_annotation` tool (write-gated) to permanently delete a Grafana annotation by ID, completing the annotation CRUD surface ([#1134](https://github.com/grafana/mcp-grafana/pull/1134))
+- `list_cloudwatch_dimension_values` tool to list the values available for a CloudWatch dimension key, rather than requiring an LLM to guess them ([#1141](https://github.com/grafana/mcp-grafana/pull/1141))
 - `--loki-enforced-matchers`: operator-configured LogQL label matchers AND-ed into every native-Loki query (logs, stats, patterns, and label enumeration) to restrict which streams the server can read. Fails closed on unparseable queries and refuses VictoriaLogs datasources while set. Pair with `--disable-api` so the raw datasource proxy cannot bypass it. A companion `--loki-label-enumeration-fallback` controls label-enumeration behaviour under purely-negative matchers ([#978](https://github.com/grafana/mcp-grafana/pull/978))
-- `--instructions-append` flag to append operator-supplied text to the server instructions returned to MCP clients on initialize, so every connecting agent sees it — e.g. to explain that Loki reads are restricted by `--loki-enforced-matchers` ([#978](https://github.com/grafana/mcp-grafana/pull/978))
+- `--instructions-append` flag to append operator-supplied text to the server instructions returned to MCP clients on initialize, so every connecting agent sees it ([#978](https://github.com/grafana/mcp-grafana/pull/978))
+- Separate `/healthz` listener with its own port, so health checks and Prometheus metrics are served independently of the MCP transport ([#1137](https://github.com/grafana/mcp-grafana/pull/1137))
 
 ### Fixed
 
-- `check_datasources_health` no longer reports a frontend-only datasource plugin (e.g. the built-in Alertmanager datasource) as unhealthy: those plugins have no backend to serve the health endpoint, so it always failed for them. Such datasources now report `"status": "UNKNOWN"` and are counted separately in a new `unknown` field on the bulk result, rather than inflating `unhealthy` ([#1069](https://github.com/grafana/mcp-grafana/issues/1069))
+- `alerting_manage_rules` list operation now applies `search_rule_name` filtering client-side when listing datasource-provisioned rules, which the Grafana ruler API does not filter server-side ([#1161](https://github.com/grafana/mcp-grafana/pull/1161))
+- `tools/list` response now includes `resultType`, `cacheScope`, and `ttlMs` fields for all protocol versions, fixing a `ValidationError` that silently dropped all tools when mcp-grafana was used behind a Python MCP proxy (mcp >= 2.0.0, fastmcp >= 4.0.0) ([#1151](https://github.com/grafana/mcp-grafana/pull/1151))
+- `get_current_oncall_users` now handles user objects (not just ID strings) in the IRM proxy API's `on_call_now` response, fixing empty results on instances using the IRM proxy ([#1150](https://github.com/grafana/mcp-grafana/pull/1150))
+- `--allowed-hosts` is now honored when the request arrives via a loopback reverse proxy, so non-loopback hostnames work behind nginx/Caddy on the same machine ([#1142](https://github.com/grafana/mcp-grafana/pull/1142))
+- `check_datasources_health` no longer reports a frontend-only datasource plugin (e.g. the built-in Alertmanager datasource) as unhealthy; such datasources now report `"status": "UNKNOWN"` and are counted separately in a new `unknown` field ([#1139](https://github.com/grafana/mcp-grafana/pull/1139))
+- Tool calls with a type mismatch (e.g. string where number is expected) now return a structured MCP tool error instead of an opaque internal error ([#1138](https://github.com/grafana/mcp-grafana/pull/1138))
+- Explore deeplinks now use the `panes` format introduced in Grafana 10.2, fixing broken Cloud Monitoring and Loki links caused by lossy migration of the legacy `left` parameter. Falls back to the legacy format for Grafana < 10.2 ([#1088](https://github.com/grafana/mcp-grafana/pull/1088))
+- `query_loki_logs` no longer double-encodes timestamps in stream results ([#982](https://github.com/grafana/mcp-grafana/pull/982))
 
 ## [1.3.0] - 2026-08-28
 
@@ -438,6 +448,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.4.0]: https://github.com/grafana/mcp-grafana/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/grafana/mcp-grafana/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/grafana/mcp-grafana/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/grafana/mcp-grafana/compare/v1.0.0...v1.1.0
