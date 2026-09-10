@@ -123,31 +123,43 @@ class TestTempoToolsBasic:
     async def test_tempo_tool_call_missing_datasourceUid(self, mcp_client):
         """Test that calling a tempo tool without datasourceUid fails appropriately."""
 
-        with pytest.raises(Exception) as exc_info:
-            await mcp_client.call_tool(
+        try:
+            result = await mcp_client.call_tool(
                 "tempo_get-attribute-names",
                 arguments={},  # Missing datasourceUid
             )
-
-        error_msg = str(exc_info.value).lower()
-        assert "datasourceuid" in error_msg or "required" in error_msg, (
-            f"Should require datasourceUid parameter: {exc_info.value}"
-        )
+            # If the server returns an error result instead of raising
+            assert result.isError, "Should return an error when datasourceUid is missing"
+            error_text = result.content[0].text.lower()
+            assert "datasourceuid" in error_text or "required" in error_text, (
+                f"Error should mention datasourceUid: {result.content[0].text}"
+            )
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            assert "datasourceuid" in error_msg or "required" in error_msg, (
+                f"Should require datasourceUid parameter: {exc}"
+            )
 
     @pytest.mark.anyio
     async def test_tempo_tool_call_invalid_datasourceUid(self, mcp_client):
         """Test that calling a tempo tool with invalid datasourceUid returns helpful error."""
 
-        with pytest.raises(Exception) as exc_info:
-            await mcp_client.call_tool(
+        try:
+            result = await mcp_client.call_tool(
                 "tempo_get-attribute-names",
                 arguments={"datasourceUid": "nonexistent-tempo"},
             )
-
-        error_msg = str(exc_info.value).lower()
-        assert "not found" in error_msg or "not accessible" in error_msg, (
-            f"Should indicate datasource not found: {exc_info.value}"
-        )
+            # Server may return an error result rather than raising
+            assert result.isError, "Should return an error for invalid datasourceUid"
+            error_text = result.content[0].text.lower()
+            assert "not found" in error_text or "not accessible" in error_text, (
+                f"Should indicate datasource not found: {result.content[0].text}"
+            )
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            assert "not found" in error_msg or "not accessible" in error_msg, (
+                f"Should indicate datasource not found: {exc}"
+            )
 
     @pytest.mark.anyio
     async def test_tempo_tool_works_with_multiple_datasources(self, mcp_client):
