@@ -38,6 +38,13 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 		summaries = filterSummaryByRuleType(summaries, opts.RuleType)
 	}
 
+	// The upstream Prometheus/Mimir ruler API does not support the search.rule_name
+	// parameter at all, so it is silently ignored by the proxy. Filter client-side
+	// so callers get consistent behavior across both list paths.
+	if opts != nil && opts.RuleName != "" {
+		summaries = filterSummaryByRuleName(summaries, opts.RuleName)
+	}
+
 	if len(labelSelectors) > 0 {
 		summaries, err = filterSummaryByLabels(summaries, labelSelectors)
 		if err != nil {

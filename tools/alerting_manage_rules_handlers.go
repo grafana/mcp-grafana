@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-openapi/strfmt"
@@ -244,6 +245,20 @@ func filterSummaryByRuleType(summaries []alertRuleSummary, ruleType string) []al
 	filtered := make([]alertRuleSummary, 0, len(summaries))
 	for _, s := range summaries {
 		if s.Type == ruleType {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
+// filterSummaryByRuleName keeps summaries whose title contains name as a
+// case-insensitive substring, matching the partial-match semantics of the
+// search.rule_name parameter on the Grafana-managed rules API.
+func filterSummaryByRuleName(summaries []alertRuleSummary, name string) []alertRuleSummary {
+	needle := strings.ToLower(name)
+	filtered := make([]alertRuleSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if strings.Contains(strings.ToLower(s.Title), needle) {
 			filtered = append(filtered, s)
 		}
 	}
