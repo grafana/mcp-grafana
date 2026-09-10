@@ -35,6 +35,7 @@ func skipOnDatasourceAuthError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil && (strings.Contains(err.Error(), "failed to auth") ||
 		strings.Contains(err.Error(), "invalid password") ||
+		strings.Contains(err.Error(), "Incorrect username or password") ||
 		strings.Contains(err.Error(), "PERMISSION_DENIED") ||
 		strings.Contains(err.Error(), "status 401") ||
 		strings.Contains(err.Error(), "temporarily locked")) {
