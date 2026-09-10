@@ -293,6 +293,36 @@ services:
       timeout: 5s
       retries: 5
 
+  mysql:
+    image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+    environment:
+      MYSQL_ROOT_PASSWORD: rootroot
+      MYSQL_DATABASE: test
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./testdata/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: test
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./testdata/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   graphite:
     image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe
     healthcheck:
