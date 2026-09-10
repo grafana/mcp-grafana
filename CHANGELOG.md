@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `check_datasources_health` no longer reports a frontend-only datasource plugin (e.g. the built-in Alertmanager datasource) as unhealthy: those plugins have no backend to serve the health endpoint, so it always failed for them. Such datasources now report `"status": "UNKNOWN"` and are counted separately in a new `unknown` field on the bulk result, rather than inflating `unhealthy` ([#1069](https://github.com/grafana/mcp-grafana/issues/1069))
+- `--base-path` now correctly prefixes the application routes: the SSE endpoints are reachable when the flag is given without a trailing slash, and the streamable-http endpoint is mounted under the prefix as the flag documentation already promised. `/healthz` and `/metrics` stay internal-only, mounted at the server root regardless of `--base-path`. **Upgrade note:** `--base-path` was previously accepted and silently ignored by `-t streamable-http`, so a deployment passing both moves its MCP endpoint from `/mcp` to `/<base-path>/mcp` — point clients at the new URL, or drop `--base-path` to keep `/mcp` ([#1033](https://github.com/grafana/mcp-grafana/pull/1033))
 
 ## [1.3.0] - 2026-08-28
 
