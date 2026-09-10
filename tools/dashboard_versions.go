@@ -87,6 +87,10 @@ var ListDashboardVersions = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
+// fetchDashboardVersion uses Grafana's legacy versions API because dashboard
+// history is not exposed by the Kubernetes-style dashboard API. Consequently,
+// APIVersion is intentionally empty and Meta contains only the version fields
+// available from that endpoint: Version, CreatedBy, and Created.
 func fetchDashboardVersion(ctx context.Context, uid string, version int64) (*DashboardResponse, error) {
 	if uid == "" {
 		return nil, fmt.Errorf("uid is required")

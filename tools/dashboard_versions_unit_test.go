@@ -15,6 +15,16 @@ import (
 )
 
 func TestGetDashboardByUID_Version(t *testing.T) {
+	t.Run("advertises version as a positive integer", func(t *testing.T) {
+		var schema map[string]any
+		require.NoError(t, json.Unmarshal(GetDashboardByUID.Tool.RawInputSchema, &schema))
+		properties, ok := schema["properties"].(map[string]any)
+		require.True(t, ok)
+		versionSchema, ok := properties["version"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, float64(1), versionSchema["minimum"])
+	})
+
 	t.Run("omitted version uses the current dashboard API", func(t *testing.T) {
 		var versionsCalled bool
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +98,19 @@ func TestGetDashboardByUID_Version(t *testing.T) {
 
 		ctx := mockSearchCtx(server)
 		version := int64(0)
+		_, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: "my-uid", Version: &version})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "version must be a positive integer")
+	})
+
+	t.Run("returns error when version is negative", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("unexpected HTTP call when version is negative")
+		}))
+		defer server.Close()
+
+		ctx := mockSearchCtx(server)
+		version := int64(-1)
 		_, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: "my-uid", Version: &version})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "version must be a positive integer")
