@@ -14,6 +14,8 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql/parser"
 )
 
 type investigationStatus string
@@ -40,6 +42,25 @@ type investigationRequest struct {
 	QueryURL string `json:"queryUrl"`
 
 	Checks []string `json:"checks"`
+}
+
+// siftInput mirrors the Sift backend's inputs.Input type.
+type siftInput struct {
+	Type         string            `json:"type"`
+	LabelMatcher *siftLabelMatcher `json:"label,omitempty"`
+	TimeRange    *siftTimeRange    `json:"timeRange,omitempty"`
+}
+
+// siftLabelMatcher mirrors the Sift backend's inputs.LabelMatcher type.
+type siftLabelMatcher struct {
+	Name  string           `json:"name"`
+	Value string           `json:"value"`
+	Type  labels.MatchType `json:"type"`
+}
+
+type siftTimeRange struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
 }
 
 // Interesting: The analysis complete with results that indicate a probable cause for failure.
@@ -262,12 +283,69 @@ var ListSiftInvestigations = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
+// parseLabelSelector parses a PromQL/LogQL stream selector string into siftInput entries.
+// Accepts selectors like {namespace=~"prod.*", cluster="us-east-1"}.
+func parseLabelSelector(selector string) ([]siftInput, error) {
+	p := parser.NewParser(parser.Options{})
+	matchers, err := p.ParseMetricSelector(selector)
+	if err != nil {
+		return nil, fmt.Errorf("invalid label selector %q: %w", selector, err)
+	}
+	var inputs []siftInput
+	for _, m := range matchers {
+		if m.Name == "__name__" {
+			continue
+		}
+		inputs = append(inputs, siftInput{
+			Type: "label",
+			LabelMatcher: &siftLabelMatcher{
+				Name:  m.Name,
+				Value: m.Value,
+				Type:  m.Type,
+			},
+		})
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("label selector %q contains no label matchers", selector)
+	}
+	return inputs, nil
+}
+
+// labelsMapToInputs converts a simple key=value label map into siftInput entries (exact match).
+func labelsMapToInputs(lbls map[string]string) []siftInput {
+	inputs := make([]siftInput, 0, len(lbls))
+	for k, v := range lbls {
+		inputs = append(inputs, siftInput{
+			Type: "label",
+			LabelMatcher: &siftLabelMatcher{
+				Name:  k,
+				Value: v,
+				Type:  labels.MatchEqual,
+			},
+		})
+	}
+	return inputs
+}
+
+// resolveSiftInputs resolves label inputs from either a selector string or a labels map.
+// LabelSelector takes precedence when both are provided.
+func resolveSiftInputs(labelSelector string, lbls map[string]string) ([]siftInput, error) {
+	if labelSelector != "" {
+		return parseLabelSelector(labelSelector)
+	}
+	if len(lbls) == 0 {
+		return nil, fmt.Errorf("either labelSelector or labels must be provided")
+	}
+	return labelsMapToInputs(lbls), nil
+}
+
 // FindErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
 type FindErrorPatternLogsParams struct {
-	Name   string            `json:"name" jsonschema:"required,description=The name of the investigation"`
-	Labels map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
-	Start  time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
-	End    time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
+	Name          string            `json:"name" jsonschema:"required,description=The name of the investigation"`
+	LabelSelector string            `json:"labelSelector,omitempty" jsonschema:"description=A PromQL/LogQL stream selector to scope the analysis. Supports all match operators: = (exact)\\, != (not equal)\\, =~ (regex)\\, !~ (negative regex). Example: {namespace=~\"prod.*\"\\, cluster=\"us-east-1\"}. Takes precedence over labels if both are provided."`
+	Labels        map[string]string `json:"labels,omitempty" jsonschema:"description=Labels to scope the analysis (exact match only). Prefer labelSelector for pattern matching."`
+	Start         time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End           time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
 }
 
 // findErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
@@ -278,9 +356,13 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 		return nil, fmt.Errorf("creating Sift client: %w", err)
 	}
 
-	// Create the investigation request with ErrorPatternLogs check
+	siftInputs, err := resolveSiftInputs(args.LabelSelector, args.Labels)
+	if err != nil {
+		return nil, err
+	}
+
 	requestData := investigationRequest{
-		Labels: args.Labels,
+		Labels: map[string]string{},
 		Start:  args.Start,
 		End:    args.End,
 		Checks: []string{string(checkTypeErrorPatternLogs)},
@@ -292,8 +374,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 		Status:     investigationStatusPending,
 	}
 
-	// Create the investigation and wait for it to complete
-	completedInvestigation, err := client.createSiftInvestigation(ctx, investigation, requestData, logger)
+	completedInvestigation, err := client.createSiftInvestigation(ctx, investigation, requestData, siftInputs, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating investigation: %w", err)
 	}
@@ -348,7 +429,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 // FindErrorPatternLogs is a tool for running an ErrorPatternLogs check
 var FindErrorPatternLogs = mcpgrafana.MustTool(
 	"find_error_pattern_logs",
-	"Searches Loki logs for elevated error patterns compared to the last day's average, waits for the analysis to complete, and returns the results including any patterns found.",
+	"Searches Loki logs for elevated error patterns compared to the last day's average, waits for the analysis to complete, and returns the results including any patterns found. Use the labelSelector parameter with PromQL/LogQL syntax for pattern matching on label values (e.g. {namespace=~\"prod.*\"}).",
 	findErrorPatternLogs,
 	mcp.WithTitleAnnotation("Find error patterns in logs"),
 	mcp.WithReadOnlyHintAnnotation(false),
@@ -358,10 +439,11 @@ var FindErrorPatternLogs = mcpgrafana.MustTool(
 
 // FindSlowRequestsParams defines the parameters for running an SlowRequests check
 type FindSlowRequestsParams struct {
-	Name   string            `json:"name" jsonschema:"required,description=The name of the investigation"`
-	Labels map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
-	Start  time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
-	End    time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
+	Name          string            `json:"name" jsonschema:"required,description=The name of the investigation"`
+	LabelSelector string            `json:"labelSelector,omitempty" jsonschema:"description=A PromQL/LogQL stream selector to scope the analysis. Supports all match operators: = (exact)\\, != (not equal)\\, =~ (regex)\\, !~ (negative regex). Example: {namespace=~\"prod.*\"\\, cluster=\"us-east-1\"}. Takes precedence over labels if both are provided."`
+	Labels        map[string]string `json:"labels,omitempty" jsonschema:"description=Labels to scope the analysis (exact match only). Prefer labelSelector for pattern matching."`
+	Start         time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End           time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
 }
 
 // findSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
@@ -372,9 +454,13 @@ func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analys
 		return nil, fmt.Errorf("creating Sift client: %w", err)
 	}
 
-	// Create the investigation request with SlowRequests check
+	siftInputs, err := resolveSiftInputs(args.LabelSelector, args.Labels)
+	if err != nil {
+		return nil, err
+	}
+
 	requestData := investigationRequest{
-		Labels: args.Labels,
+		Labels: map[string]string{},
 		Start:  args.Start,
 		End:    args.End,
 		Checks: []string{string(checkTypeSlowRequests)},
@@ -386,8 +472,7 @@ func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analys
 		Status:     investigationStatusPending,
 	}
 
-	// Create the investigation and wait for it to complete
-	completedInvestigation, err := client.createSiftInvestigation(ctx, investigation, requestData, logger)
+	completedInvestigation, err := client.createSiftInvestigation(ctx, investigation, requestData, siftInputs, logger)
 	if err != nil {
 		return nil, fmt.Errorf("creating investigation: %w", err)
 	}
@@ -417,7 +502,7 @@ func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analys
 // FindSlowRequests is a tool for running an SlowRequests check
 var FindSlowRequests = mcpgrafana.MustTool(
 	"find_slow_requests",
-	"Searches relevant Tempo datasources for slow requests, waits for the analysis to complete, and returns the results.",
+	"Searches relevant Tempo datasources for slow requests, waits for the analysis to complete, and returns the results. Use the labelSelector parameter with PromQL/LogQL syntax for pattern matching on label values (e.g. {namespace=~\"prod.*\"}).",
 	findSlowRequests,
 	mcp.WithTitleAnnotation("Find slow requests"),
 	mcp.WithReadOnlyHintAnnotation(false),
@@ -502,7 +587,7 @@ func (c *siftClient) getSiftInvestigation(ctx context.Context, id uuid.UUID) (*I
 	return &investigationResponse.Data, nil
 }
 
-func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation *Investigation, requestData investigationRequest, logger *slog.Logger) (*Investigation, error) {
+func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation *Investigation, requestData investigationRequest, inputs []siftInput, logger *slog.Logger) (*Investigation, error) {
 	// Set default time range to last 30 minutes if not provided
 	if requestData.Start.IsZero() {
 		requestData.Start = time.Now().Add(-30 * time.Minute)
@@ -511,12 +596,25 @@ func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation 
 		requestData.End = time.Now()
 	}
 
-	// Create the payload including the necessary fields for the API
+	// Add time range input alongside label inputs
+	inputs = append(inputs, siftInput{
+		Type: "time-range",
+		TimeRange: &siftTimeRange{
+			From: requestData.Start,
+			To:   requestData.End,
+		},
+	})
+
+	// Create the payload including the necessary fields for the API.
+	// We send inputs directly so the Sift backend uses them as-is
+	// (bypassing its ToInputs which only supports exact match).
 	payload := struct {
 		Investigation
+		Inputs      []siftInput          `json:"inputs"`
 		RequestData investigationRequest `json:"requestData"`
 	}{
 		Investigation: *investigation,
+		Inputs:        inputs,
 		RequestData:   requestData,
 	}
 
