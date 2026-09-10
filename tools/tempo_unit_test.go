@@ -4,6 +4,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -73,26 +74,22 @@ func tempoTestContext(t *testing.T, serverURL string) func(mcp.CallToolRequest) 
 		&mcpgrafana.GrafanaClient{GrafanaHTTPAPI: c},
 	)
 
+	tools := map[string]mcpgrafana.Tool{
+		"tempo_traceql-search":          TempoSearchTool,
+		"tempo_traceql-metrics-instant": TempoMetricsInstantTool,
+		"tempo_traceql-metrics-range":   TempoMetricsRangeTool,
+		"tempo_get-trace":               TempoGetTraceTool,
+		"tempo_trace-diff":              TempoTraceDiffTool,
+		"tempo_get-attribute-names":     TempoGetAttributeNamesTool,
+		"tempo_get-attribute-values":    TempoGetAttributeValuesTool,
+	}
+
 	return func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Route to the appropriate handler based on tool name
-		switch req.Params.Name {
-		case "tempo_traceql-search":
-			return tempoSearchHandler(ctx, req)
-		case "tempo_traceql-metrics-instant":
-			return tempoMetricsInstantHandler(ctx, req)
-		case "tempo_traceql-metrics-range":
-			return tempoMetricsRangeHandler(ctx, req)
-		case "tempo_get-trace":
-			return tempoGetTraceHandler(ctx, req)
-		case "tempo_trace-diff":
-			return tempoTraceDiffHandler(ctx, req)
-		case "tempo_get-attribute-names":
-			return tempoGetAttributeNamesHandler(ctx, req)
-		case "tempo_get-attribute-values":
-			return tempoGetAttributeValuesHandler(ctx, req)
-		default:
-			return nil, nil
+		tool, ok := tools[req.Params.Name]
+		if !ok {
+			return nil, fmt.Errorf("unknown tool: %s", req.Params.Name)
 		}
+		return tool.Handler(ctx, req)
 	}
 }
 
