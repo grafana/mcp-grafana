@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -69,7 +68,7 @@ func (b *tempoBackend) doGet(ctx context.Context, path string, query url.Values)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -101,7 +100,7 @@ func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (st
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -208,7 +207,7 @@ func tempoMetricsInstantHandler(ctx context.Context, request mcp.CallToolRequest
 		params.Set("end", epoch)
 	}
 
-	body, err := backend.doGet(ctx, "/api/metrics/query_range", params)
+	body, err := backend.doGet(ctx, "/api/metrics/query", params)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

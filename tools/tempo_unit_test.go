@@ -140,9 +140,11 @@ func TestTempoSearch(t *testing.T) {
 }
 
 func TestTempoMetricsInstant(t *testing.T) {
+	var capturedPath string
 	var capturedQuery url.Values
 
 	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
 		capturedQuery = r.URL.Query()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"series":[{"labels":{},"samples":[{"value":42}]}]}`))
@@ -161,6 +163,7 @@ func TestTempoMetricsInstant(t *testing.T) {
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
 
+	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/metrics/query", capturedPath)
 	// Metrics queries use epoch nanoseconds
 	assert.Equal(t, "1735689600000000000", capturedQuery.Get("start"))
 	assert.Equal(t, "1735693200000000000", capturedQuery.Get("end"))
