@@ -2,13 +2,11 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	sqldialect "github.com/grafana/mcp-grafana/tools/sql"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -25,7 +23,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres)"`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Fallback datasource type used only when the datasource cannot be read (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres). When the datasource is readable its real type is used and this is ignored."`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -189,25 +187,38 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		}
 	}
 
-	// If we still need the datasource type, look it up
-	if datasourceType == "" && datasourceUID != "" {
-		ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
-		if err != nil {
-			var forbiddenErr *datasources.GetDataSourceByUIDForbidden
-			var notFoundErr *datasources.GetDataSourceByUIDNotFound
-
-			switch {
-			case errors.As(err, &forbiddenErr):
-				availableDS := getAvailableDatasourceUIDs(ctx, "")
-				return nil, fmt.Errorf("permission denied for datasource '%s'. Hint: Provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, availableDS)
-			case errors.As(err, &notFoundErr):
-				availableDS := getAvailableDatasourceUIDs(ctx, "")
-				return nil, fmt.Errorf("datasource '%s' not found. Available datasources: %v", datasourceUID, availableDS)
-			default:
-				return nil, fmt.Errorf("fetching datasource info: %w", err)
-			}
+	// Resolve the datasource type authoritatively from its UID whenever the
+	// caller overrode the datasource, or when we don't yet have a type. The
+	// datasource's real type — not a caller-supplied one — decides which
+	// executor runs, because the executors are not equivalent: a Loki
+	// datasource routed on a SQL/CloudWatch type would run through
+	// executeSQLPanelQuery / executeCloudWatchPanelQuery, which query
+	// /api/ds/query directly and so bypass the Loki label-matcher enforcement
+	// that is applied only in the native Loki backend (loki_backend.go /
+	// loki_enforce.go). A type declared in the panel JSON (no override) is
+	// trusted as-is: it comes from the dashboard, not the caller.
+	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
+		ds, lookupErr := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
+		switch {
+		case lookupErr == nil:
+			// The datasource's real type wins over any caller-supplied type.
+			datasourceType = ds.Type
+		case datasourceType == "":
+			// Cannot resolve the type and the caller gave nothing to fall back
+			// on.
+			availableDS := getAvailableDatasourceUIDs(ctx, "")
+			return nil, fmt.Errorf("could not resolve datasource '%s' (%v) and no datasourceType was provided. Hint: provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, lookupErr, availableDS)
+		case len(enforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "loki":
+			// The datasource is unreadable, so the caller-supplied type is
+			// unverified. With Loki label-matcher enforcement active, refuse
+			// rather than route a possibly-Loki datasource onto the
+			// /api/ds/query path, which bypasses enforcement. Fails closed,
+			// mirroring the VictoriaLogs guard in lokiBackendForDatasource.
+			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Loki label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Loki via query_loki_logs, or supply an accessible datasource", datasourceUID)
+		default:
+			// Unreadable datasource, but the caller supplied a fallback type and
+			// enforcement (if any) is satisfied; keep the caller-supplied type.
 		}
-		datasourceType = ds.Type
 	}
 
 	// Substitute variables in the query

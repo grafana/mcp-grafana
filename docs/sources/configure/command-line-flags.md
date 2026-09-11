@@ -177,7 +177,7 @@ Enforcement applies only to the Loki query tools. Other tools can reach Loki log
 - `--disable-sift`: Sift investigations analyze Loki logs server-side across all streams.
 - `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too.
 
-The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe (it reuses the enforced query path). Proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
+The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Loki datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
 {{< /admonition >}}
 
 ## Run in read-only mode
