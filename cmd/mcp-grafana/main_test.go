@@ -572,24 +572,27 @@ func TestApplyLokiGuardrailEnv(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		env           map[string]string
-		setFlags      map[string]bool
-		wantMode      string
-		wantMaxBytes  int64
-		wantMaxRange  time.Duration
-		wantErrSubstr string
+		name               string
+		env                map[string]string
+		setFlags           map[string]bool
+		wantMode           string
+		wantMaxBytes       int64
+		wantMaxRange       time.Duration
+		wantDatasourceUIDs string
+		wantErrSubstr      string
 	}{
 		{
-			name: "env-only applies to all three settings",
+			name: "env-only applies to all settings",
 			env: map[string]string{
-				"GRAFANA_LOKI_GUARDRAIL_MODE":      "enforce",
-				"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES": "1073741824",
-				"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE": "6h",
+				"GRAFANA_LOKI_GUARDRAIL_MODE":          "enforce",
+				"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES":     "1073741824",
+				"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE":     "6h",
+				"GRAFANA_LOKI_ALLOWED_DATASOURCE_UIDS": "limited-a,limited-b",
 			},
-			wantMode:     "enforce",
-			wantMaxBytes: 1 << 30,
-			wantMaxRange: 6 * time.Hour,
+			wantMode:           "enforce",
+			wantMaxBytes:       1 << 30,
+			wantMaxRange:       6 * time.Hour,
+			wantDatasourceUIDs: "limited-a,limited-b",
 		},
 		{
 			name: "flag-set wins over env",
@@ -599,9 +602,10 @@ func TestApplyLokiGuardrailEnv(t *testing.T) {
 				"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE": "6h",
 			},
 			setFlags: map[string]bool{
-				"loki-guardrail-mode":      true,
-				"loki-guardrail-max-bytes": true,
-				"loki-guardrail-max-range": true,
+				"loki-guardrail-mode":          true,
+				"loki-guardrail-max-bytes":     true,
+				"loki-guardrail-max-range":     true,
+				"loki-allowed-datasource-uids": true,
 			},
 			// Values stay at the flag defaults: an explicit
 			// --loki-guardrail-mode=off must not be overridden by env even
@@ -644,6 +648,7 @@ func TestApplyLokiGuardrailEnv(t *testing.T) {
 		"GRAFANA_LOKI_GUARDRAIL_MODE",
 		"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES",
 		"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE",
+		"GRAFANA_LOKI_ALLOWED_DATASOURCE_UIDS",
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -661,6 +666,7 @@ func TestApplyLokiGuardrailEnv(t *testing.T) {
 			assert.Equal(t, tc.wantMode, gc.lokiGuardrailMode)
 			assert.Equal(t, tc.wantMaxBytes, gc.lokiGuardrailMaxBytes)
 			assert.Equal(t, tc.wantMaxRange, gc.lokiGuardrailMaxRange)
+			assert.Equal(t, tc.wantDatasourceUIDs, gc.lokiAllowedDatasourceUIDs)
 		})
 	}
 }
@@ -676,6 +682,11 @@ func TestValidateLokiGuardrail(t *testing.T) {
 		{name: "off is valid", gc: grafanaConfig{lokiGuardrailMode: "off"}},
 		{name: "shadow with limits is valid", gc: grafanaConfig{lokiGuardrailMode: "shadow", lokiGuardrailMaxBytes: 100 << 30, lokiGuardrailMaxRange: 24 * time.Hour}},
 		{name: "zero limits disable checks", gc: grafanaConfig{lokiGuardrailMode: "enforce"}},
+		{name: "strict with limits is valid", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxBytes: 4 << 30, lokiGuardrailMaxRange: time.Hour, lokiAllowedDatasourceUIDs: "limited"}},
+		{name: "strict requires byte limit", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxRange: time.Hour}, wantErrSubstr: "positive --loki-guardrail-max-bytes"},
+		{name: "strict requires range limit", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxBytes: 4 << 30}, wantErrSubstr: "positive --loki-guardrail-max-range"},
+		{name: "strict requires datasource allowlist", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxBytes: 4 << 30, lokiGuardrailMaxRange: time.Hour}, wantErrSubstr: "--loki-allowed-datasource-uids"},
+		{name: "strict rejects dynamic multi-org", gc: grafanaConfig{lokiGuardrailMode: "strict", lokiGuardrailMaxBytes: 4 << 30, lokiGuardrailMaxRange: time.Hour, lokiAllowedDatasourceUIDs: "limited", dynamicMultiOrg: true}, wantErrSubstr: "--dynamic-multi-org"},
 		{name: "unknown mode rejected", gc: grafanaConfig{lokiGuardrailMode: "Enforce"}, wantErrSubstr: "invalid Loki guardrail mode"},
 		{name: "negative max bytes rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxBytes: -1}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_BYTES"},
 		{name: "negative max range rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxRange: -time.Hour}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_RANGE"},
@@ -691,6 +702,39 @@ func TestValidateLokiGuardrail(t *testing.T) {
 			assert.NoError(t, err)
 		})
 	}
+}
+
+func TestValidateStrictLokiIsolation(t *testing.T) {
+	safe := disabledTools{
+		enabledTools: "search,datasource,prometheus,loki,dashboard",
+		write:        true,
+	}
+	assert.NoError(t, validateStrictLokiIsolation(mcpgrafana.LokiGuardrailStrict, safe))
+
+	tests := []struct {
+		name   string
+		mutate func(*disabledTools)
+		want   string
+	}{
+		{name: "api", mutate: func(dt *disabledTools) { dt.enabledTools += ",api" }, want: "api"},
+		{name: "rendering", mutate: func(dt *disabledTools) { dt.enabledTools += ",rendering" }, want: "rendering"},
+		{name: "panel query", mutate: func(dt *disabledTools) { dt.enabledTools += ",runpanelquery" }, want: "runpanelquery"},
+		{name: "write tools", mutate: func(dt *disabledTools) { dt.write = false }, want: "--disable-write"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dt := safe
+			tc.mutate(&dt)
+			err := validateStrictLokiIsolation(mcpgrafana.LokiGuardrailStrict, dt)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	unsafe := safe
+	unsafe.enabledTools += ",api"
+	assert.NoError(t, validateStrictLokiIsolation(mcpgrafana.LokiGuardrailEnforce, unsafe), "existing modes retain their current compatibility behavior")
+
 }
 
 func TestSplitAndTrim(t *testing.T) {

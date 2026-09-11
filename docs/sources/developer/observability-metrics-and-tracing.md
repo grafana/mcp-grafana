@@ -69,14 +69,14 @@ The high-cardinality **target** of a call (the datasource `uid`, else `name`) is
 
 ### Loki cost guardrail metrics
 
-When the [Loki query cost guardrail](../../configure/command-line-flags/) is enabled (`--loki-guardrail-mode` is `shadow` or `enforce`), every `query_loki_logs` call it evaluates increments exactly one of four counters:
+When the [Loki query cost guardrail](../../configure/command-line-flags/) is enabled (`--loki-guardrail-mode` is `shadow`, `enforce`, or `strict`), every guarded Loki content query it evaluates increments exactly one of four counters:
 
 | Metric | Type | Incremented when |
 |--------|------|------------------|
 | `mcp_loki_guardrail_admitted_total` | Counter | The query passed every enabled check |
 | `mcp_loki_guardrail_would_block_total` | Counter | The query failed a check in `shadow` mode and ran anyway |
-| `mcp_loki_guardrail_blocked_total` | Counter | The query failed a check in `enforce` mode and was rejected |
-| `mcp_loki_guardrail_fail_open_total` | Counter | The guardrail could not reach a verdict and admitted the query |
+| `mcp_loki_guardrail_blocked_total` | Counter | The query was rejected in `enforce` or `strict` mode |
+| `mcp_loki_guardrail_fail_open_total` | Counter | A compatibility mode could not reach a verdict and admitted the query |
 
 The four partition the guarded population, so their sum is the number of calls the guardrail evaluated, and each is a query count rather than a check count.
 
@@ -84,13 +84,13 @@ The four partition the guarded population, so their sum is the number of calls t
 
 | Label | On | Values |
 |-------|-----|--------|
-| `reason` | `would_block`, `blocked` | `selector` (no selective label matcher), `range` (effective time range over the cap), `bytes` (index/stats estimate over the budget) |
+| `reason` | `would_block`, `blocked` | `selector` (no selective label matcher), `range` (effective time range over the cap), `bytes` (index/stats estimate over the budget), `evaluation` (strict mode could not obtain a complete verdict) |
 | `cause` | `fail_open` | `unparseable` (no stream selector the scanner recognises), `estimate_failed` (index/stats unavailable) |
 | `backend` | all four | `loki`, `victorialogs`, `unknown` |
 
 A query can trip more than one check. It is counted **once**, labelled with the check that ran first — `selector`, then `range`, then `bytes`. That ordering is deliberate: the selectivity check is unconditional, so a query attributed to `selector` would not be admitted by raising `--loki-guardrail-max-range` or `--loki-guardrail-max-bytes`. When promoting from `shadow` to `enforce`, read `sum(rate(mcp_loki_guardrail_would_block_total[5m]))` for the size of the affected population and `sum by (reason) (...)` for whether tuning the bounds would shrink it.
 
-Watch `mcp_loki_guardrail_fail_open_total` alongside them: a quiet `would_block` rate means "nothing would be blocked" only if the fail-open rate is also low. A high `cause="unparseable"` rate on `backend="loki"` means the guardrail's LogQL scanner does not recognise the query shapes in use, which calls for improving the scanner rather than tuning the bounds. On `backend="victorialogs"` a high `unparseable` rate is expected — brace-less LogsQL is the normal shape there, and the byte-budget check never runs on that backend at all, which is why `backend` is a label rather than being folded together.
+Watch `mcp_loki_guardrail_fail_open_total` alongside them when using `shadow` or `enforce`: a quiet `would_block` rate means "nothing would be blocked" only if the fail-open rate is also low. In `strict`, the same incomplete evaluations increment `blocked` with `reason="evaluation"` instead. A high `cause="unparseable"` rate on `backend="loki"` means the guardrail's LogQL scanner does not recognise the query shapes in use, which calls for improving the scanner rather than tuning the bounds. On `backend="victorialogs"` a high `unparseable` rate is expected because brace-less LogsQL is the normal shape there and the byte-budget check never runs on that backend; strict mode therefore rejects those content queries.
 
 Neither the stream selector nor the LogQL is exported as a label: both are unbounded, and line filters can carry sensitive literals. The extracted selectors are logged at `WARN` and the full query at `DEBUG` instead.
 

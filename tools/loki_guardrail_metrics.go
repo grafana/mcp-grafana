@@ -16,9 +16,10 @@ const lokiGuardrailMeterName = "mcp-grafana"
 // would_block/blocked counters. Deliberately a closed set: these become
 // Prometheus labels downstream.
 const (
-	guardrailReasonSelector = "selector"
-	guardrailReasonRange    = "range"
-	guardrailReasonBytes    = "bytes"
+	guardrailReasonSelector   = "selector"
+	guardrailReasonRange      = "range"
+	guardrailReasonBytes      = "bytes"
+	guardrailReasonEvaluation = "evaluation"
 )
 
 // Guardrail fail-open causes, used as the `cause` attribute on the fail_open
