@@ -1545,7 +1545,9 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
-	if config.OrgID == 0 {
+	// Under dynamic multi-org the org is chosen per tool call, so an unset
+	// connection-level org is the expected starting point, not a misconfiguration.
+	if config.OrgID == 0 && !DynamicMultiOrgEnabled {
 		logger.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
 	}
 
