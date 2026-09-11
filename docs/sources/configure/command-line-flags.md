@@ -112,7 +112,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
-- `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
+- `--disable-tempo`: Disable Tempo tracing tools.
 - `--disable-provisioning`: Disable provisioning tools.
 - `--disable-agento11y`: Disable Agent Observability tools.
 - `--disable-assistant`: Disable Grafana Assistant tools.

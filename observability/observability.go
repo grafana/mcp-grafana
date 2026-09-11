@@ -865,12 +865,11 @@ func (o *Observability) TracerProvider() *sdktrace.TracerProvider {
 // MeterProvider returns the metric.MeterProvider backing this Observability
 // instance's metrics, or nil if metrics are not enabled (Config.MetricsEnabled
 // was false). Pass the result into mcp-grafana constructors that accept a
-// meter provider (e.g. NewClientCache's WithClientCacheMeterProvider,
-// NewSessionManager's WithSessionMeterProvider) so their metrics are recorded
-// against this provider explicitly, rather than relying on those constructors
-// reading otel.GetMeterProvider() at construction time — which silently
-// becomes a no-op in any process that installs its own global provider (e.g.
-// a noop one) for reasons unrelated to mcp-grafana.
+// meter provider (e.g. NewClientCache's WithClientCacheMeterProvider) so their
+// metrics are recorded against this provider explicitly, rather than relying on
+// those constructors reading otel.GetMeterProvider() at construction time —
+// which silently becomes a no-op in any process that installs its own global
+// provider (e.g. a noop one) for reasons unrelated to mcp-grafana.
 func (o *Observability) MeterProvider() metric.MeterProvider {
 	if o.meterProvider == nil {
 		return nil

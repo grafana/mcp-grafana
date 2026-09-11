@@ -51,7 +51,7 @@ Refer to [Command-line flags](../command-line-flags/) for the default list.
 
 Use `--disable-<category>` to turn off a whole category (for example, `--disable-oncall`, `--disable-alerting`, `--disable-dashboard`). For every flag, read-only behavior, and TLS-related flags, refer to [Command-line flags](../command-line-flags/).
 
-For tools that come from external MCP servers through Grafana (for example from Grafana Tempo), refer to [Proxied tools](../proxied-tools/).
+Tempo tools can be disabled with `--disable-tempo` or removed from `--enabled-tools`. They also respect `--disable-query`.
 
 ## Run in read-only mode
 
