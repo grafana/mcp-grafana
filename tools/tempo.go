@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -80,6 +79,36 @@ func (b *tempoBackend) doGet(ctx context.Context, path string, query url.Values)
 	return string(body), nil
 }
 
+func (b *tempoBackend) doGetWithAccept(ctx context.Context, path string, query url.Values, accept string) (string, error) {
+	u := b.baseURL + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", accept)
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("tempo API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return string(body), nil
+}
+
 func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (string, error) {
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -112,18 +141,18 @@ func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (st
 	return string(body), nil
 }
 
-func parseRFC3339ToEpochSeconds(value string) (string, error) {
-	t, err := time.Parse(time.RFC3339, value)
+func tempoParseToEpochSeconds(value string) (string, error) {
+	t, err := parseStartTime(value)
 	if err != nil {
-		return "", fmt.Errorf("invalid time: %v", err)
+		return "", err
 	}
 	return fmt.Sprintf("%d", t.Unix()), nil
 }
 
-func parseRFC3339ToEpochNanos(value string) (string, error) {
-	t, err := time.Parse(time.RFC3339, value)
+func tempoParseToEpochNanos(value string) (string, error) {
+	t, err := parseStartTime(value)
 	if err != nil {
-		return "", fmt.Errorf("invalid time: %v", err)
+		return "", err
 	}
 	return fmt.Sprintf("%d", t.UnixNano()), nil
 }
@@ -190,14 +219,14 @@ func tempoSearch(ctx context.Context, args TempoSearchParams) (*mcp.CallToolResu
 	params.Set("q", args.Query)
 
 	if args.Start != "" {
-		epoch, err := parseRFC3339ToEpochSeconds(args.Start)
+		epoch, err := tempoParseToEpochSeconds(args.Start)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
-		epoch, err := parseRFC3339ToEpochSeconds(args.End)
+		epoch, err := tempoParseToEpochSeconds(args.End)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
@@ -222,14 +251,14 @@ func tempoMetricsInstant(ctx context.Context, args TempoMetricsInstantParams) (*
 	params.Set("q", args.Query)
 
 	if args.Start != "" {
-		epoch, err := parseRFC3339ToEpochNanos(args.Start)
+		epoch, err := tempoParseToEpochNanos(args.Start)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
-		epoch, err := parseRFC3339ToEpochNanos(args.End)
+		epoch, err := tempoParseToEpochNanos(args.End)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
@@ -254,14 +283,14 @@ func tempoMetricsRange(ctx context.Context, args TempoMetricsRangeParams) (*mcp.
 	params.Set("q", args.Query)
 
 	if args.Start != "" {
-		epoch, err := parseRFC3339ToEpochNanos(args.Start)
+		epoch, err := tempoParseToEpochNanos(args.Start)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
-		epoch, err := parseRFC3339ToEpochNanos(args.End)
+		epoch, err := tempoParseToEpochNanos(args.End)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
@@ -282,7 +311,7 @@ func tempoGetTrace(ctx context.Context, args TempoGetTraceParams) (*mcp.CallTool
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	body, err := backend.doGet(ctx, "/api/v2/traces/"+url.PathEscape(args.TraceID), nil)
+	body, err := backend.doGetWithAccept(ctx, "/api/v2/traces/"+url.PathEscape(args.TraceID), nil, tempoAcceptLLM+", application/json")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -336,7 +365,7 @@ func tempoTraceDiff(ctx context.Context, args TempoTraceDiffParams) (*mcp.CallTo
 		Format: format,
 	}
 
-	body, err := backend.doPost(ctx, "/api/v2/trace-diff", diffReq)
+	body, err := backend.doPost(ctx, "/api/v2/traces/diff", diffReq)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -354,18 +383,18 @@ func parseOptionalTimeRange(startStr, endStr, startName, endName string) (*int64
 		return nil, nil, nil
 	}
 
-	startTS, err := time.Parse(time.RFC3339, startStr)
+	startTS, err := parseStartTime(startStr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid %s: %w", startName, err)
 	}
-	endTS, err := time.Parse(time.RFC3339, endStr)
+	endTS, err := parseStartTime(endStr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid %s: %w", endName, err)
 	}
 
-	startEpoch := startTS.Unix()
-	endEpoch := endTS.Unix()
-	return &startEpoch, &endEpoch, nil
+	startNanos := startTS.UnixNano()
+	endNanos := endTS.UnixNano()
+	return &startNanos, &endNanos, nil
 }
 
 func tempoGetAttributeNames(ctx context.Context, args TempoGetAttributeNamesParams) (*mcp.CallToolResult, error) {

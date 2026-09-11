@@ -235,7 +235,7 @@ func TestTempoTraceDiff(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
-	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/v2/trace-diff", capturedPath)
+	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/v2/traces/diff", capturedPath)
 	assert.Equal(t, "POST", capturedMethod)
 
 	base := capturedBody["base"].(map[string]any)
@@ -268,8 +268,8 @@ func TestTempoTraceDiff_WithTimeRanges(t *testing.T) {
 	require.NoError(t, err)
 
 	base := capturedBody["base"].(map[string]any)
-	assert.Equal(t, float64(1735689600), base["start"])
-	assert.Equal(t, float64(1735693200), base["end"])
+	assert.Equal(t, float64(1735689600000000000), base["start"])
+	assert.Equal(t, float64(1735693200000000000), base["end"])
 }
 
 func TestTempoTraceDiff_MismatchedTimeRange(t *testing.T) {
@@ -417,19 +417,19 @@ func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
 	}
 }
 
-func TestParseRFC3339ToEpochSeconds(t *testing.T) {
-	epoch, err := parseRFC3339ToEpochSeconds("2025-01-01T00:00:00Z")
+func TestTempoParseToEpochSeconds(t *testing.T) {
+	epoch, err := tempoParseToEpochSeconds("2025-01-01T00:00:00Z")
 	require.NoError(t, err)
 	assert.Equal(t, "1735689600", epoch)
 }
 
-func TestParseRFC3339ToEpochNanos(t *testing.T) {
-	epoch, err := parseRFC3339ToEpochNanos("2025-01-01T00:00:00Z")
+func TestTempoParseToEpochNanos(t *testing.T) {
+	epoch, err := tempoParseToEpochNanos("2025-01-01T00:00:00Z")
 	require.NoError(t, err)
 	assert.Equal(t, "1735689600000000000", epoch)
 }
 
-func TestParseRFC3339ToEpochSeconds_InvalidInput(t *testing.T) {
-	_, err := parseRFC3339ToEpochSeconds("not-a-date")
+func TestTempoParseToEpochSeconds_InvalidInput(t *testing.T) {
+	_, err := tempoParseToEpochSeconds("not-a-date")
 	require.Error(t, err)
 }
