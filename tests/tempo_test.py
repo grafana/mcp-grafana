@@ -15,7 +15,7 @@ class TestTempoToolsBasic:
     through the Grafana datasource proxy.
 
     Requires:
-    - Docker compose services running (includes 2 Tempo instances)
+    - Docker compose services running (includes Tempo)
     - GRAFANA_USERNAME and GRAFANA_PASSWORD environment variables
     - MCP server running
     """
