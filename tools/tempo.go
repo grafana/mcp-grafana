@@ -141,7 +141,7 @@ func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (st
 	return string(body), nil
 }
 
-func tempoParseToEpochSeconds(value string) (string, error) {
+func tempoParseStartToEpochSeconds(value string) (string, error) {
 	t, err := parseStartTime(value)
 	if err != nil {
 		return "", err
@@ -149,8 +149,24 @@ func tempoParseToEpochSeconds(value string) (string, error) {
 	return fmt.Sprintf("%d", t.Unix()), nil
 }
 
-func tempoParseToEpochNanos(value string) (string, error) {
+func tempoParseEndToEpochSeconds(value string) (string, error) {
+	t, err := parseEndTime(value)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d", t.Unix()), nil
+}
+
+func tempoParseStartToEpochNanos(value string) (string, error) {
 	t, err := parseStartTime(value)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d", t.UnixNano()), nil
+}
+
+func tempoParseEndToEpochNanos(value string) (string, error) {
+	t, err := parseEndTime(value)
 	if err != nil {
 		return "", err
 	}
@@ -219,14 +235,14 @@ func tempoSearch(ctx context.Context, args TempoSearchParams) (*mcp.CallToolResu
 	params.Set("q", args.Query)
 
 	if args.Start != "" {
-		epoch, err := tempoParseToEpochSeconds(args.Start)
+		epoch, err := tempoParseStartToEpochSeconds(args.Start)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
-		epoch, err := tempoParseToEpochSeconds(args.End)
+		epoch, err := tempoParseEndToEpochSeconds(args.End)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
@@ -251,14 +267,14 @@ func tempoMetricsInstant(ctx context.Context, args TempoMetricsInstantParams) (*
 	params.Set("q", args.Query)
 
 	if args.Start != "" {
-		epoch, err := tempoParseToEpochNanos(args.Start)
+		epoch, err := tempoParseStartToEpochNanos(args.Start)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
-		epoch, err := tempoParseToEpochNanos(args.End)
+		epoch, err := tempoParseEndToEpochNanos(args.End)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
@@ -283,14 +299,14 @@ func tempoMetricsRange(ctx context.Context, args TempoMetricsRangeParams) (*mcp.
 	params.Set("q", args.Query)
 
 	if args.Start != "" {
-		epoch, err := tempoParseToEpochNanos(args.Start)
+		epoch, err := tempoParseStartToEpochNanos(args.Start)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
-		epoch, err := tempoParseToEpochNanos(args.End)
+		epoch, err := tempoParseEndToEpochNanos(args.End)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
@@ -387,7 +403,7 @@ func parseOptionalTimeRange(startStr, endStr, startName, endName string) (*int64
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid %s: %w", startName, err)
 	}
-	endTS, err := parseStartTime(endStr)
+	endTS, err := parseEndTime(endStr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid %s: %w", endName, err)
 	}
