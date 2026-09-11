@@ -30,26 +30,24 @@ class TestTempoToolsBasic:
         list_response = await mcp_client.list_tools()
         all_tool_names = [tool.name for tool in list_response.tools]
 
-        # Find tempo-prefixed tools (should preserve hyphens from original tool names)
-        tempo_tools = [name for name in all_tool_names if name.startswith("tempo_")]
-
-        # Expected tools — 7 API-backed tools (doc tools excluded until shared library)
+        # Expected tools — 6 API-backed tools
         expected_tempo_tools = [
-            "tempo_traceql-search",
-            "tempo_traceql-metrics-instant",
-            "tempo_traceql-metrics-range",
-            "tempo_get-trace",
-            "tempo_trace-diff",
-            "tempo_get-attribute-names",
-            "tempo_get-attribute-values",
+            "search_tempo_traces",
+            "query_tempo_metrics",
+            "get_tempo_trace",
+            "diff_tempo_traces",
+            "list_tempo_attribute_names",
+            "list_tempo_attribute_values",
         ]
+
+        tempo_tools = [name for name in all_tool_names if name in expected_tempo_tools]
 
         assert len(tempo_tools) == len(expected_tempo_tools), (
             f"Expected {len(expected_tempo_tools)} unique tempo tools, found {len(tempo_tools)}: {tempo_tools}"
         )
 
         for expected_tool in expected_tempo_tools:
-            assert expected_tool in tempo_tools, (
+            assert expected_tool in all_tool_names, (
                 f"Tool {expected_tool} should be available"
             )
 
@@ -58,8 +56,18 @@ class TestTempoToolsBasic:
         """Test that all tempo tools have a required datasourceUid parameter."""
 
         list_response = await mcp_client.list_tools()
+
+        tempo_tool_names = {
+            "search_tempo_traces",
+            "query_tempo_metrics",
+            "get_tempo_trace",
+            "diff_tempo_traces",
+            "list_tempo_attribute_names",
+            "list_tempo_attribute_values",
+        }
+
         tempo_tools = [
-            tool for tool in list_response.tools if tool.name.startswith("tempo_")
+            tool for tool in list_response.tools if tool.name in tempo_tool_names
         ]
 
         assert len(tempo_tools) > 0, "Should have at least one tempo tool"
@@ -100,7 +108,7 @@ class TestTempoToolsBasic:
 
         try:
             call_response = await mcp_client.call_tool(
-                "tempo_get-attribute-names",
+                "list_tempo_attribute_names",
                 arguments={"datasourceUid": "tempo"},
             )
 
@@ -125,7 +133,7 @@ class TestTempoToolsBasic:
 
         try:
             result = await mcp_client.call_tool(
-                "tempo_get-attribute-names",
+                "list_tempo_attribute_names",
                 arguments={},  # Missing datasourceUid
             )
             # If the server returns an error result instead of raising
@@ -146,7 +154,7 @@ class TestTempoToolsBasic:
 
         try:
             result = await mcp_client.call_tool(
-                "tempo_get-attribute-names",
+                "list_tempo_attribute_names",
                 arguments={"datasourceUid": "nonexistent-tempo"},
             )
             # Server may return an error result rather than raising
@@ -162,12 +170,12 @@ class TestTempoToolsBasic:
             )
 
     @pytest.mark.anyio
-    async def test_tempo_tool_get_attribute_names(self, mcp_client):
-        """Test that get-attribute-names returns a response from the Tempo datasource."""
+    async def test_tempo_tool_list_attribute_names(self, mcp_client):
+        """Test that list_tempo_attribute_names returns a response from the Tempo datasource."""
 
         try:
             call_response = await mcp_client.call_tool(
-                "tempo_get-attribute-names",
+                "list_tempo_attribute_names",
                 arguments={"datasourceUid": "tempo"},
             )
 
@@ -200,8 +208,8 @@ class TestTempoToolsWithLLM:
             model, mcp_client, mcp_transport, prompt
         )
 
-        attr_calls = [tc for tc in tools_called if tc.name == "tempo_get-attribute-names"]
-        assert attr_calls, "tempo_get-attribute-names was not in tools_called"
+        attr_calls = [tc for tc in tools_called if tc.name == "list_tempo_attribute_names"]
+        assert attr_calls, "list_tempo_attribute_names was not in tools_called"
         args = attr_calls[0].args
         assert args.get("datasourceUid") == "tempo", (
             f"Expected datasourceUid='tempo', got {args.get('datasourceUid')!r}"
@@ -213,5 +221,5 @@ class TestTempoToolsWithLLM:
             tools_called,
             mcp_server,
             "Does the response list or describe trace attributes that are available for querying?",
-            expected_tools="tempo_get-attribute-names",
+            expected_tools="list_tempo_attribute_names",
         )

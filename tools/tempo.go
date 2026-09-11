@@ -175,33 +175,27 @@ func tempoParseEndToEpochNanos(value string) (string, error) {
 
 // Parameter structs for Tempo tools.
 
-type TempoSearchParams struct {
+type SearchTempoTracesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	Query         string `json:"query" jsonschema:"required,description=TraceQL query string"`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
 	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
 }
 
-type TempoMetricsInstantParams struct {
+type QueryTempoMetricsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
-	Query         string `json:"query" jsonschema:"required,description=TraceQL query string."`
-	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
-	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
+	Query         string `json:"query" jsonschema:"required,description=TraceQL metrics query string (e.g. '{ } | count_over_time()' or '{ } | rate()')."`
+	Type          string `json:"type,omitempty" jsonschema:"enum=instant,enum=range,default=range,description=Query type: 'instant' returns a single value at the end of the time range; 'range' returns a time series. Default is 'range'."`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time (RFC3339 format). If not provided will search the past 1 hour."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time (RFC3339 format). If not provided will search the past 1 hour."`
 }
 
-type TempoMetricsRangeParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
-	Query         string `json:"query" jsonschema:"required,description=TraceQL metrics query string."`
-	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
-	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
-}
-
-type TempoGetTraceParams struct {
+type GetTempoTraceParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	TraceID       string `json:"trace_id" jsonschema:"required,description=Trace ID to retrieve"`
 }
 
-type TempoTraceDiffParams struct {
+type DiffTempoTracesParams struct {
 	DatasourceUID  string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	BaseTraceID    string `json:"base_trace_id" jsonschema:"required,description=Trace ID for the baseline trace"`
 	CompareTraceID string `json:"compare_trace_id" jsonschema:"required,description=Trace ID for the comparison trace"`
@@ -212,12 +206,12 @@ type TempoTraceDiffParams struct {
 	Format         string `json:"format,omitempty" jsonschema:"enum=trace-summary-v0-composed,enum=trace-summary-v0-native,enum=trace-patch-v0,default=trace-summary-v0-composed,description=Output format. The composed format returns a compact summary and attaches the full patch only when it is at most 64 KiB. trace-patch-v0 has no output-size guarantee."`
 }
 
-type TempoGetAttributeNamesParams struct {
+type ListTempoAttributeNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	Scope         string `json:"scope,omitempty" jsonschema:"description=Optional scope to filter attributes by (span\\, resource\\, event\\, link\\, instrumentation). If not provided\\, returns all attributes."`
 }
 
-type TempoGetAttributeValuesParams struct {
+type ListTempoAttributeValuesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	Name          string `json:"name" jsonschema:"required,description=The attribute name to get values for (e.g. 'span.http.method'\\, 'resource.service.name')"`
 	FilterQuery   string `json:"filter-query,omitempty" jsonschema:"description=Filter query to apply to the attribute values. It can only have one spanset and only &&'ed conditions like { <cond> && <cond> && ... }. This is useful for filtering the values to a specific set of values."`
@@ -225,7 +219,7 @@ type TempoGetAttributeValuesParams struct {
 
 // Handler functions.
 
-func tempoSearch(ctx context.Context, args TempoSearchParams) (*mcp.CallToolResult, error) {
+func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -257,7 +251,7 @@ func tempoSearch(ctx context.Context, args TempoSearchParams) (*mcp.CallToolResu
 	return tempoToolResult(body, "search-results", "json"), nil
 }
 
-func tempoMetricsInstant(ctx context.Context, args TempoMetricsInstantParams) (*mcp.CallToolResult, error) {
+func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -281,47 +275,33 @@ func tempoMetricsInstant(ctx context.Context, args TempoMetricsInstantParams) (*
 		params.Set("end", epoch)
 	}
 
-	body, err := backend.doGet(ctx, "/api/metrics/query", params)
+	queryType := args.Type
+	if queryType == "" {
+		queryType = "range"
+	}
+
+	var endpoint string
+	var resultType string
+	switch queryType {
+	case "instant":
+		endpoint = "/api/metrics/query"
+		resultType = "metrics-instant"
+	case "range":
+		endpoint = "/api/metrics/query_range"
+		resultType = "metrics-range"
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("invalid type %q: must be 'instant' or 'range'", queryType)), nil
+	}
+
+	body, err := backend.doGet(ctx, endpoint, params)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return tempoToolResult(body, "metrics-instant", "json"), nil
+	return tempoToolResult(body, resultType, "json"), nil
 }
 
-func tempoMetricsRange(ctx context.Context, args TempoMetricsRangeParams) (*mcp.CallToolResult, error) {
-	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	params := url.Values{}
-	params.Set("q", args.Query)
-
-	if args.Start != "" {
-		epoch, err := tempoParseStartToEpochNanos(args.Start)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
-		}
-		params.Set("start", epoch)
-	}
-	if args.End != "" {
-		epoch, err := tempoParseEndToEpochNanos(args.End)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
-		}
-		params.Set("end", epoch)
-	}
-
-	body, err := backend.doGet(ctx, "/api/metrics/query_range", params)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	return tempoToolResult(body, "metrics-range", "json"), nil
-}
-
-func tempoGetTrace(ctx context.Context, args TempoGetTraceParams) (*mcp.CallToolResult, error) {
+func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -347,7 +327,7 @@ type traceDiffTraceRequest struct {
 	End     *int64 `json:"end,omitempty"`
 }
 
-func tempoTraceDiff(ctx context.Context, args TempoTraceDiffParams) (*mcp.CallToolResult, error) {
+func diffTempoTraces(ctx context.Context, args DiffTempoTracesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -413,7 +393,7 @@ func parseOptionalTimeRange(startStr, endStr, startName, endName string) (*int64
 	return &startNanos, &endNanos, nil
 }
 
-func tempoGetAttributeNames(ctx context.Context, args TempoGetAttributeNamesParams) (*mcp.CallToolResult, error) {
+func listTempoAttributeNames(ctx context.Context, args ListTempoAttributeNamesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -432,7 +412,7 @@ func tempoGetAttributeNames(ctx context.Context, args TempoGetAttributeNamesPara
 	return tempoToolResult(body, "attribute-names", "json"), nil
 }
 
-func tempoGetAttributeValues(ctx context.Context, args TempoGetAttributeValuesParams) (*mcp.CallToolResult, error) {
+func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValuesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -462,70 +442,60 @@ func tempoToolResult(body string, contentType string, encoding string) *mcp.Call
 
 // Tool definitions.
 
-var TempoSearchTool = mcpgrafana.MustTool(
-	"tempo_traceql-search",
+var SearchTempoTracesTool = mcpgrafana.MustTool(
+	"search_tempo_traces",
 	"Search for traces using TraceQL queries",
-	tempoSearch,
+	searchTempoTraces,
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-var TempoMetricsInstantTool = mcpgrafana.MustTool(
-	"tempo_traceql-metrics-instant",
-	"Retrieve a single metric value given a TraceQL metrics query. The value is at the current instant or end. Most metrics questions can be answered with instant values.",
-	tempoMetricsInstant,
+var QueryTempoMetricsTool = mcpgrafana.MustTool(
+	"query_tempo_metrics",
+	"Compute trace-derived metrics using a TraceQL metrics query. Use type 'instant' for a single value or 'range' for a time series (default).",
+	queryTempoMetrics,
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-var TempoMetricsRangeTool = mcpgrafana.MustTool(
-	"tempo_traceql-metrics-range",
-	"Retrieve a metric series given a TraceQL metrics query. The series ranges from start to end.",
-	tempoMetricsRange,
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
-
-var TempoGetTraceTool = mcpgrafana.MustTool(
-	"tempo_get-trace",
+var GetTempoTraceTool = mcpgrafana.MustTool(
+	"get_tempo_trace",
 	"Retrieve a specific trace by ID",
-	tempoGetTrace,
+	getTempoTrace,
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-var TempoTraceDiffTool = mcpgrafana.MustTool(
-	"tempo_trace-diff",
+var DiffTempoTracesTool = mcpgrafana.MustTool(
+	"diff_tempo_traces",
 	"Compare two complete traces. Returns a compact summary and includes the full span-level patch when it is at most 64 KiB. Request trace-patch-v0 only when full details are required; full patches are not size-bounded.",
-	tempoTraceDiff,
+	diffTempoTraces,
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-var TempoGetAttributeNamesTool = mcpgrafana.MustTool(
-	"tempo_get-attribute-names",
-	"Get a list of available attribute names that can be used in TraceQL queries. This is useful for finding the names of attributes that can be used in a query.",
-	tempoGetAttributeNames,
+var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
+	"list_tempo_attribute_names",
+	"List available attribute names that can be used in TraceQL queries",
+	listTempoAttributeNames,
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-var TempoGetAttributeValuesTool = mcpgrafana.MustTool(
-	"tempo_get-attribute-values",
-	"Get a list of values for a fully scoped attribute name. This is useful for finding the values of a specific attribute. i.e. you can find all the services in the data by asking for resource.service.name",
-	tempoGetAttributeValues,
+var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
+	"list_tempo_attribute_values",
+	"List values for a fully scoped attribute name (e.g. resource.service.name). Useful for discovering what values exist for a specific attribute.",
+	listTempoAttributeValues,
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
@@ -542,11 +512,10 @@ func AddTempoTools(s *server.MCPServer, enableQueryTools bool) {
 	if !enableQueryTools {
 		return
 	}
-	TempoSearchTool.Register(s)
-	TempoMetricsInstantTool.Register(s)
-	TempoMetricsRangeTool.Register(s)
-	TempoGetTraceTool.Register(s)
-	TempoTraceDiffTool.Register(s)
-	TempoGetAttributeNamesTool.Register(s)
-	TempoGetAttributeValuesTool.Register(s)
+	SearchTempoTracesTool.Register(s)
+	QueryTempoMetricsTool.Register(s)
+	GetTempoTraceTool.Register(s)
+	DiffTempoTracesTool.Register(s)
+	ListTempoAttributeNamesTool.Register(s)
+	ListTempoAttributeValuesTool.Register(s)
 }

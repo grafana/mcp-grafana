@@ -75,13 +75,12 @@ func tempoTestContext(t *testing.T, serverURL string) func(mcp.CallToolRequest) 
 	)
 
 	tools := map[string]mcpgrafana.Tool{
-		"tempo_traceql-search":          TempoSearchTool,
-		"tempo_traceql-metrics-instant": TempoMetricsInstantTool,
-		"tempo_traceql-metrics-range":   TempoMetricsRangeTool,
-		"tempo_get-trace":               TempoGetTraceTool,
-		"tempo_trace-diff":              TempoTraceDiffTool,
-		"tempo_get-attribute-names":     TempoGetAttributeNamesTool,
-		"tempo_get-attribute-values":    TempoGetAttributeValuesTool,
+		"search_tempo_traces":         SearchTempoTracesTool,
+		"query_tempo_metrics":         QueryTempoMetricsTool,
+		"get_tempo_trace":             GetTempoTraceTool,
+		"diff_tempo_traces":           DiffTempoTracesTool,
+		"list_tempo_attribute_names":  ListTempoAttributeNamesTool,
+		"list_tempo_attribute_values": ListTempoAttributeValuesTool,
 	}
 
 	return func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -117,7 +116,7 @@ func TestTempoSearch(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_traceql-search", map[string]any{
+	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
 		"datasourceUid": "test-tempo",
 		"query":         `{ span.http.status_code >= 500 }`,
 		"start":         "2025-01-01T00:00:00Z",
@@ -149,9 +148,10 @@ func TestTempoMetricsInstant(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_traceql-metrics-instant", map[string]any{
+	result, err := call(makeTempoRequest("query_tempo_metrics", map[string]any{
 		"datasourceUid": "test-tempo",
 		"query":         `{ } | count_over_time()`,
+		"type":          "instant",
 		"start":         "2025-01-01T00:00:00Z",
 		"end":           "2025-01-01T01:00:00Z",
 	}))
@@ -161,7 +161,6 @@ func TestTempoMetricsInstant(t *testing.T) {
 	assert.False(t, result.IsError)
 
 	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/metrics/query", capturedPath)
-	// Metrics queries use epoch nanoseconds
 	assert.Equal(t, "1735689600000000000", capturedQuery.Get("start"))
 	assert.Equal(t, "1735693200000000000", capturedQuery.Get("end"))
 }
@@ -177,7 +176,7 @@ func TestTempoMetricsRange(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_traceql-metrics-range", map[string]any{
+	result, err := call(makeTempoRequest("query_tempo_metrics", map[string]any{
 		"datasourceUid": "test-tempo",
 		"query":         `{ } | rate()`,
 	}))
@@ -186,6 +185,46 @@ func TestTempoMetricsRange(t *testing.T) {
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
 	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/metrics/query_range", capturedPath)
+}
+
+func TestTempoMetricsDefaultsToRange(t *testing.T) {
+	var capturedPath string
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"series":[]}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("query_tempo_metrics", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         `{ } | rate()`,
+	}))
+
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/metrics/query_range", capturedPath)
+}
+
+func TestTempoMetricsInvalidType(t *testing.T) {
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("query_tempo_metrics", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         `{ } | rate()`,
+		"type":          "bogus",
+	}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "invalid type")
 }
 
 func TestTempoGetTrace(t *testing.T) {
@@ -199,7 +238,7 @@ func TestTempoGetTrace(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_get-trace", map[string]any{
+	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
 		"datasourceUid": "test-tempo",
 		"trace_id":      "abc123def456",
 	}))
@@ -225,7 +264,7 @@ func TestTempoTraceDiff(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_trace-diff", map[string]any{
+	result, err := call(makeTempoRequest("diff_tempo_traces", map[string]any{
 		"datasourceUid":    "test-tempo",
 		"base_trace_id":    "trace-a",
 		"compare_trace_id": "trace-b",
@@ -256,7 +295,7 @@ func TestTempoTraceDiff_WithTimeRanges(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	_, err := call(makeTempoRequest("tempo_trace-diff", map[string]any{
+	_, err := call(makeTempoRequest("diff_tempo_traces", map[string]any{
 		"datasourceUid":    "test-tempo",
 		"base_trace_id":    "trace-a",
 		"compare_trace_id": "trace-b",
@@ -280,7 +319,7 @@ func TestTempoTraceDiff_MismatchedTimeRange(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_trace-diff", map[string]any{
+	result, err := call(makeTempoRequest("diff_tempo_traces", map[string]any{
 		"datasourceUid":    "test-tempo",
 		"base_trace_id":    "trace-a",
 		"compare_trace_id": "trace-b",
@@ -305,7 +344,7 @@ func TestTempoGetAttributeNames(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_get-attribute-names", map[string]any{
+	result, err := call(makeTempoRequest("list_tempo_attribute_names", map[string]any{
 		"datasourceUid": "test-tempo",
 		"scope":         "span",
 	}))
@@ -330,7 +369,7 @@ func TestTempoGetAttributeValues(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_get-attribute-values", map[string]any{
+	result, err := call(makeTempoRequest("list_tempo_attribute_values", map[string]any{
 		"datasourceUid": "test-tempo",
 		"name":          "span.http.method",
 		"filter-query":  `{ resource.service.name = "frontend" }`,
@@ -352,7 +391,7 @@ func TestTempoSearch_Non200Response(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_traceql-search", map[string]any{
+	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
 		"datasourceUid": "test-tempo",
 		"query":         "invalid query",
 	}))
@@ -370,7 +409,7 @@ func TestTempoSearch_MissingDatasourceUid(t *testing.T) {
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("tempo_traceql-search", map[string]any{
+	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
 		"query": `{ }`,
 	}))
 
@@ -391,13 +430,12 @@ func TestAddTempoTools_RegistersAllTools(t *testing.T) {
 	AddTempoTools(s, true)
 
 	expectedTools := []string{
-		"tempo_traceql-search",
-		"tempo_traceql-metrics-instant",
-		"tempo_traceql-metrics-range",
-		"tempo_get-trace",
-		"tempo_trace-diff",
-		"tempo_get-attribute-names",
-		"tempo_get-attribute-values",
+		"search_tempo_traces",
+		"query_tempo_metrics",
+		"get_tempo_trace",
+		"diff_tempo_traces",
+		"list_tempo_attribute_names",
+		"list_tempo_attribute_values",
 	}
 
 	tools := s.ListTools()
@@ -405,6 +443,7 @@ func TestAddTempoTools_RegistersAllTools(t *testing.T) {
 		_, ok := tools[name]
 		assert.True(t, ok, "expected tool %q to be registered", name)
 	}
+	assert.Len(t, tools, len(expectedTools))
 }
 
 func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
@@ -413,7 +452,10 @@ func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
 
 	tools := s.ListTools()
 	for name := range tools {
-		assert.False(t, strings.HasPrefix(name, "tempo_"), "no tempo tools should be registered when query disabled, found %q", name)
+		assert.False(t, strings.HasPrefix(name, "search_tempo") || strings.HasPrefix(name, "query_tempo") ||
+			strings.HasPrefix(name, "get_tempo") || strings.HasPrefix(name, "diff_tempo") ||
+			strings.HasPrefix(name, "list_tempo"),
+			"no tempo tools should be registered when query disabled, found %q", name)
 	}
 }
 
