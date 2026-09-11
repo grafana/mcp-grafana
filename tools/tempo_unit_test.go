@@ -417,19 +417,31 @@ func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
 	}
 }
 
-func TestTempoParseToEpochSeconds(t *testing.T) {
-	epoch, err := tempoParseToEpochSeconds("2025-01-01T00:00:00Z")
+func TestTempoParseStartToEpochSeconds(t *testing.T) {
+	epoch, err := tempoParseStartToEpochSeconds("2025-01-01T00:00:00Z")
 	require.NoError(t, err)
 	assert.Equal(t, "1735689600", epoch)
 }
 
-func TestTempoParseToEpochNanos(t *testing.T) {
-	epoch, err := tempoParseToEpochNanos("2025-01-01T00:00:00Z")
+func TestTempoParseEndToEpochSeconds(t *testing.T) {
+	epoch, err := tempoParseEndToEpochSeconds("2025-01-01T00:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, "1735689600", epoch)
+}
+
+func TestTempoParseStartToEpochNanos(t *testing.T) {
+	epoch, err := tempoParseStartToEpochNanos("2025-01-01T00:00:00Z")
 	require.NoError(t, err)
 	assert.Equal(t, "1735689600000000000", epoch)
 }
 
-func TestTempoParseToEpochSeconds_InvalidInput(t *testing.T) {
-	_, err := tempoParseToEpochSeconds("not-a-date")
+func TestTempoParseEndToEpochNanos(t *testing.T) {
+	epoch, err := tempoParseEndToEpochNanos("2025-01-01T00:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, "1735689600000000000", epoch)
+}
+
+func TestTempoParseStartToEpochSeconds_InvalidInput(t *testing.T) {
+	_, err := tempoParseStartToEpochSeconds("not-a-date")
 	require.Error(t, err)
 }
