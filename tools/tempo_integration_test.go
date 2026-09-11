@@ -14,7 +14,7 @@ const tempoTestDatasourceUID = "tempo"
 func TestTempoIntegration_Search(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoSearch(ctx, TempoSearchParams{
+	result, err := searchTempoTraces(ctx, SearchTempoTracesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Query:         "{}",
 		Start:         "now-1h",
@@ -29,7 +29,7 @@ func TestTempoIntegration_Search(t *testing.T) {
 func TestTempoIntegration_Search_InvalidQuery(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoSearch(ctx, TempoSearchParams{
+	result, err := searchTempoTraces(ctx, SearchTempoTracesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Query:         "this is not valid traceql",
 	})
@@ -41,9 +41,10 @@ func TestTempoIntegration_Search_InvalidQuery(t *testing.T) {
 func TestTempoIntegration_MetricsInstant(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoMetricsInstant(ctx, TempoMetricsInstantParams{
+	result, err := queryTempoMetrics(ctx, QueryTempoMetricsParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Query:         "{ } | count_over_time()",
+		Type:          "instant",
 		Start:         "now-1h",
 		End:           "now",
 	})
@@ -55,7 +56,7 @@ func TestTempoIntegration_MetricsInstant(t *testing.T) {
 func TestTempoIntegration_MetricsRange(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoMetricsRange(ctx, TempoMetricsRangeParams{
+	result, err := queryTempoMetrics(ctx, QueryTempoMetricsParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Query:         "{ } | count_over_time()",
 		Start:         "now-1h",
@@ -69,7 +70,7 @@ func TestTempoIntegration_MetricsRange(t *testing.T) {
 func TestTempoIntegration_GetAttributeNames(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoGetAttributeNames(ctx, TempoGetAttributeNamesParams{
+	result, err := listTempoAttributeNames(ctx, ListTempoAttributeNamesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 	})
 	require.NoError(t, err)
@@ -81,7 +82,7 @@ func TestTempoIntegration_GetAttributeNames(t *testing.T) {
 func TestTempoIntegration_GetAttributeNames_WithScope(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoGetAttributeNames(ctx, TempoGetAttributeNamesParams{
+	result, err := listTempoAttributeNames(ctx, ListTempoAttributeNamesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Scope:         "resource",
 	})
@@ -93,7 +94,7 @@ func TestTempoIntegration_GetAttributeNames_WithScope(t *testing.T) {
 func TestTempoIntegration_GetAttributeValues(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoGetAttributeValues(ctx, TempoGetAttributeValuesParams{
+	result, err := listTempoAttributeValues(ctx, ListTempoAttributeValuesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Name:          "resource.service.name",
 	})
@@ -105,7 +106,7 @@ func TestTempoIntegration_GetAttributeValues(t *testing.T) {
 func TestTempoIntegration_InvalidDatasource(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoSearch(ctx, TempoSearchParams{
+	result, err := searchTempoTraces(ctx, SearchTempoTracesParams{
 		DatasourceUID: "nonexistent-datasource",
 		Query:         "{}",
 	})
@@ -117,7 +118,7 @@ func TestTempoIntegration_InvalidDatasource(t *testing.T) {
 func TestTempoIntegration_WrongDatasourceType(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoSearch(ctx, TempoSearchParams{
+	result, err := searchTempoTraces(ctx, SearchTempoTracesParams{
 		DatasourceUID: "prometheus",
 		Query:         "{}",
 	})
@@ -129,7 +130,7 @@ func TestTempoIntegration_WrongDatasourceType(t *testing.T) {
 func TestTempoIntegration_FractionalSeconds(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoSearch(ctx, TempoSearchParams{
+	result, err := searchTempoTraces(ctx, SearchTempoTracesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Query:         "{}",
 		Start:         "2025-01-01T00:00:00.123Z",
@@ -143,7 +144,7 @@ func TestTempoIntegration_FractionalSeconds(t *testing.T) {
 func TestTempoIntegration_RelativeTime(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoSearch(ctx, TempoSearchParams{
+	result, err := searchTempoTraces(ctx, SearchTempoTracesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 		Query:         "{}",
 		Start:         "now-24h",
@@ -157,7 +158,7 @@ func TestTempoIntegration_RelativeTime(t *testing.T) {
 func TestTempoIntegration_ToolResultHasMeta(t *testing.T) {
 	ctx := newTestContext()
 
-	result, err := tempoGetAttributeNames(ctx, TempoGetAttributeNamesParams{
+	result, err := listTempoAttributeNames(ctx, ListTempoAttributeNamesParams{
 		DatasourceUID: tempoTestDatasourceUID,
 	})
 	require.NoError(t, err)
