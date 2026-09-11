@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-09-11
+
+### Added
+
+- `labelSelector` parameter on the Sift tools (`find_error_pattern_logs`, `find_slow_requests`), accepting PromQL/LogQL stream selector syntax so investigations can be scoped with regex and negative matchers (e.g. `{namespace=~"prod.*", cluster="us-east-1"}`) rather than exact label equality only. **Breaking:** this replaces the previous required `labels` map parameter on those tools ([#1165](https://github.com/grafana/mcp-grafana/pull/1165))
+
+### Fixed
+
+- `run_panel_query` now routes on the datasource's real type rather than the type recorded in the dashboard panel, so `--loki-enforced-matchers` can no longer be bypassed by a panel that mislabels a Loki datasource ([#1169](https://github.com/grafana/mcp-grafana/pull/1169))
+- The default-organisation warning is no longer logged at startup when dynamic multi-org support is enabled, where a default org is expected to be absent ([#1167](https://github.com/grafana/mcp-grafana/pull/1167))
+
 ## [1.4.0] - 2026-09-10
 
 ### Added
@@ -448,6 +459,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.4.1]: https://github.com/grafana/mcp-grafana/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/grafana/mcp-grafana/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/grafana/mcp-grafana/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/grafana/mcp-grafana/compare/v1.1.0...v1.2.0
