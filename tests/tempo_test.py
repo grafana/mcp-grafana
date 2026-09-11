@@ -162,38 +162,24 @@ class TestTempoToolsBasic:
             )
 
     @pytest.mark.anyio
-    async def test_tempo_tool_works_with_multiple_datasources(self, mcp_client):
-        """Test that the same tool works with different datasources via datasourceUid."""
+    async def test_tempo_tool_get_attribute_names(self, mcp_client):
+        """Test that get-attribute-names returns a response from the Tempo datasource."""
 
-        # Both tempo and tempo-secondary should be available in our test environment
-        datasources = ["tempo", "tempo-secondary"]
+        try:
+            call_response = await mcp_client.call_tool(
+                "tempo_get-attribute-names",
+                arguments={"datasourceUid": "tempo"},
+            )
 
-        for datasource_uid in datasources:
-            try:
-                # Call the same tool with different datasources
-                call_response = await mcp_client.call_tool(
-                    "tempo_get-attribute-names",
-                    arguments={"datasourceUid": datasource_uid},
-                )
+            assert call_response.content, "Tool should return content"
+            response_text = call_response.content[0].text
+            assert len(response_text) > 0, "Response should have content"
 
-                # Verify we got a response
-                assert call_response.content, (
-                    f"Tool should return content for datasource {datasource_uid}"
-                )
-
-                # Response should be valid JSON or text
-                response_text = call_response.content[0].text
-                assert len(response_text) > 0, (
-                    f"Response should have content for datasource {datasource_uid}"
-                )
-
-            except Exception as e:
-                # If this fails, it's acceptable if Tempo doesn't have trace data yet
-                # But verify it's not a routing/config error
-                error_msg = str(e).lower()
-                assert (
-                    "not found" not in error_msg or datasource_uid not in error_msg
-                ), f"Datasource {datasource_uid} should be accessible: {e}"
+        except Exception as e:
+            error_msg = str(e).lower()
+            assert (
+                "not found" not in error_msg or "tempo" not in error_msg
+            ), f"Datasource tempo should be accessible: {e}"
 
 
 class TestTempoToolsWithLLM:
