@@ -85,6 +85,17 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	return u, apiKey
 }
 
+// tokenFileFromEnv returns the path from GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE when
+// that file is the effective credential source (i.e. the inline
+// GRAFANA_SERVICE_ACCOUNT_TOKEN variable is unset). It is used to keep the token
+// file re-readable on every request for the long-lived stdio transport.
+func tokenFileFromEnv() string {
+	if os.Getenv(grafanaServiceAccountTokenEnvVar) != "" {
+		return ""
+	}
+	return os.Getenv(grafanaServiceAccountTokenFileEnvVar)
+}
+
 func userAndPassFromEnv() *url.Userinfo {
 	username := os.Getenv(grafanaUsernameEnvVar)
 	password, exists := os.LookupEnv(grafanaPasswordEnvVar)
@@ -1537,7 +1548,45 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	}
 	auth := userAndPassFromEnv()
 	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth)
-	return WithGrafanaClient(ctx, grafanaClient)
+	// mcp-go builds the stdio context (and therefore this client) exactly once
+	// at startup, so the token read here would otherwise be frozen for the life
+	// of the process. Re-wrap the client's auth to re-read the token file on
+	// every request, mirroring the per-request semantics of the HTTP/SSE
+	// transports and making token rotation transparent (see #987).
+	return WithGrafanaClient(ctx, withTokenFileRefresh(grafanaClient, tokenFileFromEnv(), logger))
+}
+
+// withTokenFileRefresh re-wraps the Grafana client's default authentication so
+// that the service account token is re-read from the token file on every
+// request. The original authentication is applied first, so non-token headers
+// (e.g. OrgID) are preserved, and a transient read failure (or an empty file)
+// simply keeps the previously loaded token instead of failing the request.
+func withTokenFileRefresh(c *GrafanaClient, tokenFile string, logger *slog.Logger) *GrafanaClient {
+	if c == nil || tokenFile == "" {
+		return c
+	}
+	rt, ok := c.GrafanaHTTPAPI.Transport.(*openapiclient.Runtime)
+	if !ok {
+		return c
+	}
+	original := rt.DefaultAuthentication
+	rt.DefaultAuthentication = runtime.ClientAuthInfoWriterFunc(func(req runtime.ClientRequest, _ strfmt.Registry) error {
+		if original != nil {
+			if err := original.AuthenticateRequest(req, nil); err != nil {
+				return err
+			}
+		}
+		token, err := os.ReadFile(tokenFile)
+		if err != nil {
+			logger.Warn("Failed to re-read GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, keeping previously loaded token", "path", tokenFile, "error", err)
+			return nil
+		}
+		if trimmed := strings.TrimSpace(string(token)); trimmed != "" {
+			return req.SetHeaderParam(runtime.HeaderAuthorization, "Bearer "+trimmed)
+		}
+		return nil
+	})
+	return c
 }
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
