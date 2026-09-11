@@ -1,9 +1,11 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -227,5 +229,49 @@ func TestCurrentUserInfoOrgIsRequestScoped(t *testing.T) {
 		got, err := UserPersistedOrgID(server(t, 1, 2))
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), got)
+	})
+}
+
+func TestWarnOnMissingOrgID(t *testing.T) {
+	// DynamicMultiOrgEnabled is a package-level flag set from the
+	// --dynamic-multi-org CLI flag; restore it so this test doesn't leak into
+	// others that run in the same binary.
+	original := DynamicMultiOrgEnabled
+	t.Cleanup(func() { DynamicMultiOrgEnabled = original })
+
+	t.Run("a resolved org ID never logs anything, in either mode", func(t *testing.T) {
+		for _, DynamicMultiOrgEnabled = range []bool{false, true} {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+			warnOnMissingOrgID(logger, 42)
+
+			assert.Empty(t, buf.String())
+		}
+	})
+
+	t.Run("a missing org ID logs at Warn when dynamic multi-org is off", func(t *testing.T) {
+		DynamicMultiOrgEnabled = false
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+		warnOnMissingOrgID(logger, 0)
+
+		logOutput := buf.String()
+		assert.Contains(t, logOutput, "level=WARN")
+		assert.Contains(t, logOutput, "No org ID found")
+	})
+
+	t.Run("a missing org ID logs at Debug when dynamic multi-org is on, not Warn", func(t *testing.T) {
+		DynamicMultiOrgEnabled = true
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+		warnOnMissingOrgID(logger, 0)
+
+		logOutput := buf.String()
+		assert.Contains(t, logOutput, "level=DEBUG")
+		assert.Contains(t, logOutput, "No org ID found")
+		assert.NotContains(t, logOutput, "level=WARN")
 	})
 }

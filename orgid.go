@@ -23,6 +23,24 @@ import (
 // connection) works regardless of this flag.
 var DynamicMultiOrgEnabled bool
 
+// warnOnMissingOrgID logs that a request fell back to the default Grafana org
+// because no org ID was found in request headers or environment variables.
+// With dynamic multi-org enabled, omitting orgId is the expected way to target
+// the default org on a per-call basis, so this is logged at Debug rather than
+// Warn to avoid spamming every such call; without it, a missing org ID may
+// indicate a misconfigured connection, so it stays a Warn.
+func warnOnMissingOrgID(logger *slog.Logger, orgID int64) {
+	if orgID != 0 {
+		return
+	}
+	const msg = "No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org."
+	if DynamicMultiOrgEnabled {
+		logger.Debug(msg)
+	} else {
+		logger.Warn(msg)
+	}
+}
+
 // OrgIDArgument is the name of the optional per-call tool argument that selects
 // which Grafana organization a tool call targets. When dynamic multi-org is
 // enabled it is advertised on every native tool's input schema (see

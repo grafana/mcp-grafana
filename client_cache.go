@@ -358,9 +358,7 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		config := GrafanaConfigFromContext(ctx)
 		logger := config.LoggerOrDefault()
-		if config.OrgID == 0 {
-			logger.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
-		}
+		warnOnMissingOrgID(logger, config.OrgID)
 
 		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
 		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID, req)
