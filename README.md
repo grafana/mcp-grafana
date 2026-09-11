@@ -5,6 +5,7 @@
 [![E2E Tests](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/grafana/mcp-grafana.svg)](https://pkg.go.dev/github.com/grafana/mcp-grafana)
 [![MCP Catalog](https://archestra.ai/mcp-catalog/api/badge/quality/grafana/mcp-grafana)](https://archestra.ai/mcp-catalog/grafana__mcp-grafana)
+[![Add to Kiro](https://kiro.dev/images/add-to-kiro.svg)](https://kiro.dev/launch/mcp/add?name=grafana&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22mcp-grafana%22%5D%7D)
 
 A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
@@ -30,6 +31,25 @@ Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the 
 ```
 
 For Grafana Cloud, replace `GRAFANA_URL` with your instance URL (e.g. `https://myinstance.grafana.net`). See [Usage](#usage) for more installation options including Docker, binary, and Helm.
+
+#### Kiro
+
+To install in [Kiro](https://kiro.dev), click the badge above or manually add the following to your Kiro MCP config file (`.kiro/settings/mcp.json` or `~/.kiro/settings/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "your-service-account-token"
+      }
+    }
+  }
+}
+```
 
 ## Requirements
 
