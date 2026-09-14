@@ -906,7 +906,15 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 // on mux; otherwise it goes on a side mux keyed by address (so matching
 // --healthz-address and --metrics-address share a listener). Callers pass the
 // result to runOpsServers. Side listeners skip Host/Origin checks.
-func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr string, obs observability.Config) map[string]*http.ServeMux {
+//
+// basePath prefixes the route when (and only when) it stays on the shared
+// main listener, so a single path-routed reverse-proxy rule covers health
+// and metrics too, not just the MCP endpoint. A side listener is meant to be
+// hit directly (e.g. a container health check hitting the pod's port), so it
+// keeps the unprefixed root path regardless of basePath. Pass "" when the
+// transport has no base-path concept (e.g. streamable-http's endpoint path
+// is not a directory-style prefix).
+func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr string, obs observability.Config, basePath string) map[string]*http.ServeMux {
 	side := map[string]*http.ServeMux{}
 	target := func(addr string) *http.ServeMux {
 		if addr == "" {
@@ -917,10 +925,16 @@ func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr
 		}
 		return side[addr]
 	}
+	pathFor := func(addr, path string) string {
+		if addr != "" || basePath == "" || basePath == "/" {
+			return path
+		}
+		return basePath + path
+	}
 
-	target(healthzAddr).HandleFunc("/healthz", handleHealthz)
+	target(healthzAddr).HandleFunc(pathFor(healthzAddr, "/healthz"), handleHealthz)
 	if obs.MetricsEnabled {
-		target(obs.MetricsAddress).Handle("/metrics", o.MetricsHandler())
+		target(obs.MetricsAddress).Handle(pathFor(obs.MetricsAddress, "/metrics"), o.MetricsHandler())
 	}
 	return side
 }
@@ -1067,7 +1081,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			basePath,
 		)))
-		runOpsServers(registerOps(mux, o, healthzAddress, obs))
+		runOpsServers(registerOps(mux, o, healthzAddress, obs, basePath))
 		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using SSE transport",
@@ -1101,7 +1115,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			endpointPath,
 		)))
-		runOpsServers(registerOps(mux, o, healthzAddress, obs))
+		// No basePath prefixing here: endpointPath is a full mount path (e.g.
+		// "/mcp"), not a directory-style prefix like SSE's --base-path, so
+		// there is no clean prefix to reuse for /healthz and /metrics.
+		runOpsServers(registerOps(mux, o, healthzAddress, obs, ""))
 		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
