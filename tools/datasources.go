@@ -72,28 +72,48 @@ type ListDatasourcesResult struct {
 	HasMore     bool                `json:"hasMore"` // Whether more results exist
 }
 
-// defaultDatasourceType returns the type of the org's default datasource. It
-// scans the full datasource list (not the paginated listDatasources view, which
-// caps results) so the default is always found, and reuses the same
-// frontend-settings fallback for tokens that cannot read the datasources API.
-// Used to evaluate /api/ds/query queries that name no datasource UID, which
-// resolve against this default.
-func defaultDatasourceType(ctx context.Context) (string, error) {
+// allDatasources returns the full datasource list, not the paginated
+// listDatasources view (which caps results), reusing the same frontend-settings
+// fallback for tokens that cannot read the datasources API.
+func allDatasources(ctx context.Context) (models.DataSourceList, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	var list models.DataSourceList
 	if resp, err := c.Datasources.GetDataSourcesWithParams(
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	); err == nil {
-		list = resp.Payload
+		return resp.Payload, nil
 	} else if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
-		list = fb
+		return fb, nil
 	} else {
-		return "", fmt.Errorf("list datasources: %w", err)
+		return nil, fmt.Errorf("list datasources: %w", err)
 	}
+}
+
+// effectiveDefaultDatasourceType returns the type of the datasource that an
+// /api/ds/query query resolves to when it names no UID (uid == "") or the magic
+// "default" UID. Resolution mirrors Grafana: a datasource whose literal UID is
+// "default" wins when present (Grafana >= 13 treats "default" as a real UID at
+// /api/ds/query), otherwise the org default datasource is used (older Grafana
+// resolves "default"/absent to it). Used by the Loki enforcement guard so the
+// check always reflects the datasource the query will actually hit.
+func effectiveDefaultDatasourceType(ctx context.Context, uid string) (string, error) {
+	list, err := allDatasources(ctx)
+	if err != nil {
+		return "", err
+	}
+	defType := ""
+	haveDefault := false
 	for _, ds := range list {
-		if ds.IsDefault {
+		if uid == "default" && ds.UID == "default" {
+			// A real datasource named "default" wins over the org default.
 			return ds.Type, nil
 		}
+		if ds.IsDefault {
+			defType = ds.Type
+			haveDefault = true
+		}
+	}
+	if haveDefault {
+		return defType, nil
 	}
 	return "", fmt.Errorf("no default datasource found")
 }

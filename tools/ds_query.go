@@ -54,9 +54,10 @@ func dsQueryDatasourceUID(q map[string]interface{}) string {
 // The type is resolved from the UID and never read from the payload, whose
 // declared type is caller-influenced (the run_panel_query bypass). A UID whose
 // type cannot be resolved fails closed rather than being forwarded. A query that
-// names no UID — or Grafana's magic "default" UID — resolves against the org
-// default datasource, so its type is checked the same way; an unresolvable
-// default also fails closed.
+// names no UID — or the magic "default" UID — is resolved the way Grafana
+// resolves it (a literal "default" datasource if one exists, otherwise the org
+// default) and its real type is checked the same way; an unresolvable default
+// also fails closed.
 func guardEnforcedLokiDSQuery(ctx context.Context, payload map[string]interface{}) error {
 	if len(enforcedMatchers(ctx)) == 0 {
 		return nil
@@ -70,14 +71,14 @@ func guardEnforcedLokiDSQuery(ctx context.Context, payload map[string]interface{
 	for _, q := range queries {
 		uid := dsQueryDatasourceUID(q)
 		if uid == "" || uid == "default" {
-			// No explicit datasource, or Grafana's magic "default" UID: the
-			// query resolves against the org default. Check that default's type
-			// once.
+			// No explicit datasource, or the magic "default" UID: resolve it the
+			// way Grafana does (a literal "default" datasource if present, else
+			// the org default) and check that type once.
 			if defaultChecked {
 				continue
 			}
 			defaultChecked = true
-			dsType, err := defaultDatasourceType(ctx)
+			dsType, err := effectiveDefaultDatasourceType(ctx, uid)
 			if err != nil {
 				return fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query whose default datasource could not be verified: %w", err)
 			}

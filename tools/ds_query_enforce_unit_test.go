@@ -207,6 +207,24 @@ func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, hit)
 	})
+
+	t.Run("literal \"default\"-UID log datasource refused even when the org default is not a log datasource", func(t *testing.T) {
+		var hit bool
+		// A real datasource whose UID is literally "default" is a log datasource,
+		// while the org default is Prometheus. Grafana >= 13 routes uid "default"
+		// to this literal datasource, so it must be refused (Bugbot #2).
+		dsList := []map[string]interface{}{
+			{"uid": "mimir", "type": "prometheus", "isDefault": true},
+			{"uid": "default", "type": "loki", "isDefault": false},
+		}
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
+		require.Error(t, err)
+		assert.False(t, hit)
+	})
 }
 
 // noUIDPayload is an /api/ds/query payload whose query names no datasource,
