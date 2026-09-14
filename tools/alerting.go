@@ -3,8 +3,7 @@ package tools
 import (
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -43,33 +42,33 @@ var ManageRulesRead = mcpgrafana.MustTool(
 	"alerting_manage_rules",
 	manageAlertRulesDescription(true),
 	manageRulesRead,
-	mcp.WithTitleAnnotation("Manage alert rules"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage alert rules"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageRulesReadWrite = mcpgrafana.MustTool(
 	"alerting_manage_rules",
 	manageAlertRulesDescription(false),
 	manageRulesReadWrite,
-	mcp.WithTitleAnnotation("Manage alert rules"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage alert rules"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddAlertingTools(s *mcp.Server, enableWriteTools bool) {
 	if enableWriteTools {
-		ManageRulesReadWrite.Register(mcp)
+		ManageRulesReadWrite.Register(s)
 	} else {
-		ManageRulesRead.Register(mcp)
+		ManageRulesRead.Register(s)
 	}
-	ManageRouting.Register(mcp)
+	ManageRouting.Register(s)
 	if enableWriteTools {
-		ManageSilencesReadWrite.Register(mcp)
+		ManageSilencesReadWrite.Register(s)
 	} else {
-		ManageSilencesRead.Register(mcp)
+		ManageSilencesRead.Register(s)
 	}
 }

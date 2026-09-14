@@ -19,19 +19,18 @@ import (
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	"github.com/grafana/pyroscope/api/gen/proto/go/querier/v1/querierv1connect"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // AddPyroscopeTools registers the Pyroscope tools on the MCP server.
 // query_pyroscope is registered only when enableQueryTools is true; the
 // label and profile-type listing tools stay available either way.
-func AddPyroscopeTools(mcp *server.MCPServer, enableQueryTools bool) {
-	ListPyroscopeLabelNames.Register(mcp)
-	ListPyroscopeLabelValues.Register(mcp)
-	ListPyroscopeProfileTypes.Register(mcp)
+func AddPyroscopeTools(s *mcp.Server, enableQueryTools bool) {
+	ListPyroscopeLabelNames.Register(s)
+	ListPyroscopeLabelValues.Register(s)
+	ListPyroscopeProfileTypes.Register(s)
 	if enableQueryTools {
-		QueryPyroscope.Register(mcp)
+		QueryPyroscope.Register(s)
 	}
 }
 
@@ -46,11 +45,11 @@ var ListPyroscopeLabelNames = mcpgrafana.MustTool(
 	"list_pyroscope_label_names",
 	listPyroscopeLabelNamesToolPrompt,
 	listPyroscopeLabelNames,
-	mcp.WithTitleAnnotation("List Pyroscope label names"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Pyroscope label names"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPyroscopeLabelNamesParams struct {
@@ -107,11 +106,11 @@ var ListPyroscopeLabelValues = mcpgrafana.MustTool(
 	"list_pyroscope_label_values",
 	listPyroscopeLabelValuesToolPrompt,
 	listPyroscopeLabelValues,
-	mcp.WithTitleAnnotation("List Pyroscope label values"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Pyroscope label values"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPyroscopeLabelValuesParams struct {
@@ -175,11 +174,11 @@ var ListPyroscopeProfileTypes = mcpgrafana.MustTool(
 	"list_pyroscope_profile_types",
 	listPyroscopeProfileTypesToolPrompt,
 	listPyroscopeProfileTypes,
-	mcp.WithTitleAnnotation("List Pyroscope profile types"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Pyroscope profile types"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPyroscopeProfileTypesParams struct {
@@ -630,11 +629,11 @@ var QueryPyroscope = mcpgrafana.MustTool(
 	"query_pyroscope",
 	queryPyroscopeToolPrompt,
 	queryPyroscope,
-	mcp.WithTitleAnnotation("Query Pyroscope"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Pyroscope"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type QueryPyroscopeParams struct {

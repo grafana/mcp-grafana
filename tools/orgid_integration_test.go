@@ -19,7 +19,6 @@ package tools
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -27,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -71,7 +70,6 @@ func newOrgRoutingContext(t *testing.T, baseURL string) context.Context {
 // OrgIDOverrideMiddleware, merging an orgId argument (omitted when orgID <= 0,
 // so the connection's default org is used) into args.
 func callToolWithOrgID(ctx context.Context, tool mcpgrafana.Tool, args map[string]any, orgID int64) (*mcp.CallToolResult, error) {
-	handler := mcpgrafana.OrgIDOverrideMiddleware(tool.Handler)
 	merged := map[string]any{}
 	for k, v := range args {
 		merged[k] = v
@@ -79,10 +77,23 @@ func callToolWithOrgID(ctx context.Context, tool mcpgrafana.Tool, args map[strin
 	if orgID > 0 {
 		merged["orgId"] = orgID
 	}
-	req := mcp.CallToolRequest{}
-	req.Params.Name = tool.Tool.Name
-	req.Params.Arguments = merged
-	return handler(ctx, req)
+	argsJSON, _ := json.Marshal(merged)
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      tool.Tool.Name,
+			Arguments: argsJSON,
+		},
+	}
+	// Wrap the tool handler as a MethodHandler, apply middleware, then call.
+	baseHandler := func(ctx context.Context, _ string, r mcp.Request) (mcp.Result, error) {
+		return tool.Handler(ctx, r.(*mcp.CallToolRequest))
+	}
+	wrapped := mcpgrafana.OrgIDOverrideMiddleware()(baseHandler)
+	result, err := wrapped(ctx, "tools/call", req)
+	if err != nil {
+		return nil, err
+	}
+	return result.(*mcp.CallToolResult), nil
 }
 
 // TestOrgIDParameter_OptIn_Integration verifies the --dynamic-multi-org opt-in
@@ -98,14 +109,26 @@ func TestOrgIDParameter_OptIn_Integration(t *testing.T) {
 	// callDashboard mirrors the server: wrap with the override middleware only
 	// when the feature is enabled.
 	callDashboard := func(orgID int64) (*mcp.CallToolResult, error) {
-		handler := GetDashboardByUID.Handler
-		if mcpgrafana.DynamicMultiOrgEnabled {
-			handler = mcpgrafana.OrgIDOverrideMiddleware(handler)
+		args := map[string]any{"uid": orgIDTestNSDashUID, "orgId": orgID}
+		argsJSON, _ := json.Marshal(args)
+		req := &mcp.CallToolRequest{
+			Params: &mcp.CallToolParamsRaw{
+				Name:      GetDashboardByUID.Tool.Name,
+				Arguments: argsJSON,
+			},
 		}
-		req := mcp.CallToolRequest{}
-		req.Params.Name = GetDashboardByUID.Tool.Name
-		req.Params.Arguments = map[string]any{"uid": orgIDTestNSDashUID, "orgId": orgID}
-		return handler(ctx, req)
+		baseHandler := func(ctx context.Context, _ string, r mcp.Request) (mcp.Result, error) {
+			return GetDashboardByUID.Handler(ctx, r.(*mcp.CallToolRequest))
+		}
+		var handler mcp.MethodHandler = baseHandler
+		if mcpgrafana.DynamicMultiOrgEnabled {
+			handler = mcpgrafana.OrgIDOverrideMiddleware()(baseHandler)
+		}
+		result, err := handler(ctx, "tools/call", req)
+		if err != nil {
+			return nil, err
+		}
+		return result.(*mcp.CallToolResult), nil
 	}
 
 	t.Run("disabled: orgId is ignored, call stays on the default org", func(t *testing.T) {
@@ -128,7 +151,7 @@ func TestOrgIDParameter_OptIn_Integration(t *testing.T) {
 func resultText(t *testing.T, res *mcp.CallToolResult) string {
 	t.Helper()
 	require.NotEmpty(t, res.Content)
-	tc, ok := res.Content[0].(mcp.TextContent)
+	tc, ok := res.Content[0].(*mcp.TextContent)
 	require.Truef(t, ok, "expected TextContent, got %T", res.Content[0])
 	return tc.Text
 }
@@ -216,11 +239,10 @@ func renderDashboardImage(t *testing.T, ctx context.Context, uid string, orgID i
 	require.NoError(t, err)
 	require.Falsef(t, res.IsError, "render failed: %s", textOrEmpty(res))
 	require.NotEmpty(t, res.Content)
-	img, ok := res.Content[0].(mcp.ImageContent)
+	img, ok := res.Content[0].(*mcp.ImageContent)
 	require.Truef(t, ok, "expected ImageContent, got %T", res.Content[0])
 	assert.Equal(t, "image/png", img.MIMEType)
-	data, err := base64.StdEncoding.DecodeString(img.Data)
-	require.NoError(t, err)
+	data := img.Data
 	require.NotEmpty(t, data, "rendered PNG should not be empty")
 	require.Equal(t, []byte{0x89, 'P', 'N', 'G'}, data[:4], "rendered image should be a PNG")
 	return data
@@ -276,7 +298,7 @@ func textOrEmpty(res *mcp.CallToolResult) string {
 	if res == nil || len(res.Content) == 0 {
 		return ""
 	}
-	if tc, ok := res.Content[0].(mcp.TextContent); ok {
+	if tc, ok := res.Content[0].(*mcp.TextContent); ok {
 		return tc.Text
 	}
 	return ""
