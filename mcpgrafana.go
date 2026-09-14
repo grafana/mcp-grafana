@@ -26,7 +26,7 @@ import (
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/prometheus/model/labels"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -945,9 +945,14 @@ func extractKeyGrafanaInfoFromReq(req *http.Request, logger *slog.Logger) (grafa
 	return
 }
 
+// StdioContextFunc extracts or modifies the context for the stdio transport.
+// Unlike httpContextFunc, it runs once at server startup rather than per call,
+// since a stdio process serves exactly one session for its whole lifetime.
+type StdioContextFunc func(ctx context.Context) context.Context
+
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
 // It reads GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY) environment variables and adds the configuration to the context for use by Grafana clients.
-var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractGrafanaInfoFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
@@ -970,9 +975,11 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	return WithGrafanaConfig(ctx, config)
 }
 
-// httpContextFunc is a function that can be used as a `server.HTTPContextFunc` or a
-// `server.SSEContextFunc`. It is necessary because, while the two types are functionally
-// identical, they have distinct types and cannot be passed around interchangeably.
+// httpContextFunc extracts or modifies the context for HTTP-based transports
+// (SSE and streamable HTTP). In the go-sdk, it is invoked per JSON-RPC call
+// (via GrafanaContextMiddleware reading Request.GetExtra().Header), not once
+// per connection, so request-scoped auth/org headers are honored even when
+// multiple calls share one underlying session.
 type httpContextFunc func(ctx context.Context, req *http.Request) context.Context
 
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts request-scoped Grafana configuration from HTTP headers.
@@ -1566,7 +1573,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
 // It uses configuration from GRAFANA_URL, GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY), GRAFANA_USERNAME/PASSWORD environment variables to initialize
 // the client with proper authentication.
-var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractGrafanaClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars
 	logger := LoggerFromContext(ctx)
 	grafanaURL, apiKey := urlAndAPIKeyFromEnv(logger)
@@ -1619,7 +1626,7 @@ type kubernetesClientKey struct{}
 // Kubernetes-style API client into the context, used by tools that talk to
 // Grafana's app-platform APIs (e.g. dashboard.grafana.app). On failure it injects
 // a nil client; callers fall back to the legacy API.
-var ExtractKubernetesClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractKubernetesClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	logger := LoggerFromContext(ctx)
 	client, err := NewKubernetesClient(ctx)
 	if err != nil {
@@ -1662,7 +1669,7 @@ type incidentClientKey struct{}
 
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
 // It configures the client using environment variables and applies any custom TLS settings from the context.
-var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
 	grafanaURL, apiKey := urlAndAPIKeyFromEnv(logger)
@@ -1725,7 +1732,7 @@ func IncidentClientFromContext(ctx context.Context) *incident.Client {
 
 // ComposeStdioContextFuncs composes multiple StdioContextFuncs into a single one.
 // Functions are applied in order, allowing each to modify the context before passing it to the next.
-func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioContextFunc {
+func ComposeStdioContextFuncs(funcs ...StdioContextFunc) StdioContextFunc {
 	return func(ctx context.Context) context.Context {
 		for _, f := range funcs {
 			ctx = f(ctx)
@@ -1734,9 +1741,11 @@ func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioCont
 	}
 }
 
-// ComposeSSEContextFuncs composes multiple SSEContextFuncs into a single one.
-// This enables chaining of context modifications for Server-Sent Events transport, such as extracting headers and setting up clients.
-func ComposeSSEContextFuncs(funcs ...httpContextFunc) server.SSEContextFunc {
+// ComposeHTTPContextFuncs composes multiple httpContextFuncs into a single one.
+// This enables chaining of context modifications for HTTP-based transports
+// (SSE and streamable HTTP), allowing modular setup of authentication,
+// clients, and configuration.
+func ComposeHTTPContextFuncs(funcs ...httpContextFunc) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		for _, f := range funcs {
 			ctx = f(ctx, req)
@@ -1745,20 +1754,43 @@ func ComposeSSEContextFuncs(funcs ...httpContextFunc) server.SSEContextFunc {
 	}
 }
 
-// ComposeHTTPContextFuncs composes multiple HTTPContextFuncs into a single one.
-// This enables chaining of context modifications for HTTP transport, allowing modular setup of authentication, clients, and configuration.
-func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
-	return func(ctx context.Context, req *http.Request) context.Context {
-		for _, f := range funcs {
-			ctx = f(ctx, req)
+// GrafanaContextMiddleware returns an mcp.Middleware that runs httpFn on
+// every incoming JSON-RPC call for HTTP-based transports (streamable HTTP
+// and SSE), synthesizing a minimal *http.Request from the call's headers
+// so the existing httpContextFunc family is reused unchanged.
+//
+// This replaces the per-transport context-func hooks from mark3labs' SDK
+// with a single hook that runs per call. When Extra.Header is populated
+// (streamable HTTP POSTs, SSE message POSTs that forward headers), per-call
+// auth/org-ID isolation is preserved. When headers are absent (SSE message
+// POSTs from clients that don't forward headers), the httpContextFunc still
+// runs with an empty header set, falling back to environment-variable config
+// so tool handlers always have a valid GrafanaConfig/client.
+//
+// This middleware is registered only on HTTP transports (SSE, streamable
+// HTTP) — never on stdio, which sets up its context once at startup via
+// ComposedStdioContextFunc. It runs httpFn on every call: when the transport
+// provides HTTP headers (streamable HTTP), they are forwarded for per-call
+// auth/org isolation; when it does not (SSE message POSTs), httpFn runs
+// with an empty header set and falls back to environment-variable config.
+func GrafanaContextMiddleware(httpFn httpContextFunc) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			var header http.Header
+			if extra := req.GetExtra(); extra != nil && extra.Header != nil {
+				header = extra.Header
+			} else {
+				header = http.Header{}
+			}
+			ctx = httpFn(ctx, &http.Request{Header: header})
+			return next(ctx, method, req)
 		}
-		return ctx
 	}
 }
 
 // ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs.
 // It sets up the complete context for stdio transport including Grafana configuration, client initialization from environment variables, and incident management support.
-func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
+func ComposedStdioContextFunc(config GrafanaConfig) StdioContextFunc {
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -1770,26 +1802,12 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 	)
 }
 
-// ComposedSSEContextFunc returns a SSEContextFunc that comprises all predefined SSEContextFuncs.
-// It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
+// ComposedHTTPContextFunc returns a composed httpContextFunc that comprises all
+// predefined HTTP context functions. It sets up the complete context for
+// HTTP-based transports (SSE and streamable HTTP), extracting configuration
+// from HTTP headers with environment variable fallbacks.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
-func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
-	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
-	return ComposeSSEContextFuncs(
-		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaConfig(ctx, config)
-		},
-		ExtractGrafanaInfoFromHeaders,
-		grafanaExtractor,
-		k8sExtractor,
-		incidentExtractor,
-	)
-}
-
-// ComposedHTTPContextFunc returns a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
-// It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
-// If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
-func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
+func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) httpContextFunc {
 	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {

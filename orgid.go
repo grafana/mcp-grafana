@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"github.com/invopop/jsonschema"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // DynamicMultiOrgEnabled controls per-call org selection: when true, tools
@@ -29,14 +28,8 @@ var DynamicMultiOrgEnabled bool
 // injectOrgIDProperty) and consumed by OrgIDOverrideMiddleware.
 const OrgIDArgument = "orgId"
 
-// orgIDArgumentDescription documents the orgId argument advertised on every tool.
 const orgIDArgumentDescription = "Grafana org ID to target for this call, overriding the connection's default org."
 
-// injectOrgIDProperty advertises the optional orgId argument on a tool's
-// reflected property set (unless the tool already declares it), so
-// OrgIDOverrideMiddleware has something for clients to populate. Keeping it here,
-// beside the middleware that reads it, leaves ConvertTool free of orgId
-// specifics.
 func injectOrgIDProperty(properties map[string]any) {
 	if _, exists := properties[OrgIDArgument]; exists {
 		return
@@ -47,25 +40,27 @@ func injectOrgIDProperty(properties map[string]any) {
 	}
 }
 
-// OrgIDOverrideMiddleware returns a tool-handler middleware that lets a single
-// connection address multiple Grafana organizations. When a tool call carries
-// an "orgId" argument, the middleware overrides GrafanaConfig.OrgID in the
-// context for the duration of that call. Because the outgoing X-Grafana-Org-Id
-// header (OrgIDRoundTripper) and the resolved app-platform namespace
-// (GrafanaNamespace) both read OrgID from the context at call time, this single
-// override redirects both the legacy /api/* and the /apis/* requests to the
-// requested org consistently.
-//
-// The override can only reach organizations the underlying credential is a
-// member of — Grafana still enforces authorization, and a service-account token
-// remains bound to its single org. An absent, non-numeric, fractional, or
-// non-positive value leaves the connection-level OrgID untouched.
-//
-// The orgId argument is stripped from the request before the handler runs so it
-// never propagates downstream to tool handlers.
-func OrgIDOverrideMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if args := request.GetArguments(); args != nil {
+// OrgIDOverrideMiddleware returns an mcp.Middleware that lets a single
+// connection address multiple Grafana organizations. When a tools/call request
+// carries an "orgId" argument, the middleware overrides GrafanaConfig.OrgID in
+// the context for the duration of that call. The orgId argument is stripped from
+// the request before the handler runs so it never propagates downstream.
+func OrgIDOverrideMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			callReq, ok := req.(*mcp.CallToolRequest)
+			if !ok || callReq == nil || len(callReq.Params.Arguments) == 0 {
+				return next(ctx, method, req)
+			}
+
+			var args map[string]any
+			if err := json.Unmarshal(callReq.Params.Arguments, &args); err != nil {
+				return next(ctx, method, req)
+			}
+
 			if _, present := args[OrgIDArgument]; present {
 				if orgID, ok := orgIDFromArguments(args); ok {
 					if cfg := GrafanaConfigFromContext(ctx); cfg.OrgID != orgID {
@@ -73,21 +68,19 @@ func OrgIDOverrideMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc
 						ctx = WithGrafanaConfig(ctx, cfg)
 					}
 				}
-				// Strip it regardless of validity so it never reaches a handler
-				// (GetArguments returns the live map, so deletion propagates).
 				delete(args, OrgIDArgument)
+				if newArgs, err := json.Marshal(args); err == nil {
+					callReq.Params.Arguments = newArgs
+				}
 			}
+
+			return next(ctx, method, req)
 		}
-		return next(ctx, request)
 	}
 }
 
 // orgIDFromArguments extracts a positive, whole orgId from raw tool-call
-// arguments, tolerating both JSON numbers and numeric strings (some clients send
-// integer arguments as strings). It returns ok=false when the argument is absent,
-// unparseable, fractional, or not positive: an org id is an identifier, so a
-// value that is not exactly one is a caller mistake rather than something to
-// round.
+// arguments, tolerating both JSON numbers and numeric strings.
 func orgIDFromArguments(args map[string]any) (int64, bool) {
 	raw, present := args[OrgIDArgument]
 	if !present {
@@ -97,11 +90,6 @@ func orgIDFromArguments(args map[string]any) (int64, bool) {
 	var orgID int64
 	switch v := raw.(type) {
 	case float64:
-		// JSON numbers decode to float64, so truncating would silently accept a
-		// fractional orgId and target a different org than asked for (2.9 -> 2).
-		// The same guard rejects NaN (which is never equal to its truncation) and
-		// infinities, and values at or beyond int64, whose conversion would be
-		// undefined.
 		if v != math.Trunc(v) || math.IsInf(v, 0) || v >= math.MaxInt64 {
 			return 0, false
 		}
@@ -133,10 +121,7 @@ type OrgInfo struct {
 	Role  string `json:"role"`
 }
 
-// ListUserOrgs returns the organizations the current user belongs to
-// (GET /api/user/orgs) — the set of values OrgIDArgument can usefully name. It
-// returns an error for identities that cannot enumerate orgs (e.g.
-// service-account tokens, which are single-org).
+// ListUserOrgs returns the organizations the current user belongs to.
 func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
 	cfg := GrafanaConfigFromContext(ctx)
 	var orgs []OrgInfo
@@ -146,19 +131,7 @@ func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
 	return orgs, nil
 }
 
-// UserPersistedOrgID returns the org stored on the signed-in user's record — the
-// org a browser session for this identity lands in. Unlike /api/org it is not
-// request-scoped, so GRAFANA_ORG_ID, an X-Grafana-Org-Id header and a per-call
-// orgId override all leave it unchanged. Tools that hand a URL to a human use it
-// to tell whether a link without an explicit org would resolve in the org they
-// actually rendered from.
-//
-// For identities that are not users (e.g. service-account tokens) Grafana
-// reports the request org here instead; those are single-org, so the comparison
-// is trivially satisfied.
-//
-// This is the opposite of what UserInfo.CurrentOrgID wants: that reports the org
-// calls target, so it resolves request-scoped. Do not collapse the two.
+// UserPersistedOrgID returns the org stored on the signed-in user's record.
 func UserPersistedOrgID(ctx context.Context) (int64, error) {
 	cfg := GrafanaConfigFromContext(ctx)
 	var u struct {
@@ -170,9 +143,6 @@ func UserPersistedOrgID(ctx context.Context) (int64, error) {
 	return u.OrgID, nil
 }
 
-// resolveConnectionOrgID returns the org the connection targets when no orgId is
-// given: the current org reported by /api/org, falling back to the configured
-// OrgID (0 when unset, which Grafana treats as the identity's active org).
 func resolveConnectionOrgID(ctx context.Context, logger *slog.Logger) int64 {
 	cfg := GrafanaConfigFromContext(ctx)
 	var org struct {
@@ -187,29 +157,14 @@ func resolveConnectionOrgID(ctx context.Context, logger *slog.Logger) int64 {
 
 // UserInfo describes the signed-in identity for the current request.
 type UserInfo struct {
-	Login          string `json:"login,omitempty"`
-	Email          string `json:"email,omitempty"`
-	Name           string `json:"name,omitempty"`
-	IsGrafanaAdmin bool   `json:"isGrafanaAdmin"`
-	// CurrentOrgID is the org this connection's calls target when they carry no
-	// orgId, not the org persisted on the user record.
-	CurrentOrgID int64     `json:"currentOrgId"`
-	Orgs         []OrgInfo `json:"orgs"`
+	Login          string    `json:"login,omitempty"`
+	Email          string    `json:"email,omitempty"`
+	Name           string    `json:"name,omitempty"`
+	IsGrafanaAdmin bool      `json:"isGrafanaAdmin"`
+	CurrentOrgID   int64     `json:"currentOrgId"`
+	Orgs           []OrgInfo `json:"orgs"`
 }
 
-// CurrentUserInfo returns the signed-in user's identity (GET /api/user) plus the
-// organizations the credential can access (GET /api/user/orgs). Org membership
-// is best-effort: it is empty for identities that can't enumerate orgs (e.g.
-// service-account tokens), which remain scoped to their single CurrentOrgID.
-//
-// CurrentOrgID is resolved request-scoped rather than taken from /api/user,
-// which reports the org persisted on the user record and so ignores
-// GRAFANA_ORG_ID and the X-Grafana-Org-Id header. Reporting the persisted value
-// would tell a client that calls target one org while they actually reach
-// another. (UserPersistedOrgID deliberately wants the persisted value — it answers
-// a different question.) The /api/user value remains the last fallback, for when
-// neither /api/org nor the config names an org: Grafana then applies the
-// identity's own org, which is exactly what /api/user reports.
 func CurrentUserInfo(ctx context.Context) (UserInfo, error) {
 	cfg := GrafanaConfigFromContext(ctx)
 	var u struct {
@@ -239,9 +194,6 @@ func CurrentUserInfo(ctx context.Context) (UserInfo, error) {
 	return info, nil
 }
 
-// grafanaGetJSON performs an authenticated GET against the Grafana API and
-// decodes a JSON response, using the same transport chain as the rest of the
-// server (auth, OrgID header, TLS, etc.).
 func grafanaGetJSON(ctx context.Context, cfg *GrafanaConfig, path string, out any) error {
 	transport, err := BuildTransport(cfg, nil)
 	if err != nil {
