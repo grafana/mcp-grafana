@@ -54,8 +54,9 @@ func dsQueryDatasourceUID(q map[string]interface{}) string {
 // The type is resolved from the UID and never read from the payload, whose
 // declared type is caller-influenced (the run_panel_query bypass). A UID whose
 // type cannot be resolved fails closed rather than being forwarded. A query that
-// names no UID resolves against the org default datasource, so its type is
-// checked the same way; an unresolvable default also fails closed.
+// names no UID — or Grafana's magic "default" UID — resolves against the org
+// default datasource, so its type is checked the same way; an unresolvable
+// default also fails closed.
 func guardEnforcedLokiDSQuery(ctx context.Context, payload map[string]interface{}) error {
 	if len(enforcedMatchers(ctx)) == 0 {
 		return nil
@@ -68,9 +69,10 @@ func guardEnforcedLokiDSQuery(ctx context.Context, payload map[string]interface{
 	checked := make(map[string]bool, len(queries))
 	for _, q := range queries {
 		uid := dsQueryDatasourceUID(q)
-		if uid == "" {
-			// No explicit datasource: the query resolves against the org
-			// default. Check that default's type once.
+		if uid == "" || uid == "default" {
+			// No explicit datasource, or Grafana's magic "default" UID: the
+			// query resolves against the org default. Check that default's type
+			// once.
 			if defaultChecked {
 				continue
 			}

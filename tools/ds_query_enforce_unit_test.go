@@ -176,6 +176,37 @@ func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, hit)
 	})
+
+	t.Run("magic \"default\" UID resolves against the org default (log default refused)", func(t *testing.T) {
+		var hit bool
+		dsList := []map[string]interface{}{
+			{"uid": "mimir", "type": "prometheus", "isDefault": false},
+			{"uid": "loki", "type": "loki", "isDefault": true},
+		}
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "default log datasource")
+		assert.False(t, hit)
+	})
+
+	t.Run("magic \"default\" UID allowed when the org default is not a log datasource", func(t *testing.T) {
+		var hit bool
+		dsList := []map[string]interface{}{
+			{"uid": "mimir", "type": "prometheus", "isDefault": true},
+			{"uid": "loki", "type": "loki", "isDefault": false},
+		}
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
+		require.NoError(t, err)
+		assert.True(t, hit)
+	})
 }
 
 // noUIDPayload is an /api/ds/query payload whose query names no datasource,
@@ -183,6 +214,17 @@ func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
 func noUIDPayload() map[string]interface{} {
 	return dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
 		map[string]interface{}{"refId": "A", "expr": `{app="secret"}`})
+}
+
+// defaultUIDPayload is an /api/ds/query payload that references the org default
+// datasource by Grafana's magic "default" UID.
+func defaultUIDPayload() map[string]interface{} {
+	return dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+		map[string]interface{}{
+			"refId":      "A",
+			"datasource": map[string]interface{}{"uid": "default"},
+			"expr":       `{app="secret"}`,
+		})
 }
 
 // TestBackendForDatasource_RejectsLoki covers the Prometheus-client route: a
