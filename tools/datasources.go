@@ -72,6 +72,32 @@ type ListDatasourcesResult struct {
 	HasMore     bool                `json:"hasMore"` // Whether more results exist
 }
 
+// defaultDatasourceType returns the type of the org's default datasource. It
+// scans the full datasource list (not the paginated listDatasources view, which
+// caps results) so the default is always found, and reuses the same
+// frontend-settings fallback for tokens that cannot read the datasources API.
+// Used to evaluate /api/ds/query queries that name no datasource UID, which
+// resolve against this default.
+func defaultDatasourceType(ctx context.Context) (string, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	var list models.DataSourceList
+	if resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	); err == nil {
+		list = resp.Payload
+	} else if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
+		list = fb
+	} else {
+		return "", fmt.Errorf("list datasources: %w", err)
+	}
+	for _, ds := range list {
+		if ds.IsDefault {
+			return ds.Type, nil
+		}
+	}
+	return "", fmt.Errorf("no default datasource found")
+}
+
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	var list models.DataSourceList

@@ -24,6 +24,81 @@ func dsQueryPayload(from, to time.Time, queries ...map[string]interface{}) map[s
 	}
 }
 
+// lokiLikeDatasourceType reports whether a resolved datasource type is a log
+// datasource whose reads must go through the enforced Loki path.
+func lokiLikeDatasourceType(t string) bool {
+	return t == "loki" || t == victoriaLogsDatasourceType
+}
+
+// dsQueryDatasourceUID extracts the datasource UID from one /api/ds/query query
+// object, tolerating both the map[string]string and map[string]interface{}
+// shapes the various tools build.
+func dsQueryDatasourceUID(q map[string]interface{}) string {
+	switch ds := q["datasource"].(type) {
+	case map[string]string:
+		return ds["uid"]
+	case map[string]interface{}:
+		if uid, ok := ds["uid"].(string); ok {
+			return uid
+		}
+	}
+	return ""
+}
+
+// guardEnforcedLokiDSQuery fails closed when an /api/ds/query payload would
+// reach a Loki (or VictoriaLogs) datasource while Loki label-matcher
+// enforcement is active. The enforced Loki path never uses /api/ds/query — it
+// goes through the datasource proxy (see loki.go) — so any log datasource
+// arriving here is an unenforced route around --loki-enforced-matchers.
+//
+// The type is resolved from the UID and never read from the payload, whose
+// declared type is caller-influenced (the run_panel_query bypass). A UID whose
+// type cannot be resolved fails closed rather than being forwarded. A query that
+// names no UID resolves against the org default datasource, so its type is
+// checked the same way; an unresolvable default also fails closed.
+func guardEnforcedLokiDSQuery(ctx context.Context, payload map[string]interface{}) error {
+	if len(enforcedMatchers(ctx)) == 0 {
+		return nil
+	}
+	queries, ok := payload["queries"].([]map[string]interface{})
+	if !ok {
+		return fmt.Errorf("loki label-matcher enforcement is active but the /api/ds/query payload could not be inspected for its target datasources")
+	}
+	defaultChecked := false
+	checked := make(map[string]bool, len(queries))
+	for _, q := range queries {
+		uid := dsQueryDatasourceUID(q)
+		if uid == "" {
+			// No explicit datasource: the query resolves against the org
+			// default. Check that default's type once.
+			if defaultChecked {
+				continue
+			}
+			defaultChecked = true
+			dsType, err := defaultDatasourceType(ctx)
+			if err != nil {
+				return fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query whose default datasource could not be verified: %w", err)
+			}
+			if lokiLikeDatasourceType(dsType) {
+				return fmt.Errorf("loki label-matcher enforcement is active: refusing to query the default log datasource (type %q) via /api/ds/query, which bypasses --loki-enforced-matchers; use the Loki query tools instead", dsType)
+			}
+			continue
+		}
+		if checked[uid] {
+			continue
+		}
+		checked[uid] = true
+		ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+		if err != nil {
+			return fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query for datasource %q whose type could not be verified: %w", uid, err)
+		}
+		if lokiLikeDatasourceType(ds.Type) {
+			return fmt.Errorf("loki label-matcher enforcement is active: refusing to query log datasource %q (type %q) via /api/ds/query, which bypasses --loki-enforced-matchers; use the Loki query tools instead", uid, ds.Type)
+		}
+	}
+	return nil
+}
+
 // doDSQuery posts a payload to Grafana's /api/ds/query endpoint and decodes
 // the response into the SDK's QueryDataResponse type.
 func doDSQuery(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}) (*backend.QueryDataResponse, error) {
@@ -32,6 +107,10 @@ func doDSQuery(ctx context.Context, client *http.Client, baseURL string, payload
 
 // doDSQueryWithLimit is like doDSQuery but allows overriding the response size limit.
 func doDSQueryWithLimit(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}, responseLimit int64) (*backend.QueryDataResponse, error) {
+	if err := guardEnforcedLokiDSQuery(ctx, payload); err != nil {
+		return nil, err
+	}
+
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling query payload: %w", err)
