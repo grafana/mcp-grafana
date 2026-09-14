@@ -356,6 +356,64 @@ func TestTempoGetAttributeNames(t *testing.T) {
 	assert.Equal(t, "span", capturedQuery.Get("scope"))
 }
 
+func TestTempoGetAttributeNames_SummarizesLargeUnscopedResponse(t *testing.T) {
+	// Generate a response larger than tempoAttributeNamesSummaryThreshold.
+	tags := make([]string, 2000)
+	for i := range tags {
+		tags[i] = fmt.Sprintf("attribute.name.%04d.padding.to.make.it.long.enough", i)
+	}
+	tagsJSON, _ := json.Marshal(tags)
+	responseBody := fmt.Sprintf(`{"scopes":[{"name":"resource","tags":%s},{"name":"span","tags":["http.method"]}]}`, tagsJSON)
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(responseBody))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("list_tempo_attribute_names", map[string]any{
+		"datasourceUid": "test-tempo",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+
+	text := result.Content[0].(mcp.TextContent).Text
+	assert.Contains(t, text, "resource: 2000 attributes")
+	assert.Contains(t, text, "span: 1 attributes")
+	assert.Contains(t, text, "scope parameter")
+	assert.Equal(t, "attribute-names-summary", result.Meta.AdditionalFields["type"])
+}
+
+func TestTempoGetAttributeNames_NoSummaryWhenScoped(t *testing.T) {
+	// Even if the response is large, when a scope is provided we return full results.
+	tags := make([]string, 2000)
+	for i := range tags {
+		tags[i] = fmt.Sprintf("attribute.name.%04d.padding.to.make.it.long.enough", i)
+	}
+	tagsJSON, _ := json.Marshal(tags)
+	responseBody := fmt.Sprintf(`{"scopes":[{"name":"resource","tags":%s}]}`, tagsJSON)
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(responseBody))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("list_tempo_attribute_names", map[string]any{
+		"datasourceUid": "test-tempo",
+		"scope":         "resource",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.Equal(t, "attribute-names", result.Meta.AdditionalFields["type"])
+}
+
 func TestTempoGetAttributeValues(t *testing.T) {
 	var capturedPath string
 	var capturedQuery url.Values
@@ -486,4 +544,41 @@ func TestTempoParseEndToEpochNanos(t *testing.T) {
 func TestTempoParseStartToEpochSeconds_InvalidInput(t *testing.T) {
 	_, err := tempoParseStartToEpochSeconds("not-a-date")
 	require.Error(t, err)
+}
+
+func TestTempoAPIError_499EmptyBody(t *testing.T) {
+	err := tempoAPIError(499, []byte(""))
+	assert.Contains(t, err.Error(), "499")
+	assert.Contains(t, err.Error(), "timed out")
+}
+
+func TestTempoAPIError_499WithBody(t *testing.T) {
+	err := tempoAPIError(499, []byte("context cancelled"))
+	assert.Contains(t, err.Error(), "499")
+	assert.Contains(t, err.Error(), "context cancelled")
+	assert.NotContains(t, err.Error(), "timed out")
+}
+
+func TestTempoAPIError_Non499(t *testing.T) {
+	err := tempoAPIError(400, []byte("bad request"))
+	assert.Contains(t, err.Error(), "400")
+	assert.Contains(t, err.Error(), "bad request")
+}
+
+func TestTempoSearch_499Timeout(t *testing.T) {
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(499)
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         "{ }",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "timed out")
 }

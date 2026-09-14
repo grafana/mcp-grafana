@@ -73,7 +73,7 @@ func (b *tempoBackend) doGet(ctx context.Context, path string, query url.Values)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tempo API returned %d: %s", resp.StatusCode, string(body))
+		return "", tempoAPIError(resp.StatusCode, body)
 	}
 
 	return string(body), nil
@@ -103,7 +103,7 @@ func (b *tempoBackend) doGetWithAccept(ctx context.Context, path string, query u
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tempo API returned %d: %s", resp.StatusCode, string(body))
+		return "", tempoAPIError(resp.StatusCode, body)
 	}
 
 	return string(body), nil
@@ -135,10 +135,18 @@ func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (st
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("tempo API returned %d: %s", resp.StatusCode, string(body))
+		return "", tempoAPIError(resp.StatusCode, body)
 	}
 
 	return string(body), nil
+}
+
+func tempoAPIError(statusCode int, body []byte) error {
+	msg := strings.TrimSpace(string(body))
+	if msg == "" && statusCode == 499 {
+		msg = "query timed out — try narrowing the time range or simplifying the query"
+	}
+	return fmt.Errorf("tempo API returned %d: %s", statusCode, msg)
 }
 
 func tempoParseStartToEpochSeconds(value string) (string, error) {
@@ -208,7 +216,7 @@ type DiffTempoTracesParams struct {
 
 type ListTempoAttributeNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
-	Scope         string `json:"scope,omitempty" jsonschema:"description=Optional scope to filter attributes by (span\\, resource\\, event\\, link\\, instrumentation). If not provided\\, returns all attributes."`
+	Scope         string `json:"scope,omitempty" jsonschema:"description=Scope to filter attributes by (span\\, resource\\, event\\, link\\, instrumentation). Strongly recommended — omitting scope returns all attributes across all scopes which can be very large (100K+ chars)."`
 }
 
 type ListTempoAttributeValuesParams struct {
@@ -393,6 +401,8 @@ func parseOptionalTimeRange(startStr, endStr, startName, endName string) (*int64
 	return &startNanos, &endNanos, nil
 }
 
+const tempoAttributeNamesSummaryThreshold = 32_000
+
 func listTempoAttributeNames(ctx context.Context, args ListTempoAttributeNamesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
@@ -409,7 +419,36 @@ func listTempoAttributeNames(ctx context.Context, args ListTempoAttributeNamesPa
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	if args.Scope == "" && len(body) > tempoAttributeNamesSummaryThreshold {
+		if summary, ok := summarizeTempoAttributeNames(body); ok {
+			return tempoToolResult(summary, "attribute-names-summary", "text"), nil
+		}
+	}
+
 	return tempoToolResult(body, "attribute-names", "json"), nil
+}
+
+func summarizeTempoAttributeNames(body string) (string, bool) {
+	var resp struct {
+		Scopes []struct {
+			Name string   `json:"name"`
+			Tags []string `json:"tags"`
+		} `json:"scopes"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return "", false
+	}
+
+	var b strings.Builder
+	total := 0
+	b.WriteString("Response too large to return in full. Attribute counts per scope:\n\n")
+	for _, s := range resp.Scopes {
+		total += len(s.Tags)
+		fmt.Fprintf(&b, "  %s: %d attributes\n", s.Name, len(s.Tags))
+	}
+	fmt.Fprintf(&b, "\nTotal: %d attributes across %d scopes.\n", total, len(resp.Scopes))
+	b.WriteString("Call again with the scope parameter (e.g. scope=resource or scope=span) to see the attribute names for a specific scope.")
+	return b.String(), true
 }
 
 func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValuesParams) (*mcp.CallToolResult, error) {
@@ -455,7 +494,7 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
-	"Compute trace-derived metrics using a TraceQL metrics query. Use type 'instant' for a single value or 'range' for a time series (default).",
+	"Compute trace-derived metrics using a TraceQL metrics query. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
 	queryTempoMetrics,
 	mcp.WithTitleAnnotation("Query Tempo metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -488,7 +527,7 @@ var DiffTempoTracesTool = mcpgrafana.MustTool(
 
 var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_names",
-	"List available attribute names that can be used in TraceQL queries",
+	"List available attribute names for TraceQL queries. Always pass a scope (resource, span, etc.) to avoid very large responses.",
 	listTempoAttributeNames,
 	mcp.WithTitleAnnotation("List Tempo attribute names"),
 	mcp.WithIdempotentHintAnnotation(true),
