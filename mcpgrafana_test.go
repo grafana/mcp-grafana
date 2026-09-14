@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
+	"github.com/grafana/grafana-openapi-client-go/client/search"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1614,6 +1616,100 @@ func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
 
 		assert.Empty(t, capturedHeaders.Get(grafana_client.OrgIDHeader))
 	})
+}
+
+func TestStdioTokenFileRotation(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "service-account-token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("token-a"), 0o600))
+
+	var mu sync.Mutex
+	var authHeaders []string
+	ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	t.Setenv("GRAFANA_URL", ts.URL)
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", tokenFile)
+
+	// Compose the context the way ComposedStdioContextFunc does in production, so
+	// the request context carries the GrafanaConfig that AuthRoundTripper reads.
+	// A bare context (or a nil request context) would hide the frozen-APIKey
+	// overwrite this test is meant to catch.
+	ctx := ExtractGrafanaClientFromEnv(ExtractGrafanaInfoFromEnv(context.Background()))
+	c := GrafanaClientFromContext(ctx)
+	require.NotNil(t, c)
+
+	// First request uses the token loaded at startup.
+	_, _ = c.Search.Search(search.NewSearchParams().WithContext(ctx))
+
+	// Rotate the token file on disk without rebuilding the client.
+	require.NoError(t, os.WriteFile(tokenFile, []byte("token-b"), 0o600))
+
+	// Second request must use the freshly re-read token, mirroring the HTTP/SSE
+	// transports (see #987).
+	_, _ = c.Search.Search(search.NewSearchParams().WithContext(ctx))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.GreaterOrEqual(t, len(authHeaders), 2)
+	assert.Equal(t, "Bearer token-b", authHeaders[len(authHeaders)-1])
+	assert.Contains(t, authHeaders, "Bearer token-a")
+}
+
+// TestStdioBackendTransportTokenRotation guards the shared transport path that
+// every non-OpenAPI stdio client uses (Kubernetes, Prometheus, Loki, alerting,
+// CloudWatch, Pyroscope, etc.): they build their transport from the GrafanaConfig
+// in the context, so the fix must keep their auth intact while also re-reading a
+// rotated token file. Regression for the case where clearing GrafanaConfig.APIKey
+// stripped auth and caused 401s across all of them.
+func TestStdioBackendTransportTokenRotation(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "service-account-token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("token-a"), 0o600))
+
+	var mu sync.Mutex
+	var authHeaders []string
+	ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Setenv("GRAFANA_URL", ts.URL)
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", tokenFile)
+
+	// Backends resolve the GrafanaConfig from the request context and build their
+	// transport from it, exactly like this.
+	ctx := ExtractGrafanaInfoFromEnv(context.Background())
+	cfg := GrafanaConfigFromContext(ctx)
+	rt, err := BuildTransport(&cfg, nil)
+	require.NoError(t, err)
+	client := &http.Client{Transport: rt}
+
+	doReq := func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/ds/query", nil)
+		require.NoError(t, err)
+		_, _ = client.Do(req)
+	}
+
+	doReq()
+	require.NoError(t, os.WriteFile(tokenFile, []byte("token-b"), 0o600))
+	doReq()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.GreaterOrEqual(t, len(authHeaders), 2)
+	assert.Equal(t, "Bearer token-b", authHeaders[len(authHeaders)-1])
+	assert.Contains(t, authHeaders, "Bearer token-a")
 }
 
 func newTestHTTPServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
