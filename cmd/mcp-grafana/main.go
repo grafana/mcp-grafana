@@ -576,7 +576,6 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 		},
 	)
 
-
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
 	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)
