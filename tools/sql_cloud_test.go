@@ -37,7 +37,8 @@ func skipOnDatasourceAuthError(t *testing.T, err error) {
 		strings.Contains(err.Error(), "invalid password") ||
 		strings.Contains(err.Error(), "PERMISSION_DENIED") ||
 		strings.Contains(err.Error(), "status 401") ||
-		strings.Contains(err.Error(), "temporarily locked")) {
+		strings.Contains(err.Error(), "temporarily locked") ||
+		strings.Contains(err.Error(), "is not allowed to access Snowflake")) {
 		t.Skipf("datasource auth/permission error: %v", err)
 	}
 }
