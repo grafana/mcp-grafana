@@ -287,6 +287,26 @@ func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
 		assert.False(t, hit)
 	})
 
+	t.Run("a valid datasource.uid wins over a leftover datasourceId", func(t *testing.T) {
+		var hit bool
+		// run_panel_query copies raw panel targets that keep datasourceId after
+		// overwriting datasource; a real non-log uid must still resolve on the
+		// uid, not be refused for the stale numeric id (Bugbot).
+		srv := dsQueryGuardServer(t, map[string]string{"cw-uid": "cloudwatch"}, nil, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{
+				"refId":        "A",
+				"datasource":   map[string]interface{}{"uid": "cw-uid", "type": "cloudwatch"},
+				"datasourceId": 7,
+			})
+		_, err = doDSQuery(ctx, client, base, payload)
+		require.NoError(t, err)
+		assert.True(t, hit)
+	})
+
 	t.Run("queries as []interface{} are still inspected (Loki refused)", func(t *testing.T) {
 		var hit bool
 		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &hit)

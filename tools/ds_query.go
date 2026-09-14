@@ -55,50 +55,62 @@ func dsQueryQueries(payload map[string]interface{}) (queries []map[string]interf
 }
 
 // dsQueryDatasourceUID reports the datasource UID a single /api/ds/query query
-// targets, mirroring how Grafana's query service resolves it:
+// targets, mirroring the order Grafana's query service resolves it:
 //
-//   - a numeric legacy "datasourceId" cannot be mapped to a type here, so its
-//     presence returns ok=false and the caller fails closed;
-//   - "datasource" as a bare string is the UID (the pre-8.3 form Grafana still
-//     honours);
-//   - "datasource" as an object uses its "uid" field;
-//   - an empty or absent UID returns ("", true), meaning "resolve the default".
+//  1. "datasource.uid" (or "datasource" as a bare string, the pre-8.3 form) when
+//     it names a non-empty UID;
+//  2. otherwise the legacy numeric "datasourceId", which cannot be mapped to a
+//     type here, so its presence returns ok=false and the caller fails closed;
+//  3. otherwise ("", true), meaning "resolve the default".
 //
-// ok is false when a datasource reference is present but not understood, so an
-// unrecognised shape fails closed instead of being treated as "no datasource"
-// and waved through against the org default.
+// A "datasource" object that is present but carries no usable UID (missing or
+// non-string uid, or an unrecognised shape) returns ok=false so the caller fails
+// closed rather than treating it as "no datasource" and waving it through. The
+// numeric id is only consulted when the datasource field yields no UID, matching
+// Grafana — so a query that carries both a real datasource.uid and a leftover
+// datasourceId (as run_panel_query's copied panel targets do) resolves on the
+// uid.
 func dsQueryDatasourceUID(q map[string]interface{}) (uid string, ok bool) {
-	// A legacy numeric datasourceId can name any datasource, including a log
-	// one, and we cannot resolve it to a type cheaply. Refuse under enforcement.
+	if ds, present := q["datasource"]; present {
+		switch v := ds.(type) {
+		case string:
+			if v != "" {
+				return v, true
+			}
+			// Empty string: fall through to datasourceId / default.
+		case map[string]string:
+			u, hasUID := v["uid"]
+			if !hasUID {
+				return "", false // object present but carries no uid
+			}
+			if u != "" {
+				return u, true
+			}
+			// Empty uid: fall through.
+		case map[string]interface{}:
+			u, hasUID := v["uid"]
+			if !hasUID {
+				return "", false // object present but carries no uid
+			}
+			us, isStr := u.(string)
+			if !isStr {
+				return "", false // uid present but not a string
+			}
+			if us != "" {
+				return us, true
+			}
+			// Empty uid: fall through.
+		default:
+			return "", false // unrecognised datasource shape
+		}
+	}
+	// No usable UID from the datasource field. A legacy numeric datasourceId
+	// cannot be resolved to a type here, so refuse under enforcement.
 	if _, hasLegacyID := q["datasourceId"]; hasLegacyID {
 		return "", false
 	}
-	ds, present := q["datasource"]
-	if !present {
-		return "", true // no datasource named -> the default
-	}
-	switch v := ds.(type) {
-	case string:
-		return v, true // bare-string form: the string is the UID ("" -> default)
-	case map[string]string:
-		u, hasUID := v["uid"]
-		if !hasUID {
-			return "", false
-		}
-		return u, true
-	case map[string]interface{}:
-		u, hasUID := v["uid"]
-		if !hasUID {
-			return "", false
-		}
-		us, isStr := u.(string)
-		if !isStr {
-			return "", false
-		}
-		return us, true
-	default:
-		return "", false // unrecognised datasource shape
-	}
+	// Nothing named the datasource: it resolves to the org default.
+	return "", true
 }
 
 // guardEnforcedLokiDSQuery fails closed when an /api/ds/query payload would
