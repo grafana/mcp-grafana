@@ -1577,6 +1577,17 @@ func TestRegisterOps_BasePathPrefixesMainMuxRoutes(t *testing.T) {
 		"the unprefixed root path must not also work once a base path is set")
 }
 
+// A trailing slash on --base-path must not double up into "//healthz", or
+// ServeMux drops the route (it cleans repeated slashes on incoming requests
+// but that leaves the registered pattern unreachable).
+func TestRegisterOps_BasePathTrailingSlashDoesNotDoubleSlash(t *testing.T) {
+	main := http.NewServeMux()
+	side := registerOps(main, newTestObservability(t), "", observability.Config{}, "/my-custom-base/")
+
+	assert.Empty(t, side)
+	assert.Equal(t, http.StatusOK, getPath(main, "/my-custom-base/healthz").Code)
+}
+
 // The default basePath of "/" (set by run() when --base-path is unset) must
 // not double up into "//healthz".
 func TestRegisterOps_RootBasePathDoesNotDoubleSlash(t *testing.T) {

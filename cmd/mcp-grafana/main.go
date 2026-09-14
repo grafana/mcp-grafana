@@ -929,7 +929,7 @@ func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr
 		if addr != "" || basePath == "" || basePath == "/" {
 			return path
 		}
-		return basePath + path
+		return strings.TrimSuffix(basePath, "/") + path
 	}
 
 	target(healthzAddr).HandleFunc(pathFor(healthzAddr, "/healthz"), handleHealthz)
