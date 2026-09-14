@@ -88,34 +88,31 @@ func allDatasources(ctx context.Context) (models.DataSourceList, error) {
 	}
 }
 
-// effectiveDefaultDatasourceType returns the type of the datasource that an
-// /api/ds/query query resolves to when it names no UID (uid == "") or the magic
-// "default" UID. Resolution mirrors Grafana: a datasource whose literal UID is
-// "default" wins when present (Grafana >= 13 treats "default" as a real UID at
-// /api/ds/query), otherwise the org default datasource is used (older Grafana
-// resolves "default"/absent to it). Used by the Loki enforcement guard so the
-// check always reflects the datasource the query will actually hit.
-func effectiveDefaultDatasourceType(ctx context.Context, uid string) (string, error) {
+// defaultTargetIsLogDatasource reports whether an /api/ds/query query that
+// resolves against the default (uid == "" or the magic "default" UID) could
+// reach a log datasource. Grafana may resolve such a query to more than one
+// datasource depending on version — a datasource whose literal UID is "default"
+// (Grafana >= 13 treats "default" as a real UID) and the org default (older
+// Grafana, or an absent datasource) — so every candidate is checked and the
+// result is true if ANY is a log datasource. resolvable is false when no
+// candidate datasource exists, so the caller can fail closed rather than assume
+// the query is harmless.
+func defaultTargetIsLogDatasource(ctx context.Context, uid string) (isLog bool, resolvable bool, err error) {
 	list, err := allDatasources(ctx)
 	if err != nil {
-		return "", err
+		return false, false, err
 	}
-	defType := ""
-	haveDefault := false
 	for _, ds := range list {
-		if uid == "default" && ds.UID == "default" {
-			// A real datasource named "default" wins over the org default.
-			return ds.Type, nil
+		candidate := ds.IsDefault || (uid == "default" && ds.UID == "default")
+		if !candidate {
+			continue
 		}
-		if ds.IsDefault {
-			defType = ds.Type
-			haveDefault = true
+		resolvable = true
+		if lokiLikeDatasourceType(ds.Type) {
+			return true, true, nil
 		}
 	}
-	if haveDefault {
-		return defType, nil
-	}
-	return "", fmt.Errorf("no default datasource found")
+	return false, resolvable, nil
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {

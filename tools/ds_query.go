@@ -30,19 +30,75 @@ func lokiLikeDatasourceType(t string) bool {
 	return t == "loki" || t == victoriaLogsDatasourceType
 }
 
-// dsQueryDatasourceUID extracts the datasource UID from one /api/ds/query query
-// object, tolerating both the map[string]string and map[string]interface{}
-// shapes the various tools build.
-func dsQueryDatasourceUID(q map[string]interface{}) string {
-	switch ds := q["datasource"].(type) {
-	case map[string]string:
-		return ds["uid"]
-	case map[string]interface{}:
-		if uid, ok := ds["uid"].(string); ok {
-			return uid
+// dsQueryQueries pulls the query list out of an /api/ds/query payload,
+// accepting both the []map[string]interface{} that the in-process builders use
+// and the []interface{} shape a JSON round-trip produces. ok is false only when
+// the payload has no inspectable query list, so the guard can fail closed rather
+// than wave through traffic it cannot read.
+func dsQueryQueries(payload map[string]interface{}) (queries []map[string]interface{}, ok bool) {
+	switch qs := payload["queries"].(type) {
+	case []map[string]interface{}:
+		return qs, true
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(qs))
+		for _, e := range qs {
+			m, isMap := e.(map[string]interface{})
+			if !isMap {
+				return nil, false
+			}
+			out = append(out, m)
 		}
+		return out, true
+	default:
+		return nil, false
 	}
-	return ""
+}
+
+// dsQueryDatasourceUID reports the datasource UID a single /api/ds/query query
+// targets, mirroring how Grafana's query service resolves it:
+//
+//   - a numeric legacy "datasourceId" cannot be mapped to a type here, so its
+//     presence returns ok=false and the caller fails closed;
+//   - "datasource" as a bare string is the UID (the pre-8.3 form Grafana still
+//     honours);
+//   - "datasource" as an object uses its "uid" field;
+//   - an empty or absent UID returns ("", true), meaning "resolve the default".
+//
+// ok is false when a datasource reference is present but not understood, so an
+// unrecognised shape fails closed instead of being treated as "no datasource"
+// and waved through against the org default.
+func dsQueryDatasourceUID(q map[string]interface{}) (uid string, ok bool) {
+	// A legacy numeric datasourceId can name any datasource, including a log
+	// one, and we cannot resolve it to a type cheaply. Refuse under enforcement.
+	if _, hasLegacyID := q["datasourceId"]; hasLegacyID {
+		return "", false
+	}
+	ds, present := q["datasource"]
+	if !present {
+		return "", true // no datasource named -> the default
+	}
+	switch v := ds.(type) {
+	case string:
+		return v, true // bare-string form: the string is the UID ("" -> default)
+	case map[string]string:
+		u, hasUID := v["uid"]
+		if !hasUID {
+			return "", false
+		}
+		return u, true
+	case map[string]interface{}:
+		u, hasUID := v["uid"]
+		if !hasUID {
+			return "", false
+		}
+		us, isStr := u.(string)
+		if !isStr {
+			return "", false
+		}
+		return us, true
+	default:
+		return "", false // unrecognised datasource shape
+	}
 }
 
 // guardEnforcedLokiDSQuery fails closed when an /api/ds/query payload would
@@ -52,38 +108,45 @@ func dsQueryDatasourceUID(q map[string]interface{}) string {
 // arriving here is an unenforced route around --loki-enforced-matchers.
 //
 // The type is resolved from the UID and never read from the payload, whose
-// declared type is caller-influenced (the run_panel_query bypass). A UID whose
-// type cannot be resolved fails closed rather than being forwarded. A query that
-// names no UID — or the magic "default" UID — is resolved the way Grafana
-// resolves it (a literal "default" datasource if one exists, otherwise the org
-// default) and its real type is checked the same way; an unresolvable default
-// also fails closed.
+// declared type is caller-influenced (the run_panel_query bypass). Anything that
+// cannot be positively resolved to a non-log datasource fails closed: an
+// unreadable UID, an unrecognised datasource reference, a legacy numeric
+// datasourceId, or a payload whose query list cannot be inspected. A query that
+// names no UID — or the magic "default" UID — is checked against every
+// datasource Grafana might resolve it to (a literal "default" datasource and the
+// org default), refusing if any is a log datasource.
 func guardEnforcedLokiDSQuery(ctx context.Context, payload map[string]interface{}) error {
 	if len(enforcedMatchers(ctx)) == 0 {
 		return nil
 	}
-	queries, ok := payload["queries"].([]map[string]interface{})
+	queries, ok := dsQueryQueries(payload)
 	if !ok {
 		return fmt.Errorf("loki label-matcher enforcement is active but the /api/ds/query payload could not be inspected for its target datasources")
 	}
 	defaultChecked := false
 	checked := make(map[string]bool, len(queries))
 	for _, q := range queries {
-		uid := dsQueryDatasourceUID(q)
+		uid, ok := dsQueryDatasourceUID(q)
+		if !ok {
+			return fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query with a datasource reference that could not be resolved to a type (unrecognised shape or legacy datasourceId)")
+		}
 		if uid == "" || uid == "default" {
-			// No explicit datasource, or the magic "default" UID: resolve it the
-			// way Grafana does (a literal "default" datasource if present, else
-			// the org default) and check that type once.
+			// No explicit datasource, or the magic "default" UID: refuse if any
+			// datasource Grafana might resolve it to is a log datasource. Checked
+			// once per payload.
 			if defaultChecked {
 				continue
 			}
 			defaultChecked = true
-			dsType, err := effectiveDefaultDatasourceType(ctx, uid)
+			isLog, resolvable, err := defaultTargetIsLogDatasource(ctx, uid)
 			if err != nil {
 				return fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query whose default datasource could not be verified: %w", err)
 			}
-			if lokiLikeDatasourceType(dsType) {
-				return fmt.Errorf("loki label-matcher enforcement is active: refusing to query the default log datasource (type %q) via /api/ds/query, which bypasses --loki-enforced-matchers; use the Loki query tools instead", dsType)
+			if !resolvable {
+				return fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query because no default datasource could be resolved to verify its type")
+			}
+			if isLog {
+				return fmt.Errorf("loki label-matcher enforcement is active: refusing to query the default log datasource via /api/ds/query, which bypasses --loki-enforced-matchers; use the Loki query tools instead")
 			}
 			continue
 		}

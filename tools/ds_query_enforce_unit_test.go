@@ -225,6 +225,86 @@ func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
 		require.Error(t, err)
 		assert.False(t, hit)
 	})
+
+	// Maintainer review (sd2k) findings.
+
+	t.Run("magic \"default\": log ORG default refused even when a literal \"default\" DS is non-log", func(t *testing.T) {
+		var hit bool
+		// Inverse of the case above: the literal "default" DS is Prometheus but
+		// the org default is Loki. On any Grafana that resolves "default" to the
+		// org default, the query would reach Loki, so both candidates must be
+		// checked and this refused.
+		dsList := []map[string]interface{}{
+			{"uid": "default", "type": "prometheus", "isDefault": false},
+			{"uid": "lokids", "type": "loki", "isDefault": true},
+		}
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
+		require.Error(t, err)
+		assert.False(t, hit)
+	})
+
+	t.Run("bare-string datasource resolves as a UID and is refused for Loki", func(t *testing.T) {
+		var hit bool
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{"refId": "A", "datasource": "loki-uid", "expr": `{app="secret"}`})
+		_, err = doDSQuery(ctx, client, base, payload)
+		require.Error(t, err)
+		assert.False(t, hit)
+	})
+
+	t.Run("unparseable datasource shape fails closed", func(t *testing.T) {
+		var hit bool
+		srv := dsQueryGuardServer(t, map[string]string{}, nil, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		// datasource object with a non-string uid: present but not understood.
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{"refId": "A", "datasource": map[string]interface{}{"uid": 7}, "expr": `{app="secret"}`})
+		_, err = doDSQuery(ctx, client, base, payload)
+		require.Error(t, err)
+		assert.False(t, hit)
+	})
+
+	t.Run("legacy numeric datasourceId fails closed", func(t *testing.T) {
+		var hit bool
+		srv := dsQueryGuardServer(t, map[string]string{}, nil, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{"refId": "A", "datasourceId": 7, "expr": `{app="secret"}`})
+		_, err = doDSQuery(ctx, client, base, payload)
+		require.Error(t, err)
+		assert.False(t, hit)
+	})
+
+	t.Run("queries as []interface{} are still inspected (Loki refused)", func(t *testing.T) {
+		var hit bool
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &hit)
+		ctx := dsQueryGuardCtx(srv, true)
+		client, base, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		// Envelope built with a []interface{} query list, as a JSON round-trip
+		// would produce.
+		payload := map[string]interface{}{
+			"from": "now-1h", "to": "now",
+			"queries": []interface{}{
+				map[string]interface{}{"refId": "A", "datasource": map[string]interface{}{"uid": "loki-uid"}, "expr": `{app="secret"}`},
+			},
+		}
+		_, err = doDSQuery(ctx, client, base, payload)
+		require.Error(t, err)
+		assert.False(t, hit)
+	})
 }
 
 // noUIDPayload is an /api/ds/query payload whose query names no datasource,
