@@ -28,7 +28,7 @@ jobs:
         run: make build
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@2e3743a1f8abfd3e921e53a7726ec0744c11bb01 # get-vault-secrets/v2.0.1
+        uses: grafana/shared-workflows/actions/get-vault-secrets@3b321a9af994a0b7d8caa3130f3cd9b5cc08fd7a # get-vault-secrets/v2.0.2
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
