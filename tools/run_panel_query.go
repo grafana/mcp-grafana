@@ -2,14 +2,13 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	sqldialect "github.com/grafana/mcp-grafana/tools/sql"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/common/model"
@@ -24,7 +23,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres)"`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Fallback datasource type used only when the datasource cannot be read (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres). When the datasource is readable its real type is used and this is ignored."`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -188,25 +187,38 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		}
 	}
 
-	// If we still need the datasource type, look it up
-	if datasourceType == "" && datasourceUID != "" {
-		ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
-		if err != nil {
-			var forbiddenErr *datasources.GetDataSourceByUIDForbidden
-			var notFoundErr *datasources.GetDataSourceByUIDNotFound
-
-			switch {
-			case errors.As(err, &forbiddenErr):
-				availableDS := getAvailableDatasourceUIDs(ctx, "")
-				return nil, fmt.Errorf("permission denied for datasource '%s'. Hint: Provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, availableDS)
-			case errors.As(err, &notFoundErr):
-				availableDS := getAvailableDatasourceUIDs(ctx, "")
-				return nil, fmt.Errorf("datasource '%s' not found. Available datasources: %v", datasourceUID, availableDS)
-			default:
-				return nil, fmt.Errorf("fetching datasource info: %w", err)
-			}
+	// Resolve the datasource type authoritatively from its UID whenever the
+	// caller overrode the datasource, or when we don't yet have a type. The
+	// datasource's real type — not a caller-supplied one — decides which
+	// executor runs, because the executors are not equivalent: a Loki
+	// datasource routed on a SQL/CloudWatch type would run through
+	// executeSQLPanelQuery / executeCloudWatchPanelQuery, which query
+	// /api/ds/query directly and so bypass the Loki label-matcher enforcement
+	// that is applied only in the native Loki backend (loki_backend.go /
+	// loki_enforce.go). A type declared in the panel JSON (no override) is
+	// trusted as-is: it comes from the dashboard, not the caller.
+	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
+		ds, lookupErr := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
+		switch {
+		case lookupErr == nil:
+			// The datasource's real type wins over any caller-supplied type.
+			datasourceType = ds.Type
+		case datasourceType == "":
+			// Cannot resolve the type and the caller gave nothing to fall back
+			// on.
+			availableDS := getAvailableDatasourceUIDs(ctx, "")
+			return nil, fmt.Errorf("could not resolve datasource '%s' (%v) and no datasourceType was provided. Hint: provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, lookupErr, availableDS)
+		case len(enforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "loki":
+			// The datasource is unreadable, so the caller-supplied type is
+			// unverified. With Loki label-matcher enforcement active, refuse
+			// rather than route a possibly-Loki datasource onto the
+			// /api/ds/query path, which bypasses enforcement. Fails closed,
+			// mirroring the VictoriaLogs guard in lokiBackendForDatasource.
+			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Loki label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Loki via query_loki_logs, or supply an accessible datasource", datasourceUID)
+		default:
+			// Unreadable datasource, but the caller supplied a fallback type and
+			// enforcement (if any) is satisfied; keep the caller-supplied type.
 		}
-		datasourceType = ds.Type
 	}
 
 	// Substitute variables in the query
@@ -227,16 +239,18 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, BigQueryDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.BigQueryDatasourceType)
+	case "mysql":
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MySQLDatasourceType)
 	case "mssql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, MSSQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MSSQLDatasourceType)
 	case "postgres":
 		// PostgreSQL exposes two datasource identifiers (grafana-postgresql-datasource
 		// and the legacy postgres); pass the resolved type through so the datasource
 		// object sent to Grafana matches what the panel actually declared.
 		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, datasourceType)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_sql\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
 	}
 
 	if err != nil {
@@ -581,15 +595,12 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 	return result.Data, nil
 }
 
-// executeClickHouseQuery runs a ClickHouse query using the existing queryClickHouse function
-// NOTE: Do NOT substitute macros here - queryClickHouse() handles them internally
-func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string) (*ClickHouseQueryResult, error) {
-	return queryClickHouse(ctx, ClickHouseQueryParams{
+func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string) (*sqldialect.SQLQueryResult, error) {
+	return querySQLHandler(ctx, sqldialect.QuerySQLParams{
 		DatasourceUID: datasourceUID,
 		Query:         query,
 		Start:         start,
 		End:           end,
-		Variables:     nil, // Variables already substituted by runSinglePanelQuery
 	})
 }
 
@@ -650,19 +661,6 @@ func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *
 	})
 }
 
-// BigQueryDatasourceType is the type identifier for BigQuery datasources.
-const BigQueryDatasourceType = "grafana-bigquery-datasource"
-
-// MSSQLDatasourceType is the type identifier for Microsoft SQL Server datasources.
-const MSSQLDatasourceType = "mssql"
-
-// PostgresDatasourceType is the modern type identifier for PostgreSQL datasources.
-const PostgresDatasourceType = "grafana-postgresql-datasource"
-
-// PostgresLegacyDatasourceType is the legacy identifier that older and provisioned
-// Grafana installations still expose for the same PostgreSQL datasource.
-const PostgresLegacyDatasourceType = "postgres"
-
 // SQLFormatTable is the format value for table/tabular query results on sqlds-based
 // datasources such as BigQuery, whose query model takes a numeric format enum.
 const SQLFormatTable = 1
@@ -674,21 +672,13 @@ const MSSQLFormatTable = "table"
 // defaultSQLFormat returns the table format value understood by the given datasource.
 func defaultSQLFormat(datasourceType string) interface{} {
 	switch normalizeDatasourceType(datasourceType) {
-	case "mssql", "postgres":
-		// MSSQL and PostgreSQL both use Grafana's sqleng backend, whose query model
-		// unmarshals format into a string and errors on a number.
+	case "mssql", "postgres", "mysql":
+		// MSSQL, PostgreSQL, and MySQL use Grafana's sqleng backend, whose query
+		// model unmarshals format into a string and errors on a number.
 		return MSSQLFormatTable
 	default:
 		return SQLFormatTable
 	}
-}
-
-// SQLQueryResult represents the tabular result of a SQL panel query.
-type SQLQueryResult struct {
-	Columns        []string                 `json:"columns"`
-	Rows           []map[string]interface{} `json:"rows"`
-	RowCount       int                      `json:"rowCount"`
-	ProcessedQuery string                   `json:"processedQuery,omitempty"`
 }
 
 // executeSQLPanelQuery runs a panel query against a SQL datasource via Grafana's
@@ -698,7 +688,7 @@ type SQLQueryResult struct {
 // panel's raw target is preserved so datasource-specific fields (BigQuery's location,
 // project and dataset, for example) reach the backend; only rawSql, datasource, refId
 // and format are overridden.
-func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables templateVariableValues, datasourceType string) (*SQLQueryResult, error) {
+func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables templateVariableValues, datasourceType string) (*sqldialect.SQLQueryResult, error) {
 	if panelData == nil || panelData.RawTarget == nil {
 		return nil, fmt.Errorf("SQL panel target not available")
 	}
@@ -744,7 +734,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		return nil, err
 	}
 
-	return &SQLQueryResult{
+	return &sqldialect.SQLQueryResult{
 		Columns:        columns,
 		Rows:           rows,
 		RowCount:       len(rows),
@@ -879,6 +869,12 @@ func normalizeDatasourceType(dsType string) string {
 		return "influxdb"
 	case strings.Contains(lower, "clickhouse"):
 		return "clickhouse"
+	case strings.Contains(lower, "athena"):
+		return "athena"
+	case strings.Contains(lower, "snowflake"):
+		return "snowflake"
+	case lower == "mysql":
+		return "mysql"
 	case lower == "mssql":
 		return "mssql"
 	case lower == "postgres" || lower == "grafana-postgresql-datasource":
@@ -900,11 +896,9 @@ func isEmptyPanelResult(results interface{}) bool {
 		return len(v) == 0
 	case []LogEntry:
 		return len(v) == 0
-	case *ClickHouseQueryResult:
-		return v == nil || len(v.Rows) == 0
 	case *InfluxDBQueryResult:
 		return v == nil || len(v.Rows) == 0
-	case *SQLQueryResult:
+	case *sqldialect.SQLQueryResult:
 		return v == nil || len(v.Rows) == 0
 	case model.Value:
 		switch m := v.(type) {
@@ -938,8 +932,8 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 		)
 	case "clickhouse":
 		hints = append(hints,
-			"- Table may be empty for this time range - use query_clickhouse with a COUNT(*) to verify",
-			"- Column names or WHERE clause may not match - use describe_clickhouse_table to check schema",
+			"- Table may be empty for this time range - use query_sql with a COUNT(*) to verify",
+			"- Column names or WHERE clause may not match - use describe_sql_table to check schema",
 			"- Time filter may not match the actual timestamp column format",
 		)
 	case "cloudwatch":

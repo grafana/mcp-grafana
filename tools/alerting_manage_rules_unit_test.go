@@ -1233,6 +1233,45 @@ func TestFilterSummaryByRuleType(t *testing.T) {
 	})
 }
 
+func TestFilterSummaryByRuleName(t *testing.T) {
+	summaries := []alertRuleSummary{
+		{UID: "r1", Title: "HighNoQuotesRateForT2Chains"},
+		{UID: "r2", Title: "HighNoQuotesRateForT1Chains"},
+		{UID: "r3", Title: "GetQuoteErrorRate5Percent"},
+		{UID: "r4", Title: "GatewayAPINoHeartbeatsSent"},
+	}
+
+	t.Run("exact match", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "HighNoQuotesRateForT2Chains")
+		require.Len(t, filtered, 1)
+		require.Equal(t, "r1", filtered[0].UID)
+	})
+
+	t.Run("partial match", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "NoQuotesRate")
+		require.Len(t, filtered, 2)
+		require.Equal(t, "r1", filtered[0].UID)
+		require.Equal(t, "r2", filtered[1].UID)
+	})
+
+	t.Run("case-insensitive match", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "highnoquotes")
+		require.Len(t, filtered, 2)
+	})
+
+	t.Run("no match returns empty", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "DoesNotExist")
+		require.Empty(t, filtered)
+	})
+
+	t.Run("empty name keeps all", func(t *testing.T) {
+		// Callers guard on empty RuleName before invoking the filter,
+		// but the filter itself must not drop everything on "".
+		filtered := filterSummaryByRuleName(summaries, "")
+		require.Len(t, filtered, 4)
+	})
+}
+
 func TestFindRuleInResponse(t *testing.T) {
 	evalTime := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 

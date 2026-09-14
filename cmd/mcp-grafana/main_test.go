@@ -194,12 +194,12 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "partially gated categories describe what remains when query disabled",
-			enabledTools: "prometheus,loki,clickhouse",
+			enabledTools: "prometheus,loki,sql",
 			disableFlags: map[string]bool{"query": true},
 			wantContains: []string{
 				"Prometheus: Retrieve metric metadata",
 				"Loki: Retrieve log metadata",
-				"ClickHouse: List tables and describe table schemas",
+				"SQL: List tables and describe table schemas",
 				"Query execution is disabled.",
 			},
 			wantNotContains: []string{
@@ -209,11 +209,10 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "raw-SQL categories reflect read-only mode",
-			enabledTools: "clickhouse,influxdb,athena",
+			enabledTools: "sql,influxdb",
 			disableFlags: map[string]bool{"write": true},
 			wantContains: []string{
-				"ClickHouse: List tables and describe table schemas",
-				"Athena: Discover catalogs, databases, tables",
+				"SQL: List tables and describe table schemas",
 				"Query execution is disabled.",
 			},
 			wantNotContains: []string{
@@ -222,12 +221,11 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "raw-SQL categories restored by enable-query",
-			enabledTools: "clickhouse,influxdb,athena",
+			enabledTools: "sql,influxdb",
 			disableFlags: map[string]bool{"write": true, "enableQuery": true},
 			wantContains: []string{
-				"ClickHouse: Query ClickHouse datasources",
+				"SQL: Query supported SQL datasources",
 				"InfluxDB:",
-				"Athena: Query Amazon Athena datasources",
 			},
 			wantNotContains: []string{
 				"Query execution is disabled.",
@@ -323,6 +321,82 @@ func TestAppendInstructions(t *testing.T) {
 		got := appendInstructions(base, "  NOTE  ")
 		assert.Equal(t, base+"\nNOTE\n", got)
 	})
+}
+
+func TestNormalizeEnabledTools(t *testing.T) {
+	tests := []struct {
+		name         string
+		enabledTools string
+		disableSQL   bool
+		wantTools    string
+		wantDisabled bool
+	}{
+		{
+			name:         "clickhouse alias becomes sql",
+			enabledTools: "search,clickhouse",
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "snowflake alias becomes sql",
+			enabledTools: "search,snowflake",
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "athena alias becomes sql",
+			enabledTools: "search,athena",
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "multiple aliases deduplicated",
+			enabledTools: "clickhouse,snowflake,athena",
+			wantTools:    "sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "alias overrides disable-sql",
+			enabledTools: "search,clickhouse",
+			disableSQL:   true,
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "sql without alias preserves disable flag",
+			enabledTools: "search,sql",
+			disableSQL:   true,
+			wantTools:    "search,sql",
+			wantDisabled: true,
+		},
+		{
+			name:         "no aliases no change",
+			enabledTools: "search,prometheus",
+			wantTools:    "search,prometheus",
+			wantDisabled: false,
+		},
+		{
+			name:         "alias coexists with sql",
+			enabledTools: "sql,clickhouse",
+			wantTools:    "sql",
+			wantDisabled: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dt := disabledTools{enabledTools: tc.enabledTools, sql: tc.disableSQL}
+			dt.normalizeEnabledTools()
+			assert.Equal(t, tc.wantTools, dt.enabledTools)
+			assert.Equal(t, tc.wantDisabled, dt.sql, "sql disabled flag")
+		})
+	}
+}
+
+func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
+	dt := disabledTools{enabledTools: "clickhouse"}
+	instructions := dt.buildInstructions()
+	assert.Contains(t, instructions, "SQL: Query supported SQL datasources")
 }
 
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
@@ -1200,9 +1274,7 @@ var safeQueryToolNames = []string{
 // can write when the datasource credentials permit it. Both --disable-query and
 // --disable-write remove them; --enable-query overrides the latter.
 var mutatingQueryToolNames = []string{
-	"query_clickhouse",
-	"query_snowflake",
-	"query_athena",
+	"query_sql",
 	"query_influxdb",
 }
 
@@ -1222,14 +1294,9 @@ var metadataToolNames = []string{
 	// returning log content, so query gating does not apply to them.
 	"query_loki_stats",
 	"analyze_loki_labels",
-	"list_clickhouse_tables",
-	"describe_clickhouse_table",
-	"list_snowflake_tables",
-	"describe_snowflake_table",
-	"list_athena_catalogs",
-	"list_athena_databases",
-	"list_athena_tables",
-	"describe_athena_table",
+	"list_sql_databases",
+	"list_sql_tables",
+	"describe_sql_table",
 	"list_graphite_metrics",
 	"list_graphite_tags",
 	"list_cloudwatch_namespaces",
@@ -1344,6 +1411,70 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	for _, name := range metadataToolNames {
 		assert.True(t, names[name], "%s should survive both flags", name)
 	}
+}
+
+// See issue #744: --disable-write left the Sift read tools (list/get) with
+// nothing to list or get, since the investigation-creation tools were gated
+// by the same flag. --enable-write-tools restores just those two, by name.
+func TestProcessTools_DisableWriteRemovesSiftInvestigationTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true})
+	assert.False(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be gone with --disable-write")
+	assert.False(t, names["find_slow_requests"], "find_slow_requests should be gone with --disable-write")
+	assert.True(t, names["list_sift_investigations"], "read-only sift tools should survive --disable-write")
+	assert.True(t, names["get_sift_investigation"], "read-only sift tools should survive --disable-write")
+	assert.True(t, names["get_sift_analysis"], "read-only sift tools should survive --disable-write")
+}
+
+func TestProcessTools_EnableWriteToolsRestoresSiftInvestigationTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	assert.True(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be restored by --enable-write-tools")
+	assert.True(t, names["find_slow_requests"], "find_slow_requests should be restored by --enable-write-tools")
+	// The override is scoped by name: real write tools stay gone.
+	assert.False(t, names["update_dashboard"], "--enable-write-tools must not re-enable unrelated write tools")
+	assert.False(t, names["create_folder"], "--enable-write-tools must not re-enable unrelated write tools")
+}
+
+// A space after the comma (a natural way to write the flag by hand) must not
+// prevent the match. Exercised directly against writeToolOverridden with a
+// single name, since AddSiftTools ORs both Sift tool names together and
+// would pass even if only one of them matched.
+func TestWriteToolOverridden_TrimsWhitespaceAroundNames(t *testing.T) {
+	dt := &disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs, find_slow_requests"}
+	assert.True(t, dt.writeToolOverridden("find_slow_requests"), "trailing name after a space-separated comma should still match")
+
+	dt = &disabledTools{write: true, writeToolOverrides: " find_error_pattern_logs"}
+	assert.True(t, dt.writeToolOverridden("find_error_pattern_logs"), "leading whitespace before a name should still match")
+}
+
+// AddSiftTools only exposes one bool for both investigation-creation tools,
+// so naming just one of them in --enable-write-tools restores both.
+func TestProcessTools_EnableWriteToolsPartialSiftListRestoresBoth(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs"})
+	assert.True(t, names["find_error_pattern_logs"])
+	assert.True(t, names["find_slow_requests"])
+}
+
+func TestProcessTools_EnableWriteToolsAloneChangesNothing(t *testing.T) {
+	defaults := registerAllCategories(t, disabledTools{})
+	names := registerAllCategories(t, disabledTools{writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	assert.Equal(t, defaults, names, "--enable-write-tools on its own should be a no-op")
+}
+
+func TestProcessTools_DisableSiftBeatsEnableWriteTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{sift: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	assert.False(t, names["find_error_pattern_logs"], "sift should be gone: --disable-sift wins over --enable-write-tools")
+	assert.False(t, names["list_sift_investigations"], "sift should be gone: --disable-sift wins over --enable-write-tools")
+}
+
+// --enable-query is documented as a shorthand for naming the four raw-SQL
+// query tools in --enable-write-tools; this pins that equivalence.
+func TestProcessTools_EnableQueryIsAliasForEnableWriteTools(t *testing.T) {
+	viaEnableQuery := registerAllCategories(t, disabledTools{write: true, enableQuery: true})
+	viaWriteTools := registerAllCategories(t, disabledTools{
+		write:              true,
+		writeToolOverrides: "query_sql,query_influxdb",
+	})
+	assert.Equal(t, viaEnableQuery, viaWriteTools)
 }
 
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {

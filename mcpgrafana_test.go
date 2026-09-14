@@ -2710,3 +2710,42 @@ func TestMeterProviderOrDefault(t *testing.T) {
 
 	assert.Equal(t, otel.GetMeterProvider(), GrafanaConfig{}.MeterProviderOrDefault())
 }
+
+func TestDefaultOrgWarningSuppressedWithDynamicMultiOrg(t *testing.T) {
+	newRequestCtx := func(logger *slog.Logger) (context.Context, *http.Request) {
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{Logger: logger})
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		return ctx, req
+	}
+
+	t.Run("warns without dynamic multi-org", func(t *testing.T) {
+		var buf bytes.Buffer
+		ctx, req := newRequestCtx(slog.New(slog.NewTextHandler(&buf, nil)))
+		ExtractGrafanaClientFromHeaders(ctx, req)
+		assert.Contains(t, buf.String(), "using default org")
+	})
+
+	t.Run("silent with dynamic multi-org", func(t *testing.T) {
+		DynamicMultiOrgEnabled = true
+		t.Cleanup(func() { DynamicMultiOrgEnabled = false })
+
+		var buf bytes.Buffer
+		ctx, req := newRequestCtx(slog.New(slog.NewTextHandler(&buf, nil)))
+		ExtractGrafanaClientFromHeaders(ctx, req)
+		assert.NotContains(t, buf.String(), "using default org")
+	})
+
+	t.Run("silent with dynamic multi-org on the cached path", func(t *testing.T) {
+		DynamicMultiOrgEnabled = true
+		t.Cleanup(func() { DynamicMultiOrgEnabled = false })
+
+		cache := NewClientCache(nil)
+		t.Cleanup(cache.Close)
+
+		var buf bytes.Buffer
+		ctx, req := newRequestCtx(slog.New(slog.NewTextHandler(&buf, nil)))
+		extractGrafanaClientCached(cache)(ctx, req)
+		assert.NotContains(t, buf.String(), "using default org")
+	})
+}
