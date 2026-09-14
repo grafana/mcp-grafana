@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	dsclient "github.com/grafana/gcx/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -659,14 +659,8 @@ type DatasourceHealthResult struct {
 	Message string `json:"message"`
 }
 
-type datasourcesClient struct {
-	httpClient *http.Client
-	baseURL    string
-}
-
-func newDatasourcesClient(ctx context.Context) (*datasourcesClient, error) {
+func newDatasourceHealthClient(ctx context.Context) (*dsclient.Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/") + "/api/datasources"
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
@@ -678,39 +672,21 @@ func newDatasourcesClient(ctx context.Context) (*datasourcesClient, error) {
 	}
 	httpClient := &http.Client{Transport: transport, Timeout: timeout}
 
-	return &datasourcesClient{
-		httpClient: httpClient,
-		baseURL:    baseURL,
-	}, nil
+	return dsclient.NewClient(httpClient, strings.TrimRight(cfg.URL, "/")), nil
 }
 
 func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams) (*DatasourceHealthResult, error) {
-	client, err := newDatasourcesClient(ctx)
+	client, err := newDatasourceHealthClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
 	}
-	endpoint := client.baseURL + "/uid/" + args.UID + "/health"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request %s: %w", args.UID, err)
-	}
 
-	resp, err := client.httpClient.Do(req)
+	health, err := client.Health(ctx, args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("check datasource health %s: HTTP %d: %s", args.UID, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	result := &DatasourceHealthResult{UID: args.UID}
-	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
-	}
-	return result, nil
+	return &DatasourceHealthResult{UID: health.UID, Status: health.Status, Message: health.Message}, nil
 }
 
 type BulkCheckDatasourceHealthParams struct {

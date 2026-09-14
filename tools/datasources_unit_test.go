@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -803,6 +804,34 @@ func TestCheckDatasourceHealth_HTTP200WithErrorStatus(t *testing.T) {
 	assert.Equal(t, "prom-1", result.UID)
 	assert.Equal(t, "ERROR", result.Status)
 	assert.Equal(t, "connection refused", result.Message)
+}
+
+func TestCheckDatasourceHealth_TrimsTrailingSlashFromBaseURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/datasources/uid/prom-1/health", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "ok"})
+	}))
+	defer srv.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL + "/"})
+	result, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: "prom-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "OK", result.Status)
+}
+
+func TestCheckDatasourceHealth_AppliesConfiguredTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK"})
+	}))
+	defer srv.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL, Timeout: 50 * time.Millisecond})
+	_, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: "prom-1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Client.Timeout")
 }
 
 func TestCheckDatasourceHealth_NotFound(t *testing.T) {
