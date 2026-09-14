@@ -25,6 +25,10 @@ func TestGetDashboardByUID_Version(t *testing.T) {
 		assert.Equal(t, float64(1), versionSchema["minimum"])
 	})
 
+	t.Run("describes apiVersion only for current dashboard fetches", func(t *testing.T) {
+		assert.Contains(t, GetDashboardByUID.Tool.Description, "For current (non-versioned) fetches, the response includes 'apiVersion' and 'isV2'")
+	})
+
 	t.Run("omitted version uses the current dashboard API", func(t *testing.T) {
 		var versionsCalled bool
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +136,18 @@ func TestGetDashboardByUID_Version(t *testing.T) {
 
 func TestListDashboardVersions(t *testing.T) {
 	emptyVersionsPayload := map[string]any{"versions": []any{}}
+
+	t.Run("advertises limit and start as positive integers", func(t *testing.T) {
+		var schema map[string]any
+		require.NoError(t, json.Unmarshal(ListDashboardVersions.Tool.RawInputSchema, &schema))
+		properties, ok := schema["properties"].(map[string]any)
+		require.True(t, ok)
+		for _, name := range []string{"limit", "start"} {
+			propertySchema, ok := properties[name].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, float64(1), propertySchema["minimum"])
+		}
+	})
 
 	t.Run("sends uid as path parameter", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +294,18 @@ func TestListDashboardVersions(t *testing.T) {
 		ctx := mockSearchCtx(server)
 		_, err := listDashboardVersions(ctx, ListDashboardVersionsParams{UID: "my-uid", Limit: 0, Start: 0})
 		require.NoError(t, err)
+	})
+}
+
+func TestDashboardVersionData(t *testing.T) {
+	t.Run("returns an already decoded object without rebuilding it", func(t *testing.T) {
+		data := map[string]any{"title": "Original"}
+
+		spec, err := dashboardVersionData(data)
+		require.NoError(t, err)
+		spec["title"] = "Changed"
+
+		assert.Equal(t, "Changed", data["title"])
 	})
 }
 

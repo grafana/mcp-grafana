@@ -29,8 +29,8 @@ type DashboardVersionSummary struct {
 
 type ListDashboardVersionsParams struct {
 	UID   string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
-	Limit int    `json:"limit,omitempty" jsonschema:"description=Maximum number of versions to return"`
-	Start int    `json:"start,omitempty" jsonschema:"description=Version to start from. Only versions at or below this number are returned"`
+	Limit int    `json:"limit,omitempty" jsonschema:"minimum=1,description=Maximum number of versions to return"`
+	Start int    `json:"start,omitempty" jsonschema:"minimum=1,description=Version to start from. Only versions at or below this number are returned"`
 }
 
 func listDashboardVersions(ctx context.Context, args ListDashboardVersionsParams) ([]DashboardVersionSummary, error) {
@@ -131,6 +131,9 @@ func fetchDashboardVersion(ctx context.Context, uid string, version int64) (*Das
 func dashboardVersionData(data models.JSON) (map[string]any, error) {
 	if data == nil {
 		return nil, fmt.Errorf("missing dashboard JSON")
+	}
+	if spec, ok := data.(map[string]any); ok {
+		return spec, nil
 	}
 	b, err := json.Marshal(data)
 	if err != nil {
