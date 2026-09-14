@@ -1590,4 +1590,3 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "a schema type mismatch must surface as a structured tool error")
 }
-
