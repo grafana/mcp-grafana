@@ -24,6 +24,8 @@ import (
 	"github.com/go-openapi/runtime"
 	openapiclient "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
+	irmclient "github.com/grafana/gcx/client/irm"
+	sloclient "github.com/grafana/gcx/client/slo"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
@@ -1388,6 +1390,124 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
+type sloClientKey struct{}
+
+// ExtractSLOClientFromEnv is a StdioContextFunc that creates and injects an SLO client into the context.
+// It configures the client using environment variables and applies any custom TLS settings from the context.
+var ExtractSLOClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	grafanaURL, _ := urlAndAPIKeyFromEnv(logger)
+	if grafanaURL == "" {
+		grafanaURL = defaultGrafanaURL
+	}
+	logger.Debug("Creating SLO client", "url", grafanaURL)
+
+	transport, err := BuildTransport(&config, nil)
+	if err != nil {
+		logger.Error("Failed to create transport for SLO client, using default", "error", err)
+		transport = http.DefaultTransport
+	}
+	client := sloclient.NewClient(&http.Client{Transport: transport}, grafanaURL)
+
+	return context.WithValue(ctx, sloClientKey{}, client)
+}
+
+// ExtractSLOClientFromHeaders is a HTTPContextFunc that creates and injects an SLO client into the context.
+// It uses GRAFANA_URL with request-scoped authentication and organization headers and environment fallbacks.
+var ExtractSLOClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	grafanaURL, _, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+
+	// Use orgID from the request headers rather than config, since
+	// the SLO client may be created with a different org context.
+	config.OrgID = orgID
+	transport, err := BuildTransport(&config, nil)
+	if err != nil {
+		logger.Error("Failed to create transport for SLO client, using default", "error", err)
+		transport = http.DefaultTransport
+	}
+	client := sloclient.NewClient(&http.Client{Transport: transport}, grafanaURL)
+
+	return context.WithValue(ctx, sloClientKey{}, client)
+}
+
+type irmClientKey struct{}
+
+// ExtractIRMClientFromEnv is a StdioContextFunc that creates and injects an IRM incidents client into the context.
+// It configures the client using environment variables and applies any custom TLS settings from the context.
+var ExtractIRMClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	grafanaURL, _ := urlAndAPIKeyFromEnv(logger)
+	if grafanaURL == "" {
+		grafanaURL = defaultGrafanaURL
+	}
+	logger.Debug("Creating IRM client", "url", grafanaURL)
+
+	transport, err := BuildTransport(&config, nil)
+	if err != nil {
+		logger.Error("Failed to create transport for IRM client, using default", "error", err)
+		transport = http.DefaultTransport
+	}
+	client := irmclient.NewIncidentClient(&http.Client{Transport: transport}, grafanaURL)
+
+	return context.WithValue(ctx, irmClientKey{}, client)
+}
+
+// ExtractIRMClientFromHeaders is a HTTPContextFunc that creates and injects an IRM incidents client into the context.
+// It uses GRAFANA_URL with request-scoped authentication and organization headers and environment fallbacks.
+var ExtractIRMClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	grafanaURL, _, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+
+	// Use orgID from the request headers rather than config, since
+	// the IRM client may be created with a different org context.
+	config.OrgID = orgID
+	transport, err := BuildTransport(&config, nil)
+	if err != nil {
+		logger.Error("Failed to create transport for IRM client, using default", "error", err)
+		transport = http.DefaultTransport
+	}
+	client := irmclient.NewIncidentClient(&http.Client{Transport: transport}, grafanaURL)
+
+	return context.WithValue(ctx, irmClientKey{}, client)
+}
+
+// WithIRMClient sets the IRM incidents client in the context.
+// This client is used for reading and creating Grafana IRM incidents.
+func WithIRMClient(ctx context.Context, client *irmclient.IncidentClient) context.Context {
+	return context.WithValue(ctx, irmClientKey{}, client)
+}
+
+// IRMClientFromContext retrieves the IRM incidents client from the context.
+// Returns nil if no client has been set, indicating that IRM features are not available.
+func IRMClientFromContext(ctx context.Context) *irmclient.IncidentClient {
+	c, ok := ctx.Value(irmClientKey{}).(*irmclient.IncidentClient)
+	if !ok {
+		return nil
+	}
+	return c
+}
+
+// WithSLOClient sets the SLO client in the context.
+// This client is used for reading SLO (Service Level Objective) definitions.
+func WithSLOClient(ctx context.Context, client *sloclient.Client) context.Context {
+	return context.WithValue(ctx, sloClientKey{}, client)
+}
+
+// SLOClientFromContext retrieves the SLO client from the context.
+// Returns nil if no client has been set, indicating that SLO features are not available.
+func SLOClientFromContext(ctx context.Context) *sloclient.Client {
+	c, ok := ctx.Value(sloClientKey{}).(*sloclient.Client)
+	if !ok {
+		return nil
+	}
+	return c
+}
+
 // WithIncidentClient sets the Grafana Incident client in the context.
 // This client is used for managing incidents, activities, and other IRM (Incident Response Management) operations.
 func WithIncidentClient(ctx context.Context, client *incident.Client) context.Context {
@@ -1448,6 +1568,8 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 		ExtractGrafanaClientFromEnv,
 		ExtractKubernetesClientFromEnv,
 		ExtractIncidentClientFromEnv,
+		ExtractSLOClientFromEnv,
+		ExtractIRMClientFromEnv,
 	)
 }
 
@@ -1455,7 +1577,7 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 // It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
-	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
+	grafanaExtractor, k8sExtractor, incidentExtractor, sloExtractor, irmExtractor := clientExtractors(cache)
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -1464,6 +1586,8 @@ func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.
 		grafanaExtractor,
 		k8sExtractor,
 		incidentExtractor,
+		sloExtractor,
+		irmExtractor,
 	)
 }
 
@@ -1471,7 +1595,7 @@ func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.
 // It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
-	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
+	grafanaExtractor, k8sExtractor, incidentExtractor, sloExtractor, irmExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -1480,14 +1604,16 @@ func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server
 		grafanaExtractor,
 		k8sExtractor,
 		incidentExtractor,
+		sloExtractor,
+		irmExtractor,
 	)
 }
 
 // clientExtractors returns the appropriate client extraction functions,
 // using cached versions if a cache is provided.
-func clientExtractors(cache []*ClientCache) (grafana, k8s, incident httpContextFunc) {
+func clientExtractors(cache []*ClientCache) (grafana, k8s, incident, slo, irm httpContextFunc) {
 	if len(cache) > 0 && cache[0] != nil {
-		return extractGrafanaClientCached(cache[0]), extractKubernetesClientCached(cache[0]), extractIncidentClientCached(cache[0])
+		return extractGrafanaClientCached(cache[0]), extractKubernetesClientCached(cache[0]), extractIncidentClientCached(cache[0]), extractSLOClientCached(cache[0]), extractIRMClientCached(cache[0])
 	}
-	return ExtractGrafanaClientFromHeaders, ExtractKubernetesClientFromHeaders, ExtractIncidentClientFromHeaders
+	return ExtractGrafanaClientFromHeaders, ExtractKubernetesClientFromHeaders, ExtractIncidentClientFromHeaders, ExtractSLOClientFromHeaders, ExtractIRMClientFromHeaders
 }

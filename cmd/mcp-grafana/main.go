@@ -118,7 +118,7 @@ type disabledTools struct {
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
 	runpanelquery, athena, plugin, api, config, provisioning,
-	agento11y, assistant bool
+	agento11y, assistant, slo bool
 }
 
 // Configuration for the Grafana client.
@@ -179,6 +179,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
 	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
+	flag.BoolVar(&dt.slo, "disable-slo", false, "Disable SLO tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -243,6 +244,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 		{func(mcp *server.MCPServer) { tools.AddAgento11yTools(mcp, enableWriteTools) }, dt.agento11y, "agento11y"},
 		{func(mcp *server.MCPServer) { tools.AddAssistantTools(mcp, enableWriteTools) }, dt.assistant, "assistant"},
+		{tools.AddSLOTools, dt.slo, "slo"},
 	}
 }
 

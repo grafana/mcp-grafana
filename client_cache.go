@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	irmclient "github.com/grafana/gcx/client/irm"
+	sloclient "github.com/grafana/gcx/client/slo"
 	"github.com/grafana/incident-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -109,6 +111,8 @@ var (
 	attrClientTypeGrafana  = attribute.String("client.type", "grafana")
 	attrClientTypeIncident = attribute.String("client.type", "incident")
 	attrClientTypeK8s      = attribute.String("client.type", "kubernetes")
+	attrClientTypeSLO      = attribute.String("client.type", "slo")
+	attrClientTypeIRM      = attribute.String("client.type", "irm")
 )
 
 // ClientCache caches HTTP clients keyed by credentials to avoid creating
@@ -119,10 +123,14 @@ type ClientCache struct {
 	grafanaClients  map[clientCacheKey]*GrafanaClient
 	incidentClients map[clientCacheKey]*incident.Client
 	k8sClients      map[clientCacheKey]*KubernetesClient
+	sloClients      map[clientCacheKey]*sloclient.Client
+	irmClients      map[clientCacheKey]*irmclient.IncidentClient
 	metrics         clientCacheMetrics
 	sfGrafana       singleflight.Group
 	sfIncident      singleflight.Group
 	sfK8s           singleflight.Group
+	sfSLO           singleflight.Group
+	sfIRM           singleflight.Group
 	logger          *slog.Logger
 }
 
@@ -135,6 +143,8 @@ func NewClientCache(logger *slog.Logger) *ClientCache {
 		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
 		incidentClients: make(map[clientCacheKey]*incident.Client),
 		k8sClients:      make(map[clientCacheKey]*KubernetesClient),
+		sloClients:      make(map[clientCacheKey]*sloclient.Client),
+		irmClients:      make(map[clientCacheKey]*irmclient.IncidentClient),
 		metrics:         newClientCacheMetrics(),
 		logger:          logger,
 	}
@@ -280,6 +290,92 @@ func (c *ClientCache) GetOrCreateK8sClient(key clientCacheKey, createFn func() *
 	return val.(*KubernetesClient)
 }
 
+// GetOrCreateSLOClient returns a cached SLO client for the given key,
+// or creates one using createFn if no cached client exists. The createFn
+// is called outside the cache lock via singleflight to avoid blocking
+// concurrent cache reads during slow client creation.
+func (c *ClientCache) GetOrCreateSLOClient(key clientCacheKey, createFn func() *sloclient.Client) *sloclient.Client {
+	ctx := context.Background()
+	typeAttr := metric.WithAttributes(attrClientTypeSLO)
+	c.metrics.lookups.Add(ctx, 1, typeAttr)
+
+	// Fast path: check with read lock
+	c.mu.RLock()
+	if client, ok := c.sloClients[key]; ok {
+		c.mu.RUnlock()
+		c.metrics.hits.Add(ctx, 1, typeAttr)
+		return client
+	}
+	c.mu.RUnlock()
+
+	// Slow path: use singleflight to create outside the lock
+	sfKey := fmt.Sprintf("%v", key)
+	val, _, _ := c.sfSLO.Do(sfKey, func() (any, error) {
+		c.mu.RLock()
+		if client, ok := c.sloClients[key]; ok {
+			c.mu.RUnlock()
+			return client, nil
+		}
+		c.mu.RUnlock()
+
+		client := createFn()
+
+		c.mu.Lock()
+		c.sloClients[key] = client
+		c.metrics.misses.Add(ctx, 1, typeAttr)
+		c.metrics.size.Record(ctx, int64(len(c.sloClients)), typeAttr)
+		c.logger.Debug("Cached new SLO client", "key", key, "cache_size", len(c.sloClients))
+		c.mu.Unlock()
+
+		return client, nil
+	})
+
+	return val.(*sloclient.Client)
+}
+
+// GetOrCreateIRMClient returns a cached IRM incidents client for the given key,
+// or creates one using createFn if no cached client exists. The createFn
+// is called outside the cache lock via singleflight to avoid blocking
+// concurrent cache reads during slow client creation.
+func (c *ClientCache) GetOrCreateIRMClient(key clientCacheKey, createFn func() *irmclient.IncidentClient) *irmclient.IncidentClient {
+	ctx := context.Background()
+	typeAttr := metric.WithAttributes(attrClientTypeIRM)
+	c.metrics.lookups.Add(ctx, 1, typeAttr)
+
+	// Fast path: check with read lock
+	c.mu.RLock()
+	if client, ok := c.irmClients[key]; ok {
+		c.mu.RUnlock()
+		c.metrics.hits.Add(ctx, 1, typeAttr)
+		return client
+	}
+	c.mu.RUnlock()
+
+	// Slow path: use singleflight to create outside the lock
+	sfKey := fmt.Sprintf("%v", key)
+	val, _, _ := c.sfIRM.Do(sfKey, func() (any, error) {
+		c.mu.RLock()
+		if client, ok := c.irmClients[key]; ok {
+			c.mu.RUnlock()
+			return client, nil
+		}
+		c.mu.RUnlock()
+
+		client := createFn()
+
+		c.mu.Lock()
+		c.irmClients[key] = client
+		c.metrics.misses.Add(ctx, 1, typeAttr)
+		c.metrics.size.Record(ctx, int64(len(c.irmClients)), typeAttr)
+		c.logger.Debug("Cached new IRM client", "key", key, "cache_size", len(c.irmClients))
+		c.mu.Unlock()
+
+		return client, nil
+	})
+
+	return val.(*irmclient.IncidentClient)
+}
+
 // Close cleans up cached clients. For incident clients, idle connections
 // are closed via the underlying HTTP transport. Grafana clients use a
 // go-openapi runtime whose transport is set via reflection, so we clear
@@ -300,11 +396,19 @@ func (c *ClientCache) Close() {
 	for key := range c.k8sClients {
 		delete(c.k8sClients, key)
 	}
+	for key := range c.sloClients {
+		delete(c.sloClients, key)
+	}
+	for key := range c.irmClients {
+		delete(c.irmClients, key)
+	}
 
 	ctx := context.Background()
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeGrafana))
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeIncident))
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeK8s))
+	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeSLO))
+	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeIRM))
 	c.logger.Debug("Client cache closed")
 }
 
@@ -372,6 +476,58 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 		})
 
 		return WithIncidentClient(ctx, incidentClient)
+	}
+}
+
+// extractSLOClientCached creates an httpContextFunc that uses the cache.
+func extractSLOClientCached(cache *ClientCache) httpContextFunc {
+	return func(ctx context.Context, req *http.Request) context.Context {
+		config := GrafanaConfigFromContext(ctx)
+		logger := config.LoggerOrDefault()
+
+		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID, req)
+
+		sloClient := cache.GetOrCreateSLOClient(key, func() *sloclient.Client {
+			logger.Debug("Creating new SLO client (cache miss)", "url", grafanaURL)
+
+			config.OrgID = orgID
+			transport, err := BuildTransport(&config, nil)
+			if err != nil {
+				logger.Error("Failed to create transport for SLO client, using default", "error", err)
+				transport = http.DefaultTransport
+			}
+
+			return sloclient.NewClient(&http.Client{Transport: transport}, grafanaURL)
+		})
+
+		return WithSLOClient(ctx, sloClient)
+	}
+}
+
+// extractIRMClientCached creates an httpContextFunc that uses the cache.
+func extractIRMClientCached(cache *ClientCache) httpContextFunc {
+	return func(ctx context.Context, req *http.Request) context.Context {
+		config := GrafanaConfigFromContext(ctx)
+		logger := config.LoggerOrDefault()
+
+		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID, req)
+
+		irmClient := cache.GetOrCreateIRMClient(key, func() *irmclient.IncidentClient {
+			logger.Debug("Creating new IRM client (cache miss)", "url", grafanaURL)
+
+			config.OrgID = orgID
+			transport, err := BuildTransport(&config, nil)
+			if err != nil {
+				logger.Error("Failed to create transport for IRM client, using default", "error", err)
+				transport = http.DefaultTransport
+			}
+
+			return irmclient.NewIncidentClient(&http.Client{Transport: transport}, grafanaURL)
+		})
+
+		return WithIRMClient(ctx, irmClient)
 	}
 }
 
