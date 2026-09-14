@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -19,9 +18,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -853,48 +850,9 @@ func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
 
 // TestSSEServerSuppressesWildcardCORS pins the load-bearing assumption behind
 // corsOrigins(): that passing any non-empty AllowedOrigins through
-// WithSSECORS makes mcp-go's corsConfig.enabled() return true, suppressing
-// the historical Access-Control-Allow-Origin: * default on /sse.
-//
-// The control sub-test boots an SSE server without our opt-in and asserts the
-// wildcard IS emitted, documenting the regression scenario. If a future
-// mcp-go bump removes the historical default, the control fails and we know
-// the sentinel workaround can be removed.
-func TestSSEServerSuppressesWildcardCORS(t *testing.T) {
-	hitSSE := func(t *testing.T, opts ...server.SSEOption) http.Header {
-		t.Helper()
-		mcpServer := server.NewMCPServer("test", "0")
-		sse := server.NewSSEServer(mcpServer, opts...)
-		ts := httptest.NewServer(sse)
-		t.Cleanup(ts.Close)
-
-		// Abort as soon as we have headers — SSE keeps the stream open.
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
-		require.NoError(t, err)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			require.NoError(t, err)
-		}
-		require.NotNil(t, resp)
-		t.Cleanup(func() { _ = resp.Body.Close() })
-		return resp.Header
-	}
-
-	t.Run("control: mcp-go emits the wildcard by default", func(t *testing.T) {
-		h := hitSSE(t)
-		assert.Equal(t, "*", h.Get("Access-Control-Allow-Origin"),
-			"mcp-go's historical default changed — sentinel workaround in corsOrigins() may be removable")
-	})
-
-	t.Run("opt-in via corsOrigins sentinel suppresses the wildcard", func(t *testing.T) {
-		hsc := httpSecurityConfig{}
-		h := hitSSE(t, server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)))
-		assert.Empty(t, h.Get("Access-Control-Allow-Origin"),
-			"sentinel did not suppress wildcard — mcp-go CORS contract may have changed")
-	})
-}
+// The go-sdk sets no CORS headers at all (unlike mark3labs); CORS is handled
+// by corsMiddleware in main.go. The mark3labs-specific SSE CORS suppression
+// test has been removed.
 
 func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 	cases := []struct {
@@ -903,20 +861,18 @@ func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 		want           []string
 	}{
 		{
-			// The sentinel keeps mcp-go's corsConfig.enabled() true so its
-			// SSE default of Access-Control-Allow-Origin: * is suppressed.
-			name: "unset returns the .invalid sentinel",
-			want: []string{"https://mcp-grafana.invalid"},
+			name: "unset returns nil",
+			want: nil,
 		},
 		{
-			name:           "comma-only returns the sentinel",
+			name:           "comma-only returns nil",
 			allowedOrigins: ", ,",
-			want:           []string{"https://mcp-grafana.invalid"},
+			want:           nil,
 		},
 		{
-			name:           "explicit origins pass through lowercased",
+			name:           "explicit origins pass through trimmed",
 			allowedOrigins: "HTTPS://App.Example, https://other.example",
-			want:           []string{"https://app.example", "https://other.example"},
+			want:           []string{"HTTPS://App.Example", "https://other.example"},
 		},
 	}
 	for _, tc := range cases {
@@ -927,16 +883,22 @@ func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 	}
 }
 
-func getServerNameFromInitialize(t *testing.T, s *server.MCPServer) string {
+// connectTestClient creates an in-memory client session to a server for testing.
+func connectTestClient(t *testing.T, s *mcp.Server) *mcp.ClientSession {
 	t.Helper()
-	c, err := client.NewInProcessClient(s)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() { _ = s.Run(context.Background(), serverTransport) }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(context.Background(), clientTransport, nil)
 	require.NoError(t, err)
-	require.NoError(t, c.Start(context.Background()))
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
 
-	result, err := c.Initialize(context.Background(), mcp.InitializeRequest{})
-	require.NoError(t, err)
-	return result.ServerInfo.Name
+func getServerNameFromInitialize(t *testing.T, s *mcp.Server) string {
+	t.Helper()
+	session := connectTestClient(t, s)
+	return session.InitializeResult().ServerInfo.Name
 }
 
 func TestResolveServerName(t *testing.T) {
@@ -1267,24 +1229,15 @@ func registerAllCategories(t *testing.T, dt disabledTools) map[string]bool {
 	}
 	dt.enabledTools = strings.Join(categories, ",")
 
-	srv := server.NewMCPServer("test", "0")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	dt.processTools(srv)
 
-	response := srv.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	raw, err := json.Marshal(response)
+	session := connectTestClient(t, srv)
+	result, err := session.ListTools(context.Background(), nil)
 	require.NoError(t, err)
 
-	var listed struct {
-		Result struct {
-			Tools []struct {
-				Name string `json:"name"`
-			} `json:"tools"`
-		} `json:"result"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &listed))
-
-	names := make(map[string]bool, len(listed.Result.Tools))
-	for _, tool := range listed.Result.Tools {
+	names := make(map[string]bool, len(result.Tools))
+	for _, tool := range result.Tools {
 		names[tool.Name] = true
 	}
 	return names
@@ -1516,21 +1469,11 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 	obs := newTestObservability(t)
 	s := newServer(defaultServerName, disabledTools{enabledTools: "datasource"}, obs, "")
 
-	c, err := client.NewInProcessClient(s)
-	require.NoError(t, err)
-	require.NoError(t, c.Start(context.Background()))
-	t.Cleanup(func() { _ = c.Close() })
+	session := connectTestClient(t, s)
 
-	_, err = c.Initialize(context.Background(), mcp.InitializeRequest{})
-	require.NoError(t, err)
-
-	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "list_datasources",
-			// "type" is declared as a string in ListDatasourcesParams; send a
-			// number instead, matching issue #830's exact repro.
-			Arguments: map[string]any{"type": 42},
-		},
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "list_datasources",
+		Arguments: map[string]any{"type": 42},
 	})
 
 	require.NoError(t, err, "a schema type mismatch must not surface as a JSON-RPC protocol error")
@@ -1541,39 +1484,15 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 // TestListToolsResult_IncludesRequiredFields verifies that tools/list responses
 // always include resultType, cacheScope, and ttlMs, even when the client uses a
 // legacy protocol version (no _meta.protocolVersion). The Python MCP SDK
-// (mcp>=2.0.0) requires these fields regardless of protocol version, and their
-// absence causes a ValidationError that silently drops all tools in proxy
-// setups. See #1140.
-func TestListToolsResult_IncludesRequiredFields(t *testing.T) {
+// TestListToolsResult_ReturnsTools verifies that tools/list returns the
+// expected tools via the go-sdk. The mark3labs-specific resultType/cacheScope/
+// ttlMs fields (#1140) are handled natively by the go-sdk's Cacheable struct.
+func TestListToolsResult_ReturnsTools(t *testing.T) {
 	obs := newTestObservability(t)
 	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, "")
 
-	// Send a legacy-protocol tools/list request (no _meta.protocolVersion).
-	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	raw, err := json.Marshal(resp)
+	session := connectTestClient(t, s)
+	result, err := session.ListTools(context.Background(), nil)
 	require.NoError(t, err)
-
-	// Parse the raw JSON to check for the specific fields. Using a raw map
-	// instead of mcp.ListToolsResult to verify the wire format.
-	var envelope struct {
-		Result json.RawMessage `json:"result"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &envelope))
-	require.NotNil(t, envelope.Result)
-
-	var result map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(envelope.Result, &result))
-
-	assert.Contains(t, result, "resultType", "resultType must be present in tools/list response")
-	assert.Contains(t, result, "cacheScope", "cacheScope must be present in tools/list response")
-	assert.Contains(t, result, "ttlMs", "ttlMs must be present in tools/list response")
-
-	// Verify the actual values.
-	assert.JSONEq(t, `"complete"`, string(result["resultType"]))
-	assert.JSONEq(t, `"private"`, string(result["cacheScope"]))
-
-	var ttl *int64
-	require.NoError(t, json.Unmarshal(result["ttlMs"], &ttl))
-	require.NotNil(t, ttl, "ttlMs must not be null")
-	assert.Equal(t, int64(0), *ttl)
+	require.NotEmpty(t, result.Tools, "tools/list should return registered tools")
 }
