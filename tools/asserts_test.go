@@ -52,8 +52,12 @@ func TestAssertTools(t *testing.T) {
 						},
 					},
 				},
-				"suggestionSrcEntities": []interface{}{},
-				"alertCategories":       []interface{}{"saturation", "amend", "anomaly", "failure", "error"},
+				"suggestionSrcEntities":                         []interface{}{},
+				"alertCategories":                               []interface{}{"saturation", "amend", "anomaly", "failure", "error"},
+				"hideAssertionsOlderThanNHours":                 float64(0),
+				"hideAssertionsPresentMoreThanPercentageOfTime": float64(0),
+				"includeSuggestions":                            false,
+				"includeRcaPatterns":                            false,
 			}
 			require.Equal(t, expectedBody, requestBody)
 
@@ -75,7 +79,7 @@ func TestAssertTools(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)
-		assert.Equal(t, `{"summary": "test summary"}`, result)
+		assert.JSONEq(t, `{"summary": "test summary"}`, result)
 	})
 
 	t.Run("get assertions with no site and namespace", func(t *testing.T) {
@@ -101,8 +105,12 @@ func TestAssertTools(t *testing.T) {
 						},
 					},
 				},
-				"suggestionSrcEntities": []interface{}{},
-				"alertCategories":       []interface{}{"saturation", "amend", "anomaly", "failure", "error"},
+				"suggestionSrcEntities":                         []interface{}{},
+				"alertCategories":                               []interface{}{"saturation", "amend", "anomaly", "failure", "error"},
+				"hideAssertionsOlderThanNHours":                 float64(0),
+				"hideAssertionsPresentMoreThanPercentageOfTime": float64(0),
+				"includeSuggestions":                            false,
+				"includeRcaPatterns":                            false,
 			}
 			require.Equal(t, expectedBody, requestBody)
 
@@ -122,7 +130,52 @@ func TestAssertTools(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)
-		assert.Equal(t, `{"summary": "test summary"}`, result)
+		assert.JSONEq(t, `{"summary": "test summary"}`, result)
+	})
+
+	t.Run("get assertions with no scope omits the scope key", func(t *testing.T) {
+		startTime := time.Date(2025, 4, 23, 10, 0, 0, 0, time.UTC)
+		endTime := time.Date(2025, 4, 23, 11, 0, 0, 0, time.UTC)
+		server, ctx := setupMockAssertsServer(func(w http.ResponseWriter, r *http.Request) {
+			var requestBody map[string]interface{}
+			err := json.NewDecoder(r.Body).Decode(&requestBody)
+			require.NoError(t, err)
+
+			assert.Equal(t, []interface{}{
+				map[string]interface{}{"type": "Service", "name": "mongodb"},
+			}, requestBody["entityKeys"])
+
+			w.Header().Set("Content-Type", "application/json")
+			_, err = w.Write([]byte(`{"summary": "test summary"}`))
+			require.NoError(t, err)
+		})
+		defer server.Close()
+
+		result, err := getAssertions(ctx, GetAssertionsParams{
+			StartTime:  startTime.Format(time.RFC3339),
+			EndTime:    endTime.Format(time.RFC3339),
+			EntityType: "Service",
+			EntityName: "mongodb",
+		})
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"summary": "test summary"}`, result)
+	})
+
+	t.Run("get assertions propagates server errors", func(t *testing.T) {
+		server, ctx := setupMockAssertsServer(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+		})
+		defer server.Close()
+
+		_, err := getAssertions(ctx, GetAssertionsParams{
+			StartTime:  "2025-04-23T10:00:00Z",
+			EndTime:    "2025-04-23T11:00:00Z",
+			EntityType: "Service",
+			EntityName: "mongodb",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to fetch data")
 	})
 
 	t.Run("get assertions with invalid start time", func(t *testing.T) {

@@ -1,34 +1,26 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
+	kgclient "github.com/grafana/gcx/client/kg"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
-func newAssertsClient(ctx context.Context) (*Client, error) {
+func newAssertsClient(ctx context.Context) (*kgclient.Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", cfg.URL)
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	client := &http.Client{
-		Transport: transport,
-	}
-
-	return &Client{
-		httpClient: client,
-		baseURL:    url,
-	}, nil
+	return kgclient.NewClient(&http.Client{Transport: transport}, cfg.URL), nil
 }
 
 type GetAssertionsParams struct {
@@ -39,58 +31,6 @@ type GetAssertionsParams struct {
 	Env        string `json:"env,omitempty" jsonschema:"description=The env of the entity to list"`
 	Site       string `json:"site,omitempty" jsonschema:"description=The site of the entity to list"`
 	Namespace  string `json:"namespace,omitempty" jsonschema:"description=The namespace of the entity to list"`
-}
-
-type scope struct {
-	Env       string `json:"env,omitempty"`
-	Site      string `json:"site,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-}
-
-type entity struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Scope scope  `json:"scope"`
-}
-
-type requestBody struct {
-	StartTime             int64    `json:"startTime"`
-	EndTime               int64    `json:"endTime"`
-	EntityKeys            []entity `json:"entityKeys"`
-	SuggestionSrcEntities []entity `json:"suggestionSrcEntities"`
-	AlertCategories       []string `json:"alertCategories"`
-}
-
-func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method string, reqBody any) (string, error) {
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request body: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+urlPath, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck
-	}()
-
-	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return string(body), nil
 }
 
 func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error) {
@@ -108,37 +48,40 @@ func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	// Create request body
-	reqBody := requestBody{
+	entityScope := map[string]any{}
+	if args.Env != "" {
+		entityScope["env"] = args.Env
+	}
+	if args.Site != "" {
+		entityScope["site"] = args.Site
+	}
+	if args.Namespace != "" {
+		entityScope["namespace"] = args.Namespace
+	}
+
+	summary, err := client.LLMSummary(ctx, kgclient.LLMSummaryRequest{
 		StartTime: startTime.UnixMilli(),
 		EndTime:   endTime.UnixMilli(),
-		EntityKeys: []entity{
+		EntityKeys: []kgclient.EntityKey{
 			{
 				Name:  args.EntityName,
 				Type:  args.EntityType,
-				Scope: scope{},
+				Scope: entityScope,
 			},
 		},
-		SuggestionSrcEntities: []entity{},
+		SuggestionSrcEntities: []kgclient.EntityKey{},
 		AlertCategories:       []string{"saturation", "amend", "anomaly", "failure", "error"},
-	}
-
-	if args.Env != "" {
-		reqBody.EntityKeys[0].Scope.Env = args.Env
-	}
-	if args.Site != "" {
-		reqBody.EntityKeys[0].Scope.Site = args.Site
-	}
-	if args.Namespace != "" {
-		reqBody.EntityKeys[0].Scope.Namespace = args.Namespace
-	}
-
-	data, err := client.fetchAssertsData(ctx, "/v1/assertions/llm-summary", "POST", reqBody)
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch data: %w", err)
 	}
 
-	return data, nil
+	data, err := json.Marshal(summary)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response body: %w", err)
+	}
+
+	return string(data), nil
 }
 
 var GetAssertions = mcpgrafana.MustTool(
