@@ -82,7 +82,7 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	// handled by the OnCall library (API key passed above), so we skip it.
 	transportInstalled := false
 	clientValue := reflect.ValueOf(client)
-	if clientValue.Kind() == reflect.Ptr && !clientValue.IsNil() {
+	if clientValue.Kind() == reflect.Pointer && !clientValue.IsNil() {
 		clientValue = clientValue.Elem()
 		if clientValue.Kind() == reflect.Struct {
 			httpClientField := clientValue.FieldByName("HTTPClient")

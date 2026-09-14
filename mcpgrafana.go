@@ -1431,7 +1431,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	// know about) via the AuthRoundTripper.
 	transportInstalled := false
 	v := reflect.ValueOf(grafanaClient.Transport)
-	if v.Kind() == reflect.Ptr && !v.IsNil() {
+	if v.Kind() == reflect.Pointer && !v.IsNil() {
 		v = v.Elem()
 		if v.Kind() == reflect.Struct {
 			transportField := v.FieldByName("Transport")
