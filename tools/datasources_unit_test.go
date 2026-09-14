@@ -16,7 +16,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -316,7 +316,7 @@ func TestCreateDatasource_NoSchemaGuidancePhase(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
-	text, ok := result.Content[0].(mcp.TextContent)
+	text, ok := result.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 
 	var guidance map[string]any
@@ -345,7 +345,7 @@ func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
-	text, ok := result.Content[0].(mcp.TextContent)
+	text, ok := result.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 
 	var guidance map[string]any
@@ -373,7 +373,7 @@ func TestCreateDatasource_EmptyFieldsMapStaysInGuidancePhase(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
-	text, ok := result.Content[0].(mcp.TextContent)
+	text, ok := result.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 
 	var guidance map[string]any
@@ -437,7 +437,7 @@ func TestCreateDatasource_SchemaReviewedWithoutNameReturnsGuidance(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
-	text, ok := result.Content[0].(mcp.TextContent)
+	text, ok := result.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 
 	var guidance map[string]any
@@ -532,7 +532,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.False(t, toolResult.IsError)
 	require.Len(t, toolResult.Content, 2)
 
-	text, ok := toolResult.Content[0].(mcp.TextContent)
+	text, ok := toolResult.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 
 	var got CreateDatasourceResult
@@ -548,9 +548,8 @@ func TestCreateDatasource_Success(t *testing.T) {
 	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
 	assert.Contains(t, got.NextSteps, configPageURL)
 
-	link, ok := toolResult.Content[1].(mcp.ResourceLink)
+	link, ok := toolResult.Content[1].(*mcp.ResourceLink)
 	require.True(t, ok)
-	assert.Equal(t, "resource_link", link.Type)
 	assert.Equal(t, configPageURL, link.URI)
 	assert.Equal(t, name, link.Name)
 }
@@ -593,7 +592,7 @@ func parseUpdateResult(t *testing.T, res *mcp.CallToolResult) UpdateDatasourceRe
 	t.Helper()
 	require.NotNil(t, res)
 	require.Len(t, res.Content, 1)
-	text, ok := res.Content[0].(mcp.TextContent)
+	text, ok := res.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 	var r UpdateDatasourceResult
 	require.NoError(t, json.Unmarshal([]byte(text.Text), &r))
@@ -641,7 +640,7 @@ func TestUpdateDatasource_SchemaGuidancePhase(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
-	text, ok := result.Content[0].(mcp.TextContent)
+	text, ok := result.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 
 	var guidance map[string]any
@@ -670,7 +669,7 @@ func TestUpdateDatasource_NoSchemaGuidancePhase(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
-	text, ok := result.Content[0].(mcp.TextContent)
+	text, ok := result.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
 
 	var guidance map[string]any

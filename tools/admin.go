@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/access_control"
 	"github.com/grafana/grafana-openapi-client-go/client/org"
@@ -35,11 +34,11 @@ var ListTeams = mcpgrafana.MustTool(
 	"list_teams",
 	"Search for Grafana teams by a query string. Returns a list of matching teams with details like name, ID, and URL.",
 	listTeams,
-	mcp.WithTitleAnnotation("List teams"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List teams"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListUsersByOrgParams struct{}
@@ -59,11 +58,11 @@ var ListUsersByOrg = mcpgrafana.MustTool(
 	"list_users_by_org",
 	"List users in the Grafana organization. Returns a list of organization users with details like userid, email, role etc.",
 	listUsersByOrg,
-	mcp.WithTitleAnnotation("List users by org"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List users by org"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAllRolesParams struct {
@@ -90,11 +89,11 @@ var ListAllRoles = mcpgrafana.MustTool(
 	"list_all_roles",
 	"List all roles in Grafana. Optionally filter to show only roles that can be delegated by the current user. Returns role details including UID, name, permissions, and metadata.",
 	listAllRoles,
-	mcp.WithTitleAnnotation("List all roles"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List all roles"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type GetRoleDetailsParams struct {
@@ -116,11 +115,11 @@ var GetRoleDetails = mcpgrafana.MustTool(
 	"get_role_details",
 	"Get detailed information about a specific Grafana role by its UID, including permissions, metadata, and configuration.",
 	getRoleDetails,
-	mcp.WithTitleAnnotation("Get role details"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get role details"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type GetRoleAssignmentsParams struct {
@@ -142,11 +141,11 @@ var GetRoleAssignments = mcpgrafana.MustTool(
 	"get_role_assignments",
 	"List all assignments for a specific role, showing which users, teams, and service accounts have been assigned this role.",
 	getRoleAssignments,
-	mcp.WithTitleAnnotation("Get role assignments"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get role assignments"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListUserRolesParams struct {
@@ -169,11 +168,11 @@ var ListUserRoles = mcpgrafana.MustTool(
 	"list_user_roles",
 	"List all roles assigned to one or more users. Returns a map of user IDs to their assigned roles, excluding built-in roles and team-inherited roles.",
 	listUserRoles,
-	mcp.WithTitleAnnotation("List user roles"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List user roles"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListTeamRolesParams struct {
@@ -196,11 +195,11 @@ var ListTeamRoles = mcpgrafana.MustTool(
 	"list_team_roles",
 	"List all roles assigned to one or more teams. Returns a map of team IDs to their assigned roles.",
 	listTeamRoles,
-	mcp.WithTitleAnnotation("List team roles"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List team roles"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type GetResourcePermissionsParams struct {
@@ -223,11 +222,11 @@ var GetResourcePermissions = mcpgrafana.MustTool(
 	"get_resource_permissions",
 	"List all permissions set on a specific Grafana resource (e.g., dashboard, datasource, folder) by its type and ID.",
 	getResourcePermissions,
-	mcp.WithTitleAnnotation("Get resource permissions"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get resource permissions"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type GetResourceDescriptionParams struct {
@@ -252,21 +251,21 @@ var GetResourceDescription = mcpgrafana.MustTool(
 	"get_resource_description",
 	"List available permissions and assignment capabilities for a Grafana resource type.",
 	getResourceDescription,
-	mcp.WithTitleAnnotation("Get resource description"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get resource description"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddAdminTools(mcp *server.MCPServer) {
-	ListTeams.Register(mcp)
-	ListUsersByOrg.Register(mcp)
-	ListAllRoles.Register(mcp)
-	GetRoleDetails.Register(mcp)
-	GetRoleAssignments.Register(mcp)
-	ListUserRoles.Register(mcp)
-	ListTeamRoles.Register(mcp)
-	GetResourcePermissions.Register(mcp)
-	GetResourceDescription.Register(mcp)
+func AddAdminTools(s *mcp.Server) {
+	ListTeams.Register(s)
+	ListUsersByOrg.Register(s)
+	ListAllRoles.Register(s)
+	GetRoleDetails.Register(s)
+	GetRoleAssignments.Register(s)
+	ListUserRoles.Register(s)
+	ListTeamRoles.Register(s)
+	GetResourcePermissions.Register(s)
+	GetResourceDescription.Register(s)
 }

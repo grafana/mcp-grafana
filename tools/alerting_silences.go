@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-openapi/strfmt"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/prometheus/alertmanager/api/v2/models"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -431,11 +430,11 @@ var ManageSilencesRead = mcpgrafana.MustTool(
 	"alerting_manage_silences",
 	manageSilencesReadDescription,
 	manageSilencesRead,
-	mcp.WithTitleAnnotation("Manage alerting silences"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage alerting silences"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ManageSilencesReadWrite is the write-capable variant (create/update/delete
@@ -444,8 +443,8 @@ var ManageSilencesReadWrite = mcpgrafana.MustTool(
 	"alerting_manage_silences",
 	manageSilencesDescription,
 	manageSilencesReadWrite,
-	mcp.WithTitleAnnotation("Manage alerting silences"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage alerting silences"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )

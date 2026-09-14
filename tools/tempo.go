@@ -10,8 +10,7 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -230,7 +229,7 @@ type ListTempoAttributeValuesParams struct {
 func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	params := url.Values{}
@@ -239,21 +238,21 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 	if args.Start != "" {
 		epoch, err := tempoParseStartToEpochSeconds(args.Start)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
+			return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
 		epoch, err := tempoParseEndToEpochSeconds(args.End)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
+			return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
 		params.Set("end", epoch)
 	}
 
 	body, err := backend.doGet(ctx, "/api/search", params)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	return tempoToolResult(body, "search-results", "json"), nil
@@ -262,7 +261,7 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	params := url.Values{}
@@ -271,14 +270,14 @@ func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.
 	if args.Start != "" {
 		epoch, err := tempoParseStartToEpochNanos(args.Start)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
+			return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid start time: %v", err)), nil
 		}
 		params.Set("start", epoch)
 	}
 	if args.End != "" {
 		epoch, err := tempoParseEndToEpochNanos(args.End)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
+			return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid end time: %v", err)), nil
 		}
 		params.Set("end", epoch)
 	}
@@ -298,12 +297,12 @@ func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.
 		endpoint = "/api/metrics/query_range"
 		resultType = "metrics-range"
 	default:
-		return mcp.NewToolResultError(fmt.Sprintf("invalid type %q: must be 'instant' or 'range'", queryType)), nil
+		return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid type %q: must be 'instant' or 'range'", queryType)), nil
 	}
 
 	body, err := backend.doGet(ctx, endpoint, params)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	return tempoToolResult(body, resultType, "json"), nil
@@ -312,12 +311,12 @@ func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.
 func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	body, err := backend.doGetWithAccept(ctx, "/api/v2/traces/"+url.PathEscape(args.TraceID), nil, tempoAcceptLLM+", application/json")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	return tempoToolResult(body, "trace", "json"), nil
@@ -338,7 +337,7 @@ type traceDiffTraceRequest struct {
 func diffTempoTraces(ctx context.Context, args DiffTempoTracesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	format := args.Format
@@ -348,11 +347,11 @@ func diffTempoTraces(ctx context.Context, args DiffTempoTracesParams) (*mcp.Call
 
 	baseStart, baseEnd, err := parseOptionalTimeRange(args.BaseStart, args.BaseEnd, "base_start", "base_end")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 	compareStart, compareEnd, err := parseOptionalTimeRange(args.CompareStart, args.CompareEnd, "compare_start", "compare_end")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	diffReq := traceDiffAPIRequest{
@@ -371,7 +370,7 @@ func diffTempoTraces(ctx context.Context, args DiffTempoTracesParams) (*mcp.Call
 
 	body, err := backend.doPost(ctx, "/api/v2/traces/diff", diffReq)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	return tempoToolResult(body, "trace-diff", "json"), nil
@@ -406,7 +405,7 @@ const tempoAttributeNamesSummaryThreshold = 32_000
 func listTempoAttributeNames(ctx context.Context, args ListTempoAttributeNamesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	params := url.Values{}
@@ -416,7 +415,7 @@ func listTempoAttributeNames(ctx context.Context, args ListTempoAttributeNamesPa
 
 	body, err := backend.doGet(ctx, "/api/v2/search/tags", params)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	if args.Scope == "" && len(body) > tempoAttributeNamesSummaryThreshold {
@@ -454,7 +453,7 @@ func summarizeTempoAttributeNames(body string) (string, bool) {
 func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValuesParams) (*mcp.CallToolResult, error) {
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	params := url.Values{}
@@ -464,18 +463,18 @@ func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValues
 
 	body, err := backend.doGet(ctx, "/api/v2/search/tag/"+url.PathEscape(args.Name)+"/values", params)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	return tempoToolResult(body, "attribute-values", "json"), nil
 }
 
 func tempoToolResult(body string, contentType string, encoding string) *mcp.CallToolResult {
-	res := mcp.NewToolResultText(body)
-	res.Meta = &mcp.Meta{AdditionalFields: map[string]any{
+	res := mcpgrafana.NewToolResultText(body)
+	res.Meta = mcp.Meta{
 		"type":     contentType,
 		"encoding": encoding,
-	}}
+	}
 	return res
 }
 
@@ -485,67 +484,61 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 	"search_tempo_traces",
 	"Search for traces using TraceQL queries",
 	searchTempoTraces,
-	mcp.WithTitleAnnotation("Search Tempo traces"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
+	mcpgrafana.WithTitleAnnotation("Search Tempo traces"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false))
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
 	"Compute trace-derived metrics using a TraceQL metrics query. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
 	queryTempoMetrics,
-	mcp.WithTitleAnnotation("Query Tempo metrics"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
+	mcpgrafana.WithTitleAnnotation("Query Tempo metrics"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false))
 
 var GetTempoTraceTool = mcpgrafana.MustTool(
 	"get_tempo_trace",
 	"Retrieve a specific trace by ID",
 	getTempoTrace,
-	mcp.WithTitleAnnotation("Get Tempo trace"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
+	mcpgrafana.WithTitleAnnotation("Get Tempo trace"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false))
 
 var DiffTempoTracesTool = mcpgrafana.MustTool(
 	"diff_tempo_traces",
 	"Compare two complete traces. Returns a compact summary and includes the full span-level patch when it is at most 64 KiB. Request trace-patch-v0 only when full details are required; full patches are not size-bounded.",
 	diffTempoTraces,
-	mcp.WithTitleAnnotation("Diff Tempo traces"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
+	mcpgrafana.WithTitleAnnotation("Diff Tempo traces"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false))
 
 var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_names",
 	"List available attribute names for TraceQL queries. Always pass a scope (resource, span, etc.) to avoid very large responses.",
 	listTempoAttributeNames,
-	mcp.WithTitleAnnotation("List Tempo attribute names"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
+	mcpgrafana.WithTitleAnnotation("List Tempo attribute names"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false))
 
 var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_values",
 	"List values for a fully scoped attribute name (e.g. resource.service.name). Useful for discovering what values exist for a specific attribute.",
 	listTempoAttributeValues,
-	mcp.WithTitleAnnotation("List Tempo attribute values"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
+	mcpgrafana.WithTitleAnnotation("List Tempo attribute values"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false))
 
 // AddTempoTools registers all Tempo tools on the MCP server. Tools call
 // Tempo's REST API through the Grafana datasource proxy.
@@ -553,7 +546,7 @@ var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
 // Doc tools (docs-traceql, docs-config) are not included here because they
 // serve embedded markdown content that lives inside the Tempo binary. They
 // can be added once Tempo publishes a shared tools library.
-func AddTempoTools(s *server.MCPServer, enableQueryTools bool) {
+func AddTempoTools(s *mcp.Server, enableQueryTools bool) {
 	if !enableQueryTools {
 		return
 	}
