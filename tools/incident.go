@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
+	irmclient "github.com/grafana/gcx/client/irm"
 	"github.com/grafana/incident-go"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -32,26 +34,36 @@ type ListIncidentsResult struct {
 	HasMore   bool                     `json:"hasMore"`
 }
 
-func summarizeIncidentPreviews(previews []incident.IncidentPreview) []incidentPreviewSummary {
-	result := make([]incidentPreviewSummary, 0, len(previews))
-	for _, p := range previews {
+func formatIncidentTime(t irmclient.FlexTime) string {
+	ts := time.Time(t)
+	if ts.IsZero() {
+		return ""
+	}
+	return ts.Format(time.RFC3339)
+}
+
+func summarizeIncidents(incidents []irmclient.Incident) []incidentPreviewSummary {
+	result := make([]incidentPreviewSummary, 0, len(incidents))
+	for _, i := range incidents {
 		result = append(result, incidentPreviewSummary{
-			IncidentID:    p.IncidentID,
-			Title:         p.Title,
-			Status:        p.Status,
-			Severity:      p.SeverityLabel,
-			CreatedTime:   p.CreatedTime,
-			ModifiedTime:  p.ModifiedTime,
-			IncidentStart: p.IncidentStart,
-			IsDrill:       p.IsDrill,
+			IncidentID:    i.IncidentID,
+			Title:         i.Title,
+			Status:        i.Status,
+			Severity:      i.Severity,
+			CreatedTime:   formatIncidentTime(i.CreatedTime),
+			ModifiedTime:  formatIncidentTime(i.ModifiedTime),
+			IncidentStart: formatIncidentTime(i.IncidentStart),
+			IsDrill:       i.IsDrill,
 		})
 	}
 	return result
 }
 
 func listIncidents(ctx context.Context, args ListIncidentsParams) (*ListIncidentsResult, error) {
-	c := mcpgrafana.IncidentClientFromContext(ctx)
-	is := incident.NewIncidentsService(c)
+	c := mcpgrafana.IRMClientFromContext(ctx)
+	if c == nil {
+		return nil, fmt.Errorf("list incidents: no IRM client configured")
+	}
 
 	// Set default limit to 10 if not specified
 	limit := args.Limit
@@ -66,19 +78,26 @@ func listIncidents(ctx context.Context, args ListIncidentsParams) (*ListIncident
 	if args.Status != "" {
 		query += fmt.Sprintf(" status:%s", args.Status)
 	}
-	incidents, err := is.QueryIncidentPreviews(ctx, incident.QueryIncidentPreviewsRequest{
-		Query: incident.IncidentPreviewsQuery{
-			QueryString:    query,
-			OrderDirection: "DESC",
-			Limit:          limit,
-		},
+
+	// client/irm.List surfaces no response cursor, so hasMore is derived by
+	// asking for one incident more than the caller wants.
+	incidents, err := c.List(ctx, irmclient.IncidentQuery{
+		QueryString:    query,
+		OrderDirection: "DESC",
+		Limit:          limit + 1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list incidents: %w", err)
 	}
+
+	hasMore := len(incidents) > limit
+	if hasMore {
+		incidents = incidents[:limit]
+	}
+
 	return &ListIncidentsResult{
-		Incidents: summarizeIncidentPreviews(incidents.IncidentPreviews),
-		HasMore:   incidents.Cursor.HasMore,
+		Incidents: summarizeIncidents(incidents),
+		HasMore:   hasMore,
 	}, nil
 }
 

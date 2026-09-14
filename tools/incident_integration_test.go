@@ -23,7 +23,7 @@ import (
 func TestCloudIncidentTools(t *testing.T) {
 	t.Run("list incidents", func(t *testing.T) {
 		ctx := createCloudTestContext(t, "Incident", "GRAFANA_URL", "GRAFANA_API_KEY")
-		ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
+		ctx = mcpgrafana.ExtractIRMClientFromEnv(ctx)
 
 		result, err := listIncidents(ctx, ListIncidentsParams{
 			Limit: 1,
