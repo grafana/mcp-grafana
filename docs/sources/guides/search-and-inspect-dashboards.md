@@ -37,6 +37,10 @@ When you need an overview of a dashboard without the full JSON, ask for a **dash
 
 When you only need certain parts of a dashboard (for example, one panel’s config), ask the assistant to use **get_dashboard_property** with a JSONPath expression (for example, `$.panels[0].title`). That fetches only the requested data and avoids loading the full dashboard.
 
+## Inspect a previous dashboard version
+
+To see how a dashboard looked at a previous save, first list its versions. The server returns compact metadata only (version number, author, timestamp, and save message), not the full JSON. Then ask for the dashboard by UID with that version number. Omitting `version` still returns the current dashboard.
+
 ## Next steps
 
 - [Generate deeplinks to Grafana](../generate-deeplinks-to-grafana/) to get shareable links to dashboards and panels.

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional `version` on `get_dashboard_by_uid` to fetch a saved snapshot via Grafana's dashboard versions API. New `list_dashboard_versions` tool returns compact version metadata (version, author, timestamp, message) ([#1158](https://github.com/grafana/mcp-grafana/pull/1158))
 - `labelSelector` parameter on the Sift tools (`find_error_pattern_logs`, `find_slow_requests`), accepting PromQL/LogQL stream selector syntax so investigations can be scoped with regex and negative matchers (e.g. `{namespace=~"prod.*", cluster="us-east-1"}`) rather than exact label equality only. **Breaking:** this replaces the previous required `labels` map parameter on those tools ([#1165](https://github.com/grafana/mcp-grafana/pull/1165))
 
 ### Fixed
