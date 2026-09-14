@@ -10,6 +10,7 @@ services:
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
       GF_RENDERING_RENDERER_TOKEN: integration-test-renderer-token
+      GF_PROVISIONING_ALLOWED_GIT_URLS: "http://gitserver/**"
     ports:
       - 3000:3000/tcp
     volumes:
@@ -223,7 +224,7 @@ services:
     ports:
       - "7280:7280"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:7280/health/livez || curl -sf http://localhost:7280/api/v1/version"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/7280 && echo -e \"GET /health/livez HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q true <&3'"]
       interval: 10s
       timeout: 5s
       retries: 15
