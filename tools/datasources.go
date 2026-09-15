@@ -72,6 +72,49 @@ type ListDatasourcesResult struct {
 	HasMore     bool                `json:"hasMore"` // Whether more results exist
 }
 
+// allDatasources returns the full datasource list, not the paginated
+// listDatasources view (which caps results), reusing the same frontend-settings
+// fallback for tokens that cannot read the datasources API.
+func allDatasources(ctx context.Context) (models.DataSourceList, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	if resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	); err == nil {
+		return resp.Payload, nil
+	} else if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
+		return fb, nil
+	} else {
+		return nil, fmt.Errorf("list datasources: %w", err)
+	}
+}
+
+// defaultTargetIsLogDatasource reports whether an /api/ds/query query that
+// resolves against the default (uid == "" or the magic "default" UID) could
+// reach a log datasource. Grafana may resolve such a query to more than one
+// datasource depending on version — a datasource whose literal UID is "default"
+// (Grafana >= 13 treats "default" as a real UID) and the org default (older
+// Grafana, or an absent datasource) — so every candidate is checked and the
+// result is true if ANY is a log datasource. resolvable is false when no
+// candidate datasource exists, so the caller can fail closed rather than assume
+// the query is harmless.
+func defaultTargetIsLogDatasource(ctx context.Context, uid string) (isLog bool, resolvable bool, err error) {
+	list, err := allDatasources(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	for _, ds := range list {
+		candidate := ds.IsDefault || (uid == "default" && ds.UID == "default")
+		if !candidate {
+			continue
+		}
+		resolvable = true
+		if lokiLikeDatasourceType(ds.Type) {
+			return true, true, nil
+		}
+	}
+	return false, resolvable, nil
+}
+
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	var list models.DataSourceList
