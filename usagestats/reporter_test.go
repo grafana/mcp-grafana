@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -469,4 +470,67 @@ func TestEmptyToolCallsOmittedOnEveryFlush(t *testing.T) {
 	assert.Contains(t, c.rawBodies()[0], "search_dashboards")
 	assert.NotContains(t, c.rawBodies()[1], "tool_calls")
 	assert.NotContains(t, c.rawBodies()[1], "tools_called")
+}
+
+// TestGrafanaVersionIsLengthCapped: the instance's reported version is as much
+// outside this binary's control as the client's, and forks set it freely.
+func TestGrafanaVersionIsLengthCapped(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:     ModeEnabled,
+		Endpoint: c.URL,
+		Target: func(context.Context) GrafanaTarget {
+			return GrafanaTarget{
+				URL:     "http://localhost:3000",
+				Version: "12.1.0-" + strings.Repeat("x", 4096),
+			}
+		},
+	})
+	hooks := r.Hooks()
+	ctx, sess := sessionContext(t, "mcp-session-1")
+	hooks.OnRegisterSession[0](ctx, sess)
+
+	r.flushAll(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Len(t, c.received()[0].GrafanaVersion, maxVersionLen)
+}
+
+// TestTargetFuncIsNotCalledUnderTheSessionLock: a Target implementation that
+// blocks must not be able to block a concurrent flush, because the shutdown
+// flush is on the process's exit path.
+func TestTargetFuncIsNotCalledUnderTheSessionLock(t *testing.T) {
+	c := newCollector(t)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	r := New(Config{
+		Mode:     ModeEnabled,
+		Endpoint: c.URL,
+		Target: func(context.Context) GrafanaTarget {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+			return GrafanaTarget{URL: "http://localhost:3000"}
+		},
+	})
+	hooks := r.Hooks()
+	ctx, sess := sessionContext(t, "mcp-session-1")
+
+	go hooks.OnRegisterSession[0](ctx, sess)
+	<-entered
+
+	// The session is not yet stored, so flush sees nothing; the point is that
+	// it returns rather than blocking behind the stalled Target call.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.flushAll(context.Background(), ReasonInterval)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flush blocked behind the Target call")
+	}
+	close(release)
 }

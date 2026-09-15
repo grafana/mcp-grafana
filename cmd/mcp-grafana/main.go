@@ -939,9 +939,11 @@ func runOpsServer(addr string, h http.Handler) {
 
 // grafanaTarget describes the Grafana instance a session talks to for the
 // usage-statistics report. It reads only the resolved configuration in the
-// context and performs no I/O: mcpgrafana.GrafanaVersion answers from the
-// settings cache the session's own Grafana requests populate, and returns ""
-// until one has.
+// context and issues no request of its own: GrafanaVersionIfKnown, unlike
+// GrafanaVersion, never falls through to a fetch, so a session that has not
+// yet talked to Grafana — or an instance whose settings endpoint is forbidden
+// — reports an empty version rather than paying a timeout on every tool call.
+// Reporting must never add traffic to the operator's Grafana.
 //
 // The URL is passed for classification into cloud/self_hosted only; the
 // reporter discards it.
@@ -949,7 +951,7 @@ func grafanaTarget(ctx context.Context) usagestats.GrafanaTarget {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	return usagestats.GrafanaTarget{
 		URL:      cfg.URL,
-		Version:  mcpgrafana.GrafanaVersion(ctx),
+		Version:  mcpgrafana.GrafanaVersionIfKnown(ctx),
 		OrgIDSet: cfg.OrgID != 0,
 		AuthMethod: usagestats.AuthMethodFor(
 			cfg.AccessToken != "",

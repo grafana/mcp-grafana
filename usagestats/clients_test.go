@@ -5,6 +5,7 @@ package usagestats
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 
@@ -64,10 +65,23 @@ func TestClientVersion(t *testing.T) {
 func TestClientVersionIsLengthCapped(t *testing.T) {
 	long := strings.Repeat("v", 40*1024)
 	got := ClientVersion("cursor", long)
-	assert.Len(t, got, maxClientVersionLen)
-	assert.Equal(t, strings.Repeat("v", maxClientVersionLen), got)
+	assert.Len(t, got, maxVersionLen)
+	assert.Equal(t, strings.Repeat("v", maxVersionLen), got)
 
 	// Exactly at the cap is untouched.
-	atCap := strings.Repeat("v", maxClientVersionLen)
+	atCap := strings.Repeat("v", maxVersionLen)
 	assert.Equal(t, atCap, ClientVersion("cursor", atCap))
+}
+
+// TestVersionTruncationKeepsValidUTF8: a byte-slice cut can land mid-rune,
+// which json.Marshal then rewrites to U+FFFD.
+func TestVersionTruncationKeepsValidUTF8(t *testing.T) {
+	// Each "é" is two bytes, so a naive cut at 64 bytes splits the 33rd.
+	got := ClientVersion("cursor", strings.Repeat("é", 40))
+	assert.True(t, utf8.ValidString(got), "truncated version must stay valid UTF-8")
+	assert.LessOrEqual(t, len(got), maxVersionLen)
+	assert.Equal(t, strings.Repeat("é", 32), got)
+
+	// A cut that happens to land on a boundary keeps the full budget.
+	assert.Equal(t, strings.Repeat("a", maxVersionLen), ClientVersion("cursor", strings.Repeat("a", 100)))
 }

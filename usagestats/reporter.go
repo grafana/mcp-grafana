@@ -53,8 +53,13 @@ const (
 const ProxiedToolName = "proxied"
 
 // TargetFunc resolves the Grafana target fields for a session from that
-// session's context. It must not perform I/O: it is called on the session
-// lifecycle and tool-call paths.
+// session's context.
+//
+// It runs on the initialize and tool-call paths, so it must not issue network
+// requests, block, or do anything else whose cost the caller would notice:
+// reporting is not allowed to slow down a tool call or to add traffic to the
+// operator's Grafana. It may only read what is already resolved or already
+// cached, and return zero values for the rest.
 type TargetFunc func(ctx context.Context) GrafanaTarget
 
 // Config is the static half of a report: everything that is fixed for the
@@ -352,7 +357,7 @@ func (r *Reporter) startSession(ctx context.Context, mcpSessionID string) {
 		startedAt: time.Now(),
 		tools:     map[string]ToolCount{},
 	}
-	r.refreshTargetLocked(ctx, sc)
+	sc.applyTarget(r.resolveTarget(ctx))
 	r.sessions.Store(mcpSessionID, sc)
 }
 
@@ -362,14 +367,18 @@ func (r *Reporter) recordClientInfo(ctx context.Context, mcpSessionID string, in
 		return
 	}
 	name := ClientName(info.Name)
+	// The initialize request is the earliest point at which every transport's
+	// context carries the resolved Grafana configuration, so a session that
+	// never calls a tool still reports its target. Resolved before taking the
+	// lock: nothing outside this package runs while a session's counters are
+	// held.
+	target := r.resolveTarget(ctx)
+
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.clientName = name
 	sc.clientVersion = ClientVersion(name, info.Version)
-	// The initialize request is the earliest point at which every transport's
-	// context carries the resolved Grafana configuration, so a session that
-	// never calls a tool still reports its target.
-	r.refreshTargetLocked(ctx, sc)
+	sc.applyTarget(target)
 }
 
 func (r *Reporter) recordToolCall(ctx context.Context, toolName string, failed bool) {
@@ -378,6 +387,7 @@ func (r *Reporter) recordToolCall(ctx context.Context, toolName string, failed b
 		return
 	}
 	key := r.toolKey(toolName)
+	target := r.resolveTarget(ctx)
 
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -387,30 +397,33 @@ func (r *Reporter) recordToolCall(ctx context.Context, toolName string, failed b
 		c.Errors++
 	}
 	sc.tools[key] = c
-
-	r.refreshTargetLocked(ctx, sc)
+	sc.applyTarget(target)
 }
 
-// refreshTargetLocked re-reads the Grafana target from a tool call's context.
+// resolveTarget reads the Grafana target for a session, outside any lock.
 //
 // It cannot be done once at session start: the stdio transport registers its
 // session before the Grafana configuration is attached to the context, and the
-// Grafana version comes from a cache that only the session's first Grafana
-// request populates. So the target is read again on each call and each field
-// updated once there is something to update it with, leaving it empty for a
-// session that never reached Grafana.
-func (r *Reporter) refreshTargetLocked(ctx context.Context, sc *sessionCounters) {
+// Grafana version is only known once something else has fetched it. So the
+// target is re-read on initialize and on each tool call, and applyTarget fills
+// in each field once there is something to fill it with.
+func (r *Reporter) resolveTarget(ctx context.Context) GrafanaTarget {
 	if r.cfg.Target == nil {
-		return
+		return GrafanaTarget{}
 	}
-	t := r.cfg.Target(ctx)
+	return r.cfg.Target(ctx)
+}
+
+// applyTarget updates the target fields that t can answer, leaving the rest as
+// they were. The caller holds sc.mu.
+func (sc *sessionCounters) applyTarget(t GrafanaTarget) {
 	if t.URL != "" {
 		sc.targetKind = TargetKind(t.URL)
 		sc.orgIDSet = t.OrgIDSet
 		sc.authMethod = observability.BoundedValue(t.AuthMethod, authMethods)
 	}
-	if t.Version != "" {
-		sc.grafanaVersion = t.Version
+	if v := truncateRunes(t.Version, maxVersionLen); v != "" {
+		sc.grafanaVersion = v
 	}
 }
 

@@ -38,15 +38,8 @@ func ClientName(reported string) string {
 	return observability.BoundedValue(strings.ToLower(strings.TrimSpace(reported)), clientNames)
 }
 
-// maxClientVersionLen caps client_version. Unlike client_name there is no
-// vocabulary to clamp a version against, so it travels as the client wrote it
-// — which makes it untrusted input of unbounded length. The cap is what bounds
-// it: without one, a client is free to push arbitrarily large text into a
-// typed column and into the stored raw payload.
-const maxClientVersionLen = 64
-
 // ClientVersion returns the version to report for a client, truncated to
-// maxClientVersionLen bytes.
+// maxVersionLen bytes on a rune boundary.
 //
 // It is sent only when the client's name is allowlisted. A version string
 // alongside an unrecognised name would reintroduce exactly the free-text field
@@ -61,9 +54,5 @@ func ClientVersion(clampedName, reportedVersion string) string {
 	if clampedName == "" || clampedName == observability.ValueOther {
 		return ""
 	}
-	v := strings.TrimSpace(reportedVersion)
-	if len(v) > maxClientVersionLen {
-		v = v[:maxClientVersionLen]
-	}
-	return v
+	return truncateRunes(strings.TrimSpace(reportedVersion), maxVersionLen)
 }

@@ -3,6 +3,7 @@ package usagestats
 import (
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/grafana/mcp-grafana/observability"
 )
@@ -48,6 +49,32 @@ var authMethods = observability.ValueSet(
 	AuthMethodAnonymous,
 )
 
+// maxVersionLen caps every version string that comes from outside this binary:
+// the MCP client's reported version and the Grafana instance's reported one.
+// Neither has a vocabulary to clamp against — a version is whatever the thing
+// reporting it calls itself, and forks and internal builds legitimately use
+// strings like "12.1.0-acmecorp.4+g1a2b3c-internal" — so the length is the
+// only bound available, and without it either side can push arbitrarily large
+// text into a typed column and into the stored raw payload.
+//
+// Only the length is bounded. A pattern match would be the wrong tool: it
+// would discard legitimate versions to no benefit, since the risk here is
+// volume, not shape.
+const maxVersionLen = 64
+
+// truncateRunes cuts s to at most limit bytes without splitting a rune.
+// Cutting mid-rune would leave invalid UTF-8 that json.Marshal silently
+// rewrites to U+FFFD, corrupting the tail of an otherwise valid version.
+func truncateRunes(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit]
+}
+
 // ToolCount is the per-tool delta recorded since the previous flush.
 type ToolCount struct {
 	Calls  int64 `json:"calls"`
@@ -74,8 +101,8 @@ type Event struct {
 
 	// Client, from the initialize request. ClientName is clamped to a
 	// vocabulary (see ClientName); ClientVersion is the client's own string,
-	// only length-capped, and is omitted entirely unless the name matched —
-	// so "unrecognised client" reads as NULL rather than as an empty string.
+	// capped at maxVersionLen, and is omitted entirely unless the name matched
+	// — so "unrecognised client" reads as NULL rather than as an empty string.
 	ClientName    string `json:"client_name"`
 	ClientVersion string `json:"client_version,omitempty"`
 
@@ -86,7 +113,8 @@ type Event struct {
 	ToolCalls   map[string]ToolCount `json:"tool_calls,omitempty"`
 
 	// The Grafana instance the session talked to, described without
-	// identifying it.
+	// identifying it. GrafanaVersion is the instance's own string, capped at
+	// maxVersionLen for the same reason ClientVersion is.
 	GrafanaVersion string `json:"grafana_version"`
 	TargetKind     string `json:"target_kind"`
 	OrgIDSet       bool   `json:"org_id_set"`
