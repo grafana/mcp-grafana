@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -533,4 +534,53 @@ func TestTargetFuncIsNotCalledUnderTheSessionLock(t *testing.T) {
 		t.Fatal("flush blocked behind the Target call")
 	}
 	close(release)
+}
+
+// countingTransport records every request attempt without letting one out.
+type countingTransport struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *countingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+	return nil, errors.New("blocked by test")
+}
+
+func (c *countingTransport) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+// TestZeroConfigLifecycleSendsNothing walks the whole session lifecycle on a
+// zero-valued Config and asserts not one request was even attempted.
+//
+// This is a regression test for a real leak: Enabled() used to be "mode is not
+// disabled", so usagestats.New(usagestats.Config{}) in the cmd tests was
+// enabled, New filled in DefaultEndpoint, and a session registered and torn
+// down in a t.Cleanup POSTed a usage report to the production endpoint on
+// every `make test-unit` run.
+func TestZeroConfigLifecycleSendsNothing(t *testing.T) {
+	ct := &countingTransport{}
+	r := New(Config{HTTPClient: &http.Client{Transport: ct}})
+	require.False(t, r.Enabled())
+
+	hooks := r.Hooks()
+	assert.Empty(t, hooks.OnRegisterSession)
+	assert.Empty(t, hooks.OnUnregisterSession)
+	assert.Empty(t, hooks.OnAfterInitialize)
+	assert.Empty(t, hooks.OnAfterCallTool)
+	assert.Empty(t, hooks.OnError)
+
+	// Even driven directly, past the empty hooks, nothing must leave.
+	ctx, sess := sessionContext(t, "mcp-session-1")
+	r.startSession(ctx, sess.SessionID())
+	r.endSession(sess.SessionID())
+	r.Start(context.Background())
+	r.Shutdown()
+
+	assert.Zero(t, ct.count(), "a disabled reporter must not attempt a request")
 }

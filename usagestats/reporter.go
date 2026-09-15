@@ -198,8 +198,16 @@ func (r *Reporter) SetNativeTools(names map[string]struct{}) {
 }
 
 // Enabled reports whether anything is collected at all.
+//
+// Only an explicitly enabling mode counts, so the zero-valued Config is inert.
+// Testing for "not disabled" instead would make Config{} — and any future
+// caller that forgets to set Mode — report to the live endpoint, which is the
+// one direction this package must never fail in.
 func (r *Reporter) Enabled() bool {
-	return r != nil && r.cfg.Mode != ModeDisabled
+	if r == nil {
+		return false
+	}
+	return r.cfg.Mode == ModeEnabled || r.cfg.Mode == ModeLog
 }
 
 // Disclose logs the one startup line that tells the operator usage statistics
@@ -352,6 +360,9 @@ func isErrorResult(result any) bool {
 // that one is chosen by, and visible to, the client, and under horizontal
 // scaling it is shared across processes.
 func (r *Reporter) startSession(ctx context.Context, mcpSessionID string) {
+	if !r.Enabled() {
+		return
+	}
 	sc := &sessionCounters{
 		sessionID: uuid.NewString(),
 		startedAt: time.Now(),
@@ -567,6 +578,12 @@ func joinSorted(values []string) string {
 // Failures are logged at debug only, and nothing is ever written to stdout —
 // under the stdio transport stdout is the MCP protocol channel.
 func (r *Reporter) send(ctx context.Context, e Event) {
+	// Checked here as well as at every entry point: this is the only place a
+	// request is issued, so it is the one place where "disabled means nothing
+	// leaves" can be guaranteed rather than assumed.
+	if !r.Enabled() {
+		return
+	}
 	body, err := json.Marshal(e)
 	if err != nil {
 		r.cfg.Logger.Debug("failed to encode usage statistics report", "error", err)

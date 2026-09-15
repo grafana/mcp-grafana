@@ -47,6 +47,17 @@ func TestDefaultModeIsDisabled(t *testing.T) {
 	assert.Equal(t, ModeDisabled, ResolveMode("", false, ""))
 }
 
+// TestZeroConfigIsInert: Mode is a string, so a Config built without one has
+// Mode == "". That must not report. Every other default in this package fails
+// toward privacy and so must this one.
+func TestZeroConfigIsInert(t *testing.T) {
+	assert.False(t, New(Config{}).Enabled())
+	assert.False(t, New(Config{Mode: ModeDisabled}).Enabled())
+	assert.False(t, New(Config{Mode: "ENABLED"}).Enabled(), "Mode is not normalised; only ResolveMode produces valid values")
+	assert.True(t, New(Config{Mode: ModeEnabled}).Enabled())
+	assert.True(t, New(Config{Mode: ModeLog}).Enabled())
+}
+
 func TestResolveEndpoint(t *testing.T) {
 	assert.Equal(t, DefaultEndpoint, ResolveEndpoint(""))
 	assert.Equal(t, DefaultEndpoint, ResolveEndpoint("  "))
