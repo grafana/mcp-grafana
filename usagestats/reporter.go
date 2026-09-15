@@ -363,6 +363,16 @@ func (r *Reporter) startSession(ctx context.Context, mcpSessionID string) {
 	if !r.Enabled() {
 		return
 	}
+	// An empty MCP session ID is not a session this package can account for.
+	// mcp-go's stateless session ID manager generates "" (streamable_http.go
+	// :2043), and a GET with no session header then stores every such client
+	// under that one key (:1058), so distinct clients would share a single
+	// sessionCounters and report as one session with their tool calls merged.
+	// Reporting nothing for them is the honest outcome; WarnSessionCoverage
+	// tells the operator at startup.
+	if mcpSessionID == "" {
+		return
+	}
 	sc := &sessionCounters{
 		sessionID: uuid.NewString(),
 		startedAt: time.Now(),

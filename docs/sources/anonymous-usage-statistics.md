@@ -36,6 +36,17 @@ Nothing is written to disk and nothing survives a restart. There is no device ID
 
 This has a consequence worth being explicit about: **install counts are not possible.** The server can be counted in sessions and in processes, and in nothing else. A restart produces a new `process_id`, and a client that reconnects produces a new `session_id`. Growth in event volume is therefore ambiguous between more people using the server and the same people opening more sessions.
 
+### Sessions the server cannot see
+
+The unit of reporting is the MCP session, and the server only learns about a session when the MCP library registers one. Under the `streamable-http` transport there are two configurations in which that does not happen, and both mean reported session counts are a lower bound rather than a count:
+
+- **A client using protocol version `2026-07-28` is never counted.** That version removed protocol-level sessions, so no session is registered for it, in any `streamable-http` configuration. As clients upgrade to it, reported session volume falls without usage falling, so do not compare session counts across a period in which clients were upgrading.
+- **`streamable-http` with `--disable-proxied` collects nothing at all.** Disabling proxied tools puts the server into the MCP library's stateless mode, where session IDs are empty and no session is ever registered. Such a deployment reports zero events, not a small number of them.
+
+The server logs a warning at startup for each of these when reporting is on, so an empty dataset is never left to be mistaken for an idle server. A deliberately unattributable session — one whose transport gave it no ID — is dropped rather than merged with others, so a reported session is always exactly one client's.
+
+The `stdio` and `sse` transports register a session per connection and are unaffected.
+
 `session_id` is *not* the MCP transport's session ID. The transport's session ID is chosen by, and visible to, the client, and under horizontal scaling the same one is seen by several server processes. The reported `session_id` is minted independently for reporting and never leaves the process except in these events.
 
 ## Understand which data is collected

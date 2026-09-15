@@ -962,6 +962,14 @@ func grafanaTarget(ctx context.Context) usagestats.GrafanaTarget {
 	}
 }
 
+// statelessStreamableHTTP reports whether the streamable-http server will run
+// in mcp-go's stateless mode, which is what WithStateLess(dt.proxied) below
+// selects when proxied tools are disabled. In that mode session IDs are empty
+// and no session is ever registered.
+func statelessStreamableHTTP(transport string, dt disabledTools) bool {
+	return transport == "streamable-http" && dt.proxied
+}
+
 // nativeToolNames is the set of tool names the server registered itself. It
 // bounds the tool names the usage-statistics reporter may emit, so it must be
 // taken before any proxied tool is registered: those names come from a remote
@@ -1036,6 +1044,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	us.Target = grafanaTarget
 	usage := usagestats.New(us)
 	usage.Disclose()
+	// Said at startup rather than left to be inferred from an empty dataset:
+	// on streamable-http there are configurations in which mcp-go never
+	// registers a session, and the event unit here is the session.
+	usage.WarnSessionCoverage(transport, statelessStreamableHTTP(transport, dt))
 
 	s, tm, sm := newServer(obs.ServerName, transport, dt, o, usage, sessionIdleTimeoutMinutes, instructionsAppend)
 	defer sm.Close()
