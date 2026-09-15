@@ -574,7 +574,7 @@ func (r *Reporter) send(ctx context.Context, e Event) {
 		r.cfg.Logger.Debug("failed to send usage statistics report", "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode >= http.StatusBadRequest {
 		r.cfg.Logger.Debug("usage statistics report rejected", "status", resp.StatusCode)

@@ -444,6 +444,9 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--slow-request-threshold`: Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this duration. Accepts Go duration strings (e.g., `500ms`, `5s`). Default `0` disables slow-request logging. See the [Slow-request logging](#slow-request-logging) section.
 - `--slow-request-log-level`: Log level for slow-request events (`info` or `warn`) - default: `warn`.
 
+**Anonymous Usage Statistics:**
+- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
+
 **Session Management:**
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
@@ -1189,6 +1192,27 @@ curl http://127.0.0.1:8080/healthz
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
+
+### Anonymous Usage Statistics
+
+The server can report anonymous usage statistics about itself to Grafana Labs: how many MCP sessions ran, which tools they called, how many of those calls failed, and how the server is configured. **Reporting is disabled by default in this release** — the receiving endpoint isn't live yet — and a later release will change the default to enabled with the same opt-out.
+
+Tool arguments, resource names, queries, log lines, error messages and credentials are never sent. Flags are recorded by name only, never by value, and the Grafana instance is described only as `cloud` or `self_hosted` — never by URL, hostname, stack slug or org.
+
+```bash
+# Turn reporting on
+mcp-grafana --usage-stats=enabled
+
+# Turn it off (or GRAFANA_USAGE_STATS=disabled)
+mcp-grafana --usage-stats=disabled
+
+# Print what would be sent, to stderr, and send nothing
+GRAFANA_USAGE_STATS=log mcp-grafana
+```
+
+`GRAFANA_USAGE_STATS_ENDPOINT` changes the destination. It is not an opt-out.
+
+For the full field list, what is never sent, how to read the data and its limitations, see [Anonymous usage statistics](https://grafana.com/docs/mcp-grafana/latest/anonymous-usage-statistics/).
 
 ### Observability
 
