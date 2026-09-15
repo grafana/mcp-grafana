@@ -349,6 +349,12 @@ type GrafanaConfig struct {
 	// per-request context such as tenant_id.
 	Logger *slog.Logger
 
+	// UserAgent overrides the default "mcp-grafana/<version>" User-Agent
+	// header sent with every Grafana API request. Embedders (e.g. the
+	// hosted Cloud MCP server) can set this to distinguish their traffic
+	// from the open-source CLI. When empty the default is used.
+	UserAgent string
+
 	// MeterProvider is an optional OTel metric.MeterProvider used by
 	// instrumentation that lives inside tool handlers (which have no
 	// constructor to take a WithXxxMeterProvider option), such as the Loki
@@ -882,7 +888,11 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 
 	// User-Agent
 	if !options.withoutUserAgent {
-		transport = NewUserAgentTransport(transport)
+		if cfg.UserAgent != "" {
+			transport = NewUserAgentTransport(transport, cfg.UserAgent)
+		} else {
+			transport = NewUserAgentTransport(transport)
+		}
 	}
 
 	// OpenTelemetry HTTP tracing (outermost)
