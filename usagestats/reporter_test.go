@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,19 +37,26 @@ type collector struct {
 	*httptest.Server
 	mu     sync.Mutex
 	events []Event
+	bodies [][]byte
 }
 
 func newCollector(t *testing.T) *collector {
 	t.Helper()
 	c := &collector{}
 	c.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		var e Event
-		if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		if err := json.Unmarshal(body, &e); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		c.mu.Lock()
 		c.events = append(c.events, e)
+		c.bodies = append(c.bodies, body)
 		c.mu.Unlock()
 	}))
 	t.Cleanup(c.Close)
@@ -59,6 +67,18 @@ func (c *collector) received() []Event {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]Event(nil), c.events...)
+}
+
+// rawBodies returns the payloads exactly as they went over the wire, so a test
+// can assert on which keys are present rather than on decoded zero values.
+func (c *collector) rawBodies() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.bodies))
+	for _, b := range c.bodies {
+		out = append(out, string(b))
+	}
+	return out
 }
 
 // sessionContext returns a context carrying a client session, as the MCP
@@ -399,4 +419,54 @@ func TestJitterStaysWithinTenPercent(t *testing.T) {
 		assert.GreaterOrEqual(t, d, lo)
 		assert.LessOrEqual(t, d, hi)
 	}
+}
+
+// TestEmptyFieldsAreOmittedNotSentEmpty: an unrecognised client and a session
+// that called no tools must read as NULL at the receiver, not as an empty
+// string and an empty object. Otherwise "which sessions called no tools" and
+// "which clients were unrecognised" are unanswerable.
+func TestEmptyFieldsAreOmittedNotSentEmpty(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
+	hooks := r.Hooks()
+	ctx, sess := sessionContext(t, "mcp-session-1")
+	hooks.OnRegisterSession[0](ctx, sess)
+	hooks.OnAfterInitialize[0](ctx, 1, &mcp.InitializeRequest{
+		Params: mcp.InitializeParams{ClientInfo: mcp.Implementation{Name: "some-internal-agent", Version: "9.9.9"}},
+	}, &mcp.InitializeResult{})
+
+	r.flushAll(context.Background(), ReasonSessionEnd)
+	require.Len(t, c.rawBodies(), 1)
+	body := c.rawBodies()[0]
+
+	assert.NotContains(t, body, "client_version")
+	assert.NotContains(t, body, "tool_calls")
+	assert.NotContains(t, body, "tools_called")
+	// The clamped name is still reported: "an unrecognised client connected"
+	// is the fact the field exists to record.
+	assert.Contains(t, body, `"client_name":"other"`)
+}
+
+// TestEmptyToolCallsOmittedOnEveryFlush: the counters are reset to an
+// initialised empty map after a flush, so the second flush must still omit
+// rather than send {}.
+func TestEmptyToolCallsOmittedOnEveryFlush(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:        ModeEnabled,
+		Endpoint:    c.URL,
+		NativeTools: observability.ValueSet("search_dashboards"),
+	})
+	hooks := r.Hooks()
+	ctx, sess := sessionContext(t, "mcp-session-1")
+	hooks.OnRegisterSession[0](ctx, sess)
+	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+
+	r.flushAll(context.Background(), ReasonInterval)
+	r.flushAll(context.Background(), ReasonInterval)
+
+	require.Len(t, c.rawBodies(), 2)
+	assert.Contains(t, c.rawBodies()[0], "search_dashboards")
+	assert.NotContains(t, c.rawBodies()[1], "tool_calls")
+	assert.NotContains(t, c.rawBodies()[1], "tools_called")
 }

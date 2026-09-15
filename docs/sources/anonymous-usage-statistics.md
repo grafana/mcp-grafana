@@ -60,7 +60,7 @@ The MCP client identifies itself in its `initialize` request. That is free text 
 | Field | Description | Example |
 | :---- | :---- | :---- |
 | `client_name` | The client's reported name, matched case-insensitively against a fixed list of the clients with a setup page under [Clients](../clients/), plus `mcpb` for the desktop extension bundle. Anything else is sent as `other`. | `claude-code` |
-| `client_version` | The version the client reported. Sent **only** when `client_name` matched the list; omitted otherwise. | `2.0.1` |
+| `client_version` | The version the client reported, truncated to 64 bytes. Sent **only** when `client_name` matched the list; the field is absent from the event otherwise, rather than sent empty. | `2.0.1` |
 
 The list is exactly `claude-code`, `claude-desktop`, `codex`, `cursor`, `gemini-cli`, `mcpb`, `vscode-copilot`, `windsurf` and `zed`.
 
@@ -68,8 +68,8 @@ The list is exactly `claude-code`, `claude-desktop`, `codex`, `cursor`, `gemini-
 
 | Field | Description | Example |
 | :---- | :---- | :---- |
-| `tools_called` | The sorted, comma-joined names of the tools called since the previous event. | `list_datasources,query_prometheus` |
-| `tool_calls` | A nested object keyed by tool name, each holding `calls` and `errors`. | `{"query_prometheus":{"calls":4,"errors":1}}` |
+| `tools_called` | The sorted, comma-joined names of the tools called since the previous event. Absent from the event when no tool was called in that window. | `list_datasources,query_prometheus` |
+| `tool_calls` | A nested object keyed by tool name, each holding `calls` and `errors`. Absent from the event when no tool was called in that window, rather than sent as an empty object. | `{"query_prometheus":{"calls":4,"errors":1}}` |
 | `calls` | Within `tool_calls`: how many times that tool was called since the previous event. An exact number. | `4` |
 | `errors` | Within `tool_calls`: how many of those calls failed. An exact number. | `1` |
 
@@ -106,12 +106,14 @@ These fields are easy to misread, so the following constraints are part of the c
 
 - **Totals are a floor, not a count.** `calls` and `errors` are deltas since the previous event, and they are reset at the moment an event is *sent*, not when the receiver acknowledges it. A report that never arrives takes its delta with it. Any total built by summing these counts undercounts by an unknown amount, and it undercounts most in exactly the environments where delivery fails most.
 - **`tools_called` and `tool_calls` always agree, and both are per-event.** `tools_called` is the sorted key list of `tool_calls` for that same event, not a running list for the session. A session that called one tool in its first four hours and a different one in its second reports one name in each event, never both in either.
+- **A field with nothing to say is absent, not empty.** `client_version` for an unrecognised client, and `tools_called` and `tool_calls` for a window in which no tool was called, are left out of the event entirely, so they read as null rather than as an empty string or an empty object. A session that opened and closed without calling anything is still reported — it just carries no tool fields.
 - **`errors` counts calls that failed, not why they failed.** A tool that returns an error result and a tool whose handler fails outright both count as one error. Nothing describes the failure: no message, no status, no error category. You can see which tools are failing and never why. A coarse error-kind field may be added later; until then, absence of detail is by design, not an omission.
 - **`proxied` is one key covering every proxied tool.** Tools proxied from an external MCP server are all recorded under the single name `proxied`, never by their real names and never by the datasource type they came from. Those names are chosen by a remote server, so this repository cannot bound them, and the datasource type would tell us which backends you run. A call to a tool this build does not have registered — a typo from the model, or a tool whose category is disabled — also lands on `proxied`, so a small `proxied` count is not by itself evidence that proxied tools were used.
 - **`target_kind` misclassifies Cloud instances behind a custom domain.** It is derived from the configured URL's hostname alone, and the only positive signal available is the Grafana Cloud domain. A Grafana Cloud stack reached through your own domain reports `self_hosted`. Read `target_kind` as "looks like Cloud" and "everything else", never as an authoritative split.
 - **`grafana_version` and the target fields are empty until the session talks to Grafana.** They are read from configuration and from a cache the session's own Grafana requests populate; nothing is fetched to fill them in. A session that opened and closed without calling a tool reports them empty. Empty means "not resolved", never "old" or "self-hosted".
 - **`enabled_tools` and `disabled_tools` are not complements.** A category that is neither named in `--enabled-tools` nor explicitly disabled appears in neither list. A category name in `--enabled-tools` that this build does not recognise appears in neither list either, because both are bounded by the categories compiled into the binary.
-- **`client_name: other` is not a rare case.** The list is the documented client slugs, and there is no alias table mapping a client's display name onto its slug. A client that reports a display name rather than its slug is reported as `other`, along with anything genuinely unrecognised. `client_version` is free text from the client even when the name matched, so a client can put anything there.
+- **`client_name: other` is not a rare case.** The list is the documented client slugs, and there is no alias table mapping a client's display name onto its slug. A client that reports a display name rather than its slug is reported as `other`, along with anything genuinely unrecognised.
+- **`client_version` is the client's own string.** There is no vocabulary to clamp a version against, so when the name matched, the version travels as the client wrote it, bounded only by a 64-byte truncation. Treat it as untrusted text from the connecting client, not as a value this server vouches for.
 - **`flags` records what was set, not what is in effect.** A setting supplied through an environment variable rather than a flag does not appear in `flags`, even though it changes the server's behaviour. Read the resolved-state fields — `loki_guardrail_mode`, `tls_enabled`, `metrics_enabled`, `dynamic_multi_org`, `proxied_enabled` — for what the server is actually doing.
 - **Grouping by `process_id` reveals deployment concurrency.** One process can host many sessions, so the number of distinct `session_id` values sharing a `process_id`, and their overlap in time, describes how heavily a single deployment is used. That is a property of the data, not a mistake, but it means events are less atomised than a per-session identifier suggests.
 

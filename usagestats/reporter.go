@@ -489,8 +489,13 @@ func (r *Reporter) flushAll(ctx context.Context, reason string) {
 // never arrives loses its delta: totals are a floor, never a count.
 func (r *Reporter) buildEvent(sc *sessionCounters, reason string) Event {
 	sc.mu.Lock()
-	tools := sc.tools
-	sc.tools = map[string]ToolCount{}
+	// A flush with no tool calls reports a nil map, not an empty one, so the
+	// field is omitted rather than sent as {}.
+	var tools map[string]ToolCount
+	if len(sc.tools) > 0 {
+		tools = sc.tools
+		sc.tools = map[string]ToolCount{}
+	}
 	e := Event{
 		Service:           ServiceName,
 		Version:           r.cfg.Version,

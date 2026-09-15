@@ -72,14 +72,18 @@ type Event struct {
 	ReportReason      string `json:"report_reason"`
 	SessionDurationMS int64  `json:"session_duration_ms"`
 
-	// Client, from the initialize request. Free text from the client, so
-	// clamped — see ClientName.
+	// Client, from the initialize request. ClientName is clamped to a
+	// vocabulary (see ClientName); ClientVersion is the client's own string,
+	// only length-capped, and is omitted entirely unless the name matched —
+	// so "unrecognised client" reads as NULL rather than as an empty string.
 	ClientName    string `json:"client_name"`
-	ClientVersion string `json:"client_version"`
+	ClientVersion string `json:"client_version,omitempty"`
 
-	// Tool usage since the previous flush.
-	ToolsCalled string               `json:"tools_called"`
-	ToolCalls   map[string]ToolCount `json:"tool_calls"`
+	// Tool usage since the previous flush. Both are omitted when the session
+	// called no tools in this window, so "no tools called" reads as NULL
+	// rather than as an empty string and an empty object.
+	ToolsCalled string               `json:"tools_called,omitempty"`
+	ToolCalls   map[string]ToolCount `json:"tool_calls,omitempty"`
 
 	// The Grafana instance the session talked to, described without
 	// identifying it.

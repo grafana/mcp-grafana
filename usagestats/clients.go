@@ -38,15 +38,32 @@ func ClientName(reported string) string {
 	return observability.BoundedValue(strings.ToLower(strings.TrimSpace(reported)), clientNames)
 }
 
-// ClientVersion returns the version to report for a client.
+// maxClientVersionLen caps client_version. Unlike client_name there is no
+// vocabulary to clamp a version against, so it travels as the client wrote it
+// — which makes it untrusted input of unbounded length. The cap is what bounds
+// it: without one, a client is free to push arbitrarily large text into a
+// typed column and into the stored raw payload.
+const maxClientVersionLen = 64
+
+// ClientVersion returns the version to report for a client, truncated to
+// maxClientVersionLen bytes.
 //
 // It is sent only when the client's name is allowlisted. A version string
 // alongside an unrecognised name would reintroduce exactly the free-text field
 // the client_name clamp exists to prevent, and a version is not interpretable
-// without knowing which client it belongs to anyway.
+// without knowing which client it belongs to anyway. The empty string is
+// omitted from the event rather than sent, so an unrecognised client carries
+// no version field at all.
+//
+// Nothing beyond the length is validated: a version is whatever the client
+// calls itself, and guessing at its shape would drop legitimate values.
 func ClientVersion(clampedName, reportedVersion string) string {
 	if clampedName == "" || clampedName == observability.ValueOther {
 		return ""
 	}
-	return strings.TrimSpace(reportedVersion)
+	v := strings.TrimSpace(reportedVersion)
+	if len(v) > maxClientVersionLen {
+		v = v[:maxClientVersionLen]
+	}
+	return v
 }

@@ -3,6 +3,7 @@
 package usagestats
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,4 +57,17 @@ func TestClientVersion(t *testing.T) {
 	// client_name clamp exists to prevent.
 	assert.Empty(t, ClientVersion(observability.ValueOther, "1.2.3"))
 	assert.Empty(t, ClientVersion("", "1.2.3"))
+}
+
+// TestClientVersionIsLengthCapped: there is no vocabulary to clamp a version
+// against, so the length cap is the only bound on it.
+func TestClientVersionIsLengthCapped(t *testing.T) {
+	long := strings.Repeat("v", 40*1024)
+	got := ClientVersion("cursor", long)
+	assert.Len(t, got, maxClientVersionLen)
+	assert.Equal(t, strings.Repeat("v", maxClientVersionLen), got)
+
+	// Exactly at the cap is untouched.
+	atCap := strings.Repeat("v", maxClientVersionLen)
+	assert.Equal(t, atCap, ClientVersion("cursor", atCap))
 }
