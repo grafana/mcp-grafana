@@ -1051,6 +1051,24 @@ func TestBuildTransport(t *testing.T) {
 		assert.Empty(t, capturedReq.Header.Get("User-Agent"))
 	})
 
+	t.Run("custom UserAgent in config overrides default", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{UserAgent: "mcp-grafana-cloud/1.0"}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "mcp-grafana-cloud/1.0", capturedReq.Header.Get("User-Agent"))
+	})
+
 	t.Run("auth takes precedence over extra headers for same key", func(t *testing.T) {
 		var capturedReq *http.Request
 		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
