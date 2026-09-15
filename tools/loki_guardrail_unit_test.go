@@ -82,6 +82,44 @@ func TestParseLogQLSelectorsSelectivity(t *testing.T) {
 	}
 }
 
+func TestPrepareStrictLokiQuery(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		want    string
+		wantErr string
+	}{
+		{name: "existing line filter", query: `{app="api"} |= "error"`, want: `{app="api"} |~ "(?s).*" |= "error"`},
+		{name: "negative line filter", query: `{app="api"} != "healthcheck"`, want: `{app="api"} |~ "(?s).*" != "healthcheck"`},
+		{name: "metric range", query: `count_over_time({app="api"} |= "timeout" [5m])`, want: `count_over_time({app="api"} |~ "(?s).*" |= "timeout" [5m])`},
+		{name: "binary metric query", query: `rate({app="api"} |= "error" [5m]) / rate({app="worker"} |~ "warn" [5m])`, want: `rate({app="api"} |~ "(?s).*" |= "error" [5m]) / rate({app="worker"} |~ "(?s).*" |~ "warn" [5m])`},
+		{name: "braces in filter and comment", query: "{app=\"api\"} |= `{json}` # {ignored=\"selector\"}\n", want: "{app=\"api\"} |~ \"(?s).*\" |= `{json}` # {ignored=\"selector\"}\n"},
+		{name: "empty query", wantErr: "no stream selector found"},
+		{name: "not LogQL", query: "not LogQL", wantErr: "no stream selector found"},
+		{name: "unterminated selector", query: `{app="api"`, wantErr: "unterminated stream selector"},
+		{name: "invalid selector", query: `{app=="api"}`, wantErr: "invalid stream selector"},
+		{name: "selector only", query: `{app="api"}`, wantErr: "add a non-empty line filter"},
+		{name: "empty filter", query: `{app="api"} |= ""`, wantErr: "add a non-empty line filter"},
+		{name: "empty raw filter", query: "{app=\"api\"} |= ``", wantErr: "add a non-empty line filter"},
+		{name: "parser only", query: `{app="api"} | json`, wantErr: "add a non-empty line filter"},
+		{name: "parsed-label filter is not a line filter", query: `{app="api"} | json | level != "error"`, wantErr: "add a non-empty line filter"},
+		{name: "filterless metric", query: `count_over_time({app="api"}[5m])`, wantErr: "add a non-empty line filter"},
+		{name: "one filterless binary leg", query: `rate({app="api"} |= "error" [5m]) / rate({app="worker"}[5m])`, wantErr: "add a non-empty line filter"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := prepareStrictLokiQuery(tc.query)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestMaxVectorDuration(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -348,6 +386,24 @@ func TestLokiGuardrailReasonsByteCheckSkippedWithoutWindow(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestLokiGuardrailReasonsStrictRequiresCompleteByteEvaluation(t *testing.T) {
+	config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+
+	t.Run("missing query window", func(t *testing.T) {
+		outcome := lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo"}`, "instant", time.Time{}, time.Time{}, func(context.Context, string, time.Time, time.Time) (*Stats, error) {
+			t.Fatal("stats must not be called without a window")
+			return nil, nil
+		})
+		assert.Equal(t, guardrailCauseEstimateFailed, outcome.failOpen)
+	})
+
+	t.Run("non-native backend", func(t *testing.T) {
+		end := time.Now()
+		outcome := lokiGuardrailReasons(context.Background(), config, false, `{namespace="foo"}`, "range", end.Add(-time.Hour), end, nil)
+		assert.Equal(t, guardrailCauseEstimateFailed, outcome.failOpen)
+	})
+}
+
 func TestLokiGuardrailReasonsStatsFailureFailsOpen(t *testing.T) {
 	config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
 	end := time.Now()
@@ -445,6 +501,30 @@ func TestGuardLokiQueryModes(t *testing.T) {
 		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 0, 24*time.Hour)
 		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
 		assert.NoError(t, guardLokiQuery(ctx, nil, `{namespace="foo", app="bar"}`, "", start, end))
+	})
+
+	t.Run("strict rejects unparseable query", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		err := guardLokiQuery(ctx, newStatsBackend(t, 0, new(int)), `{app=="x"}`, "range", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unable to verify")
+	})
+
+	t.Run("strict rejects failed estimate", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		err := guardLokiQuery(ctx, newBrokenStatsBackend(t), `{namespace="foo", app="bar"}`, "range", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "estimate_failed")
+	})
+
+	t.Run("strict rejects backend without a cheap estimate", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		err := guardLokiQuery(ctx, &fakeLokiBackend{}, `{namespace="foo", app="bar"}`, "range", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unable to verify")
 	})
 }
 

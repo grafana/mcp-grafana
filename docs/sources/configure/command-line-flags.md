@@ -122,11 +122,19 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 ## Configure tool limits
 
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call.
-- `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs`: `off` (default), `shadow` (log queries that would be blocked, but let them run), or `enforce` (reject them with rewrite guidance). The guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. On VictoriaLogs it applies only to selector-shaped (`{...}`) queries — brace-less LogsQL passes through entirely and the byte-budget check never applies. Falls back to the `GRAFANA_LOKI_GUARDRAIL_MODE` environment variable.
-- `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API. Defaults to 100 GiB; `0` disables the byte-budget check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
-- `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+- `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs`: `off` (default), `shadow` (log queries that would be blocked, but let them run), `enforce` (reject known violations but fail open when parsing or estimation fails), or `strict` (also reject incomplete evaluations and unsafe startup configurations). Strict mode requires a non-empty line filter after every native Loki selector and returns concrete rewrite examples so an AI caller can correct and retry. After validation, it inserts the semantics-preserving filter `|~ "(?s).*"` as defense in depth so the query uses the Grafana Cloud Access Policy byte-limit path. It disables `query_loki_patterns` because CAP enforcement has not been verified for that endpoint. The guardrail also requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. On VictoriaLogs, `shadow` and `enforce` apply only to selector-shaped (`{...}`) queries; `strict` rejects content queries because no cheap byte estimate is available. Falls back to the `GRAFANA_LOKI_GUARDRAIL_MODE` environment variable.
+- `--loki-guardrail-max-bytes`: Maximum estimated bytes a single guarded Loki content query may scan, based on Loki's index/stats API. Defaults to 100 GiB; `0` disables the byte-budget check, except that `strict` requires a positive value. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-max-range`: Maximum effective time range for a single guarded Loki content query, including range-vector durations. Defaults to `24h`; `0` disables the range check, except that `strict` requires a positive value. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+- `--loki-allowed-datasource-uids`: Comma-separated Loki datasource UIDs the Loki tools may use. Strict mode requires this allowlist so callers cannot select an unrestricted datasource. Falls back to `GRAFANA_LOKI_ALLOWED_DATASOURCE_UIDS`.
+
+{{< admonition type="warning" >}}
+For an exact Grafana Cloud ceiling, configure every allowed datasource with a CAP token whose `lokiQueryPolicy.maxQueryBytesRead` is the required limit. The MCP index/stats check remains an earlier approximate rejection layer, so configure it with headroom below the CAP limit and retain a short range cap. For example, pair a 4 GB MCP estimate limit with a 5 GB CAP limit.
+
+Strict mode requires `--disable-write`, rejects dynamic multi-org, and refuses to start while the `api`, `rendering`, or `runpanelquery` category is enabled. Disable those categories or omit them from `--enabled-tools`.
+{{< /admonition >}}
 
 The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
+
 - `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 ## Run without query execution
