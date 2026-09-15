@@ -2,6 +2,7 @@ package usagestats
 
 import (
 	"net/url"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -10,18 +11,16 @@ import (
 
 // Report reasons. Every event carries exactly one.
 const (
-	// ReasonSessionEnd is a flush triggered by the MCP session ending, either
-	// mid-life (the client disconnected) or during server shutdown.
-	ReasonSessionEnd = "session_end"
-	// ReasonInterval is a flush triggered by the periodic timer, for sessions
-	// that are still live.
+	// ReasonInterval is a flush triggered by the periodic timer.
 	ReasonInterval = "interval"
+	// ReasonShutdown is the final flush as the process exits.
+	ReasonShutdown = "shutdown"
 )
 
 // ServiceName identifies the reporting product to the receiver.
 const ServiceName = "mcp-grafana"
 
-// Target kinds for the Grafana instance a session talks to. Deliberately
+// Target kinds for the Grafana instance the process talks to. Deliberately
 // coarse: never the URL, hostname, stack slug, org name or org ID.
 const (
 	TargetKindCloud      = "cloud"
@@ -49,12 +48,11 @@ var authMethods = observability.ValueSet(
 	AuthMethodAnonymous,
 )
 
-// maxVersionLen caps every version string that comes from outside this binary:
-// the MCP client's reported version and the Grafana instance's reported one.
-// Neither has a vocabulary to clamp against — a version is whatever the thing
-// reporting it calls itself, and forks and internal builds legitimately use
-// strings like "12.1.0-acmecorp.4+g1a2b3c-internal" — so the length is the
-// only bound available, and without it either side can push arbitrarily large
+// maxVersionLen caps grafana_version, which comes from outside this binary.
+// It has no vocabulary to clamp against — a version is whatever the instance
+// calls itself, and forks and internal builds legitimately use strings like
+// "12.1.0-acmecorp.4+g1a2b3c-internal" — so the length is the only bound
+// available, and without it the reporting instance can push arbitrarily large
 // text into a typed column and into the stored raw payload.
 //
 // Only the length is bounded. A pattern match would be the wrong tool: it
@@ -86,39 +84,55 @@ type ToolCount struct {
 // TestWireFields, so a field cannot be added, renamed or removed without the
 // docs page and the startup notice being updated alongside it.
 //
+// The unit is the PROCESS, not the MCP session. Protocol version 2026-07-28
+// removed protocol-level sessions (SEP-2567), so mcp-go registers no session
+// for a client using it and a per-session event would never be built at all on
+// the streamable-http transport — see the Reporter doc comment. Tool-call
+// hooks still fire for those requests, so the counts below are aggregated over
+// every session and every sessionless request the process served.
+//
 // Fields are flat scalars apart from ToolCalls, which the receiver stores as a
 // JSON column.
 type Event struct {
 	// Envelope.
-	Service           string `json:"service"`
-	Version           string `json:"version"`
-	OS                string `json:"os"`
-	Arch              string `json:"arch"`
-	ProcessID         string `json:"process_id"`
-	SessionID         string `json:"session_id"`
-	ReportReason      string `json:"report_reason"`
-	SessionDurationMS int64  `json:"session_duration_ms"`
+	Service         string `json:"service"`
+	Version         string `json:"version"`
+	OS              string `json:"os"`
+	Arch            string `json:"arch"`
+	ProcessID       string `json:"process_id"`
+	ReportReason    string `json:"report_reason"`
+	ProcessUptimeMS int64  `json:"process_uptime_ms"`
 
-	// Client, from the initialize request. ClientName is clamped to a
-	// vocabulary (see ClientName); ClientVersion is the client's own string,
-	// capped at maxVersionLen, and is omitted entirely unless the name matched
-	// — so "unrecognised client" reads as NULL rather than as an empty string.
-	ClientName    string `json:"client_name"`
-	ClientVersion string `json:"client_version,omitempty"`
+	// ClientsSeen is the set of MCP clients that identified themselves to this
+	// process in this window, as a sorted comma-joined list of allowlisted
+	// names. A set, not a count: one process can serve many clients, and this
+	// says which kinds, never how many of each. Omitted when no client
+	// identified itself.
+	//
+	// No client version travels with it. Per-process it would be a set of
+	// version strings of limited value, and it was the only unbounded
+	// third-party free-text field on the wire.
+	ClientsSeen string `json:"clients_seen,omitempty"`
 
-	// Tool usage since the previous flush. Both are omitted when the session
-	// called no tools in this window, so "no tools called" reads as NULL
-	// rather than as an empty string and an empty object.
+	// Tool usage since the previous flush, aggregated over the whole process.
+	// Both are omitted when no tool was called in this window, so "no tools
+	// called" reads as NULL rather than as an empty string and an empty
+	// object.
 	ToolsCalled string               `json:"tools_called,omitempty"`
 	ToolCalls   map[string]ToolCount `json:"tool_calls,omitempty"`
 
-	// The Grafana instance the session talked to, described without
-	// identifying it. GrafanaVersion is the instance's own string, capped at
-	// maxVersionLen for the same reason ClientVersion is.
-	GrafanaVersion string `json:"grafana_version"`
-	TargetKind     string `json:"target_kind"`
+	// The Grafana instance the process talked to, described without
+	// identifying it.
+	//
+	// GrafanaVersion is the instance's own string, capped at maxVersionLen.
+	// It and AuthMethod are omitted entirely when the process resolved more
+	// than one distinct value — a multi-tenant HTTP process can serve several
+	// — so absence means "no single value" rather than inventing a "mixed"
+	// sentinel that a reader could mistake for a real one.
+	GrafanaVersion string `json:"grafana_version,omitempty"`
+	TargetKind     string `json:"target_kind,omitempty"`
 	OrgIDSet       bool   `json:"org_id_set"`
-	AuthMethod     string `json:"auth_method"`
+	AuthMethod     string `json:"auth_method,omitempty"`
 
 	// Server configuration, by name and resolved state only. No flag value
 	// an operator can type free text into is included.
@@ -133,8 +147,8 @@ type Event struct {
 	ProxiedEnabled    bool   `json:"proxied_enabled"`
 }
 
-// GrafanaTarget describes the Grafana instance a session talks to, as read
-// from the session's resolved configuration.
+// GrafanaTarget describes the Grafana instance a request talks to, as read
+// from the resolved configuration in its context.
 //
 // URL is consumed by TargetKind and then discarded: it never reaches an Event,
 // and no field derived from it is finer-grained than cloud/self_hosted.
@@ -169,8 +183,8 @@ func TargetKind(rawURL string) string {
 	return TargetKindSelfHosted
 }
 
-// AuthMethodFor names the credential category a session resolved, in the same
-// precedence order the Grafana client's auth round-tripper applies.
+// AuthMethodFor names the credential category a connection resolved, in the
+// same precedence order the Grafana client's auth round-tripper applies.
 func AuthMethodFor(accessTokenSet, idTokenSet, serviceAccountTokenSet, basicAuthSet bool) string {
 	switch {
 	case accessTokenSet && idTokenSet:
@@ -184,4 +198,34 @@ func AuthMethodFor(accessTokenSet, idTokenSet, serviceAccountTokenSet, basicAuth
 	default:
 		return AuthMethodAnonymous
 	}
+}
+
+// soleValue returns the single member of values, or "" when the set is empty
+// or holds more than one.
+//
+// This is how a field that can resolve differently per request is reported at
+// process scope: one value travels, several mean the field is omitted. Absence
+// is the honest answer — a "mixed" sentinel would sit in the same column as
+// real values and be counted as one.
+func soleValue(values map[string]struct{}) string {
+	if len(values) != 1 {
+		return ""
+	}
+	for v := range values {
+		return v
+	}
+	return ""
+}
+
+// joinSortedSet renders a set as a sorted comma-joined string.
+func joinSortedSet(values map[string]struct{}) string {
+	if len(values) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(values))
+	for v := range values {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
 }

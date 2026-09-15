@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	// DefaultInterval is how often a still-live MCP session reports a delta.
+	// DefaultInterval is how often a running process reports a delta.
 	DefaultInterval = 4 * time.Hour
 
 	// intervalJitter is the fraction of DefaultInterval applied as random
@@ -36,9 +36,8 @@ const (
 	// sendTimeout caps a single background send.
 	sendTimeout = 5 * time.Second
 
-	// shutdownFlushTimeout caps the whole synchronous shutdown flush,
-	// regardless of how many sessions it covers. Shutdown must not be held up
-	// by telemetry.
+	// shutdownFlushTimeout caps the whole synchronous shutdown flush.
+	// Shutdown must not be held up by telemetry.
 	shutdownFlushTimeout = time.Second
 )
 
@@ -52,8 +51,7 @@ const (
 // map's shape independent of whatever the remote server happens to expose.
 const ProxiedToolName = "proxied"
 
-// TargetFunc resolves the Grafana target fields for a session from that
-// session's context.
+// TargetFunc resolves the Grafana target fields from a request's context.
 //
 // It runs on the initialize and tool-call paths, so it must not issue network
 // requests, block, or do anything else whose cost the caller would notice:
@@ -63,7 +61,7 @@ const ProxiedToolName = "proxied"
 type TargetFunc func(ctx context.Context) GrafanaTarget
 
 // Config is the static half of a report: everything that is fixed for the
-// process. The per-session half is gathered by the hooks.
+// process. The rest is accumulated by the hooks.
 type Config struct {
 	Mode     Mode
 	Endpoint string
@@ -100,8 +98,8 @@ type Config struct {
 	// the server's hooks.
 	NativeTools map[string]struct{}
 
-	// Target resolves the per-session Grafana target. A nil Target leaves the
-	// Grafana fields empty.
+	// Target resolves the Grafana target. A nil Target leaves the Grafana
+	// fields empty.
 	Target TargetFunc
 
 	// Interval overrides DefaultInterval. Tests only.
@@ -116,58 +114,81 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
-// sessionCounters is the mutable per-session state. Counters are deltas: a
-// flush takes and resets them, so a report that fails to send loses its delta
-// rather than double-counting it into the next one.
-type sessionCounters struct {
+// counters is the process's accumulated usage.
+//
+// Two different lifetimes live here on purpose:
+//
+//   - Activity (tools, clients) is a delta. A flush takes it and resets it, so
+//     a report that fails to send loses its delta rather than double-counting
+//     it into the next one.
+//   - Description (grafanaVersions, authMethods, targetKind, orgIDSet) is
+//     cumulative for the process. These say what the process is talking to,
+//     not what it did in a window, and a window with no new initialize must
+//     not forget them. Keeping the version and auth sets cumulative is also
+//     what makes "the process resolved more than one value" a stable fact
+//     rather than one that depends on flush timing.
+type counters struct {
 	mu sync.Mutex
 
-	sessionID string
-	startedAt time.Time
+	tools   map[string]ToolCount
+	clients map[string]struct{}
 
-	clientName    string
-	clientVersion string
-
-	grafanaVersion string
-	targetKind     string
-	orgIDSet       bool
-	authMethod     string
-
-	tools map[string]ToolCount
+	grafanaVersions map[string]struct{}
+	authMethods     map[string]struct{}
+	targetKind      string
+	orgIDSet        bool
 }
 
-// Reporter accumulates per-session usage and flushes it to the endpoint.
-// A Reporter whose mode is ModeDisabled builds nothing and opens no
-// connection; its Hooks are empty and its Start and Shutdown are no-ops.
+func newCounters() *counters {
+	return &counters{
+		tools:           map[string]ToolCount{},
+		clients:         map[string]struct{}{},
+		grafanaVersions: map[string]struct{}{},
+		authMethods:     map[string]struct{}{},
+	}
+}
+
+// Reporter accumulates this process's usage and flushes it to the endpoint.
+// A Reporter whose mode is not explicitly enabling collects nothing and opens
+// no connection; its Hooks are empty and its Start and Shutdown are no-ops.
+//
+// The unit is the process rather than the MCP session because a session is not
+// something every transport has. Verified against mcp-go v1.0.0: protocol
+// version 2026-07-28 removed protocol-level sessions (SEP-2567), so
+// server/streamable_http.go:647 forces isInitializeRequest to false for it and
+// the registration at :998 — gated on `isInitializeRequest && sessionID != ""`
+// — never runs. A per-session reporter would therefore produce no events at
+// all for a client on that version. The tool-call hooks are unaffected:
+// HandleMessage is reached at :881 and fires hooks.afterCallTool at
+// request_handler.go:527 regardless of whether a session was registered, so
+// counting at process scope sees every call either way.
 type Reporter struct {
 	cfg       Config
 	processID string
+	startedAt time.Time
 	client    *http.Client
 	logOutput io.Writer
 	interval  time.Duration
 
 	nativeTools atomic.Pointer[map[string]struct{}]
-
-	sessions sync.Map // MCP session ID -> *sessionCounters
+	counters    *counters
 
 	startOnce sync.Once
 	stopOnce  sync.Once
 	stop      chan struct{}
-
-	// inFlight tracks the background sends started by mid-life session-end and
-	// interval flushes, so Shutdown does not race them.
-	inFlight sync.WaitGroup
 }
 
-// New builds a Reporter. It is safe to call with ModeDisabled and use the
+// New builds a Reporter. It is safe to call with a disabled mode and use the
 // result unconditionally.
 func New(cfg Config) *Reporter {
 	r := &Reporter{
 		cfg:       cfg,
 		processID: uuid.NewString(),
+		startedAt: time.Now(),
 		client:    cfg.HTTPClient,
 		logOutput: cfg.LogOutput,
 		interval:  cfg.Interval,
+		counters:  newCounters(),
 		stop:      make(chan struct{}),
 	}
 	if r.cfg.Logger == nil {
@@ -221,7 +242,7 @@ func (r *Reporter) Disclose() {
 	if !r.Enabled() {
 		return
 	}
-	r.cfg.Logger.Info("Anonymous usage statistics are being reported to Grafana Labs: MCP session and tool-usage counts, server configuration by flag name, and a coarse description of the Grafana target. No Grafana URL, credentials, tool arguments or resource names are sent. Opt out with --usage-stats=disabled or "+ModeEnvVar+"=disabled, or inspect what would be sent with "+ModeEnvVar+"=log.",
+	r.cfg.Logger.Info("Anonymous usage statistics are being reported to Grafana Labs: per-process tool-usage counts, which kinds of MCP client connected, server configuration by flag name, and a coarse description of the Grafana target. No Grafana URL, credentials, tool arguments or resource names are sent. Opt out with --usage-stats=disabled or "+ModeEnvVar+"=disabled, or inspect what would be sent with "+ModeEnvVar+"=log.",
 		"mode", string(r.cfg.Mode),
 		"docs", "https://grafana.com/docs/mcp-grafana/latest/anonymous-usage-statistics/",
 	)
@@ -250,7 +271,9 @@ func (r *Reporter) runInterval(ctx context.Context) {
 		case <-r.stop:
 			return
 		case <-timer.C:
-			r.flushAll(ctx, ReasonInterval)
+			sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+			r.flush(sendCtx, ReasonInterval)
+			cancel()
 			timer.Reset(r.interval)
 		}
 	}
@@ -262,9 +285,8 @@ func jitterDuration(d time.Duration) time.Duration {
 	return time.Duration(float64(d) * (1 + offset))
 }
 
-// Shutdown stops the interval flusher and flushes every still-live session
-// with ReasonSessionEnd, synchronously and under a one-second cap for the
-// whole operation. It is safe to call more than once.
+// Shutdown stops the interval flusher and sends the process's final report,
+// synchronously and under a one-second cap. It is safe to call more than once.
 func (r *Reporter) Shutdown() {
 	if !r.Enabled() {
 		return
@@ -275,55 +297,46 @@ func (r *Reporter) Shutdown() {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
 		defer cancel()
 
-		// The whole flush is inside the cap, not just the HTTP sends. Building
-		// an event takes each session's counter lock, and in log mode writing
-		// one goes to stderr — a pipe whose reader is the MCP client and may
-		// have stopped draining it. Either can block on something outside this
-		// process's control, so the cap has to cover them too, which means
-		// running them where a deadline can abandon them.
+		// The whole flush is inside the cap, not just the HTTP send. Building
+		// the event takes the counter lock, and in log mode writing it goes to
+		// stderr — a pipe whose reader is the MCP client and may have stopped
+		// draining it. Either can block on something outside this process's
+		// control, so the cap has to cover them too, which means running them
+		// where a deadline can abandon them.
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			r.flushAll(ctx, ReasonSessionEnd)
-			r.inFlight.Wait()
+			r.flush(ctx, ReasonShutdown)
 		}()
 		select {
 		case <-done:
 		case <-ctx.Done():
 			// Abandoned, not cancelled: the goroutine may still be blocked on
-			// a lock or a write. The process is on its way out, so leaving it
-			// is correct — shutdown must not wait on telemetry.
+			// the lock or a write. The process is on its way out, so leaving
+			// it is correct — shutdown must not wait on telemetry.
 		}
 	})
 }
 
 // Hooks returns the MCP server hooks that collect usage. Merge them with the
 // server's other hooks via observability.MergeHooks.
+//
+// There are no session hooks: the unit is the process, and depending on
+// session registration is exactly what would blind this on the streamable-http
+// transport (see the Reporter doc comment).
 func (r *Reporter) Hooks() *server.Hooks {
 	if !r.Enabled() {
 		return &server.Hooks{}
 	}
 	return &server.Hooks{
-		OnRegisterSession: []server.OnRegisterSessionHookFunc{
-			func(ctx context.Context, session server.ClientSession) {
-				r.startSession(ctx, session.SessionID())
-			},
-		},
 		OnAfterInitialize: []server.OnAfterInitializeFunc{
 			func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
 				if message == nil {
 					return
 				}
-				session := server.ClientSessionFromContext(ctx)
-				if session == nil {
-					return
-				}
-				r.recordClientInfo(ctx, session.SessionID(), message.Params.ClientInfo)
-			},
-		},
-		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{
-			func(ctx context.Context, session server.ClientSession) {
-				r.endSession(session.SessionID())
+				// Read straight off the request rather than from a session
+				// handle, so this works for a sessionless modern request too.
+				r.recordClient(ctx, message.Params.ClientInfo)
 			},
 		},
 		OnAfterCallTool: []server.OnAfterCallToolFunc{
@@ -367,81 +380,46 @@ func isErrorResult(result any) bool {
 	return ok && res != nil && res.IsError
 }
 
-// startSession mints this session's telemetry identity and resolves the
-// Grafana target fields.
-//
-// The session ID is a fresh random UUID, never the MCP transport's session ID:
-// that one is chosen by, and visible to, the client, and under horizontal
-// scaling it is shared across processes.
-func (r *Reporter) startSession(ctx context.Context, mcpSessionID string) {
-	if !r.Enabled() {
-		return
-	}
-	// An empty MCP session ID is not a session this package can account for.
-	// mcp-go's stateless session ID manager generates "" (streamable_http.go
-	// :2043), and a GET with no session header then stores every such client
-	// under that one key (:1058), so distinct clients would share a single
-	// sessionCounters and report as one session with their tool calls merged.
-	// Reporting nothing for them is the honest outcome; WarnSessionCoverage
-	// tells the operator at startup.
-	if mcpSessionID == "" {
-		return
-	}
-	sc := &sessionCounters{
-		sessionID: uuid.NewString(),
-		startedAt: time.Now(),
-		tools:     map[string]ToolCount{},
-	}
-	sc.applyTarget(r.resolveTarget(ctx))
-	r.sessions.Store(mcpSessionID, sc)
-}
-
-func (r *Reporter) recordClientInfo(ctx context.Context, mcpSessionID string, info mcp.Implementation) {
-	sc, ok := r.session(mcpSessionID)
-	if !ok {
-		return
-	}
+func (r *Reporter) recordClient(ctx context.Context, info mcp.Implementation) {
 	name := ClientName(info.Name)
 	// The initialize request is the earliest point at which every transport's
-	// context carries the resolved Grafana configuration, so a session that
-	// never calls a tool still reports its target. Resolved before taking the
-	// lock: nothing outside this package runs while a session's counters are
-	// held.
+	// context carries the resolved Grafana configuration. Resolved before
+	// taking the lock: nothing outside this package runs while the counters
+	// are held.
 	target := r.resolveTarget(ctx)
 
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sc.clientName = name
-	sc.clientVersion = ClientVersion(name, info.Version)
-	sc.applyTarget(target)
+	c := r.counters
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if name != "" {
+		c.clients[name] = struct{}{}
+	}
+	c.applyTarget(target)
 }
 
 func (r *Reporter) recordToolCall(ctx context.Context, toolName string, failed bool) {
-	sc, ok := r.sessionFromContext(ctx)
-	if !ok {
-		return
-	}
 	key := r.toolKey(toolName)
 	target := r.resolveTarget(ctx)
 
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	c := sc.tools[key]
-	c.Calls++
+	c := r.counters
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	tc := c.tools[key]
+	tc.Calls++
 	if failed {
-		c.Errors++
+		tc.Errors++
 	}
-	sc.tools[key] = c
-	sc.applyTarget(target)
+	c.tools[key] = tc
+	c.applyTarget(target)
 }
 
-// resolveTarget reads the Grafana target for a session, outside any lock.
+// resolveTarget reads the Grafana target, outside any lock.
 //
-// It cannot be done once at session start: the stdio transport registers its
-// session before the Grafana configuration is attached to the context, and the
-// Grafana version is only known once something else has fetched it. So the
-// target is re-read on initialize and on each tool call, and applyTarget fills
-// in each field once there is something to fill it with.
+// It cannot be done once at startup: the stdio transport attaches its Grafana
+// configuration to the context after the server is built, and the Grafana
+// version is only known once something else has fetched it. So the target is
+// re-read on initialize and on each tool call, and applyTarget accumulates
+// what it can answer.
 func (r *Reporter) resolveTarget(ctx context.Context) GrafanaTarget {
 	if r.cfg.Target == nil {
 		return GrafanaTarget{}
@@ -449,16 +427,28 @@ func (r *Reporter) resolveTarget(ctx context.Context) GrafanaTarget {
 	return r.cfg.Target(ctx)
 }
 
-// applyTarget updates the target fields that t can answer, leaving the rest as
-// they were. The caller holds sc.mu.
-func (sc *sessionCounters) applyTarget(t GrafanaTarget) {
+// applyTarget folds one request's target into the process's description. The
+// caller holds c.mu.
+//
+// The version and auth method accumulate as sets, because a multi-tenant HTTP
+// process can resolve either differently per request; the event reports one
+// only when the set holds exactly one. targetKind comes from GRAFANA_URL,
+// which extractKeyGrafanaInfoFromReq never takes from a header, so it cannot
+// vary within a process. orgIDSet can vary per request, and accumulates as
+// "an organisation was selected for at least one request" — see the docs page,
+// which says so rather than implying it describes every request.
+func (c *counters) applyTarget(t GrafanaTarget) {
 	if t.URL != "" {
-		sc.targetKind = TargetKind(t.URL)
-		sc.orgIDSet = t.OrgIDSet
-		sc.authMethod = observability.BoundedValue(t.AuthMethod, authMethods)
+		c.targetKind = TargetKind(t.URL)
+		if t.OrgIDSet {
+			c.orgIDSet = true
+		}
+		if m := observability.BoundedValue(t.AuthMethod, authMethods); m != "" {
+			c.authMethods[m] = struct{}{}
+		}
 	}
 	if v := truncateRunes(t.Version, maxVersionLen); v != "" {
-		sc.grafanaVersion = v
+		c.grafanaVersions[v] = struct{}{}
 	}
 }
 
@@ -478,98 +468,46 @@ func (r *Reporter) toolKey(name string) string {
 	return ProxiedToolName
 }
 
-func (r *Reporter) session(mcpSessionID string) (*sessionCounters, bool) {
-	v, ok := r.sessions.Load(mcpSessionID)
-	if !ok {
-		return nil, false
-	}
-	sc, ok := v.(*sessionCounters)
-	return sc, ok
-}
-
-func (r *Reporter) sessionFromContext(ctx context.Context) (*sessionCounters, bool) {
-	session := server.ClientSessionFromContext(ctx)
-	if session == nil {
-		return nil, false
-	}
-	return r.session(session.SessionID())
-}
-
-// endSession flushes a session that ended while the server is still running.
-// The send is backgrounded: OnUnregisterSession runs on the transport's
-// teardown path, which must not wait on a network round trip.
-func (r *Reporter) endSession(mcpSessionID string) {
-	v, ok := r.sessions.LoadAndDelete(mcpSessionID)
-	if !ok {
+// flush builds one event for the process and sends it.
+func (r *Reporter) flush(ctx context.Context, reason string) {
+	if !r.Enabled() {
 		return
 	}
-	sc, ok := v.(*sessionCounters)
-	if !ok {
-		return
-	}
-	event := r.buildEvent(sc, ReasonSessionEnd)
-	r.inFlight.Add(1)
-	go func() {
-		defer r.inFlight.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
-		defer cancel()
-		r.send(ctx, event)
-	}()
+	r.send(ctx, r.buildEvent(reason))
 }
 
-// flushAll reports every live session. Sessions are kept for a session_end
-// flush; only their counters are reset.
-func (r *Reporter) flushAll(ctx context.Context, reason string) {
-	var events []Event
-	r.sessions.Range(func(_, v any) bool {
-		if ctx.Err() != nil {
-			return false
-		}
-		if sc, ok := v.(*sessionCounters); ok {
-			events = append(events, r.buildEvent(sc, reason))
-		}
-		return true
-	})
-	for _, e := range events {
-		// A deadline reached partway through stops the remaining sends rather
-		// than issuing them against an already-expired context. Their deltas
-		// are lost, which is the documented behaviour of a flush that does not
-		// land.
-		if ctx.Err() != nil {
-			return
-		}
-		r.send(ctx, e)
-	}
-}
+// buildEvent snapshots the counters into an event and resets the activity
+// half. The reset happens here rather than after a successful send, so a
+// report that never arrives loses its delta: totals are a floor, never a
+// count.
+func (r *Reporter) buildEvent(reason string) Event {
+	c := r.counters
 
-// buildEvent snapshots the session's counters into an event and resets them.
-// The reset happens here rather than after a successful send, so a report that
-// never arrives loses its delta: totals are a floor, never a count.
-func (r *Reporter) buildEvent(sc *sessionCounters, reason string) Event {
-	sc.mu.Lock()
+	c.mu.Lock()
 	// A flush with no tool calls reports a nil map, not an empty one, so the
 	// field is omitted rather than sent as {}.
 	var tools map[string]ToolCount
-	if len(sc.tools) > 0 {
-		tools = sc.tools
-		sc.tools = map[string]ToolCount{}
+	if len(c.tools) > 0 {
+		tools = c.tools
+		c.tools = map[string]ToolCount{}
 	}
+	clients := joinSortedSet(c.clients)
+	c.clients = map[string]struct{}{}
+
 	e := Event{
 		Service:           ServiceName,
 		Version:           r.cfg.Version,
 		OS:                runtime.GOOS,
 		Arch:              runtime.GOARCH,
 		ProcessID:         r.processID,
-		SessionID:         sc.sessionID,
 		ReportReason:      reason,
-		SessionDurationMS: time.Since(sc.startedAt).Milliseconds(),
-		ClientName:        sc.clientName,
-		ClientVersion:     sc.clientVersion,
+		ProcessUptimeMS:   time.Since(r.startedAt).Milliseconds(),
+		ClientsSeen:       clients,
 		ToolCalls:         tools,
-		GrafanaVersion:    sc.grafanaVersion,
-		TargetKind:        sc.targetKind,
-		OrgIDSet:          sc.orgIDSet,
-		AuthMethod:        sc.authMethod,
+		GrafanaVersion:    soleValue(c.grafanaVersions),
+		TargetKind:        c.targetKind,
+		OrgIDSet:          c.orgIDSet,
+		AuthMethod:        soleValue(c.authMethods),
 		Transport:         r.cfg.Transport,
 		Flags:             joinSorted(r.cfg.Flags),
 		EnabledTools:      joinSorted(r.cfg.EnabledTools),
@@ -580,7 +518,7 @@ func (r *Reporter) buildEvent(sc *sessionCounters, reason string) Event {
 		DynamicMultiOrg:   r.cfg.DynamicMultiOrg,
 		ProxiedEnabled:    r.cfg.ProxiedEnabled,
 	}
-	sc.mu.Unlock()
+	c.mu.Unlock()
 
 	names := make([]string, 0, len(tools))
 	for name := range tools {
