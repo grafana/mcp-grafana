@@ -1613,3 +1613,43 @@ func TestNativeToolNamesFromRegistrations(t *testing.T) {
 	assert.Contains(t, names, "search_dashboards")
 	assert.NotEmpty(t, names)
 }
+
+// TestCategoryReportNormalisesAliases: --enabled-tools=clickhouse is rewritten
+// to sql and clears --disable-sql, so the report must say sql is enabled
+// rather than repeating the flags as typed.
+func TestCategoryReportNormalisesAliases(t *testing.T) {
+	dt := disabledTools{enabledTools: "search,clickhouse", sql: true}
+	dt.normalizeEnabledTools()
+	enabled, disabled := dt.categoryReport()
+
+	assert.Contains(t, enabled, "sql")
+	assert.NotContains(t, disabled, "sql")
+	assert.NotContains(t, enabled, "clickhouse")
+}
+
+func TestEffectiveTLSEnabled(t *testing.T) {
+	withCert := tlsConfig{certFile: "/tmp/c.pem", keyFile: "/tmp/k.pem"}
+
+	assert.True(t, effectiveTLSEnabled("streamable-http", withCert))
+	// run() only hands the cert and key to the streamable-http server, so an
+	// SSE server with them set is still serving plain HTTP.
+	assert.False(t, effectiveTLSEnabled("sse", withCert))
+	assert.False(t, effectiveTLSEnabled("stdio", withCert))
+	assert.False(t, effectiveTLSEnabled("streamable-http", tlsConfig{}))
+}
+
+func TestEffectiveMetricsEnabled(t *testing.T) {
+	assert.True(t, effectiveMetricsEnabled("streamable-http", true))
+	assert.True(t, effectiveMetricsEnabled("sse", true))
+	// registerOps is never called for stdio, so nothing serves /metrics.
+	assert.False(t, effectiveMetricsEnabled("stdio", true))
+	assert.False(t, effectiveMetricsEnabled("streamable-http", false))
+}
+
+func TestStatelessStreamableHTTP(t *testing.T) {
+	// WithStateLess(dt.proxied): proxied tools disabled means stateless.
+	assert.True(t, statelessStreamableHTTP("streamable-http", disabledTools{proxied: true}))
+	assert.False(t, statelessStreamableHTTP("streamable-http", disabledTools{}))
+	assert.False(t, statelessStreamableHTTP("sse", disabledTools{proxied: true}))
+	assert.False(t, statelessStreamableHTTP("stdio", disabledTools{proxied: true}))
+}

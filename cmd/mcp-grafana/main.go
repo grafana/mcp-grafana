@@ -962,6 +962,22 @@ func grafanaTarget(ctx context.Context) usagestats.GrafanaTarget {
 	}
 }
 
+// effectiveTLSEnabled reports whether the server will actually serve HTTPS,
+// which is not the same as TLS material having been configured: the cert and
+// key are only passed to a server in run()'s streamable-http branch, so
+// `-t sse --tls-cert-file=...` serves plain HTTP. Reporting the flag would
+// claim HTTPS for a connection that does not have it.
+func effectiveTLSEnabled(transport string, tls tlsConfig) bool {
+	return transport == "streamable-http" && (tls.certFile != "" || tls.keyFile != "")
+}
+
+// effectiveMetricsEnabled reports whether /metrics is actually served.
+// --metrics still builds a meter provider under stdio, but registerOps is only
+// called from the HTTP branches, so no route exists to scrape.
+func effectiveMetricsEnabled(transport string, metricsEnabled bool) bool {
+	return metricsEnabled && transport != "stdio"
+}
+
 // statelessStreamableHTTP reports whether the streamable-http server will run
 // in mcp-go's stateless mode, which is what WithStateLess(dt.proxied) below
 // selects when proxied tools are disabled. In that mode session IDs are empty
@@ -1035,10 +1051,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// built before the server; the tool-name allowlist it needs only exists
 	// once the server has registered its tools, and is handed over below.
 	us.Transport = transport
+	// Normalise first: processTools and buildInstructions each do this to their
+	// own copy of dt, rewriting the deprecated SQL dialect aliases to "sql" and
+	// clearing --disable-sql when one is named. Reading dt before that reported
+	// the flags as typed rather than the categories the server actually
+	// registered — e.g. --enabled-tools=search,clickhouse --disable-sql would
+	// register the SQL tools and report sql as disabled.
+	dt.normalizeEnabledTools()
 	us.EnabledTools, us.DisabledTools = dt.categoryReport()
 	us.LokiGuardrailMode = gc.LokiGuardrailMode
-	us.TLSEnabled = tls.certFile != "" || tls.keyFile != ""
-	us.MetricsEnabled = obs.MetricsEnabled
+	us.TLSEnabled = effectiveTLSEnabled(transport, tls)
+	us.MetricsEnabled = effectiveMetricsEnabled(transport, obs.MetricsEnabled)
 	us.DynamicMultiOrg = mcpgrafana.DynamicMultiOrgEnabled
 	us.ProxiedEnabled = isCategoryEnabled(strings.Split(dt.enabledTools, ","), dt.proxied, "proxied")
 	us.Target = grafanaTarget

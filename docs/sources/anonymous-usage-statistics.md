@@ -106,8 +106,8 @@ The `auth_method` vocabulary is exactly `on_behalf_of`, `access_token`, `service
 | `enabled_tools` | The tool category names that are actually active, sorted. | `alerting,dashboard,search` |
 | `disabled_tools` | The tool category names a `--disable-*` flag turned off, sorted. | `oncall` |
 | `loki_guardrail_mode` | The resolved Loki query cost guardrail mode: `off`, `shadow` or `enforce`. | `off` |
-| `tls_enabled` | Whether the server is serving HTTPS. Whether, not which certificate: no path or certificate detail is sent. | `false` |
-| `metrics_enabled` | Whether the Prometheus metrics endpoint is enabled. | `true` |
+| `tls_enabled` | Whether the server is actually serving HTTPS, which only the `streamable-http` transport does. Whether, not which certificate: no path or certificate detail is sent. | `false` |
+| `metrics_enabled` | Whether the Prometheus `/metrics` endpoint is actually served. Always `false` under `stdio`, which mounts no HTTP routes, even with `--metrics` set. | `true` |
 | `dynamic_multi_org` | Whether per-call organisation selection is enabled. | `false` |
 | `proxied_enabled` | Whether proxied tools from external MCP servers are enabled. | `true` |
 
@@ -126,6 +126,7 @@ These fields are easy to misread, so the following constraints are part of the c
 - **`enabled_tools` and `disabled_tools` are not complements.** A category that is neither named in `--enabled-tools` nor explicitly disabled appears in neither list. A category name in `--enabled-tools` that this build does not recognise appears in neither list either, because both are bounded by the categories compiled into the binary.
 - **`client_name: other` is not a rare case.** The list is the documented client slugs, and there is no alias table mapping a client's display name onto its slug. A client that reports a display name rather than its slug is reported as `other`, along with anything genuinely unrecognised.
 - **`client_version` is the client's own string.** There is no vocabulary to clamp a version against, so when the name matched, the version travels as the client wrote it, bounded only by a 64-byte truncation. Treat it as untrusted text from the connecting client, not as a value this server vouches for.
+- **The boolean configuration fields record effective state, while `flags` records what was set.** `tls_enabled` and `metrics_enabled` describe what the running server actually does, so TLS material passed to an `sse` server reports `tls_enabled: false` and `--metrics` under `stdio` reports `metrics_enabled: false`. `enabled_tools` and `disabled_tools` likewise describe the categories the server registered, after the deprecated SQL dialect aliases have been resolved, so `clickhouse` never appears and `--enabled-tools=clickhouse` reports `sql` as enabled.
 - **`flags` records what was set, not what is in effect.** A setting supplied through an environment variable rather than a flag does not appear in `flags`, even though it changes the server's behaviour. Read the resolved-state fields — `loki_guardrail_mode`, `tls_enabled`, `metrics_enabled`, `dynamic_multi_org`, `proxied_enabled` — for what the server is actually doing.
 - **Grouping by `process_id` reveals deployment concurrency.** One process can host many sessions, so the number of distinct `session_id` values sharing a `process_id`, and their overlap in time, describes how heavily a single deployment is used. That is a property of the data, not a mistake, but it means events are less atomised than a per-session identifier suggests.
 
