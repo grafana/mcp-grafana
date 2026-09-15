@@ -81,11 +81,10 @@ type Config struct {
 	EnabledTools  []string
 	DisabledTools []string
 
-	LokiGuardrailMode string
-	TLSEnabled        bool
-	MetricsEnabled    bool
-	DynamicMultiOrg   bool
-	ProxiedEnabled    bool
+	TLSEnabled      bool
+	MetricsEnabled  bool
+	DynamicMultiOrg bool
+	ProxiedEnabled  bool
 
 	// NativeTools is the set of tool names this server registered itself. It
 	// is the allowlist for tool_calls keys: anything outside it is recorded as
@@ -118,10 +117,10 @@ type Config struct {
 //
 // Two different lifetimes live here on purpose:
 //
-//   - Activity (tools, clients) is a delta. A flush takes it and resets it, so
-//     a report that fails to send loses its delta rather than double-counting
+//   - Activity (tools) is a delta. A flush takes it and resets it, so a
+//     report that fails to send loses its delta rather than double-counting
 //     it into the next one.
-//   - Description (grafanaVersions, authMethods, targetKind, orgIDSeen) is
+//   - Description (grafanaVersions, authMethods, targetKind) is
 //     cumulative for the process. These say what the process is talking to,
 //     not what it did in a window, and a window with no new initialize must
 //     not forget them. Keeping the version and auth sets cumulative is also
@@ -130,19 +129,16 @@ type Config struct {
 type counters struct {
 	mu sync.Mutex
 
-	tools   map[string]ToolCount
-	clients map[string]struct{}
+	tools map[string]ToolCount
 
 	grafanaVersions map[string]struct{}
 	authMethods     map[string]struct{}
 	targetKind      string
-	orgIDSeen       bool
 }
 
 func newCounters() *counters {
 	return &counters{
 		tools:           map[string]ToolCount{},
-		clients:         map[string]struct{}{},
 		grafanaVersions: map[string]struct{}{},
 		authMethods:     map[string]struct{}{},
 	}
@@ -334,9 +330,7 @@ func (r *Reporter) Hooks() *server.Hooks {
 				if message == nil {
 					return
 				}
-				// Read straight off the request rather than from a session
-				// handle, so this works for a sessionless modern request too.
-				r.recordClient(ctx, message.Params.ClientInfo)
+				r.recordInitialize(ctx)
 			},
 		},
 		OnAfterCallTool: []server.OnAfterCallToolFunc{
@@ -380,20 +374,18 @@ func isErrorResult(result any) bool {
 	return ok && res != nil && res.IsError
 }
 
-func (r *Reporter) recordClient(ctx context.Context, info mcp.Implementation) {
-	name := ClientName(info.Name)
-	// The initialize request is the earliest point at which every transport's
-	// context carries the resolved Grafana configuration. Resolved before
-	// taking the lock: nothing outside this package runs while the counters
-	// are held.
+// recordInitialize folds the Grafana target into the process description. The
+// initialize request is the earliest point at which every transport's context
+// carries the resolved Grafana configuration, which is the only reason this
+// hook exists — no property of the connecting client is recorded. Resolved
+// before taking the lock: nothing outside this package runs while the counters
+// are held.
+func (r *Reporter) recordInitialize(ctx context.Context) {
 	target := r.resolveTarget(ctx)
 
 	c := r.counters
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if name != "" {
-		c.clients[name] = struct{}{}
-	}
 	c.applyTarget(target)
 }
 
@@ -434,15 +426,10 @@ func (r *Reporter) resolveTarget(ctx context.Context) GrafanaTarget {
 // process can resolve either differently per request; the event reports one
 // only when the set holds exactly one. targetKind comes from GRAFANA_URL,
 // which extractKeyGrafanaInfoFromReq never takes from a header, so it cannot
-// vary within a process. orgIDSeen can vary per request, and accumulates as
-// "an organisation was selected for at least one request" — see the docs page,
-// which says so rather than implying it describes every request.
+// vary within a process.
 func (c *counters) applyTarget(t GrafanaTarget) {
 	if t.URL != "" {
 		c.targetKind = TargetKind(t.URL)
-		if t.OrgIDSeen {
-			c.orgIDSeen = true
-		}
 		if m := observability.BoundedValue(t.AuthMethod, authMethods); m != "" {
 			c.authMethods[m] = struct{}{}
 		}
@@ -491,32 +478,26 @@ func (r *Reporter) buildEvent(reason string) Event {
 		tools = c.tools
 		c.tools = map[string]ToolCount{}
 	}
-	clients := joinSortedSet(c.clients)
-	c.clients = map[string]struct{}{}
-
 	e := Event{
-		Service:           ServiceName,
-		Version:           r.cfg.Version,
-		OS:                runtime.GOOS,
-		Arch:              runtime.GOARCH,
-		ProcessID:         r.processID,
-		ReportReason:      reason,
-		ProcessUptimeMS:   time.Since(r.startedAt).Milliseconds(),
-		ClientsSeen:       clients,
-		ToolCalls:         tools,
-		GrafanaVersion:    soleValue(c.grafanaVersions),
-		TargetKind:        c.targetKind,
-		OrgIDSeen:         c.orgIDSeen,
-		AuthMethod:        soleValue(c.authMethods),
-		Transport:         r.cfg.Transport,
-		Flags:             joinSorted(r.cfg.Flags),
-		EnabledTools:      joinSorted(r.cfg.EnabledTools),
-		DisabledTools:     joinSorted(r.cfg.DisabledTools),
-		LokiGuardrailMode: r.cfg.LokiGuardrailMode,
-		TLSEnabled:        r.cfg.TLSEnabled,
-		MetricsEnabled:    r.cfg.MetricsEnabled,
-		DynamicMultiOrg:   r.cfg.DynamicMultiOrg,
-		ProxiedEnabled:    r.cfg.ProxiedEnabled,
+		Service:         ServiceName,
+		Version:         r.cfg.Version,
+		OS:              runtime.GOOS,
+		Arch:            runtime.GOARCH,
+		ProcessID:       r.processID,
+		ReportReason:    reason,
+		ProcessUptimeMS: time.Since(r.startedAt).Milliseconds(),
+		ToolCalls:       tools,
+		GrafanaVersion:  soleValue(c.grafanaVersions),
+		TargetKind:      c.targetKind,
+		AuthMethod:      soleValue(c.authMethods),
+		Transport:       r.cfg.Transport,
+		Flags:           joinSorted(r.cfg.Flags),
+		EnabledTools:    joinSorted(r.cfg.EnabledTools),
+		DisabledTools:   joinSorted(r.cfg.DisabledTools),
+		TLSEnabled:      r.cfg.TLSEnabled,
+		MetricsEnabled:  r.cfg.MetricsEnabled,
+		DynamicMultiOrg: r.cfg.DynamicMultiOrg,
+		ProxiedEnabled:  r.cfg.ProxiedEnabled,
 	}
 	c.mu.Unlock()
 

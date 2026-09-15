@@ -19,7 +19,7 @@ The Grafana MCP server can report limited usage statistics about itself to Grafa
 
 The statistics describe the *shape* of usage only. Tool arguments, resource names, dashboards, queries, log lines, error messages and credentials are never sent. The flags you set are recorded by **name** only, never by value, and the Grafana instance the server talks to is described only as `cloud` or `self_hosted` — never by URL, hostname, stack slug, organisation name or organisation ID.
 
-Any value that comes from outside the binary — an MCP client's reported name, a proxied tool's name, the authentication method — is first reduced to a fixed vocabulary compiled into the binary, so only known, non-identifying values can ever be sent. A value outside its vocabulary is sent as `other`, never verbatim.
+Nothing an MCP client reports about itself is collected: not its name, not its version. Any other value that comes from outside the binary — a proxied tool's name, the authentication method — is first reduced to a fixed vocabulary compiled into the binary, so only known, non-identifying values can ever be sent. A value outside its vocabulary is sent as `other`, never verbatim.
 
 {{< admonition type="note" >}}
 Usage statistics reporting is **currently disabled by default**. This will soon change to enabled by default. There are details on how to opt out in [Opt out](#opt-out).
@@ -53,18 +53,6 @@ Every event carries the following envelope:
 | `report_reason` | Why this event was sent: `interval` or `shutdown`. | `interval` |
 | `process_uptime_ms` | How long the process had been running when the event was built, in milliseconds. Cumulative, unlike the counters. | `1234` |
 
-### Client field
-
-MCP clients identify themselves in their `initialize` request. That is free text chosen by the client, so it is clamped:
-
-| Field | Description | Example |
-| :---- | :---- | :---- |
-| `clients_seen` | The **kinds** of MCP client that connected in this window, as a sorted comma-joined list. Each reported name is matched case-insensitively against a fixed list of the clients with a setup page under [Clients](../clients/), plus `mcpb` for the desktop extension bundle; anything else is sent as `other`. Absent when no client identified itself. | `claude-code,cursor` |
-
-The list is exactly `claude-code`, `claude-desktop`, `codex`, `cursor`, `gemini-cli`, `mcpb`, `vscode-copilot`, `windsurf` and `zed`.
-
-No client version is sent. Per process this would be a set of version strings of little analytical value, and it was the only unbounded piece of third-party free text on the wire.
-
 ### Tool usage fields
 
 | Field | Description | Example |
@@ -82,7 +70,6 @@ Only the tool's name is recorded. Its arguments, its result, the size of its res
 | :---- | :---- | :---- |
 | `grafana_version` | The version the Grafana instance reported, read from a response the server had already fetched for its own reasons, and truncated to 64 bytes. Absent whenever that version is not already known — nothing is fetched to find it out — and absent when the process resolved more than one. | `12.1.0` |
 | `target_kind` | `cloud` or `self_hosted`. Deliberately coarse: never the URL, hostname, stack slug, organisation name or organisation ID. Absent when no Grafana target was resolved. | `cloud` |
-| `org_id_seen` | Whether a Grafana organisation was selected for **at least one** request this process served. Whether, not which: the organisation ID is never sent. | `true` |
 | `auth_method` | The credential category the connection resolved, from a fixed vocabulary, never the credential itself. Absent when the process resolved more than one. | `service_account_token` |
 
 The `auth_method` vocabulary is exactly `on_behalf_of`, `access_token`, `service_account_token`, `basic_auth` and `anonymous`, plus the `other` sentinel.
@@ -95,7 +82,6 @@ The `auth_method` vocabulary is exactly `on_behalf_of`, `access_token`, `service
 | `flags` | The **names** of the command-line flags that were set, sorted. No flag value is sent in this field. | `disable-write,transport` |
 | `enabled_tools` | The tool category names that are actually active, sorted. | `alerting,dashboard,search` |
 | `disabled_tools` | The tool category names a `--disable-*` flag turned off, sorted. | `oncall` |
-| `loki_guardrail_mode` | The resolved Loki query cost guardrail mode: `off`, `shadow` or `enforce`. | `off` |
 | `tls_enabled` | Whether the server is actually serving HTTPS, which only the `streamable-http` transport does. Whether, not which certificate: no path or certificate detail is sent. | `false` |
 | `metrics_enabled` | Whether the Prometheus `/metrics` endpoint is actually served. Always `false` under `stdio`, which mounts no HTTP routes, even with `--metrics` set. | `true` |
 | `dynamic_multi_org` | Whether per-call organisation selection is enabled. | `false` |
@@ -106,11 +92,10 @@ The `auth_method` vocabulary is exactly `on_behalf_of`, `access_token`, `service
 These fields are easy to misread, so the following constraints are part of the contract:
 
 - **Totals are a floor, not a count.** `calls` and `errors` are deltas since the previous event, and they are reset at the moment an event is *sent*, not when the receiver acknowledges it. A report that never arrives takes its delta with it. Any total built by summing these counts undercounts by an unknown amount, and it undercounts most in exactly the environments where delivery fails most.
-- **Nothing is per user, per conversation or per client.** One process can serve many clients and many people at once, and all of their activity is summed into one set of counters. `clients_seen` says which kinds of client connected, never how many of each, and there is no way to attribute a tool call to a particular client, session or person — by construction, not by omission.
+- **Nothing is per user, per conversation or per client.** One process can serve many clients and many people at once, and all of their activity is summed into one set of counters. There is no way to attribute a tool call to a particular client, session or person, and no field says which clients connected — by construction, not by omission.
 - **`tools_called` and `tool_calls` always agree, and both are per-event.** `tools_called` is the sorted key list of `tool_calls` for that same event, not a running list for the process. A process that called one tool in its first four hours and a different one in its second reports one name in each event, never both in either.
-- **A field with nothing to say is absent, not empty.** `clients_seen`, `tools_called` and `tool_calls` for a window with no activity, and the Grafana fields when nothing resolved them, are left out of the event entirely, so they read as null rather than as an empty string or an empty object. An idle process still reports its envelope, so it remains countable.
+- **A field with nothing to say is absent, not empty.** `tools_called` and `tool_calls` for a window with no activity, and the Grafana fields when nothing resolved them, are left out of the event entirely, so they read as null rather than as an empty string or an empty object. An idle process still reports its envelope, so it remains countable.
 - **`grafana_version` and `auth_method` are omitted when the process resolved more than one value.** A multi-tenant HTTP process can serve several Grafana versions or authenticate several ways. Rather than invent a "mixed" value that would sit in the same column as real ones and be counted as one, the field is dropped: absence means "not resolved" *or* "no single value", and those two cases are not distinguishable. Do not read the share of events carrying a value as a measure of anything.
-- **`org_id_seen` is "at least one", not "every".** The organisation can be selected per request by header, so in a multi-tenant process a single request carrying one sets this `true` for the whole report.
 - **`errors` counts calls that failed, not why they failed.** A tool that returns an error result and a tool whose handler fails outright both count as one error. Nothing describes the failure: no message, no status, no error category. You can see which tools are failing and never why. A coarse error-kind field may be added later; until then, absence of detail is by design, not an omission.
 - **A failure that named no tool is not counted at all.** A `tools/call` whose payload could not be parsed, or that arrived when the tools capability was unavailable, has no tool to attribute, so it is left out of `tool_calls` entirely rather than attributed to anything. `calls` is therefore a count of calls that reached a named tool, not of everything a client attempted.
 - **`proxied` is one key covering every proxied tool.** Tools proxied from an external MCP server are all recorded under the single name `proxied`, never by their real names and never by the datasource type they came from. Those names are chosen by a remote server, so this repository cannot bound them, and the datasource type would tell us which backends you run. A call to a tool this build does not have registered — a typo from the model, or a tool whose category is disabled — also lands on `proxied`, so a small `proxied` count is not by itself evidence that proxied tools were used.
@@ -118,9 +103,8 @@ These fields are easy to misread, so the following constraints are part of the c
 - **The Grafana fields stay absent until the server talks to Grafana.** They are read from configuration and from a cache the server's own Grafana requests populate. Reporting never issues a request of its own, so a version that nothing else has fetched is simply absent — including on an instance whose `/api/frontend/settings` is unreachable or forbidden. Absent means "not resolved", never "old" or "self-hosted".
 - **`grafana_version` is the instance's own string.** It has no vocabulary to clamp against — forks and internal builds set it freely — so it travels as reported, bounded only by a 64-byte truncation. Treat it as untrusted text, not as a value this server vouches for.
 - **`enabled_tools` and `disabled_tools` are not complements.** A category that is neither named in `--enabled-tools` nor explicitly disabled appears in neither list. A category name in `--enabled-tools` that this build does not recognise appears in neither list either, because both are bounded by the categories compiled into the binary.
-- **`clients_seen` containing `other` is not a rare case.** The list is the documented client slugs, and there is no alias table mapping a client's display name onto its slug. A client that reports a display name rather than its slug is reported as `other`, along with anything genuinely unrecognised.
 - **The boolean configuration fields record effective state, while `flags` records what was set.** `tls_enabled` and `metrics_enabled` describe what the running server actually does, so TLS material passed to an `sse` server reports `tls_enabled: false` and `--metrics` under `stdio` reports `metrics_enabled: false`. `enabled_tools` and `disabled_tools` likewise describe the categories the server registered, after the deprecated SQL dialect aliases have been resolved, so `clickhouse` never appears and `--enabled-tools=clickhouse` reports `sql` as enabled.
-- **`flags` records what was set, not what is in effect.** A setting supplied through an environment variable rather than a flag does not appear in `flags`, even though it changes the server's behaviour. Read the resolved-state fields — `loki_guardrail_mode`, `tls_enabled`, `metrics_enabled`, `dynamic_multi_org`, `proxied_enabled` — for what the server is actually doing.
+- **`flags` records what was set as a flag, and nothing else.** A setting supplied through an environment variable does not appear in `flags`, even though it changes the server's behaviour, and containerised deployments configure almost entirely by environment variable. `tls_enabled`, `metrics_enabled`, `dynamic_multi_org` and `proxied_enabled` report resolved state and are unaffected, but for everything else `flags` systematically under-reports how the server is configured.
 - **Grouping by `process_id` reveals deployment concurrency.** Consecutive events sharing a `process_id`, and how many distinct IDs report at once, describe how many replicas an operator runs and for how long. It says nothing about sessions, which are no longer reported.
 
 ## What is never reported
@@ -135,7 +119,9 @@ The following never appear in an event, in any field:
 - Error messages, stack traces or HTTP response bodies.
 - The names of tools proxied from an external MCP server, or the datasource types they were discovered on.
 - Any result-size, result-count or cardinality measurement. There is no such field, bucketed or otherwise.
-- Any MCP session identifier, or any per-session, per-client or per-user breakdown.
+- The name or version an MCP client reports for itself, and any per-session, per-client or per-user breakdown.
+- Any MCP session identifier.
+- The Loki query cost guardrail mode, or any other value of a setting supplied through an environment variable rather than a flag.
 - Your IP address. See [Server-side enrichment](#server-side-enrichment) for what the receiving service derives from the connection.
 
 ## How the report is sent

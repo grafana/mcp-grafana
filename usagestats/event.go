@@ -2,7 +2,6 @@ package usagestats
 
 import (
 	"net/url"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -103,17 +102,6 @@ type Event struct {
 	ReportReason    string `json:"report_reason"`
 	ProcessUptimeMS int64  `json:"process_uptime_ms"`
 
-	// ClientsSeen is the set of MCP clients that identified themselves to this
-	// process in this window, as a sorted comma-joined list of allowlisted
-	// names. A set, not a count: one process can serve many clients, and this
-	// says which kinds, never how many of each. Omitted when no client
-	// identified itself.
-	//
-	// No client version travels with it. Per-process it would be a set of
-	// version strings of limited value, and it was the only unbounded
-	// third-party free-text field on the wire.
-	ClientsSeen string `json:"clients_seen,omitempty"`
-
 	// Tool usage since the previous flush, aggregated over the whole process.
 	// Both are omitted when no tool was called in this window, so "no tools
 	// called" reads as NULL rather than as an empty string and an empty
@@ -131,20 +119,18 @@ type Event struct {
 	// sentinel that a reader could mistake for a real one.
 	GrafanaVersion string `json:"grafana_version,omitempty"`
 	TargetKind     string `json:"target_kind,omitempty"`
-	OrgIDSeen      bool   `json:"org_id_seen"`
 	AuthMethod     string `json:"auth_method,omitempty"`
 
 	// Server configuration, by name and resolved state only. No flag value
 	// an operator can type free text into is included.
-	Transport         string `json:"transport"`
-	Flags             string `json:"flags"`
-	EnabledTools      string `json:"enabled_tools"`
-	DisabledTools     string `json:"disabled_tools"`
-	LokiGuardrailMode string `json:"loki_guardrail_mode"`
-	TLSEnabled        bool   `json:"tls_enabled"`
-	MetricsEnabled    bool   `json:"metrics_enabled"`
-	DynamicMultiOrg   bool   `json:"dynamic_multi_org"`
-	ProxiedEnabled    bool   `json:"proxied_enabled"`
+	Transport       string `json:"transport"`
+	Flags           string `json:"flags"`
+	EnabledTools    string `json:"enabled_tools"`
+	DisabledTools   string `json:"disabled_tools"`
+	TLSEnabled      bool   `json:"tls_enabled"`
+	MetricsEnabled  bool   `json:"metrics_enabled"`
+	DynamicMultiOrg bool   `json:"dynamic_multi_org"`
+	ProxiedEnabled  bool   `json:"proxied_enabled"`
 }
 
 // GrafanaTarget describes the Grafana instance a request talks to, as read
@@ -156,7 +142,6 @@ type GrafanaTarget struct {
 	URL        string
 	Version    string
 	AuthMethod string
-	OrgIDSeen  bool
 }
 
 // grafanaCloudHostSuffix is the only positive signal for a Grafana Cloud
@@ -215,17 +200,4 @@ func soleValue(values map[string]struct{}) string {
 		return v
 	}
 	return ""
-}
-
-// joinSortedSet renders a set as a sorted comma-joined string.
-func joinSortedSet(values map[string]struct{}) string {
-	if len(values) == 0 {
-		return ""
-	}
-	out := make([]string, 0, len(values))
-	for v := range values {
-		out = append(out, v)
-	}
-	sort.Strings(out)
-	return strings.Join(out, ",")
 }

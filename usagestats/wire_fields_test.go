@@ -36,16 +36,13 @@ var wireFields = []string{
 	"arch",
 	"auth_method",
 	"calls",
-	"clients_seen",
 	"disabled_tools",
 	"dynamic_multi_org",
 	"enabled_tools",
 	"errors",
 	"flags",
 	"grafana_version",
-	"loki_guardrail_mode",
 	"metrics_enabled",
-	"org_id_seen",
 	"os",
 	"process_id",
 	"process_uptime_ms",
@@ -71,12 +68,21 @@ func TestWireFields(t *testing.T) {
 	assert.Equal(t, want, got, "the set of fields on the wire changed: see this test's comment for what else must change with it")
 }
 
-// TestRemovedFieldsStayRemoved pins the fields the per-process regrouping took
-// off the wire, so reintroducing one is a deliberate act rather than a
-// copy-paste. The session ones cannot come back at all: protocol version
-// 2026-07-28 removed protocol sessions, which is why the unit is the process.
+// TestRemovedFieldsStayRemoved pins the fields taken off the wire, so
+// reintroducing one is a deliberate act rather than a copy-paste.
+//
+// The session ones cannot come back at all: protocol version 2026-07-28
+// removed protocol sessions, which is why the unit is the process. The rest
+// were dropped on review as not worth their collection: clients_seen and
+// client_version described the connecting client, org_id_seen was true for
+// any multi-tenant process and said nothing dynamic_multi_org does not, and
+// loki_guardrail_mode duplicated what flags already reports for operators who
+// set it by flag.
 func TestRemovedFieldsStayRemoved(t *testing.T) {
-	for _, gone := range []string{"session_id", "session_duration_ms", "client_name", "client_version"} {
+	for _, gone := range []string{
+		"session_id", "session_duration_ms", "client_name", "client_version",
+		"clients_seen", "org_id_seen", "loki_guardrail_mode",
+	} {
 		assert.NotContains(t, wireFields, gone)
 	}
 }

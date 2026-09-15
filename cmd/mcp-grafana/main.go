@@ -950,9 +950,8 @@ func runOpsServer(addr string, h http.Handler) {
 func grafanaTarget(ctx context.Context) usagestats.GrafanaTarget {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	return usagestats.GrafanaTarget{
-		URL:       cfg.URL,
-		Version:   mcpgrafana.GrafanaVersionIfKnown(ctx),
-		OrgIDSeen: cfg.OrgID != 0,
+		URL:     cfg.URL,
+		Version: mcpgrafana.GrafanaVersionIfKnown(ctx),
 		AuthMethod: usagestats.AuthMethodFor(
 			cfg.AccessToken != "",
 			cfg.IDToken != "",
@@ -1051,7 +1050,6 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// register the SQL tools and report sql as disabled.
 	dt.normalizeEnabledTools()
 	us.EnabledTools, us.DisabledTools = dt.categoryReport()
-	us.LokiGuardrailMode = gc.LokiGuardrailMode
 	us.TLSEnabled = effectiveTLSEnabled(transport, tls)
 	us.MetricsEnabled = effectiveMetricsEnabled(transport, obs.MetricsEnabled)
 	us.DynamicMultiOrg = mcpgrafana.DynamicMultiOrgEnabled

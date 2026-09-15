@@ -175,31 +175,30 @@ func TestCountsAggregateAcrossSessionsAndSessionlessRequests(t *testing.T) {
 	assert.Equal(t, ToolCount{Calls: 3}, c.received()[0].ToolCalls["search_dashboards"])
 }
 
-// TestClientsSeenIsASortedSet: clients_seen says which kinds of client
-// connected, never how many of each, and resets with the other activity.
-func TestClientsSeenIsASortedSet(t *testing.T) {
+// TestNoClientPropertyReachesTheWire: the initialize hook exists only to
+// resolve the Grafana target, and nothing an MCP client reports about itself
+// is collected. clients_seen and client_version were both dropped on review,
+// so the client's name and version are read by nothing and must not appear
+// under any key.
+func TestNoClientPropertyReachesTheWire(t *testing.T) {
 	c := newCollector(t)
 	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
 	hooks := r.Hooks()
 	ctx := context.Background()
 
-	hooks.OnAfterInitialize[0](ctx, 1, initRequest("Cursor", "1.2.3"), &mcp.InitializeResult{})
-	hooks.OnAfterInitialize[0](ctx, 1, initRequest("cursor", "1.2.4"), &mcp.InitializeResult{})
-	hooks.OnAfterInitialize[0](ctx, 1, initRequest("claude-code", "2.0.1"), &mcp.InitializeResult{})
+	hooks.OnAfterInitialize[0](ctx, 1, initRequest("cursor", "1.2.3"), &mcp.InitializeResult{})
 	hooks.OnAfterInitialize[0](ctx, 1, initRequest("my-internal-agent", "9.9"), &mcp.InitializeResult{})
 
-	r.flush(context.Background(), ReasonInterval)
-	require.Len(t, c.received(), 1)
-	assert.Equal(t, "claude-code,cursor,other", c.received()[0].ClientsSeen)
+	r.flush(ctx, ReasonInterval)
+	require.Len(t, c.rawBodies(), 1)
+	body := c.rawBodies()[0]
 
-	// No version travels with the set, under any key.
-	assert.NotContains(t, c.rawBodies()[0], "1.2.3")
-	assert.NotContains(t, c.rawBodies()[0], "client_version")
-
-	// It is a delta like the counters: a window with no initialize omits it.
-	r.flush(context.Background(), ReasonInterval)
-	require.Len(t, c.rawBodies(), 2)
-	assert.NotContains(t, c.rawBodies()[1], "clients_seen")
+	for _, absent := range []string{
+		"cursor", "my-internal-agent", "1.2.3", "9.9",
+		"clients_seen", "client_name", "client_version",
+	} {
+		assert.NotContains(t, body, absent)
+	}
 }
 
 // TestConflictingPerRequestValuesAreOmitted: a multi-tenant process can
@@ -451,7 +450,6 @@ func TestGrafanaURLNeverReachesTheWire(t *testing.T) {
 			return GrafanaTarget{
 				URL:        "https://secret-stack-name.grafana.net",
 				Version:    "12.1.0",
-				OrgIDSeen:  true,
 				AuthMethod: AuthMethodServiceAccountToken,
 			}
 		},
@@ -465,7 +463,6 @@ func TestGrafanaURLNeverReachesTheWire(t *testing.T) {
 
 	assert.Equal(t, TargetKindCloud, e.TargetKind)
 	assert.Equal(t, "12.1.0", e.GrafanaVersion)
-	assert.True(t, e.OrgIDSeen)
 	assert.Equal(t, AuthMethodServiceAccountToken, e.AuthMethod)
 
 	assert.NotContains(t, c.rawBodies()[0], "secret-stack-name")
@@ -547,7 +544,7 @@ func TestEmptyFieldsAreOmittedNotSentEmpty(t *testing.T) {
 	require.Len(t, c.rawBodies(), 1)
 	body := c.rawBodies()[0]
 
-	for _, absent := range []string{"clients_seen", "tool_calls", "tools_called", "grafana_version", "auth_method", "target_kind"} {
+	for _, absent := range []string{"tool_calls", "tools_called", "grafana_version", "auth_method", "target_kind"} {
 		assert.NotContains(t, body, absent)
 	}
 	// The envelope is always present, so an idle process is still countable.
