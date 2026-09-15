@@ -1478,6 +1478,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						SOCKS5ProxyURL: config.SOCKS5ProxyURL,
 						Debug:          config.Debug,
 						Logger:         config.Logger,
+						UserAgent:      config.UserAgent,
 					}
 					wrapped, err := BuildTransport(&oboConfig, base)
 					if err != nil {
@@ -1524,6 +1525,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		ExtraHeaders:   config.ExtraHeaders,
 		SOCKS5ProxyURL: config.SOCKS5ProxyURL,
 		Logger:         config.Logger,
+		UserAgent:      config.UserAgent,
 	}
 	// A failed fetch yields zero values, leaving both fields empty as before.
 	settings, _ := cachedSharedSettings(fetchCfg)
