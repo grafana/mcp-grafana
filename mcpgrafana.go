@@ -85,6 +85,17 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	return u, apiKey
 }
 
+// tokenFileFromEnv returns the path from GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE when
+// that file is the effective credential source (i.e. no non-empty
+// GRAFANA_SERVICE_ACCOUNT_TOKEN value is set). It is used to populate
+// GrafanaConfig.TokenFile so BuildTransport re-reads the file on every request.
+func tokenFileFromEnv() string {
+	if os.Getenv(grafanaServiceAccountTokenEnvVar) != "" {
+		return ""
+	}
+	return os.Getenv(grafanaServiceAccountTokenFileEnvVar)
+}
+
 func userAndPassFromEnv() *url.Userinfo {
 	username := os.Getenv(grafanaUsernameEnvVar)
 	password, exists := os.LookupEnv(grafanaPasswordEnvVar)
@@ -252,6 +263,12 @@ type GrafanaConfig struct {
 	// APIKey is the API key or service account token for the Grafana instance.
 	// It may be empty if we are using on-behalf-of auth.
 	APIKey string
+
+	// TokenFile is the path from GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE when that file
+	// is the effective credential source. When set, BuildTransport installs a round
+	// tripper that re-reads the file on every request so rotated tokens are picked
+	// up without restarting (see #987). Only the stdio context func sets this.
+	TokenFile string
 
 	// Credentials if user is using basic auth
 	BasicAuth *url.Userinfo
@@ -728,6 +745,40 @@ func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey stri
 	}
 }
 
+// tokenFileRefreshRoundTripper re-reads a service-account-token file on every
+// request and overwrites the Authorization header with the freshly read value.
+// It is installed below AuthRoundTripper so it wins on the Authorization header;
+// the startup token baked into the config/context is only a fallback for when
+// the file read fails (see #987).
+type tokenFileRefreshRoundTripper struct {
+	tokenFile  string
+	logger     *slog.Logger
+	underlying http.RoundTripper
+}
+
+func (rt *tokenFileRefreshRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	token, err := os.ReadFile(rt.tokenFile)
+	if err != nil {
+		rt.logger.Warn("Failed to re-read GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, keeping previously loaded token", "path", rt.tokenFile, "error", err)
+		return rt.underlying.RoundTrip(req)
+	}
+	if trimmed := strings.TrimSpace(string(token)); trimmed != "" {
+		req.Header.Set("Authorization", "Bearer "+trimmed)
+	}
+	return rt.underlying.RoundTrip(req)
+}
+
+func newTokenFileRefreshRoundTripper(rt http.RoundTripper, tokenFile string, logger *slog.Logger) *tokenFileRefreshRoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return &tokenFileRefreshRoundTripper{
+		tokenFile:  tokenFile,
+		logger:     logger,
+		underlying: rt,
+	}
+}
+
 // sensitiveHeaders lists HTTP header names whose values must be redacted in
 // debug logs to prevent credential leakage (see #919).
 var sensitiveHeaders = map[string]bool{
@@ -873,6 +924,13 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		}
 	}
 
+	// Token file refresh (innermost auth layer — re-reads the token file fresh on
+	// every request so rotated tokens are picked up; sits below AuthRoundTripper
+	// so its value wins on the Authorization header).
+	if !options.withoutAuth && cfg.TokenFile != "" {
+		transport = newTokenFileRefreshRoundTripper(transport, cfg.TokenFile, cfg.LoggerOrDefault())
+	}
+
 	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
 	if !options.withoutAuth {
 		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
@@ -967,6 +1025,10 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeaders
+	// Record the token-file path so BuildTransport can re-read the token on every
+	// request (see #987). Only the stdio context sets this: HTTP/SSE re-read the
+	// token per request through their own context funcs, so they leave it empty.
+	config.TokenFile = tokenFileFromEnv()
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -1473,6 +1535,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						AccessToken:    config.AccessToken,
 						IDToken:        config.IDToken,
 						OrgID:          config.OrgID,
+						TokenFile:      config.TokenFile,
 						TLSConfig:      config.TLSConfig,
 						ExtraHeaders:   config.ExtraHeaders,
 						SOCKS5ProxyURL: config.SOCKS5ProxyURL,
