@@ -1591,3 +1591,25 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "a schema type mismatch must surface as a structured tool error")
 }
+
+func TestCategoryReport(t *testing.T) {
+	dt := disabledTools{enabledTools: "search,alerting,oncall,not-a-real-category", oncall: true, dashboard: true}
+	enabled, disabled := dt.categoryReport()
+
+	assert.ElementsMatch(t, []string{"search", "alerting"}, enabled)
+	// Every category a --disable-* flag turned off, whether or not
+	// --enabled-tools named it. An unrecognised category name from
+	// --enabled-tools appears in neither list.
+	assert.ElementsMatch(t, []string{"dashboard", "oncall"}, disabled)
+}
+
+func TestNativeToolNamesFromRegistrations(t *testing.T) {
+	obs, err := observability.Setup(observability.Config{})
+	require.NoError(t, err)
+	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{}), 0, "")
+	defer sm.Close()
+
+	names := nativeToolNames(s)
+	assert.Contains(t, names, "search_dashboards")
+	assert.NotEmpty(t, names)
+}

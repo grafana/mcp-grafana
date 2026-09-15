@@ -440,12 +440,15 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	}
 }
 
-// categoryReport splits the tool categories into the ones actually active and
-// the ones a --disable-* flag turned off, for the usage-statistics
-// enabled_tools / disabled_tools fields. Both lists are bounded by
-// toolEntries, so neither can carry an operator-supplied string: a category
-// named in --enabled-tools that this build does not know about appears in
-// neither list.
+// categoryReport lists the tool categories that are actually active and the
+// ones a --disable-* flag turned off, for the usage-statistics enabled_tools /
+// disabled_tools fields. The two are not complements: a category this build
+// knows about that is neither named in --enabled-tools nor explicitly disabled
+// appears in neither list.
+//
+// Both lists are bounded by toolEntries, so neither can carry an
+// operator-supplied string — a category named in --enabled-tools that this
+// build does not know about is reported by neither.
 func (dt *disabledTools) categoryReport() (enabled, disabled []string) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, e := range dt.toolEntries() {
