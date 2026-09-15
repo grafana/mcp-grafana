@@ -451,7 +451,7 @@ func TestGrafanaURLNeverReachesTheWire(t *testing.T) {
 			return GrafanaTarget{
 				URL:        "https://secret-stack-name.grafana.net",
 				Version:    "12.1.0",
-				OrgIDSet:   true,
+				OrgIDSeen:  true,
 				AuthMethod: AuthMethodServiceAccountToken,
 			}
 		},
@@ -465,7 +465,7 @@ func TestGrafanaURLNeverReachesTheWire(t *testing.T) {
 
 	assert.Equal(t, TargetKindCloud, e.TargetKind)
 	assert.Equal(t, "12.1.0", e.GrafanaVersion)
-	assert.True(t, e.OrgIDSet)
+	assert.True(t, e.OrgIDSeen)
 	assert.Equal(t, AuthMethodServiceAccountToken, e.AuthMethod)
 
 	assert.NotContains(t, c.rawBodies()[0], "secret-stack-name")

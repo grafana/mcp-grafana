@@ -121,7 +121,7 @@ type Config struct {
 //   - Activity (tools, clients) is a delta. A flush takes it and resets it, so
 //     a report that fails to send loses its delta rather than double-counting
 //     it into the next one.
-//   - Description (grafanaVersions, authMethods, targetKind, orgIDSet) is
+//   - Description (grafanaVersions, authMethods, targetKind, orgIDSeen) is
 //     cumulative for the process. These say what the process is talking to,
 //     not what it did in a window, and a window with no new initialize must
 //     not forget them. Keeping the version and auth sets cumulative is also
@@ -136,7 +136,7 @@ type counters struct {
 	grafanaVersions map[string]struct{}
 	authMethods     map[string]struct{}
 	targetKind      string
-	orgIDSet        bool
+	orgIDSeen       bool
 }
 
 func newCounters() *counters {
@@ -434,14 +434,14 @@ func (r *Reporter) resolveTarget(ctx context.Context) GrafanaTarget {
 // process can resolve either differently per request; the event reports one
 // only when the set holds exactly one. targetKind comes from GRAFANA_URL,
 // which extractKeyGrafanaInfoFromReq never takes from a header, so it cannot
-// vary within a process. orgIDSet can vary per request, and accumulates as
+// vary within a process. orgIDSeen can vary per request, and accumulates as
 // "an organisation was selected for at least one request" — see the docs page,
 // which says so rather than implying it describes every request.
 func (c *counters) applyTarget(t GrafanaTarget) {
 	if t.URL != "" {
 		c.targetKind = TargetKind(t.URL)
-		if t.OrgIDSet {
-			c.orgIDSet = true
+		if t.OrgIDSeen {
+			c.orgIDSeen = true
 		}
 		if m := observability.BoundedValue(t.AuthMethod, authMethods); m != "" {
 			c.authMethods[m] = struct{}{}
@@ -506,7 +506,7 @@ func (r *Reporter) buildEvent(reason string) Event {
 		ToolCalls:         tools,
 		GrafanaVersion:    soleValue(c.grafanaVersions),
 		TargetKind:        c.targetKind,
-		OrgIDSet:          c.orgIDSet,
+		OrgIDSeen:         c.orgIDSeen,
 		AuthMethod:        soleValue(c.authMethods),
 		Transport:         r.cfg.Transport,
 		Flags:             joinSorted(r.cfg.Flags),

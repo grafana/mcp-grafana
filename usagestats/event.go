@@ -131,7 +131,7 @@ type Event struct {
 	// sentinel that a reader could mistake for a real one.
 	GrafanaVersion string `json:"grafana_version,omitempty"`
 	TargetKind     string `json:"target_kind,omitempty"`
-	OrgIDSet       bool   `json:"org_id_set"`
+	OrgIDSeen      bool   `json:"org_id_seen"`
 	AuthMethod     string `json:"auth_method,omitempty"`
 
 	// Server configuration, by name and resolved state only. No flag value
@@ -156,7 +156,7 @@ type GrafanaTarget struct {
 	URL        string
 	Version    string
 	AuthMethod string
-	OrgIDSet   bool
+	OrgIDSeen  bool
 }
 
 // grafanaCloudHostSuffix is the only positive signal for a Grafana Cloud

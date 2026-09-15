@@ -45,7 +45,7 @@ var wireFields = []string{
 	"grafana_version",
 	"loki_guardrail_mode",
 	"metrics_enabled",
-	"org_id_set",
+	"org_id_seen",
 	"os",
 	"process_id",
 	"process_uptime_ms",

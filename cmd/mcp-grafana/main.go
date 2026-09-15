@@ -950,9 +950,9 @@ func runOpsServer(addr string, h http.Handler) {
 func grafanaTarget(ctx context.Context) usagestats.GrafanaTarget {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	return usagestats.GrafanaTarget{
-		URL:      cfg.URL,
-		Version:  mcpgrafana.GrafanaVersionIfKnown(ctx),
-		OrgIDSet: cfg.OrgID != 0,
+		URL:       cfg.URL,
+		Version:   mcpgrafana.GrafanaVersionIfKnown(ctx),
+		OrgIDSeen: cfg.OrgID != 0,
 		AuthMethod: usagestats.AuthMethodFor(
 			cfg.AccessToken != "",
 			cfg.IDToken != "",
