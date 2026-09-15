@@ -36,8 +36,7 @@ var wireFields = []string{
 	"arch",
 	"auth_method",
 	"calls",
-	"client_name",
-	"client_version",
+	"clients_seen",
 	"disabled_tools",
 	"dynamic_multi_org",
 	"enabled_tools",
@@ -49,11 +48,10 @@ var wireFields = []string{
 	"org_id_set",
 	"os",
 	"process_id",
+	"process_uptime_ms",
 	"proxied_enabled",
 	"report_reason",
 	"service",
-	"session_duration_ms",
-	"session_id",
 	"target_kind",
 	"tls_enabled",
 	"tool_calls",
@@ -71,6 +69,16 @@ func TestWireFields(t *testing.T) {
 	sort.Strings(want)
 
 	assert.Equal(t, want, got, "the set of fields on the wire changed: see this test's comment for what else must change with it")
+}
+
+// TestRemovedFieldsStayRemoved pins the fields the per-process regrouping took
+// off the wire, so reintroducing one is a deliberate act rather than a
+// copy-paste. The session ones cannot come back at all: protocol version
+// 2026-07-28 removed protocol sessions, which is why the unit is the process.
+func TestRemovedFieldsStayRemoved(t *testing.T) {
+	for _, gone := range []string{"session_id", "session_duration_ms", "client_name", "client_version"} {
+		assert.NotContains(t, wireFields, gone)
+	}
 }
 
 // TestEveryWireFieldIsDocumented stops a field shipping undocumented. The docs
@@ -103,6 +111,8 @@ func TestDocsPageDocumentsTheControls(t *testing.T) {
 		string(ModeDisabled),
 		string(ModeLog),
 		ProxiedToolName,
+		ReasonInterval,
+		ReasonShutdown,
 	} {
 		assert.Contains(t, doc, needed, "%s must be documented in %s", needed, docsPage)
 	}

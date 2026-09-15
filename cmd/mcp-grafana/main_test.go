@@ -1645,11 +1645,3 @@ func TestEffectiveMetricsEnabled(t *testing.T) {
 	assert.False(t, effectiveMetricsEnabled("stdio", true))
 	assert.False(t, effectiveMetricsEnabled("streamable-http", false))
 }
-
-func TestStatelessStreamableHTTP(t *testing.T) {
-	// WithStateLess(dt.proxied): proxied tools disabled means stateless.
-	assert.True(t, statelessStreamableHTTP("streamable-http", disabledTools{proxied: true}))
-	assert.False(t, statelessStreamableHTTP("streamable-http", disabledTools{}))
-	assert.False(t, statelessStreamableHTTP("sse", disabledTools{proxied: true}))
-	assert.False(t, statelessStreamableHTTP("stdio", disabledTools{proxied: true}))
-}

@@ -12,6 +12,21 @@ import (
 	"github.com/grafana/mcp-grafana/observability"
 )
 
+// TestTruncateRunesKeepsValidUTF8: a byte-slice cut can land mid-rune, which
+// json.Marshal then rewrites to U+FFFD, corrupting the tail of the value.
+func TestTruncateRunesKeepsValidUTF8(t *testing.T) {
+	// Each "é" is two bytes, so a naive cut at 64 bytes splits the 33rd.
+	got := truncateRunes(strings.Repeat("é", 40), maxVersionLen)
+	assert.True(t, utf8.ValidString(got), "truncated value must stay valid UTF-8")
+	assert.LessOrEqual(t, len(got), maxVersionLen)
+	assert.Equal(t, strings.Repeat("é", 32), got)
+
+	// A cut that lands on a boundary keeps the full budget, and a short value
+	// is untouched.
+	assert.Equal(t, strings.Repeat("a", maxVersionLen), truncateRunes(strings.Repeat("a", 100), maxVersionLen))
+	assert.Equal(t, "12.1.0", truncateRunes("12.1.0", maxVersionLen))
+}
+
 func TestClientName(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -48,40 +63,4 @@ func TestClientNameAllowlistMatchesDocumentedClients(t *testing.T) {
 		assert.Equal(t, slug, ClientName(slug), "client documented under docs/sources/clients/%s.md is not allowlisted", slug)
 	}
 	assert.Len(t, clientNames, len(documented)+1, "allowlist should be the documented clients plus mcpb")
-}
-
-func TestClientVersion(t *testing.T) {
-	assert.Equal(t, "1.2.3", ClientVersion("cursor", "1.2.3"))
-	assert.Equal(t, "1.2.3", ClientVersion("cursor", " 1.2.3 "))
-
-	// A version alongside an unrecognised name is the free-text field the
-	// client_name clamp exists to prevent.
-	assert.Empty(t, ClientVersion(observability.ValueOther, "1.2.3"))
-	assert.Empty(t, ClientVersion("", "1.2.3"))
-}
-
-// TestClientVersionIsLengthCapped: there is no vocabulary to clamp a version
-// against, so the length cap is the only bound on it.
-func TestClientVersionIsLengthCapped(t *testing.T) {
-	long := strings.Repeat("v", 40*1024)
-	got := ClientVersion("cursor", long)
-	assert.Len(t, got, maxVersionLen)
-	assert.Equal(t, strings.Repeat("v", maxVersionLen), got)
-
-	// Exactly at the cap is untouched.
-	atCap := strings.Repeat("v", maxVersionLen)
-	assert.Equal(t, atCap, ClientVersion("cursor", atCap))
-}
-
-// TestVersionTruncationKeepsValidUTF8: a byte-slice cut can land mid-rune,
-// which json.Marshal then rewrites to U+FFFD.
-func TestVersionTruncationKeepsValidUTF8(t *testing.T) {
-	// Each "é" is two bytes, so a naive cut at 64 bytes splits the 33rd.
-	got := ClientVersion("cursor", strings.Repeat("é", 40))
-	assert.True(t, utf8.ValidString(got), "truncated version must stay valid UTF-8")
-	assert.LessOrEqual(t, len(got), maxVersionLen)
-	assert.Equal(t, strings.Repeat("é", 32), got)
-
-	// A cut that happens to land on a boundary keeps the full budget.
-	assert.Equal(t, strings.Repeat("a", maxVersionLen), ClientVersion("cursor", strings.Repeat("a", 100)))
 }

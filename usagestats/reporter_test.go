@@ -24,7 +24,7 @@ import (
 	"github.com/grafana/mcp-grafana/observability"
 )
 
-// fakeSession is the minimum server.ClientSession the hooks need.
+// fakeSession is the minimum server.ClientSession a context needs.
 type fakeSession struct{ id string }
 
 func (f *fakeSession) Initialize()       {}
@@ -84,7 +84,7 @@ func (c *collector) rawBodies() []string {
 }
 
 // sessionContext returns a context carrying a client session, as the MCP
-// server's hooks receive one.
+// server's hooks receive one on the legacy path.
 func sessionContext(t *testing.T, id string) (context.Context, server.ClientSession) {
 	t.Helper()
 	srv := server.NewMCPServer("test", "v0")
@@ -98,6 +98,14 @@ func callRequest(name string) *mcp.CallToolRequest {
 	return req
 }
 
+func initRequest(clientName, clientVersion string) *mcp.InitializeRequest {
+	return &mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ClientInfo: mcp.Implementation{Name: clientName, Version: clientVersion},
+		},
+	}
+}
+
 // TestToolCountsAreExactAndResetOnFlush pins two properties at once: counts
 // are raw numbers rather than buckets, and each flush reports the delta since
 // the previous one rather than a running total.
@@ -109,8 +117,7 @@ func TestToolCountsAreExactAndResetOnFlush(t *testing.T) {
 		NativeTools: observability.ValueSet("search_dashboards", "query_prometheus"),
 	})
 	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
+	ctx, _ := sessionContext(t, "mcp-session-1")
 
 	for range 7 {
 		hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
@@ -119,7 +126,7 @@ func TestToolCountsAreExactAndResetOnFlush(t *testing.T) {
 		hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{IsError: true})
 	}
 
-	r.flushAll(context.Background(), ReasonInterval)
+	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
 	first := c.received()[0]
 	assert.Equal(t, ReasonInterval, first.ReportReason)
@@ -128,7 +135,7 @@ func TestToolCountsAreExactAndResetOnFlush(t *testing.T) {
 	assert.Equal(t, "search_dashboards", first.ToolsCalled)
 
 	hooks.OnAfterCallTool[0](ctx, 1, callRequest("query_prometheus"), &mcp.CallToolResult{})
-	r.flushAll(context.Background(), ReasonInterval)
+	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 2)
 	second := c.received()[1]
 
@@ -136,11 +143,105 @@ func TestToolCountsAreExactAndResetOnFlush(t *testing.T) {
 	assert.Equal(t, map[string]ToolCount{"query_prometheus": {Calls: 1}}, second.ToolCalls)
 	assert.Equal(t, "query_prometheus", second.ToolsCalled)
 
-	// Same session across both reports, and the duration keeps accumulating
-	// even though the counters do not.
-	assert.Equal(t, first.SessionID, second.SessionID)
+	// Same process across both reports, and uptime keeps accumulating even
+	// though the counters do not.
 	assert.Equal(t, first.ProcessID, second.ProcessID)
-	assert.GreaterOrEqual(t, second.SessionDurationMS, first.SessionDurationMS)
+	assert.GreaterOrEqual(t, second.ProcessUptimeMS, first.ProcessUptimeMS)
+}
+
+// TestCountsAggregateAcrossSessionsAndSessionlessRequests is the point of the
+// per-process unit: calls are counted whether or not a session was registered,
+// which is what keeps protocol version 2026-07-28 clients visible.
+func TestCountsAggregateAcrossSessionsAndSessionlessRequests(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:        ModeEnabled,
+		Endpoint:    c.URL,
+		NativeTools: observability.ValueSet("search_dashboards"),
+	})
+	hooks := r.Hooks()
+
+	ctxA, _ := sessionContext(t, "session-a")
+	ctxB, _ := sessionContext(t, "session-b")
+	// No session in context at all, as on the sessionless modern path.
+	ctxNone := context.Background()
+
+	hooks.OnAfterCallTool[0](ctxA, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	hooks.OnAfterCallTool[0](ctxB, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	hooks.OnAfterCallTool[0](ctxNone, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Equal(t, ToolCount{Calls: 3}, c.received()[0].ToolCalls["search_dashboards"])
+}
+
+// TestClientsSeenIsASortedSet: clients_seen says which kinds of client
+// connected, never how many of each, and resets with the other activity.
+func TestClientsSeenIsASortedSet(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
+	hooks := r.Hooks()
+	ctx := context.Background()
+
+	hooks.OnAfterInitialize[0](ctx, 1, initRequest("Cursor", "1.2.3"), &mcp.InitializeResult{})
+	hooks.OnAfterInitialize[0](ctx, 1, initRequest("cursor", "1.2.4"), &mcp.InitializeResult{})
+	hooks.OnAfterInitialize[0](ctx, 1, initRequest("claude-code", "2.0.1"), &mcp.InitializeResult{})
+	hooks.OnAfterInitialize[0](ctx, 1, initRequest("my-internal-agent", "9.9"), &mcp.InitializeResult{})
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Equal(t, "claude-code,cursor,other", c.received()[0].ClientsSeen)
+
+	// No version travels with the set, under any key.
+	assert.NotContains(t, c.rawBodies()[0], "1.2.3")
+	assert.NotContains(t, c.rawBodies()[0], "client_version")
+
+	// It is a delta like the counters: a window with no initialize omits it.
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.rawBodies(), 2)
+	assert.NotContains(t, c.rawBodies()[1], "clients_seen")
+}
+
+// TestConflictingPerRequestValuesAreOmitted: a multi-tenant process can
+// resolve a different Grafana version or auth method per request. Absence then
+// means "no single value", rather than a "mixed" sentinel that would sit in
+// the same column as real values.
+func TestConflictingPerRequestValuesAreOmitted(t *testing.T) {
+	c := newCollector(t)
+	var target GrafanaTarget
+	r := New(Config{
+		Mode:     ModeEnabled,
+		Endpoint: c.URL,
+		Target:   func(context.Context) GrafanaTarget { return target },
+	})
+	hooks := r.Hooks()
+	ctx := context.Background()
+
+	target = GrafanaTarget{URL: "https://one.grafana.net", Version: "12.1.0", AuthMethod: AuthMethodServiceAccountToken}
+	hooks.OnAfterCallTool[0](ctx, 1, callRequest("x"), &mcp.CallToolResult{})
+
+	// One distinct value each, so both travel.
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Equal(t, "12.1.0", c.received()[0].GrafanaVersion)
+	assert.Equal(t, AuthMethodServiceAccountToken, c.received()[0].AuthMethod)
+
+	// A second tenant resolves differently.
+	target = GrafanaTarget{URL: "https://one.grafana.net", Version: "12.2.0", AuthMethod: AuthMethodBasicAuth}
+	hooks.OnAfterCallTool[0](ctx, 1, callRequest("x"), &mcp.CallToolResult{})
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.rawBodies(), 2)
+	assert.Empty(t, c.received()[1].GrafanaVersion)
+	assert.Empty(t, c.received()[1].AuthMethod)
+	assert.NotContains(t, c.rawBodies()[1], "grafana_version")
+	assert.NotContains(t, c.rawBodies()[1], "auth_method")
+	// And no invented sentinel took their place.
+	assert.NotContains(t, c.rawBodies()[1], "mixed")
+
+	// target_kind comes from GRAFANA_URL, which is never read from a header,
+	// so it is not subject to the rule.
+	assert.Equal(t, TargetKindCloud, c.received()[1].TargetKind)
 }
 
 // TestFailedFlushLosesItsDelta is the stated consequence of resetting on send
@@ -153,14 +254,13 @@ func TestFailedFlushLosesItsDelta(t *testing.T) {
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
 	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
+	ctx := context.Background()
 	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
 
-	r.flushAll(context.Background(), ReasonInterval)
+	r.flush(context.Background(), ReasonInterval)
 
 	r.cfg.Endpoint = c.URL
-	r.flushAll(context.Background(), ReasonInterval)
+	r.flush(context.Background(), ReasonInterval)
 
 	require.Len(t, c.received(), 1)
 	assert.Empty(t, c.received()[0].ToolCalls, "the lost report's delta must not be re-reported")
@@ -178,15 +278,14 @@ func TestProxiedToolsCollapseToOneKey(t *testing.T) {
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
 	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
+	ctx := context.Background()
 
 	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
 	hooks.OnAfterCallTool[0](ctx, 1, callRequest("tempo_traceql-search"), &mcp.CallToolResult{})
 	hooks.OnAfterCallTool[0](ctx, 1, callRequest("tempo_get-trace"), &mcp.CallToolResult{IsError: true})
 	hooks.OnError[0](ctx, 1, "tools/call", callRequest("loki_some-remote-tool"), assert.AnError)
 
-	r.flushAll(context.Background(), ReasonInterval)
+	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
 	e := c.received()[0]
 
@@ -196,10 +295,8 @@ func TestProxiedToolsCollapseToOneKey(t *testing.T) {
 	}, e.ToolCalls)
 	assert.Equal(t, "proxied,search_dashboards", e.ToolsCalled)
 
-	body, err := json.Marshal(e)
-	require.NoError(t, err)
 	for _, forbidden := range []string{"traceql", "get-trace", "tempo", "some-remote-tool"} {
-		assert.NotContains(t, string(body), forbidden)
+		assert.NotContains(t, c.rawBodies()[0], forbidden)
 	}
 }
 
@@ -214,6 +311,25 @@ func TestNativeToolsSetBeforeRegistrationFailsSafe(t *testing.T) {
 	assert.Equal(t, ProxiedToolName, r.toolKey("search_dashboardz"))
 }
 
+// TestOnErrorWithoutAToolNameRecordsNothing: mcp-go hands onError a
+// zero-valued request when the tools capability is unsupported or the payload
+// fails to unmarshal. toolKey("") returns the proxied sentinel, so counting it
+// would invent a proxied call that never happened.
+func TestOnErrorWithoutAToolNameRecordsNothing(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
+	hooks := r.Hooks()
+	ctx := context.Background()
+
+	hooks.OnError[0](ctx, 1, "tools/call", &mcp.CallToolRequest{}, assert.AnError)
+	hooks.OnError[0](ctx, 1, "tools/list", callRequest("search_dashboards"), assert.AnError)
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Empty(t, c.received()[0].ToolCalls)
+	assert.Empty(t, c.received()[0].ToolsCalled)
+}
+
 func TestLogModeWritesToStderrAndSendsNothing(t *testing.T) {
 	c := newCollector(t)
 	var out bytes.Buffer
@@ -224,11 +340,9 @@ func TestLogModeWritesToStderrAndSendsNothing(t *testing.T) {
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
 	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
 
-	r.flushAll(context.Background(), ReasonSessionEnd)
+	r.flush(context.Background(), ReasonShutdown)
 
 	assert.Empty(t, c.received(), "log mode must not send")
 	assert.Contains(t, out.String(), "usage statistics (not sent):")
@@ -238,6 +352,7 @@ func TestLogModeWritesToStderrAndSendsNothing(t *testing.T) {
 	require.True(t, found)
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(payload), &e))
 	assert.Equal(t, ToolCount{Calls: 1}, e.ToolCalls["search_dashboards"])
+	assert.Equal(t, ReasonShutdown, e.ReportReason)
 }
 
 // TestLogModeDefaultsToStderr: stdout is the MCP protocol channel under the
@@ -253,287 +368,13 @@ func TestDisabledReporterCollectsNothing(t *testing.T) {
 
 	assert.False(t, r.Enabled())
 	hooks := r.Hooks()
-	assert.Empty(t, hooks.OnRegisterSession)
+	assert.Empty(t, hooks.OnAfterInitialize)
 	assert.Empty(t, hooks.OnAfterCallTool)
 	assert.Empty(t, hooks.OnError)
 
 	r.Start(context.Background())
 	r.Shutdown()
 	assert.Empty(t, c.received())
-}
-
-func TestSessionEndFlushOnUnregister(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{
-		Mode:        ModeEnabled,
-		Endpoint:    c.URL,
-		NativeTools: observability.ValueSet("search_dashboards"),
-	})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-	hooks.OnAfterInitialize[0](ctx, 1, &mcp.InitializeRequest{
-		Params: mcp.InitializeParams{ClientInfo: mcp.Implementation{Name: "Claude-Code", Version: "2.0.1"}},
-	}, &mcp.InitializeResult{})
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
-
-	hooks.OnUnregisterSession[0](ctx, sess)
-	// The mid-life flush is backgrounded; Shutdown waits for it.
-	r.Shutdown()
-
-	require.Len(t, c.received(), 1)
-	e := c.received()[0]
-	assert.Equal(t, ReasonSessionEnd, e.ReportReason)
-	assert.Equal(t, "claude-code", e.ClientName)
-	assert.Equal(t, "2.0.1", e.ClientVersion)
-
-	// The session is gone, so the shutdown flush must not report it twice.
-	r2 := c.received()
-	assert.Len(t, r2, 1)
-}
-
-// TestSessionIDIsNotTheTransportSessionID: the MCP session ID is chosen by the
-// client and shared across processes under horizontal scaling, so the reported
-// identity is minted here instead.
-func TestSessionIDIsNotTheTransportSessionID(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "client-chosen-session-id")
-	hooks.OnRegisterSession[0](ctx, sess)
-
-	r.flushAll(context.Background(), ReasonInterval)
-	require.Len(t, c.received(), 1)
-	assert.NotEqual(t, "client-chosen-session-id", c.received()[0].SessionID)
-	assert.NotEmpty(t, c.received()[0].SessionID)
-}
-
-// TestGrafanaURLNeverReachesTheWire: the target URL is supplied only so it can
-// be classified as cloud or self-hosted.
-func TestGrafanaURLNeverReachesTheWire(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{
-		Mode:     ModeEnabled,
-		Endpoint: c.URL,
-		Target: func(context.Context) GrafanaTarget {
-			return GrafanaTarget{
-				URL:        "https://secret-stack-name.grafana.net",
-				Version:    "12.1.0",
-				OrgIDSet:   true,
-				AuthMethod: AuthMethodServiceAccountToken,
-			}
-		},
-	})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-
-	r.flushAll(context.Background(), ReasonInterval)
-	require.Len(t, c.received(), 1)
-	e := c.received()[0]
-
-	assert.Equal(t, TargetKindCloud, e.TargetKind)
-	assert.Equal(t, "12.1.0", e.GrafanaVersion)
-	assert.True(t, e.OrgIDSet)
-	assert.Equal(t, AuthMethodServiceAccountToken, e.AuthMethod)
-
-	body, err := json.Marshal(e)
-	require.NoError(t, err)
-	assert.NotContains(t, string(body), "secret-stack-name")
-	assert.NotContains(t, string(body), "grafana.net")
-}
-
-// TestAuthMethodOutsideTheVocabularyIsClamped: the vocabulary is shared with
-// observability's metric-label allowlist, sentinel included.
-func TestAuthMethodOutsideTheVocabularyIsClamped(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{
-		Mode:     ModeEnabled,
-		Endpoint: c.URL,
-		Target: func(context.Context) GrafanaTarget {
-			return GrafanaTarget{URL: "http://localhost:3000", AuthMethod: "some-new-scheme"}
-		},
-	})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-
-	r.flushAll(context.Background(), ReasonInterval)
-	require.Len(t, c.received(), 1)
-	assert.Equal(t, observability.ValueOther, c.received()[0].AuthMethod)
-}
-
-func TestConfigFieldsAreNamesNotValues(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{
-		Mode:          ModeEnabled,
-		Endpoint:      c.URL,
-		Version:       "v1.2.3",
-		Transport:     "streamable-http",
-		Flags:         []string{"transport", "server-name", "instructions-append"},
-		EnabledTools:  []string{"search", "alerting"},
-		DisabledTools: []string{"oncall"},
-	})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-
-	r.flushAll(context.Background(), ReasonInterval)
-	require.Len(t, c.received(), 1)
-	e := c.received()[0]
-
-	assert.Equal(t, ServiceName, e.Service)
-	assert.Equal(t, "v1.2.3", e.Version)
-	assert.Equal(t, "streamable-http", e.Transport)
-	assert.Equal(t, "instructions-append,server-name,transport", e.Flags)
-	assert.Equal(t, "alerting,search", e.EnabledTools)
-	assert.Equal(t, "oncall", e.DisabledTools)
-}
-
-// TestShutdownFlushIsCapped: shutdown must not wait on a telemetry endpoint
-// that accepts the connection and then stalls.
-func TestShutdownFlushIsCapped(t *testing.T) {
-	release := make(chan struct{})
-	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-release
-	}))
-	t.Cleanup(func() {
-		close(release)
-		stalled.Close()
-	})
-
-	r := New(Config{Mode: ModeEnabled, Endpoint: stalled.URL})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-
-	start := time.Now()
-	r.Shutdown()
-	assert.Less(t, time.Since(start), 3*time.Second, "shutdown flush should give up after about a second")
-}
-
-func TestJitterStaysWithinTenPercent(t *testing.T) {
-	base := float64(DefaultInterval)
-	lo := time.Duration(base * (1 - intervalJitter))
-	hi := time.Duration(base * (1 + intervalJitter))
-	for range 200 {
-		d := jitterDuration(DefaultInterval)
-		assert.GreaterOrEqual(t, d, lo)
-		assert.LessOrEqual(t, d, hi)
-	}
-}
-
-// TestEmptyFieldsAreOmittedNotSentEmpty: an unrecognised client and a session
-// that called no tools must read as NULL at the receiver, not as an empty
-// string and an empty object. Otherwise "which sessions called no tools" and
-// "which clients were unrecognised" are unanswerable.
-func TestEmptyFieldsAreOmittedNotSentEmpty(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-	hooks.OnAfterInitialize[0](ctx, 1, &mcp.InitializeRequest{
-		Params: mcp.InitializeParams{ClientInfo: mcp.Implementation{Name: "some-internal-agent", Version: "9.9.9"}},
-	}, &mcp.InitializeResult{})
-
-	r.flushAll(context.Background(), ReasonSessionEnd)
-	require.Len(t, c.rawBodies(), 1)
-	body := c.rawBodies()[0]
-
-	assert.NotContains(t, body, "client_version")
-	assert.NotContains(t, body, "tool_calls")
-	assert.NotContains(t, body, "tools_called")
-	// The clamped name is still reported: "an unrecognised client connected"
-	// is the fact the field exists to record.
-	assert.Contains(t, body, `"client_name":"other"`)
-}
-
-// TestEmptyToolCallsOmittedOnEveryFlush: the counters are reset to an
-// initialised empty map after a flush, so the second flush must still omit
-// rather than send {}.
-func TestEmptyToolCallsOmittedOnEveryFlush(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{
-		Mode:        ModeEnabled,
-		Endpoint:    c.URL,
-		NativeTools: observability.ValueSet("search_dashboards"),
-	})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
-
-	r.flushAll(context.Background(), ReasonInterval)
-	r.flushAll(context.Background(), ReasonInterval)
-
-	require.Len(t, c.rawBodies(), 2)
-	assert.Contains(t, c.rawBodies()[0], "search_dashboards")
-	assert.NotContains(t, c.rawBodies()[1], "tool_calls")
-	assert.NotContains(t, c.rawBodies()[1], "tools_called")
-}
-
-// TestGrafanaVersionIsLengthCapped: the instance's reported version is as much
-// outside this binary's control as the client's, and forks set it freely.
-func TestGrafanaVersionIsLengthCapped(t *testing.T) {
-	c := newCollector(t)
-	r := New(Config{
-		Mode:     ModeEnabled,
-		Endpoint: c.URL,
-		Target: func(context.Context) GrafanaTarget {
-			return GrafanaTarget{
-				URL:     "http://localhost:3000",
-				Version: "12.1.0-" + strings.Repeat("x", 4096),
-			}
-		},
-	})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
-
-	r.flushAll(context.Background(), ReasonInterval)
-	require.Len(t, c.received(), 1)
-	assert.Len(t, c.received()[0].GrafanaVersion, maxVersionLen)
-}
-
-// TestTargetFuncIsNotCalledUnderTheSessionLock: a Target implementation that
-// blocks must not be able to block a concurrent flush, because the shutdown
-// flush is on the process's exit path.
-func TestTargetFuncIsNotCalledUnderTheSessionLock(t *testing.T) {
-	c := newCollector(t)
-	release := make(chan struct{})
-	entered := make(chan struct{}, 1)
-	r := New(Config{
-		Mode:     ModeEnabled,
-		Endpoint: c.URL,
-		Target: func(context.Context) GrafanaTarget {
-			select {
-			case entered <- struct{}{}:
-			default:
-			}
-			<-release
-			return GrafanaTarget{URL: "http://localhost:3000"}
-		},
-	})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-
-	go hooks.OnRegisterSession[0](ctx, sess)
-	<-entered
-
-	// The session is not yet stored, so flush sees nothing; the point is that
-	// it returns rather than blocking behind the stalled Target call.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		r.flushAll(context.Background(), ReasonInterval)
-	}()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("flush blocked behind the Target call")
-	}
-	close(release)
 }
 
 // countingTransport records every request attempt without letting one out.
@@ -555,54 +396,164 @@ func (c *countingTransport) count() int {
 	return c.n
 }
 
-// TestZeroConfigLifecycleSendsNothing walks the whole session lifecycle on a
+// TestZeroConfigLifecycleSendsNothing walks the whole lifecycle on a
 // zero-valued Config and asserts not one request was even attempted.
 //
 // This is a regression test for a real leak: Enabled() used to be "mode is not
 // disabled", so usagestats.New(usagestats.Config{}) in the cmd tests was
-// enabled, New filled in DefaultEndpoint, and a session registered and torn
-// down in a t.Cleanup POSTed a usage report to the production endpoint on
-// every `make test-unit` run.
+// enabled, New filled in DefaultEndpoint, and a torn-down server POSTed a
+// usage report to the production endpoint on every `make test-unit` run.
 func TestZeroConfigLifecycleSendsNothing(t *testing.T) {
 	ct := &countingTransport{}
 	r := New(Config{HTTPClient: &http.Client{Transport: ct}})
 	require.False(t, r.Enabled())
 
 	hooks := r.Hooks()
-	assert.Empty(t, hooks.OnRegisterSession)
-	assert.Empty(t, hooks.OnUnregisterSession)
 	assert.Empty(t, hooks.OnAfterInitialize)
 	assert.Empty(t, hooks.OnAfterCallTool)
 	assert.Empty(t, hooks.OnError)
 
 	// Even driven directly, past the empty hooks, nothing must leave.
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	r.startSession(ctx, sess.SessionID())
-	r.endSession(sess.SessionID())
+	r.recordToolCall(context.Background(), "search_dashboards", false)
+	r.flush(context.Background(), ReasonInterval)
 	r.Start(context.Background())
 	r.Shutdown()
 
 	assert.Zero(t, ct.count(), "a disabled reporter must not attempt a request")
 }
 
-// TestOnErrorWithoutAToolNameRecordsNothing: mcp-go hands onError a
-// zero-valued request when the tools capability is unsupported or the payload
-// fails to unmarshal. toolKey("") returns the proxied sentinel, so counting it
-// would invent a proxied call that never happened.
-func TestOnErrorWithoutAToolNameRecordsNothing(t *testing.T) {
+func TestShutdownReportsWithTheShutdownReason(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:        ModeEnabled,
+		Endpoint:    c.URL,
+		NativeTools: observability.ValueSet("search_dashboards"),
+	})
+	hooks := r.Hooks()
+	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+
+	r.Shutdown()
+	r.Shutdown() // idempotent: must not send twice
+
+	require.Len(t, c.received(), 1)
+	assert.Equal(t, ReasonShutdown, c.received()[0].ReportReason)
+	assert.Equal(t, ToolCount{Calls: 1}, c.received()[0].ToolCalls["search_dashboards"])
+}
+
+// TestGrafanaURLNeverReachesTheWire: the target URL is supplied only so it can
+// be classified as cloud or self-hosted.
+func TestGrafanaURLNeverReachesTheWire(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:     ModeEnabled,
+		Endpoint: c.URL,
+		Target: func(context.Context) GrafanaTarget {
+			return GrafanaTarget{
+				URL:        "https://secret-stack-name.grafana.net",
+				Version:    "12.1.0",
+				OrgIDSet:   true,
+				AuthMethod: AuthMethodServiceAccountToken,
+			}
+		},
+	})
+	hooks := r.Hooks()
+	hooks.OnAfterInitialize[0](context.Background(), 1, initRequest("cursor", "1"), &mcp.InitializeResult{})
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	e := c.received()[0]
+
+	assert.Equal(t, TargetKindCloud, e.TargetKind)
+	assert.Equal(t, "12.1.0", e.GrafanaVersion)
+	assert.True(t, e.OrgIDSet)
+	assert.Equal(t, AuthMethodServiceAccountToken, e.AuthMethod)
+
+	assert.NotContains(t, c.rawBodies()[0], "secret-stack-name")
+	assert.NotContains(t, c.rawBodies()[0], "grafana.net")
+}
+
+// TestAuthMethodOutsideTheVocabularyIsClamped: the vocabulary is shared with
+// observability's metric-label allowlist, sentinel included.
+func TestAuthMethodOutsideTheVocabularyIsClamped(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:     ModeEnabled,
+		Endpoint: c.URL,
+		Target: func(context.Context) GrafanaTarget {
+			return GrafanaTarget{URL: "http://localhost:3000", AuthMethod: "some-new-scheme"}
+		},
+	})
+	hooks := r.Hooks()
+	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("x"), &mcp.CallToolResult{})
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Equal(t, observability.ValueOther, c.received()[0].AuthMethod)
+}
+
+// TestGrafanaVersionIsLengthCapped: the instance's reported version is outside
+// this binary's control, and forks set it freely.
+func TestGrafanaVersionIsLengthCapped(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:     ModeEnabled,
+		Endpoint: c.URL,
+		Target: func(context.Context) GrafanaTarget {
+			return GrafanaTarget{
+				URL:     "http://localhost:3000",
+				Version: "12.1.0-" + strings.Repeat("x", 4096),
+			}
+		},
+	})
+	hooks := r.Hooks()
+	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("x"), &mcp.CallToolResult{})
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Len(t, c.received()[0].GrafanaVersion, maxVersionLen)
+}
+
+func TestConfigFieldsAreNamesNotValues(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:          ModeEnabled,
+		Endpoint:      c.URL,
+		Version:       "v1.2.3",
+		Transport:     "streamable-http",
+		Flags:         []string{"transport", "server-name", "instructions-append"},
+		EnabledTools:  []string{"search", "alerting"},
+		DisabledTools: []string{"oncall"},
+	})
+
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	e := c.received()[0]
+
+	assert.Equal(t, ServiceName, e.Service)
+	assert.Equal(t, "v1.2.3", e.Version)
+	assert.Equal(t, "streamable-http", e.Transport)
+	assert.Equal(t, "instructions-append,server-name,transport", e.Flags)
+	assert.Equal(t, "alerting,search", e.EnabledTools)
+	assert.Equal(t, "oncall", e.DisabledTools)
+}
+
+// TestEmptyFieldsAreOmittedNotSentEmpty: a window with no activity must read
+// as NULL at the receiver, not as empty strings and an empty object.
+func TestEmptyFieldsAreOmittedNotSentEmpty(t *testing.T) {
 	c := newCollector(t)
 	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
 
-	hooks.OnError[0](ctx, 1, "tools/call", &mcp.CallToolRequest{}, assert.AnError)
-	hooks.OnError[0](ctx, 1, "tools/list", callRequest("search_dashboards"), assert.AnError)
+	r.flush(context.Background(), ReasonInterval)
+	require.Len(t, c.rawBodies(), 1)
+	body := c.rawBodies()[0]
 
-	r.flushAll(context.Background(), ReasonInterval)
-	require.Len(t, c.received(), 1)
-	assert.Empty(t, c.received()[0].ToolCalls)
-	assert.Empty(t, c.received()[0].ToolsCalled)
+	for _, absent := range []string{"clients_seen", "tool_calls", "tools_called", "grafana_version", "auth_method", "target_kind"} {
+		assert.NotContains(t, body, absent)
+	}
+	// The envelope is always present, so an idle process is still countable.
+	assert.Contains(t, body, `"report_reason":"interval"`)
+	assert.Contains(t, body, `"process_id":`)
+	assert.Contains(t, body, `"process_uptime_ms":`)
 }
 
 // TestShutdownIsCappedWhenLogOutputBlocks: in log mode the event goes to
@@ -613,9 +564,6 @@ func TestShutdownIsCappedWhenLogOutputBlocks(t *testing.T) {
 	t.Cleanup(func() { close(release) })
 
 	r := New(Config{Mode: ModeLog, LogOutput: blockingWriter{release}})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
 
 	start := time.Now()
 	r.Shutdown()
@@ -630,21 +578,124 @@ func (b blockingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// TestShutdownIsCappedWhenACounterLockIsHeld: buildEvent takes each session's
+// TestShutdownIsCappedWhenTheCounterLockIsHeld: buildEvent takes the counter
 // lock, so a stuck holder must not extend shutdown either.
-func TestShutdownIsCappedWhenACounterLockIsHeld(t *testing.T) {
+func TestShutdownIsCappedWhenTheCounterLockIsHeld(t *testing.T) {
 	c := newCollector(t)
 	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
-	hooks := r.Hooks()
-	ctx, sess := sessionContext(t, "mcp-session-1")
-	hooks.OnRegisterSession[0](ctx, sess)
 
-	sc, ok := r.session(sess.SessionID())
-	require.True(t, ok)
-	sc.mu.Lock()
-	t.Cleanup(sc.mu.Unlock)
+	r.counters.mu.Lock()
+	t.Cleanup(r.counters.mu.Unlock)
 
 	start := time.Now()
 	r.Shutdown()
 	assert.Less(t, time.Since(start), 3*time.Second, "shutdown must not wait on a held counter lock")
+}
+
+// TestShutdownIsCappedWhenTheEndpointStalls: a telemetry endpoint that accepts
+// the connection and never answers must not delay the process exit.
+func TestShutdownIsCappedWhenTheEndpointStalls(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	t.Cleanup(func() {
+		close(release)
+		stalled.Close()
+	})
+
+	r := New(Config{Mode: ModeEnabled, Endpoint: stalled.URL})
+
+	start := time.Now()
+	r.Shutdown()
+	assert.Less(t, time.Since(start), 3*time.Second, "shutdown flush should give up after about a second")
+}
+
+// TestTargetFuncIsNotCalledUnderTheCounterLock: a Target implementation that
+// blocks must not be able to block a concurrent flush, because the shutdown
+// flush is on the process's exit path.
+func TestTargetFuncIsNotCalledUnderTheCounterLock(t *testing.T) {
+	c := newCollector(t)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	r := New(Config{
+		Mode:     ModeEnabled,
+		Endpoint: c.URL,
+		Target: func(context.Context) GrafanaTarget {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+			return GrafanaTarget{URL: "http://localhost:3000"}
+		},
+	})
+	hooks := r.Hooks()
+
+	go hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("x"), &mcp.CallToolResult{})
+	<-entered
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.flush(context.Background(), ReasonInterval)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flush blocked behind the Target call")
+	}
+	close(release)
+}
+
+func TestJitterStaysWithinTenPercent(t *testing.T) {
+	base := float64(DefaultInterval)
+	lo := time.Duration(base * (1 - intervalJitter))
+	hi := time.Duration(base * (1 + intervalJitter))
+	for range 200 {
+		d := jitterDuration(DefaultInterval)
+		assert.GreaterOrEqual(t, d, lo)
+		assert.LessOrEqual(t, d, hi)
+	}
+}
+
+// TestConcurrentRecordingIsRaceFree drives the hooks from many goroutines
+// while flushing, which is what the process actually does: one shared counter
+// set behind requests served in parallel.
+func TestConcurrentRecordingIsRaceFree(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{
+		Mode:        ModeEnabled,
+		Endpoint:    c.URL,
+		NativeTools: observability.ValueSet("search_dashboards"),
+	})
+	hooks := r.Hooks()
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+				hooks.OnAfterInitialize[0](context.Background(), 1, initRequest("cursor", "1"), &mcp.InitializeResult{})
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 5 {
+			r.flush(context.Background(), ReasonInterval)
+		}
+	}()
+	wg.Wait()
+	r.flush(context.Background(), ReasonInterval)
+
+	// Every call lands in exactly one report, so the deltas must total 400.
+	var total int64
+	for _, e := range c.received() {
+		total += e.ToolCalls["search_dashboards"].Calls
+	}
+	assert.Equal(t, int64(400), total, "no call may be lost or double-counted across flushes")
 }
