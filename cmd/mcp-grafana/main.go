@@ -22,6 +22,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"github.com/grafana/mcp-grafana/usagestats"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
@@ -439,6 +440,25 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	}
 }
 
+// categoryReport splits the tool categories into the ones actually active and
+// the ones a --disable-* flag turned off, for the usage-statistics
+// enabled_tools / disabled_tools fields. Both lists are bounded by
+// toolEntries, so neither can carry an operator-supplied string: a category
+// named in --enabled-tools that this build does not know about appears in
+// neither list.
+func (dt *disabledTools) categoryReport() (enabled, disabled []string) {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	for _, e := range dt.toolEntries() {
+		switch {
+		case isCategoryEnabled(enabledTools, e.disabled, e.category):
+			enabled = append(enabled, e.category)
+		case e.disabled:
+			disabled = append(disabled, e.category)
+		}
+	}
+	return enabled, disabled
+}
+
 // sqlCategoryAliases maps deprecated per-dialect category names to the unified
 // "sql" category. When any alias appears in --enabled-tools it is replaced with
 // "sql" and any --disable-sql / --disable-{dialect} flag is cleared, so an
@@ -556,7 +576,7 @@ func appendInstructions(base, extra string) string {
 	return base
 }
 
-func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int, instructionsAppend string) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, usage *usagestats.Reporter, sessionIdleTimeoutMinutes int, instructionsAppend string) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute),
 		mcpgrafana.WithSessionMeterProvider(obs.MeterProvider()),
@@ -616,8 +636,8 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 		}
 	}
 
-	// Merge observability hooks with existing hooks
-	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
+	// Merge observability and usage-statistics hooks with existing hooks
+	hooks = observability.MergeHooks(hooks, obs.MCPHooks(), usage.Hooks())
 
 	// Register tools and build the instruction string from enabled categories.
 	// processTools both registers tools on the server and collects descriptions
@@ -914,7 +934,43 @@ func runOpsServer(addr string, h http.Handler) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int, healthzAddress, instructionsAppend string) error {
+// grafanaTarget describes the Grafana instance a session talks to for the
+// usage-statistics report. It reads only the resolved configuration in the
+// context and performs no I/O: mcpgrafana.GrafanaVersion answers from the
+// settings cache the session's own Grafana requests populate, and returns ""
+// until one has.
+//
+// The URL is passed for classification into cloud/self_hosted only; the
+// reporter discards it.
+func grafanaTarget(ctx context.Context) usagestats.GrafanaTarget {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	return usagestats.GrafanaTarget{
+		URL:      cfg.URL,
+		Version:  mcpgrafana.GrafanaVersion(ctx),
+		OrgIDSet: cfg.OrgID != 0,
+		AuthMethod: usagestats.AuthMethodFor(
+			cfg.AccessToken != "",
+			cfg.IDToken != "",
+			cfg.APIKey != "",
+			cfg.BasicAuth != nil,
+		),
+	}
+}
+
+// nativeToolNames is the set of tool names the server registered itself. It
+// bounds the tool names the usage-statistics reporter may emit, so it must be
+// taken before any proxied tool is registered: those names come from a remote
+// MCP server and collapse to a single pseudo-name instead.
+func nativeToolNames(s *server.MCPServer) map[string]struct{} {
+	registered := s.ListTools()
+	names := make(map[string]struct{}, len(registered))
+	for name := range registered {
+		names[name] = struct{}{}
+	}
+	return names
+}
+
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, us usagestats.Config, sessionIdleTimeoutMinutes int, healthzAddress, instructionsAppend string) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -962,12 +1018,33 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes, instructionsAppend)
+	// The reporter supplies the server's session and tool-call hooks, so it is
+	// built before the server; the tool-name allowlist it needs only exists
+	// once the server has registered its tools, and is handed over below.
+	us.Transport = transport
+	us.EnabledTools, us.DisabledTools = dt.categoryReport()
+	us.LokiGuardrailMode = gc.LokiGuardrailMode
+	us.TLSEnabled = tls.certFile != "" || tls.keyFile != ""
+	us.MetricsEnabled = obs.MetricsEnabled
+	us.DynamicMultiOrg = mcpgrafana.DynamicMultiOrgEnabled
+	us.ProxiedEnabled = isCategoryEnabled(strings.Split(dt.enabledTools, ","), dt.proxied, "proxied")
+	us.Target = grafanaTarget
+	usage := usagestats.New(us)
+	usage.Disclose()
+
+	s, tm, sm := newServer(obs.ServerName, transport, dt, o, usage, sessionIdleTimeoutMinutes, instructionsAppend)
 	defer sm.Close()
+	usage.SetNativeTools(nativeToolNames(s))
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Registered after sm.Close and the observability shutdown so it runs
+	// before them: the final flush needs the session state that sm.Close tears
+	// down, and it logs through the handler o.Shutdown removes.
+	defer usage.Shutdown()
+	usage.Start(ctx)
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -1106,6 +1183,7 @@ func main() {
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
+	usageStatsMode := flag.String("usage-stats", "", "Anonymous usage statistics reporting: 'enabled', 'disabled', or 'log' to print the report that would be sent to stderr and send nothing. Overrides the "+usagestats.ModeEnvVar+" environment variable; any unrecognised value disables reporting. See https://grafana.com/docs/mcp-grafana/latest/anonymous-usage-statistics/")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
@@ -1158,7 +1236,21 @@ func main() {
 	}
 
 	setFlags := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	setFlagNames := []string{}
+	flag.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true
+		setFlagNames = append(setFlagNames, f.Name)
+	})
+
+	// Flag NAMES only: --server-name, --instructions-append and the address
+	// flags all carry operator-chosen text, so no flag value is reported.
+	usageStats := usagestats.Config{
+		Mode:     usagestats.ResolveMode(*usageStatsMode, setFlags["usage-stats"], os.Getenv(usagestats.ModeEnvVar)),
+		Endpoint: usagestats.ResolveEndpoint(os.Getenv(usagestats.EndpointEnvVar)),
+		Version:  mcpgrafana.Version(),
+		Flags:    setFlagNames,
+	}
+
 	if err := gc.applyLokiGuardrailEnv(setFlags); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -1237,7 +1329,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes, *healthzAddress, *instructionsAppend); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, usageStats, *sessionIdleTimeoutMinutes, *healthzAddress, *instructionsAppend); err != nil {
 		panic(err)
 	}
 }

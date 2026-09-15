@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,6 +88,11 @@ type Config struct {
 	// is the allowlist for tool_calls keys: anything outside it is recorded as
 	// ProxiedToolName. A nil or empty set therefore reports every call as
 	// proxied, which is the safe direction to fail in.
+	//
+	// The server's tool registrations are the single definition of this set;
+	// it is not restated here. SetNativeTools supplies it when the server is
+	// built after the Reporter, which it must be because the Reporter provides
+	// the server's hooks.
 	NativeTools map[string]struct{}
 
 	// Target resolves the per-session Grafana target. A nil Target leaves the
@@ -135,6 +141,8 @@ type Reporter struct {
 	logOutput io.Writer
 	interval  time.Duration
 
+	nativeTools atomic.Pointer[map[string]struct{}]
+
 	sessions sync.Map // MCP session ID -> *sessionCounters
 
 	startOnce sync.Once
@@ -172,7 +180,16 @@ func New(cfg Config) *Reporter {
 	if r.cfg.Endpoint == "" {
 		r.cfg.Endpoint = DefaultEndpoint
 	}
+	r.SetNativeTools(cfg.NativeTools)
 	return r
+}
+
+// SetNativeTools supplies the set of tool names this server registered, which
+// bounds the keys of tool_calls. Call it once the server's tools are
+// registered and before it starts serving; until then every call is reported
+// as ProxiedToolName.
+func (r *Reporter) SetNativeTools(names map[string]struct{}) {
+	r.nativeTools.Store(&names)
 }
 
 // Enabled reports whether anything is collected at all.
@@ -282,7 +299,7 @@ func (r *Reporter) Hooks() *server.Hooks {
 				if session == nil {
 					return
 				}
-				r.recordClientInfo(session.SessionID(), message.Params.ClientInfo)
+				r.recordClientInfo(ctx, session.SessionID(), message.Params.ClientInfo)
 			},
 		},
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{
@@ -335,17 +352,11 @@ func (r *Reporter) startSession(ctx context.Context, mcpSessionID string) {
 		startedAt: time.Now(),
 		tools:     map[string]ToolCount{},
 	}
-	if r.cfg.Target != nil {
-		t := r.cfg.Target(ctx)
-		sc.grafanaVersion = t.Version
-		sc.targetKind = TargetKind(t.URL)
-		sc.orgIDSet = t.OrgIDSet
-		sc.authMethod = observability.BoundedValue(t.AuthMethod, authMethods)
-	}
+	r.refreshTargetLocked(ctx, sc)
 	r.sessions.Store(mcpSessionID, sc)
 }
 
-func (r *Reporter) recordClientInfo(mcpSessionID string, info mcp.Implementation) {
+func (r *Reporter) recordClientInfo(ctx context.Context, mcpSessionID string, info mcp.Implementation) {
 	sc, ok := r.session(mcpSessionID)
 	if !ok {
 		return
@@ -355,6 +366,10 @@ func (r *Reporter) recordClientInfo(mcpSessionID string, info mcp.Implementation
 	defer sc.mu.Unlock()
 	sc.clientName = name
 	sc.clientVersion = ClientVersion(name, info.Version)
+	// The initialize request is the earliest point at which every transport's
+	// context carries the resolved Grafana configuration, so a session that
+	// never calls a tool still reports its target.
+	r.refreshTargetLocked(ctx, sc)
 }
 
 func (r *Reporter) recordToolCall(ctx context.Context, toolName string, failed bool) {
@@ -373,12 +388,29 @@ func (r *Reporter) recordToolCall(ctx context.Context, toolName string, failed b
 	}
 	sc.tools[key] = c
 
-	// The Grafana version comes from a cache that is populated by the first
-	// Grafana request of the session, so it is usually still unknown when the
-	// session registers. Filling it in on the first call that can answer keeps
-	// the field useful without holding on to a request context.
-	if sc.grafanaVersion == "" && r.cfg.Target != nil {
-		sc.grafanaVersion = r.cfg.Target(ctx).Version
+	r.refreshTargetLocked(ctx, sc)
+}
+
+// refreshTargetLocked re-reads the Grafana target from a tool call's context.
+//
+// It cannot be done once at session start: the stdio transport registers its
+// session before the Grafana configuration is attached to the context, and the
+// Grafana version comes from a cache that only the session's first Grafana
+// request populates. So the target is read again on each call and each field
+// updated once there is something to update it with, leaving it empty for a
+// session that never reached Grafana.
+func (r *Reporter) refreshTargetLocked(ctx context.Context, sc *sessionCounters) {
+	if r.cfg.Target == nil {
+		return
+	}
+	t := r.cfg.Target(ctx)
+	if t.URL != "" {
+		sc.targetKind = TargetKind(t.URL)
+		sc.orgIDSet = t.OrgIDSet
+		sc.authMethod = observability.BoundedValue(t.AuthMethod, authMethods)
+	}
+	if t.Version != "" {
+		sc.grafanaVersion = t.Version
 	}
 }
 
@@ -390,8 +422,10 @@ func (r *Reporter) recordToolCall(ctx context.Context, toolName string, failed b
 // outside the vocabulary because another server chose it, which is a different
 // fact and one the docs page describes separately.
 func (r *Reporter) toolKey(name string) string {
-	if _, ok := r.cfg.NativeTools[name]; ok {
-		return name
+	if native := r.nativeTools.Load(); native != nil {
+		if _, ok := (*native)[name]; ok {
+			return name
+		}
 	}
 	return ProxiedToolName
 }
