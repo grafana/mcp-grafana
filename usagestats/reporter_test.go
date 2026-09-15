@@ -584,3 +584,67 @@ func TestZeroConfigLifecycleSendsNothing(t *testing.T) {
 
 	assert.Zero(t, ct.count(), "a disabled reporter must not attempt a request")
 }
+
+// TestOnErrorWithoutAToolNameRecordsNothing: mcp-go hands onError a
+// zero-valued request when the tools capability is unsupported or the payload
+// fails to unmarshal. toolKey("") returns the proxied sentinel, so counting it
+// would invent a proxied call that never happened.
+func TestOnErrorWithoutAToolNameRecordsNothing(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
+	hooks := r.Hooks()
+	ctx, sess := sessionContext(t, "mcp-session-1")
+	hooks.OnRegisterSession[0](ctx, sess)
+
+	hooks.OnError[0](ctx, 1, "tools/call", &mcp.CallToolRequest{}, assert.AnError)
+	hooks.OnError[0](ctx, 1, "tools/list", callRequest("search_dashboards"), assert.AnError)
+
+	r.flushAll(context.Background(), ReasonInterval)
+	require.Len(t, c.received(), 1)
+	assert.Empty(t, c.received()[0].ToolCalls)
+	assert.Empty(t, c.received()[0].ToolsCalled)
+}
+
+// TestShutdownIsCappedWhenLogOutputBlocks: in log mode the event goes to
+// stderr, which under stdio is a pipe the MCP client owns. A client that has
+// stopped reading it must not be able to hold the process open.
+func TestShutdownIsCappedWhenLogOutputBlocks(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	r := New(Config{Mode: ModeLog, LogOutput: blockingWriter{release}})
+	hooks := r.Hooks()
+	ctx, sess := sessionContext(t, "mcp-session-1")
+	hooks.OnRegisterSession[0](ctx, sess)
+
+	start := time.Now()
+	r.Shutdown()
+	assert.Less(t, time.Since(start), 3*time.Second, "a blocked stderr must not hold up shutdown")
+}
+
+// blockingWriter blocks in Write until its channel is closed.
+type blockingWriter struct{ release chan struct{} }
+
+func (b blockingWriter) Write(p []byte) (int, error) {
+	<-b.release
+	return len(p), nil
+}
+
+// TestShutdownIsCappedWhenACounterLockIsHeld: buildEvent takes each session's
+// lock, so a stuck holder must not extend shutdown either.
+func TestShutdownIsCappedWhenACounterLockIsHeld(t *testing.T) {
+	c := newCollector(t)
+	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
+	hooks := r.Hooks()
+	ctx, sess := sessionContext(t, "mcp-session-1")
+	hooks.OnRegisterSession[0](ctx, sess)
+
+	sc, ok := r.session(sess.SessionID())
+	require.True(t, ok)
+	sc.mu.Lock()
+	t.Cleanup(sc.mu.Unlock)
+
+	start := time.Now()
+	r.Shutdown()
+	assert.Less(t, time.Since(start), 3*time.Second, "shutdown must not wait on a held counter lock")
+}

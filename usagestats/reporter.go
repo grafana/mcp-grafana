@@ -274,19 +274,25 @@ func (r *Reporter) Shutdown() {
 
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
 		defer cancel()
-		r.flushAll(ctx, ReasonSessionEnd)
 
-		// Background sends already in flight share the same deadline: waiting
-		// on them without one would reintroduce the delay the cap exists to
-		// prevent.
+		// The whole flush is inside the cap, not just the HTTP sends. Building
+		// an event takes each session's counter lock, and in log mode writing
+		// one goes to stderr — a pipe whose reader is the MCP client and may
+		// have stopped draining it. Either can block on something outside this
+		// process's control, so the cap has to cover them too, which means
+		// running them where a deadline can abandon them.
 		done := make(chan struct{})
 		go func() {
+			defer close(done)
+			r.flushAll(ctx, ReasonSessionEnd)
 			r.inFlight.Wait()
-			close(done)
 		}()
 		select {
 		case <-done:
 		case <-ctx.Done():
+			// Abandoned, not cancelled: the goroutine may still be blocked on
+			// a lock or a write. The process is on its way out, so leaving it
+			// is correct — shutdown must not wait on telemetry.
 		}
 	})
 }
@@ -337,6 +343,14 @@ func (r *Reporter) Hooks() *server.Hooks {
 				}
 				req, ok := message.(*mcp.CallToolRequest)
 				if !ok || req == nil {
+					return
+				}
+				// mcp-go calls onError with a zero-valued request when the
+				// tools capability is unsupported or the tools/call payload
+				// fails to unmarshal. No tool was named, so there is nothing
+				// to attribute; counting it would report a phantom proxied
+				// call, since toolKey("") falls through to the sentinel.
+				if req.Params.Name == "" {
 					return
 				}
 				r.recordToolCall(ctx, req.Params.Name, true)
@@ -508,12 +522,22 @@ func (r *Reporter) endSession(mcpSessionID string) {
 func (r *Reporter) flushAll(ctx context.Context, reason string) {
 	var events []Event
 	r.sessions.Range(func(_, v any) bool {
+		if ctx.Err() != nil {
+			return false
+		}
 		if sc, ok := v.(*sessionCounters); ok {
 			events = append(events, r.buildEvent(sc, reason))
 		}
 		return true
 	})
 	for _, e := range events {
+		// A deadline reached partway through stops the remaining sends rather
+		// than issuing them against an already-expired context. Their deltas
+		// are lost, which is the documented behaviour of a flush that does not
+		// land.
+		if ctx.Err() != nil {
+			return
+		}
 		r.send(ctx, e)
 	}
 }
