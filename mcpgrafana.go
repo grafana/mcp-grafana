@@ -1355,6 +1355,32 @@ func GrafanaVersion(ctx context.Context) string {
 	return settings.Version
 }
 
+// GrafanaVersionIfKnown returns the Grafana version only when it is already
+// known, and never issues a request to find out: it reads the GrafanaClient in
+// ctx, then the settings cache a previous fetch populated, and returns ""
+// otherwise.
+//
+// Use this instead of GrafanaVersion wherever a miss must not cost anything.
+// GrafanaVersion falls through to cachedSharedSettings, which fetches
+// /api/frontend/settings on a miss and does not cache failures — so on an
+// instance where that endpoint is unreachable or forbidden, every call pays the
+// client timeout and issues a request of its own. That is the right trade for
+// a tool that needs the answer, and the wrong one for a caller that is merely
+// describing what it happens to know (usage statistics), where it would add
+// both latency and traffic the operator did not ask for.
+//
+// As with GrafanaVersion, "" means "unknown", never "old".
+func GrafanaVersionIfKnown(ctx context.Context) string {
+	if gc := GrafanaClientFromContext(ctx); gc != nil && gc.Version != "" {
+		return gc.Version
+	}
+	cfg := GrafanaConfigFromContext(ctx)
+	if cached, ok := sharedSettingsCache.Load(cfg.URL); ok {
+		return cached.(sharedSettings).Version
+	}
+	return ""
+}
+
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
 // It also fetches the Grafana instance's public URL and version from /api/frontend/settings, for deep link generation and version-dependent behaviour respectively.
