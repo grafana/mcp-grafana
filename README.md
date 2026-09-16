@@ -157,14 +157,6 @@ Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, an
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, adding activities, and reading or setting custom fields.
 
-### Sift Investigations
-
-- **List Sift investigations:** Retrieve a list of Sift investigations, with support for a limit parameter.
-- **Get Sift investigation:** Retrieve details of a specific Sift investigation by its UUID.
-- **Get Sift analyses:** Retrieve a specific analysis from a Sift investigation.
-- **Find error patterns in logs:** Detect elevated error patterns in Loki logs using Sift.
-- **Find slow requests:** Detect slow requests using Sift (Tempo).
-
 ### Alerting
 
 - **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana. Supports both Grafana-managed rules and datasource-managed rules from Prometheus or Loki datasources.
@@ -246,7 +238,7 @@ Each tool requires specific RBAC permissions to function properly. When creating
 
 Tip: If you're not familiar with Grafana RBAC or you want a quicker, simpler setup instead of configuring many granular scopes, you can assign a built-in role such as `Editor` to the service account. The `Editor` role grants broad read/write access that will allow most MCP server operations; it is less granular (and therefore less restrictive) than manually-applied scopes, so use it only when convenience is more important than strict least-privilege access.
 
-**Note:** Grafana Incident and Sift tools use basic Grafana roles instead of fine-grained RBAC permissions:
+**Note:** Grafana Incident tools use basic Grafana roles instead of fine-grained RBAC permissions:
 - **Viewer role:** Required for read-only operations (list incidents, get investigations)
 - **Editor role:** Required for write operations (create incidents, modify investigations)
 
@@ -363,11 +355,6 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_alert_groups`               | OnCall                    | List alert groups from Grafana OnCall with filtering options                                                 | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `get_alert_group`                 | OnCall                    | Get a specific alert group from Grafana OnCall by its ID                                                     | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `update_alert_group`              | OnCall                    | Acknowledge, unacknowledge, resolve, or unresolve an alert group                                             | `grafana-oncall-app.alert-groups:write` (and `:read`)  | Plugin-specific scopes                              |
-| `get_sift_investigation`          | Sift                      | Retrieve an existing Sift investigation by its UUID                                                          | Viewer role                                            | N/A                                                 |
-| `get_sift_analysis`               | Sift                      | Retrieve a specific analysis from a Sift investigation                                                       | Viewer role                                            | N/A                                                 |
-| `list_sift_investigations`        | Sift                      | Retrieve a list of Sift investigations with an optional limit                                                | Viewer role                                            | N/A                                                 |
-| `find_error_pattern_logs`         | Sift                      | Finds elevated error patterns in Loki logs.                                                                  | Editor role                                            | N/A                                                 |
-| `find_slow_requests`              | Sift                      | Finds slow requests from the relevant tempo datasources.                                                     | Editor role                                            | N/A                                                 |
 | `list_pyroscope_label_names`      | Pyroscope                 | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_label_values`     | Pyroscope                 | List label values matching a selector for a label name                                                       | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_profile_types`    | Pyroscope                 | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
@@ -460,7 +447,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
-- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently (e.g. `find_error_pattern_logs,find_slow_requests`). Has no effect on a tool whose whole category is disabled, e.g. via `--disable-sift`.
+- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -469,7 +456,6 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-oncall`: Disable oncall tools
 - `--disable-asserts`: Disable asserts tools
-- `--disable-sift`: Disable sift tools
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
@@ -518,12 +504,6 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `create_annotation`
 - `update_annotation`
 - `delete_annotation`
-
-**Sift Tools:**
-- `find_error_pattern_logs` (creates investigations)
-- `find_slow_requests` (creates investigations)
-
-These only create ephemeral Sift investigation records via the Sift API — they never touch a Grafana dashboard, alert, or datasource. Without them, `list_sift_investigations`/`get_sift_investigation`/`get_sift_analysis` have nothing to list or get. Pass `--enable-write-tools=find_error_pattern_logs,find_slow_requests` to keep them registered under `--disable-write`.
 
 **Snapshot Tools:**
 - `create_snapshot`
@@ -1059,7 +1039,6 @@ The TLS configuration is applied to all HTTP clients used by the MCP server, inc
 - Prometheus datasource clients
 - Loki datasource clients
 - Incident management clients
-- Sift investigation clients
 - Alerting clients
 - Asserts clients
 
@@ -1362,7 +1341,6 @@ How it works:
 >
 > - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 > - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-> - `--disable-sift` — Sift investigations analyze Loki logs server-side across all streams.
 > - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too.
 >
 > The server logs a warning at startup naming each of these that is still enabled.
