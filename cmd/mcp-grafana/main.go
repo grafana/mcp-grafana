@@ -453,13 +453,39 @@ func (dt *disabledTools) categoryReport() (enabled, disabled []string) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, e := range dt.toolEntries() {
 		switch {
-		case isCategoryEnabled(enabledTools, e.disabled, e.category):
+		case dt.categoryRegistersTools(e, enabledTools):
 			enabled = append(enabled, e.category)
 		case e.disabled:
 			disabled = append(disabled, e.category)
 		}
 	}
 	return enabled, disabled
+}
+
+// categoryRegistersTools reports whether a category that survived
+// --enabled-tools and --disable-<category> actually registers a tool once the
+// write and query gates are applied.
+//
+// It exists so buildInstructions and categoryReport cannot disagree. They ask
+// the same question for different audiences — one advertises the capability to
+// the agent, the other reports it as enabled — and a category that registers
+// nothing must do neither. They did disagree: --enabled-tools=assistant with
+// --disable-write reported assistant enabled while registering no tool, and
+// --disable-query did the same for every query-only category.
+func (dt *disabledTools) categoryRegistersTools(e toolEntry, enabledTools []string) bool {
+	if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
+		return false
+	}
+	// AddAssistantTools registers nothing when write tools are disabled.
+	if e.category == "assistant" && dt.write {
+		return false
+	}
+	// A category whose every tool executes a query registers nothing once
+	// query tools are gated off.
+	if !dt.queryToolsEnabled(e.category) && slices.Contains(queryOnlyCategories, e.category) {
+		return false
+	}
+	return true
 }
 
 // sqlCategoryAliases maps deprecated per-dialect category names to the unified
@@ -520,21 +546,14 @@ func (dt *disabledTools) buildInstructions() string {
 
 	var capabilities []string
 	for _, e := range dt.toolEntries() {
-		if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
+		// Don't advertise a capability the server won't actually expose; the
+		// same gate decides what categoryReport reports as enabled.
+		if !dt.categoryRegistersTools(e, enabledTools) {
 			continue
 		}
-		// The assistant category is entirely write-gated: AddAssistantTools
-		// registers no tools when write tools are disabled. Don't advertise a
-		// capability the server won't actually expose.
-		if e.category == "assistant" && dt.write {
-			continue
-		}
-		// Likewise for categories whose every tool executes a query: they
-		// register nothing at all once their query tools are gated off.
+		// Registered, but with its query tools gated off, so describe the
+		// reduced capability rather than the full one.
 		if !dt.queryToolsEnabled(e.category) {
-			if slices.Contains(queryOnlyCategories, e.category) {
-				continue
-			}
 			if desc, ok := categoryDescriptionNoQuery[e.category]; ok {
 				capabilities = append(capabilities, desc)
 				continue
@@ -1053,8 +1072,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	us.TLSEnabled = effectiveTLSEnabled(transport, tls)
 	us.MetricsEnabled = effectiveMetricsEnabled(transport, obs.MetricsEnabled)
 	us.DynamicMultiOrg = mcpgrafana.DynamicMultiOrgEnabled
-	us.ProxiedEnabled = isCategoryEnabled(strings.Split(dt.enabledTools, ","), dt.proxied, "proxied")
+	// Mirrors WithProxiedTools(!dt.proxied): the proxied token in
+	// --enabled-tools does not gate proxied tools, only --disable-proxied
+	// does, so deriving this from the category selection reported them
+	// disabled while the server was using them.
+	us.ProxiedEnabled = !dt.proxied
 	us.Target = grafanaTarget
+	// The other half of us.Flags: flag.Visit sees only flags, and container
+	// deployments configure almost entirely by environment variable.
+	us.EnvSet = usagestats.EnvSet(os.Getenv)
 	usage := usagestats.New(us)
 	usage.Disclose()
 
@@ -1209,7 +1235,7 @@ func main() {
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
-	usageStatsMode := flag.String("usage-stats", "", "Anonymous usage statistics reporting: 'enabled', 'disabled', or 'log' to print the report that would be sent to stderr and send nothing. Overrides the "+usagestats.ModeEnvVar+" environment variable; any unrecognised value disables reporting. See https://grafana.com/docs/mcp-grafana/latest/anonymous-usage-statistics/")
+	usageStatsMode := flag.String("usage-stats", "", "Anonymous usage statistics reporting: 'enabled', 'disabled', or 'log' to print the report that would be sent to stderr and send nothing. Overrides the "+usagestats.ModeEnvVar+" environment variable; any unrecognised value disables reporting. See https://grafana.com/docs/grafana/latest/developer-resources/mcp/anonymous-usage-statistics/")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig

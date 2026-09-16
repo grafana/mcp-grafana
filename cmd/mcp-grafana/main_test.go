@@ -1627,6 +1627,51 @@ func TestCategoryReportNormalisesAliases(t *testing.T) {
 	assert.NotContains(t, enabled, "clickhouse")
 }
 
+// TestCategoryReportHonoursWriteAndQueryGates: a category can survive
+// --enabled-tools and still register no tool, because --disable-write empties
+// assistant and --disable-query empties the query-only categories.
+// categoryReport reported those as enabled while the server exposed nothing,
+// which made tool availability look unrelated to tool usage. It shares
+// categoryRegistersTools with buildInstructions so the two cannot drift again.
+func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
+	t.Run("assistant is empty without write tools", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "assistant", write: true}
+		enabled, disabled := dt.categoryReport()
+
+		assert.NotContains(t, enabled, "assistant")
+		// Not disabled either: no --disable-assistant was passed. The two
+		// lists are deliberately not complements.
+		assert.NotContains(t, disabled, "assistant")
+	})
+
+	t.Run("assistant is reported when write tools are enabled", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "assistant"}
+		enabled, _ := dt.categoryReport()
+
+		assert.Contains(t, enabled, "assistant")
+	})
+
+	t.Run("query-only categories are empty without query tools", func(t *testing.T) {
+		dt := disabledTools{enabledTools: strings.Join(queryOnlyCategories, ",") + ",search", query: true}
+		enabled, _ := dt.categoryReport()
+
+		for _, category := range queryOnlyCategories {
+			assert.NotContains(t, enabled, category, "%s registers nothing with --disable-query", category)
+		}
+		// A category that is not query-only still registers its other tools.
+		assert.Contains(t, enabled, "search")
+	})
+
+	t.Run("agrees with the capabilities advertised to the agent", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "assistant,search", write: true}
+		enabled, _ := dt.categoryReport()
+		instructions := (&disabledTools{enabledTools: "assistant,search", write: true}).buildInstructions()
+
+		assert.NotContains(t, enabled, "assistant")
+		assert.NotContains(t, instructions, "Assistant")
+	})
+}
+
 func TestEffectiveTLSEnabled(t *testing.T) {
 	withCert := tlsConfig{certFile: "/tmp/c.pem", keyFile: "/tmp/k.pem"}
 

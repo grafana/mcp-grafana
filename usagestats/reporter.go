@@ -71,7 +71,13 @@ type Config struct {
 	Version string
 
 	// Transport is the MCP transport name ("stdio", "sse", "streamable-http").
+	// Clamped to that vocabulary on the wire: it is read before the flag is
+	// validated, so an invalid value reaches here.
 	Transport string
+
+	// EnvSet holds the comma-joined NAMES of the configuration environment
+	// variables that are set, from usagestats.EnvSet. Never their values.
+	EnvSet string
 
 	// Flags holds the NAMES of the flags explicitly set on the command line.
 	// Never their values.
@@ -167,7 +173,12 @@ type Reporter struct {
 	interval  time.Duration
 
 	nativeTools atomic.Pointer[map[string]struct{}]
-	counters    *counters
+
+	// reportSeq numbers this process's reports from 1. Incremented as each
+	// event is built, so a gap identifies a report that was built and lost
+	// rather than one that was never made.
+	reportSeq atomic.Int64
+	counters  *counters
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -240,7 +251,7 @@ func (r *Reporter) Disclose() {
 	}
 	r.cfg.Logger.Info("Anonymous usage statistics are being reported to Grafana Labs: per-process tool-usage counts, server configuration by flag name, and a coarse description of the Grafana target. Nothing is collected about the MCP clients that connect, and no Grafana URL, credentials, tool arguments or resource names are sent. Opt out with --usage-stats=disabled or "+ModeEnvVar+"=disabled, or inspect what would be sent with "+ModeEnvVar+"=log.",
 		"mode", string(r.cfg.Mode),
-		"docs", "https://grafana.com/docs/mcp-grafana/latest/anonymous-usage-statistics/",
+		"docs", "https://grafana.com/docs/grafana/latest/developer-resources/mcp/anonymous-usage-statistics/",
 	)
 }
 
@@ -486,12 +497,14 @@ func (r *Reporter) buildEvent(reason string) Event {
 		ProcessID:       r.processID,
 		ReportReason:    reason,
 		ProcessUptimeMS: time.Since(r.startedAt).Milliseconds(),
+		ReportSeq:       r.reportSeq.Add(1),
 		ToolCalls:       tools,
 		GrafanaVersion:  soleValue(c.grafanaVersions),
 		TargetKind:      c.targetKind,
 		AuthMethod:      soleValue(c.authMethods),
-		Transport:       r.cfg.Transport,
+		Transport:       observability.BoundedValue(r.cfg.Transport, transports),
 		Flags:           joinSorted(r.cfg.Flags),
+		EnvSet:          r.cfg.EnvSet,
 		EnabledTools:    joinSorted(r.cfg.EnabledTools),
 		DisabledTools:   joinSorted(r.cfg.DisabledTools),
 		TLSEnabled:      r.cfg.TLSEnabled,

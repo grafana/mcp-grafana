@@ -1212,7 +1212,7 @@ GRAFANA_USAGE_STATS=log mcp-grafana
 
 `GRAFANA_USAGE_STATS_ENDPOINT` changes the destination. It is not an opt-out.
 
-For the full field list, what is never sent, how to read the data and its limitations, see [Anonymous usage statistics](https://grafana.com/docs/mcp-grafana/latest/anonymous-usage-statistics/).
+For the full field list, what is never sent, how to read the data and its limitations, see [Anonymous usage statistics](https://grafana.com/docs/grafana/latest/developer-resources/mcp/anonymous-usage-statistics/).
 
 ### Observability
 

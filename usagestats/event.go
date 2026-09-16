@@ -102,6 +102,13 @@ type Event struct {
 	ReportReason    string `json:"report_reason"`
 	ProcessUptimeMS int64  `json:"process_uptime_ms"`
 
+	// ReportSeq numbers this process's reports from 1, so a gap in the
+	// sequence for a process_id identifies a report that was built and lost.
+	// Counters reset on send rather than on acknowledgement, so a lost report
+	// takes its delta with it; without this the loss is invisible and totals
+	// look like counts rather than the floor they are.
+	ReportSeq int64 `json:"report_seq"`
+
 	// Tool usage since the previous flush, aggregated over the whole process.
 	// Both are omitted when no tool was called in this window, so "no tools
 	// called" reads as NULL rather than as an empty string and an empty
@@ -123,8 +130,15 @@ type Event struct {
 
 	// Server configuration, by name and resolved state only. No flag value
 	// an operator can type free text into is included.
-	Transport       string `json:"transport"`
-	Flags           string `json:"flags"`
+	Transport string `json:"transport"`
+	Flags     string `json:"flags"`
+
+	// EnvSet is the sorted names of the configuration environment variables
+	// that are set, from the fixed inventory in configEnvVars. Names only,
+	// never values. It is the other half of Flags: flag.Visit sees only
+	// flags, so without this a container deployment reports almost no
+	// configuration at all.
+	EnvSet          string `json:"env_set"`
 	EnabledTools    string `json:"enabled_tools"`
 	DisabledTools   string `json:"disabled_tools"`
 	TLSEnabled      bool   `json:"tls_enabled"`
@@ -144,12 +158,13 @@ type GrafanaTarget struct {
 	AuthMethod string
 }
 
-// grafanaCloudHostSuffix is the only positive signal for a Grafana Cloud
-// stack that can be read from configuration alone. A Cloud instance reached
-// through a custom domain therefore reports self_hosted; see the docs page,
-// which states the misclassification rather than implying target_kind is
-// authoritative.
-const grafanaCloudHostSuffix = ".grafana.net"
+// grafanaCloudHostSuffixes are the only positive signals for a Grafana
+// Cloud stack that can be read from configuration alone: the public stack
+// domain plus the Grafana-operated ops and dev domains. A Cloud instance
+// reached through a custom domain therefore reports self_hosted; see the docs
+// page, which states the misclassification rather than implying target_kind
+// is authoritative.
+var grafanaCloudHostSuffixes = []string{".grafana.net", ".grafana-ops.net", ".grafana-dev.net"}
 
 // TargetKind classifies a Grafana URL as cloud or self-hosted. An empty or
 // unparseable URL returns "", meaning no target was resolved, which is
@@ -162,8 +177,11 @@ func TargetKind(rawURL string) string {
 	if err != nil || u.Hostname() == "" {
 		return ""
 	}
-	if strings.HasSuffix(strings.ToLower(u.Hostname()), grafanaCloudHostSuffix) {
-		return TargetKindCloud
+	host := strings.ToLower(u.Hostname())
+	for _, suffix := range grafanaCloudHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return TargetKindCloud
+		}
 	}
 	return TargetKindSelfHosted
 }
@@ -200,4 +218,66 @@ func soleValue(values map[string]struct{}) string {
 		return v
 	}
 	return ""
+}
+
+// Transport values for Event.Transport, the complete wire vocabulary.
+const (
+	TransportStdio          = "stdio"
+	TransportSSE            = "sse"
+	TransportStreamableHTTP = "streamable-http"
+)
+
+// transports bounds Event.Transport. The flag is validated before the server
+// starts, but that validation runs after the reporter is built and the
+// shutdown flush is deferred, so an invalid --transport would otherwise reach
+// the wire verbatim on the error path — and an operator who mistypes it can
+// put anything there, including a hostname. Clamping here rather than
+// reordering the validation keeps the guarantee if that order changes again.
+var transports = observability.ValueSet(TransportStdio, TransportSSE, TransportStreamableHTTP)
+
+// configEnvVars is the inventory for Event.EnvSet: every environment variable
+// this server reads its own configuration from. Names only ever travel, never
+// values, and only a name from this list — it is a fixed inventory compiled
+// into the binary, not a scan of the process environment, so an unrelated
+// variable cannot be reported even by accident.
+//
+// Flags alone under-report configuration badly: Event.Flags comes from
+// flag.Visit, and container and Kubernetes deployments configure almost
+// entirely by environment variable, so for those the flags field is close to
+// empty however the server is set up.
+//
+// Credential-bearing names are included because the name says only that a
+// credential of that kind was supplied, which auth_method already reports.
+var configEnvVars = []string{
+	"GRAFANA_API_KEY",
+	"GRAFANA_EXTRA_HEADERS",
+	"GRAFANA_FORWARD_HEADERS",
+	"GRAFANA_LEGACY_8_URL",
+	"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES",
+	"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE",
+	"GRAFANA_LOKI_GUARDRAIL_MODE",
+	"GRAFANA_MCP_SERVER_NAME",
+	"GRAFANA_ORG_ID",
+	"GRAFANA_PASSWORD",
+	"GRAFANA_SERVICE_ACCOUNT_TOKEN",
+	"GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE",
+	"GRAFANA_SOCKS5_PROXY",
+	"GRAFANA_URL",
+	"GRAFANA_USAGE_STATS",
+	"GRAFANA_USAGE_STATS_ENDPOINT",
+	"GRAFANA_USERNAME",
+	"MCP_GRAFANA_SERVER_TOKEN",
+}
+
+// EnvSet returns the sorted names of the configuration environment variables
+// that are set to a non-empty value, as a comma-joined list. Values are never
+// read for reporting - only whether each name is present.
+func EnvSet(lookup func(string) string) string {
+	var set []string
+	for _, name := range configEnvVars {
+		if strings.TrimSpace(lookup(name)) != "" {
+			set = append(set, name)
+		}
+	}
+	return strings.Join(set, ",")
 }
