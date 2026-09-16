@@ -8,6 +8,40 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestDoNotTrack pins which DO_NOT_TRACK values opt out, directly rather than
+// through ResolveMode.
+//
+// It has to be direct: DefaultMode is ModeDisabled in this release, so a
+// ResolveMode case asserting "DO_NOT_TRACK disabled it" and one asserting "it
+// was ignored and we fell back to the default" expect the same value and both
+// pass however DoNotTrack behaves. Those cases only start telling the two
+// apart when the default flips to enabled. This test does not depend on the
+// default at all.
+func TestDoNotTrack(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{in: "1", want: true},
+		{in: " 1 ", want: true},
+		{in: "0"},
+		{in: ""},
+		{in: "   "},
+		// Only "1" is the convention's value. "true" reads like an opt-out
+		// and deliberately is not one.
+		{in: "true"},
+		{in: "TRUE"},
+		{in: "yes"},
+		{in: "on"},
+		{in: "11"},
+		{in: "1.0"},
+	} {
+		t.Run("DO_NOT_TRACK="+tc.in, func(t *testing.T) {
+			assert.Equal(t, tc.want, DoNotTrack(tc.in))
+		})
+	}
+}
+
 func TestResolveMode(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -36,10 +70,18 @@ func TestResolveMode(t *testing.T) {
 
 		// DO_NOT_TRACK can only ever disable, and sits below both explicit
 		// settings so a host-wide preference can be overridden per server.
+		//
+		// While DefaultMode is ModeDisabled these ModeDisabled/DefaultMode
+		// expectations are the same value, so the rows that distinguish
+		// "opted out" from "ignored" are carried by TestDoNotTrack above
+		// until the default flips. The rows expecting ModeEnabled are
+		// meaningful now: they prove the precedence.
 		{name: "DO_NOT_TRACK=1 disables", doNotTrack: "1", want: ModeDisabled},
-		{name: "DO_NOT_TRACK=true disables", doNotTrack: "true", want: ModeDisabled},
-		{name: "DO_NOT_TRACK is case insensitive and trimmed", doNotTrack: " TRUE ", want: ModeDisabled},
+		{name: "DO_NOT_TRACK=1 is trimmed", doNotTrack: " 1 ", want: ModeDisabled},
 		{name: "DO_NOT_TRACK=0 does not disable", doNotTrack: "0", want: DefaultMode},
+		// Only "1" opts out. "true" is not the convention's value and is
+		// deliberately not accepted.
+		{name: "DO_NOT_TRACK=true does not disable", doNotTrack: "true", want: DefaultMode},
 		{name: "DO_NOT_TRACK=false does not disable", doNotTrack: "false", want: DefaultMode},
 		{name: "DO_NOT_TRACK with an unrelated value is ignored", doNotTrack: "yes", want: DefaultMode},
 		{name: "env wins over DO_NOT_TRACK", env: "enabled", doNotTrack: "1", want: ModeEnabled},

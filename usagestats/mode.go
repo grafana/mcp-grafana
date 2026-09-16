@@ -36,11 +36,11 @@ const DefaultMode = ModeDisabled
 const (
 	// ModeEnvVar selects the reporting mode. The --usage-stats flag wins over it.
 	ModeEnvVar = "GRAFANA_USAGE_STATS"
-	// DoNotTrackEnvVar disables reporting when set to "1" or "true",
-	// following the cross-tool DO_NOT_TRACK convention
-	// (https://donottrack.sh/). GRAFANA_USAGE_STATS and --usage-stats both
-	// win over it, so a machine that sets it globally can still opt a single
-	// server back in deliberately.
+	// DoNotTrackEnvVar disables reporting when set to "1", following the
+	// cross-tool DO_NOT_TRACK convention (https://donottrack.sh/).
+	// GRAFANA_USAGE_STATS and --usage-stats both win over it, so a machine
+	// that sets it globally can still opt a single server back in
+	// deliberately.
 	DoNotTrackEnvVar = "DO_NOT_TRACK"
 	// EndpointEnvVar overrides where reports are sent. It is not an opt-out.
 	EndpointEnvVar = "GRAFANA_USAGE_STATS_ENDPOINT"
@@ -72,16 +72,16 @@ func ResolveMode(flagValue string, flagSet bool, envValue, doNotTrack string) Mo
 	}
 }
 
-// DoNotTrack reports whether a DO_NOT_TRACK value opts out. Only "1" and
-// "true" do: the convention assigns no meaning to other values, and treating
-// any non-empty value as opt-out would make DO_NOT_TRACK=0 disable reporting.
+// DoNotTrack reports whether a DO_NOT_TRACK value opts out. Only "1" does:
+// that is the value the convention defines, and treating any non-empty value
+// as an opt-out would make DO_NOT_TRACK=0 disable reporting.
+//
+// Surrounding whitespace is trimmed but nothing else is accepted. Trimming is
+// not a second value: a quoted "1 " in a compose file or a Kubernetes
+// manifest is still the value 1, and not recognising it would leave reporting
+// on, which is the wrong direction to fail in for an opt-out.
 func DoNotTrack(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true":
-		return true
-	default:
-		return false
-	}
+	return strings.TrimSpace(v) == "1"
 }
 
 func parseMode(v string) Mode {

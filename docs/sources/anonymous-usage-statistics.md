@@ -191,7 +191,7 @@ mcp-grafana --usage-stats=disabled
 export GRAFANA_USAGE_STATS=disabled
 ```
 
-3. **`DO_NOT_TRACK` environment variable**: set it to `1` or `true` to disable reporting, following the cross-tool [DO_NOT_TRACK](https://donottrack.sh/) convention.
+3. **`DO_NOT_TRACK` environment variable**: set it to `1` to disable reporting, following the cross-tool [DO_NOT_TRACK](https://donottrack.sh/) convention.
 
 ```shell
 export DO_NOT_TRACK=1
@@ -201,7 +201,7 @@ Any value of `--usage-stats` or `GRAFANA_USAGE_STATS` that is not one of those t
 
 Two things about `DO_NOT_TRACK` are worth stating, because it behaves differently from the other two:
 
-- **It can only ever disable.** `DO_NOT_TRACK=0` and `DO_NOT_TRACK=false` do not turn reporting on; they leave the decision to the settings above. Only `1` and `true` opt out, because the convention gives no meaning to any other value, and treating every non-empty value as an opt-out would make `DO_NOT_TRACK=0` disable reporting.
+- **Only `1` opts out, and it can only ever disable.** No other value has any effect: `DO_NOT_TRACK=0`, `DO_NOT_TRACK=true` and `DO_NOT_TRACK=anything-else` all leave the decision to the settings above, and none of them turns reporting on. `1` is the value the convention defines, and treating every non-empty value as an opt-out would make `DO_NOT_TRACK=0` disable reporting.
 - **The two explicit settings override it.** It is a machine-wide preference, so a host that sets it can still opt one server back in with `--usage-stats=enabled` or `GRAFANA_USAGE_STATS=enabled`. If you want it to be final, do not also set those.
 
 There is no configuration file. Refer to [Command-line flags](../configure/command-line-flags/) for where `--usage-stats` sits among the other flags.

@@ -1210,7 +1210,7 @@ mcp-grafana --usage-stats=disabled
 GRAFANA_USAGE_STATS=log mcp-grafana
 ```
 
-`DO_NOT_TRACK=1` (or `true`) also disables reporting, following the cross-tool [DO_NOT_TRACK](https://donottrack.sh/) convention. It can only disable, and both `--usage-stats` and `GRAFANA_USAGE_STATS` override it, so a host that sets it globally can still opt one server back in.
+`DO_NOT_TRACK=1` also disables reporting, following the cross-tool [DO_NOT_TRACK](https://donottrack.sh/) convention. Only `1` has any effect, it can only disable, and both `--usage-stats` and `GRAFANA_USAGE_STATS` override it, so a host that sets it globally can still opt one server back in.
 
 `GRAFANA_USAGE_STATS_ENDPOINT` changes the destination. It is not an opt-out.
 
