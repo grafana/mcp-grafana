@@ -16,6 +16,11 @@ import (
 
 const (
 	tempoAcceptLLM = "application/llm"
+	// Tempo's own MCP server, used only for the embedded TraceQL docs; every
+	// other Tempo capability is reachable over plain REST.
+	tempoMCPPath            = "/api/mcp"
+	tempoAcceptMCP          = "application/json, text/event-stream"
+	tempoMCPProtocolVersion = "2025-06-18"
 )
 
 type tempoBackend struct {
@@ -141,6 +146,132 @@ func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (st
 	return string(body), nil
 }
 
+// mcpToolCall invokes a tool on Tempo's own MCP server, reached through the same
+// datasource proxy as the REST tools.
+//
+// Tempo rejects a tools/call that carries no session, so each call opens a
+// throwaway one: initialize, read the session id off the response header, then
+// call. Nothing is cached between calls, which is what keeps this from
+// reintroducing the per-session tool store the old proxy layer required. Only
+// worth it for content Tempo serves nowhere else, i.e. the embedded docs.
+func (b *tempoBackend) mcpToolCall(ctx context.Context, name string, args map[string]any) (string, error) {
+	sessionID, err := b.mcpInitialize(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	body, _, err := b.doMCPPost(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": name, "arguments": args},
+	}, sessionID)
+	if err != nil {
+		return "", err
+	}
+	return tempoMCPToolText(body)
+}
+
+func (b *tempoBackend) mcpInitialize(ctx context.Context) (string, error) {
+	_, header, err := b.doMCPPost(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": tempoMCPProtocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "mcp-grafana", "version": "1"},
+		},
+	}, "")
+	if err != nil {
+		return "", err
+	}
+
+	sessionID := header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		return "", fmt.Errorf("tempo MCP server did not return a session id")
+	}
+	return sessionID, nil
+}
+
+func (b *tempoBackend) doMCPPost(ctx context.Context, payload any, sessionID string) (string, http.Header, error) {
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+tempoMCPPath, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", tempoAcceptMCP)
+	req.Header.Set("Content-Type", "application/json")
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, tempoAPIError(resp.StatusCode, body)
+	}
+
+	return string(body), resp.Header, nil
+}
+
+// tempoMCPToolText pulls the text content out of a tools/call result. The
+// response is JSON, or the same JSON inside an SSE frame when Tempo streams it.
+func tempoMCPToolText(body string) (string, error) {
+	payload := strings.TrimSpace(body)
+	if rest, ok := strings.CutPrefix(payload, "event:"); ok {
+		_, payload, _ = strings.Cut(rest, "data:")
+	} else if rest, ok := strings.CutPrefix(payload, "data:"); ok {
+		payload = rest
+	}
+
+	var envelope struct {
+		Result struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			IsError bool `json:"isError"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &envelope); err != nil {
+		return "", fmt.Errorf("failed to parse tempo MCP response: %w", err)
+	}
+	if envelope.Error != nil {
+		return "", fmt.Errorf("tempo MCP error: %s", envelope.Error.Message)
+	}
+
+	var text strings.Builder
+	for _, item := range envelope.Result.Content {
+		if item.Type == "text" {
+			text.WriteString(item.Text)
+		}
+	}
+	if envelope.Result.IsError {
+		return "", fmt.Errorf("tempo MCP tool error: %s", strings.TrimSpace(text.String()))
+	}
+	if text.Len() == 0 {
+		return "", fmt.Errorf("tempo MCP tool returned no text content")
+	}
+	return text.String(), nil
+}
+
 func tempoAPIError(statusCode int, body []byte) error {
 	msg := strings.TrimSpace(string(body))
 	if msg == "" && statusCode == 499 {
@@ -223,6 +354,11 @@ type ListTempoAttributeValuesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	Name          string `json:"name" jsonschema:"required,description=The attribute name to get values for (e.g. 'span.http.method'\\, 'resource.service.name')"`
 	FilterQuery   string `json:"filter-query,omitempty" jsonschema:"description=Filter query to apply to the attribute values. It can only have one spanset and only &&'ed conditions like { <cond> && <cond> && ... }. This is useful for filtering the values to a specific set of values."`
+}
+
+type GetTempoTraceQLDocsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	Topic         string `json:"topic" jsonschema:"required,enum=basic,enum=aggregates,enum=structural,enum=metrics,description=Which section of the TraceQL reference to retrieve: 'basic' for attribute and duration filters\\, 'aggregates' for count/avg/sum and by() grouping\\, 'structural' for parent/child and descendant operators\\, 'metrics' for rate/quantile_over_time metrics queries"`
 }
 
 // Handler functions.
@@ -470,6 +606,26 @@ func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValues
 	return tempoToolResult(body, "attribute-values", "json"), nil
 }
 
+func getTempoTraceQLDocs(ctx context.Context, args GetTempoTraceQLDocsParams) (*mcp.CallToolResult, error) {
+	switch args.Topic {
+	case "basic", "aggregates", "structural", "metrics":
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("invalid topic %q: must be 'basic', 'aggregates', 'structural', or 'metrics'", args.Topic)), nil
+	}
+
+	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	body, err := backend.mcpToolCall(ctx, "docs-traceql", map[string]any{"name": args.Topic})
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return tempoToolResult(body, "traceql-docs", "markdown"), nil
+}
+
 func tempoToolResult(body string, contentType string, encoding string) *mcp.CallToolResult {
 	res := mcp.NewToolResultText(body)
 	res.Meta = &mcp.Meta{AdditionalFields: map[string]any{
@@ -547,12 +703,25 @@ var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
+var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
+	"get_tempo_traceql_docs",
+	"Retrieve TraceQL reference documentation with examples, covering attribute filters, aggregates, structural operators, and metrics queries. Consult this before writing a non-trivial TraceQL query, or after one returns an error or no results.",
+	getTempoTraceQLDocs,
+	mcp.WithTitleAnnotation("Get TraceQL documentation"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
 // AddTempoTools registers all Tempo tools on the MCP server. Tools call
-// Tempo's REST API through the Grafana datasource proxy.
+// Tempo's REST API through the Grafana datasource proxy, except for
+// get_tempo_traceql_docs: the docs are embedded in the Tempo binary and served
+// only over Tempo's MCP endpoint, so that one tool speaks MCP to fetch them
+// rather than shipping a copy that drifts from the deployed Tempo.
 //
-// Doc tools (docs-traceql, docs-config) are not included here because they
-// serve embedded markdown content that lives inside the Tempo binary. They
-// can be added once Tempo publishes a shared tools library.
+// docs-config is still not exposed — it describes how to configure a Tempo
+// deployment, which is not something these tools can act on.
 func AddTempoTools(s *server.MCPServer, enableQueryTools bool) {
 	if !enableQueryTools {
 		return
@@ -563,4 +732,5 @@ func AddTempoTools(s *server.MCPServer, enableQueryTools bool) {
 	DiffTempoTracesTool.Register(s)
 	ListTempoAttributeNamesTool.Register(s)
 	ListTempoAttributeValuesTool.Register(s)
+	GetTempoTraceQLDocsTool.Register(s)
 }
