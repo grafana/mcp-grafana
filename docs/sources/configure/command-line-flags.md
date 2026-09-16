@@ -79,9 +79,9 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 
 ## Configure anonymous usage statistics
 
-- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` to print the report that would be sent to stderr and send nothing. Overrides the `GRAFANA_USAGE_STATS` environment variable. Any other value disables reporting, so a typo fails toward privacy. Reporting is disabled by default in this release.
+- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` to print the report that would be sent to stderr and send nothing. Overrides the `GRAFANA_USAGE_STATS` environment variable.
 
-`GRAFANA_USAGE_STATS_ENDPOINT` changes where reports are sent. It is not an opt-out.
+`GRAFANA_USAGE_STATS_ENDPOINT` changes where reports are sent.
 
 Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the full list of fields, what is never sent, and how to read the data.
 
