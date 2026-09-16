@@ -81,7 +81,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
-  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,docs`
+  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,proxied,annotations,rendering,snapshot,docs`
 
   Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` are accepted and map to `sql`.
 
@@ -101,7 +101,6 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--disable-folder`: Disable folder tools.
 - `--disable-oncall`: Disable OnCall tools.
 - `--disable-asserts`: Disable Asserts tools.
-- `--disable-sift`: Disable Sift tools.
 - `--disable-admin`: Disable admin tools.
 - `--disable-pyroscope`: Disable Pyroscope tools.
 - `--disable-navigation`: Disable navigation (deeplink) tools.
@@ -174,7 +173,6 @@ Enforcement applies only to the Loki query tools. Other tools can reach Loki log
 
 - `--disable-api`: `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 - `--disable-rendering`: `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-- `--disable-sift`: Sift investigations analyze Loki logs server-side across all streams.
 - `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too.
 
 The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Loki datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
@@ -213,11 +211,6 @@ When enabled, the following writes are disabled:
 - `create_annotation`
 - `update_annotation`
 - `delete_annotation`
-
-**Sift tools**
-
-- `find_error_pattern_logs` (creates investigations)
-- `find_slow_requests` (creates investigations)
 
 **Snapshot tools**
 

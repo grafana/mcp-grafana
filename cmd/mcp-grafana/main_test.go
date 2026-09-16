@@ -43,7 +43,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 	}{
 		{
 			name:         "all defaults include Loki and Prometheus",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,annotations,rendering",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,annotations,rendering",
 			wantContains: []string{
 				"Prometheus:",
 				"Loki:",
@@ -92,7 +92,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "agento11y excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -120,7 +120,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "assistant excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -1314,57 +1314,18 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	}
 }
 
-// See issue #744: --disable-write left the Sift read tools (list/get) with
-// nothing to list or get, since the investigation-creation tools were gated
-// by the same flag. --enable-write-tools restores just those two, by name.
-func TestProcessTools_DisableWriteRemovesSiftInvestigationTools(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{write: true})
-	assert.False(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be gone with --disable-write")
-	assert.False(t, names["find_slow_requests"], "find_slow_requests should be gone with --disable-write")
-	assert.True(t, names["list_sift_investigations"], "read-only sift tools should survive --disable-write")
-	assert.True(t, names["get_sift_investigation"], "read-only sift tools should survive --disable-write")
-	assert.True(t, names["get_sift_analysis"], "read-only sift tools should survive --disable-write")
-}
-
-func TestProcessTools_EnableWriteToolsRestoresSiftInvestigationTools(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
-	assert.True(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be restored by --enable-write-tools")
-	assert.True(t, names["find_slow_requests"], "find_slow_requests should be restored by --enable-write-tools")
-	// The override is scoped by name: real write tools stay gone.
-	assert.False(t, names["update_dashboard"], "--enable-write-tools must not re-enable unrelated write tools")
-	assert.False(t, names["create_folder"], "--enable-write-tools must not re-enable unrelated write tools")
-}
-
-// A space after the comma (a natural way to write the flag by hand) must not
-// prevent the match. Exercised directly against writeToolOverridden with a
-// single name, since AddSiftTools ORs both Sift tool names together and
-// would pass even if only one of them matched.
 func TestWriteToolOverridden_TrimsWhitespaceAroundNames(t *testing.T) {
-	dt := &disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs, find_slow_requests"}
-	assert.True(t, dt.writeToolOverridden("find_slow_requests"), "trailing name after a space-separated comma should still match")
+	dt := &disabledTools{write: true, writeToolOverrides: "query_sql, query_influxdb"}
+	assert.True(t, dt.writeToolOverridden("query_influxdb"), "trailing name after a space-separated comma should still match")
 
-	dt = &disabledTools{write: true, writeToolOverrides: " find_error_pattern_logs"}
-	assert.True(t, dt.writeToolOverridden("find_error_pattern_logs"), "leading whitespace before a name should still match")
-}
-
-// AddSiftTools only exposes one bool for both investigation-creation tools,
-// so naming just one of them in --enable-write-tools restores both.
-func TestProcessTools_EnableWriteToolsPartialSiftListRestoresBoth(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs"})
-	assert.True(t, names["find_error_pattern_logs"])
-	assert.True(t, names["find_slow_requests"])
+	dt = &disabledTools{write: true, writeToolOverrides: " query_sql"}
+	assert.True(t, dt.writeToolOverridden("query_sql"), "leading whitespace before a name should still match")
 }
 
 func TestProcessTools_EnableWriteToolsAloneChangesNothing(t *testing.T) {
 	defaults := registerAllCategories(t, disabledTools{})
-	names := registerAllCategories(t, disabledTools{writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	names := registerAllCategories(t, disabledTools{writeToolOverrides: "query_sql,query_influxdb"})
 	assert.Equal(t, defaults, names, "--enable-write-tools on its own should be a no-op")
-}
-
-func TestProcessTools_DisableSiftBeatsEnableWriteTools(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{sift: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
-	assert.False(t, names["find_error_pattern_logs"], "sift should be gone: --disable-sift wins over --enable-write-tools")
-	assert.False(t, names["list_sift_investigations"], "sift should be gone: --disable-sift wins over --enable-write-tools")
 }
 
 // --enable-query is documented as a shorthand for naming the four raw-SQL

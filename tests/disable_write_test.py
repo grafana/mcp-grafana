@@ -42,8 +42,6 @@ async def test_disable_write_flag_disables_write_tools(grafana_env):
                 "create_annotation",
                 "update_annotation",
                 "delete_annotation",
-                "find_error_pattern_logs",
-                "find_slow_requests",
                 "update_alert_group",
             ]
 
@@ -63,7 +61,6 @@ async def test_disable_write_flag_disables_write_tools(grafana_env):
                 "list_incidents",
                 "get_incident",
                 "list_incident_custom_fields",
-                "get_sift_investigation",
                 "get_annotations",
                 "get_annotation_tags",
                 "list_alert_groups",
@@ -99,8 +96,6 @@ async def test_without_disable_write_flag_enables_write_tools(grafana_env):
                 "create_annotation",
                 "update_annotation",
                 "delete_annotation",
-                "find_error_pattern_logs",
-                "find_slow_requests",
                 "update_alert_group",
             ]
 
@@ -120,7 +115,6 @@ async def test_without_disable_write_flag_enables_write_tools(grafana_env):
                 "list_incidents",
                 "get_incident",
                 "list_incident_custom_fields",
-                "get_sift_investigation",
                 "get_annotations",
                 "get_annotation_tags",
                 "list_alert_groups",

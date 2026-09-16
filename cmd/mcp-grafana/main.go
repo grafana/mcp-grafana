@@ -84,7 +84,6 @@ var categoryDescription = map[string]string{
 	"folder":        "Folders: Manage dashboard folders.",
 	"oncall":        "OnCall: View and manage on-call schedules, shifts, teams, and users.",
 	"asserts":       "Asserts: Query and analyze assertion data.",
-	"sift":          "Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.",
 	"admin":         "Admin: List teams and perform administrative tasks.",
 	"pyroscope":     "Pyroscope: Profile applications and fetch profiling data.",
 	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries, with optional built-in shortening.",
@@ -166,7 +165,7 @@ type disabledTools struct {
 
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
-	dashboard, folder, oncall, asserts, sift, admin,
+	dashboard, folder, oncall, asserts, admin,
 	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, write, query, enableQuery,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
@@ -198,7 +197,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -212,7 +211,6 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
 	flag.BoolVar(&dt.asserts, "disable-asserts", false, "Disable asserts tools")
-	flag.BoolVar(&dt.sift, "disable-sift", false, "Disable sift tools")
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
 	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 	flag.BoolVar(&dt.navigation, "disable-navigation", false, "Disable navigation tools")
@@ -220,7 +218,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
-	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently (e.g. find_error_pattern_logs,find_slow_requests, which only create ephemeral Sift investigation records and never touch a Grafana dashboard, alert, or datasource). Has no effect on a tool whose whole category is disabled, e.g. via --disable-sift.")
+	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
@@ -335,9 +333,6 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
 		{func(s *mcp.Server) { tools.AddOnCallTools(s, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
-		{func(s *mcp.Server) {
-			tools.AddSiftTools(s, dt.writeToolEnabled("find_error_pattern_logs", "find_slow_requests"))
-		}, dt.sift, "sift"},
 		{tools.AddAdminTools, dt.admin, "admin"},
 		{func(s *mcp.Server) { tools.AddPyroscopeTools(s, enableQueryTools) }, dt.pyroscope, "pyroscope"},
 		{func(s *mcp.Server) { tools.AddNavigationTools(s, enableWriteTools) }, dt.navigation, "navigation"},
@@ -393,9 +388,6 @@ func (dt *disabledTools) processTools(s *mcp.Server) {
 	dt.normalizeEnabledTools()
 	if dt.query && dt.enableQuery {
 		slog.Warn("--enable-query has no effect because --disable-query is set; no query tools will be registered")
-	}
-	if dt.sift && dt.writeToolOverridden("find_error_pattern_logs", "find_slow_requests") {
-		slog.Warn("--enable-write-tools naming find_error_pattern_logs/find_slow_requests has no effect because --disable-sift is set; no sift tools will be registered")
 	}
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, e := range dt.toolEntries() {
@@ -568,7 +560,6 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 	for _, b := range []bypass{
 		{"api", dt.api, "--disable-api", "grafana_api_request can query the Loki datasource proxy directly, fully bypassing enforcement"},
 		{"rendering", dt.rendering, "--disable-rendering", "get_panel_image renders Loki panels server-side via the Grafana renderer, producing images that contain unrestricted log lines"},
-		{"sift", dt.sift, "--disable-sift", "Sift investigations (e.g. find_error_pattern_logs) analyze Loki logs server-side across all streams; enforced matchers are not applied to that analysis"},
 	} {
 		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
 			slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
