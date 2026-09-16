@@ -98,11 +98,6 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 | `list_alert_groups`               | OnCall         | List alert groups from Grafana OnCall with filtering options                                                 | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `get_alert_group`                 | OnCall         | Get a specific alert group from Grafana OnCall by its ID                                                     | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `update_alert_group`              | OnCall         | Acknowledge, unacknowledge, resolve, or unresolve an alert group                                             | `grafana-oncall-app.alert-groups:write` (and `:read`)  | Plugin-specific scopes                              |
-| `get_sift_investigation`          | Sift           | Retrieve an existing Sift investigation by its UUID                                                          | Viewer role                                            | N/A                                                 |
-| `get_sift_analysis`               | Sift           | Retrieve a specific analysis from a Sift investigation                                                       | Viewer role                                            | N/A                                                 |
-| `list_sift_investigations`        | Sift           | Retrieve a list of Sift investigations with an optional limit                                                | Viewer role                                            | N/A                                                 |
-| `find_error_pattern_logs`         | Sift           | Finds elevated error patterns in Loki logs.                                                                  | Editor role                                            | N/A                                                 |
-| `find_slow_requests`              | Sift           | Finds slow requests from the relevant tempo datasources.                                                     | Editor role                                            | N/A                                                 |
 | `list_pyroscope_label_names`      | Pyroscope      | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_label_values`     | Pyroscope      | List label values matching a selector for a label name                                                       | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_profile_types`    | Pyroscope      | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
@@ -158,7 +153,7 @@ Each tool requires specific RBAC permissions. When you create a service account 
 
 Tip: If you want a faster setup instead of tuning many scopes, assign a built-in role such as **Editor** to the service account. **Editor** grants broad read and write access for most MCP operations; it is less granular than least privilege.
 
-Grafana Incident and Sift tools use basic Grafana roles instead of fine-grained RBAC permissions:
+Grafana Incident tools use basic Grafana roles instead of fine-grained RBAC permissions:
 
 - **Viewer:** read-only operations (for example list incidents, get investigations).
 - **Editor:** write operations (for example create incidents, run analyses that modify state).
