@@ -17,7 +17,7 @@ aliases:
 
 The Grafana MCP server can report limited usage statistics about itself to Grafana Labs. This data is used to understand which tools are used most and where tools fail, so we can make the product better.
 
-To preserve anonymity, the emitted data describes the *shape* of usage only. This like tool arguments, resource names, dashboards, queries, log lines, error messages and credentials are never sent.
+To preserve anonymity, the emitted data describes the *shape* of usage only. Things like tool arguments, resource names, dashboards, queries, log lines, error messages and credentials are never sent, and neither is the Grafana instance's URL, hostname, stack slug, organisation name or organisation ID.
 
 Nothing an MCP client reports about itself - things like name and version - is collected. Any other value that comes from outside the binary is reduced to a fixed vocabulary before being emitted, so we don't emit a potentially-identifying value.
 
@@ -68,7 +68,27 @@ Reports are received by Grafana's usage-stats service, the same service that rec
 
 ## Inspect what would be sent
 
-To see exactly what the server would report, set either the `--usage-stats=log` or `GRAFANA_USAGE_STATS=log` environment variable. In this mode, each event is printed to stderr only:
+To see exactly what the server would report, set either the `--usage-stats=log` flag or the `GRAFANA_USAGE_STATS=log` environment variable. In this mode each event is printed to stderr and nothing is sent:
+
+```shell
+GRAFANA_USAGE_STATS=log mcp-grafana
+```
+
+Under the `stdio` transport, stderr goes wherever your MCP client sends the server's logs, so read the printed events there rather than in a terminal.
+
+## How the report is sent
+
+| Property | Value |
+| --- | --- |
+| Destination | `https://stats.grafana.org/mcp-grafana-usage-report` |
+| Method | A single `POST` with the event as a JSON object |
+| Attempts | One. A failed report is never retried and never stored. |
+| Timing | Every four hours, and once more as the process exits |
+| Time limit | One second for the shutdown report, so exit is never delayed longer than that |
+
+Because a failed report is never retried, and the counters reset when a report is built rather than when it arrives, a total summed across a `process_id` is a floor rather than an exact count. `report_seq` is how a missing report is identified.
+
+To send reports somewhere else, set `GRAFANA_USAGE_STATS_ENDPOINT` to another URL. This changes the destination only; it is not an opt-out.
 
 ## Opt out
 
