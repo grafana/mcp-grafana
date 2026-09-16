@@ -1235,7 +1235,7 @@ func main() {
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
-	usageStatsMode := flag.String("usage-stats", "", "Anonymous usage statistics reporting: 'enabled', 'disabled', or 'log' to print the report that would be sent to stderr and send nothing. Overrides the "+usagestats.ModeEnvVar+" environment variable; any unrecognised value disables reporting. See https://grafana.com/docs/grafana/latest/developer-resources/mcp/anonymous-usage-statistics/")
+	usageStatsMode := flag.String("usage-stats", "", "Anonymous usage statistics reporting: 'enabled', 'disabled', or 'log' to print the report that would be sent to stderr and send nothing. Overrides the "+usagestats.ModeEnvVar+" environment variable, which in turn overrides "+usagestats.DoNotTrackEnvVar+"; any unrecognised value disables reporting. See https://grafana.com/docs/grafana/latest/developer-resources/mcp/anonymous-usage-statistics/")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
@@ -1297,7 +1297,7 @@ func main() {
 	// Flag NAMES only: --server-name, --instructions-append and the address
 	// flags all carry operator-chosen text, so no flag value is reported.
 	usageStats := usagestats.Config{
-		Mode:     usagestats.ResolveMode(*usageStatsMode, setFlags["usage-stats"], os.Getenv(usagestats.ModeEnvVar)),
+		Mode:     usagestats.ResolveMode(*usageStatsMode, setFlags["usage-stats"], os.Getenv(usagestats.ModeEnvVar), os.Getenv(usagestats.DoNotTrackEnvVar)),
 		Endpoint: usagestats.ResolveEndpoint(os.Getenv(usagestats.EndpointEnvVar)),
 		Version:  mcpgrafana.Version(),
 		Flags:    setFlagNames,

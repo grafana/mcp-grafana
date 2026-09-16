@@ -112,6 +112,7 @@ func TestDocsPageDocumentsTheControls(t *testing.T) {
 
 	for _, needed := range []string{
 		ModeEnvVar,
+		DoNotTrackEnvVar,
 		EndpointEnvVar,
 		DefaultEndpoint,
 		"--usage-stats",

@@ -445,7 +445,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--slow-request-log-level`: Log level for slow-request events (`info` or `warn`) - default: `warn`.
 
 **Anonymous Usage Statistics:**
-- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
+- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
 **Session Management:**
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
@@ -1209,6 +1209,8 @@ mcp-grafana --usage-stats=disabled
 # Print what would be sent, to stderr, and send nothing
 GRAFANA_USAGE_STATS=log mcp-grafana
 ```
+
+`DO_NOT_TRACK=1` (or `true`) also disables reporting, following the cross-tool [DO_NOT_TRACK](https://donottrack.sh/) convention. It can only disable, and both `--usage-stats` and `GRAFANA_USAGE_STATS` override it, so a host that sets it globally can still opt one server back in.
 
 `GRAFANA_USAGE_STATS_ENDPOINT` changes the destination. It is not an opt-out.
 

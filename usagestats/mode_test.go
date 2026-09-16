@@ -10,11 +10,12 @@ import (
 
 func TestResolveMode(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		flagValue string
-		flagSet   bool
-		env       string
-		want      Mode
+		name       string
+		flagValue  string
+		flagSet    bool
+		env        string
+		doNotTrack string
+		want       Mode
 	}{
 		{name: "nothing set falls back to the default", want: DefaultMode},
 		{name: "env enabled", env: "enabled", want: ModeEnabled},
@@ -32,9 +33,21 @@ func TestResolveMode(t *testing.T) {
 		{name: "unrecognised flag value disables", flagValue: "on", flagSet: true, want: ModeDisabled},
 		{name: "explicitly empty flag value disables", flagValue: "", flagSet: true, env: "enabled", want: ModeDisabled},
 		{name: "whitespace-only env value falls back to the default", env: "   ", want: DefaultMode},
+
+		// DO_NOT_TRACK can only ever disable, and sits below both explicit
+		// settings so a host-wide preference can be overridden per server.
+		{name: "DO_NOT_TRACK=1 disables", doNotTrack: "1", want: ModeDisabled},
+		{name: "DO_NOT_TRACK=true disables", doNotTrack: "true", want: ModeDisabled},
+		{name: "DO_NOT_TRACK is case insensitive and trimmed", doNotTrack: " TRUE ", want: ModeDisabled},
+		{name: "DO_NOT_TRACK=0 does not disable", doNotTrack: "0", want: DefaultMode},
+		{name: "DO_NOT_TRACK=false does not disable", doNotTrack: "false", want: DefaultMode},
+		{name: "DO_NOT_TRACK with an unrelated value is ignored", doNotTrack: "yes", want: DefaultMode},
+		{name: "env wins over DO_NOT_TRACK", env: "enabled", doNotTrack: "1", want: ModeEnabled},
+		{name: "flag wins over DO_NOT_TRACK", flagValue: "enabled", flagSet: true, doNotTrack: "1", want: ModeEnabled},
+		{name: "DO_NOT_TRACK applies when env is only whitespace", env: "  ", doNotTrack: "1", want: ModeDisabled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, ResolveMode(tc.flagValue, tc.flagSet, tc.env))
+			assert.Equal(t, tc.want, ResolveMode(tc.flagValue, tc.flagSet, tc.env, tc.doNotTrack))
 		})
 	}
 }
@@ -44,7 +57,7 @@ func TestResolveMode(t *testing.T) {
 // deliberate, separate change.
 func TestDefaultModeIsDisabled(t *testing.T) {
 	assert.Equal(t, ModeDisabled, DefaultMode)
-	assert.Equal(t, ModeDisabled, ResolveMode("", false, ""))
+	assert.Equal(t, ModeDisabled, ResolveMode("", false, "", ""))
 }
 
 // TestZeroConfigIsInert: Mode is a string, so a Config built without one has

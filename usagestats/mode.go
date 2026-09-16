@@ -36,6 +36,12 @@ const DefaultMode = ModeDisabled
 const (
 	// ModeEnvVar selects the reporting mode. The --usage-stats flag wins over it.
 	ModeEnvVar = "GRAFANA_USAGE_STATS"
+	// DoNotTrackEnvVar disables reporting when set to "1" or "true",
+	// following the cross-tool DO_NOT_TRACK convention
+	// (https://donottrack.sh/). GRAFANA_USAGE_STATS and --usage-stats both
+	// win over it, so a machine that sets it globally can still opt a single
+	// server back in deliberately.
+	DoNotTrackEnvVar = "DO_NOT_TRACK"
 	// EndpointEnvVar overrides where reports are sent. It is not an opt-out.
 	EndpointEnvVar = "GRAFANA_USAGE_STATS_ENDPOINT"
 	// DefaultEndpoint is Grafana's usage-statistics service, the same service
@@ -43,19 +49,38 @@ const (
 	DefaultEndpoint = "https://stats.grafana.org/mcp-grafana-usage-report"
 )
 
-// ResolveMode resolves the reporting mode. The --usage-stats flag wins over
-// GRAFANA_USAGE_STATS, which wins over DefaultMode.
+// ResolveMode resolves the reporting mode. Precedence, highest first: the
+// --usage-stats flag, GRAFANA_USAGE_STATS, DO_NOT_TRACK, DefaultMode.
+//
+// DO_NOT_TRACK sits below the two explicit settings on purpose. It is a
+// machine-wide preference, so a host that sets it should still be able to opt
+// one server back in by naming this server's own setting; it can only ever
+// disable, never enable.
 //
 // Any unrecognised non-empty value resolves to ModeDisabled rather than to the
 // default: a typo in an opt-out must not silently turn reporting on.
-func ResolveMode(flagValue string, flagSet bool, envValue string) Mode {
+func ResolveMode(flagValue string, flagSet bool, envValue, doNotTrack string) Mode {
 	switch {
 	case flagSet:
 		return parseMode(flagValue)
 	case strings.TrimSpace(envValue) != "":
 		return parseMode(envValue)
+	case DoNotTrack(doNotTrack):
+		return ModeDisabled
 	default:
 		return DefaultMode
+	}
+}
+
+// DoNotTrack reports whether a DO_NOT_TRACK value opts out. Only "1" and
+// "true" do: the convention assigns no meaning to other values, and treating
+// any non-empty value as opt-out would make DO_NOT_TRACK=0 disable reporting.
+func DoNotTrack(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -177,7 +177,7 @@ Under the `stdio` transport, stderr goes wherever your MCP client sends the serv
 
 ## Opt out
 
-There are two controls, and the flag wins over the environment variable:
+There are three controls. Precedence is highest first:
 
 1. **`--usage-stats` flag**: set it to `enabled`, `disabled` or `log`.
 
@@ -191,9 +191,20 @@ mcp-grafana --usage-stats=disabled
 export GRAFANA_USAGE_STATS=disabled
 ```
 
-Any value that is not one of those three disables reporting, so a typo fails toward privacy rather than toward collection. Opting out disables reporting entirely: no event is constructed and no connection is opened.
+3. **`DO_NOT_TRACK` environment variable**: set it to `1` or `true` to disable reporting, following the cross-tool [DO_NOT_TRACK](https://donottrack.sh/) convention.
 
-There is no configuration file and no `DO_NOT_TRACK` support. Refer to [Command-line flags](../configure/command-line-flags/) for where `--usage-stats` sits among the other flags.
+```shell
+export DO_NOT_TRACK=1
+```
+
+Any value of `--usage-stats` or `GRAFANA_USAGE_STATS` that is not one of those three disables reporting, so a typo fails toward privacy rather than toward collection. Opting out disables reporting entirely: no event is constructed and no connection is opened.
+
+Two things about `DO_NOT_TRACK` are worth stating, because it behaves differently from the other two:
+
+- **It can only ever disable.** `DO_NOT_TRACK=0` and `DO_NOT_TRACK=false` do not turn reporting on; they leave the decision to the settings above. Only `1` and `true` opt out, because the convention gives no meaning to any other value, and treating every non-empty value as an opt-out would make `DO_NOT_TRACK=0` disable reporting.
+- **The two explicit settings override it.** It is a machine-wide preference, so a host that sets it can still opt one server back in with `--usage-stats=enabled` or `GRAFANA_USAGE_STATS=enabled`. If you want it to be final, do not also set those.
+
+There is no configuration file. Refer to [Command-line flags](../configure/command-line-flags/) for where `--usage-stats` sits among the other flags.
 
 ## The startup notice, and who sees it
 
