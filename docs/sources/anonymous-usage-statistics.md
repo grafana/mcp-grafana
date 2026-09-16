@@ -13,23 +13,26 @@ aliases:
   - /docs/grafana-cloud/machine-learning/mcp/anonymous-usage-statistics/
 ---
 
-# Understand Grafana MCP server usage statistics
+# Anonymous usage statistics
 
-The Grafana MCP server can report limited usage statistics about itself to Grafana Labs. This data is used to understand which tools are used most and where tools fail, so we can make the product better.
+The Grafana MCP server can report limited usage statistics about itself to Grafana Labs. Grafana Labs uses this data to improve tools and investigate failures.
 
 To preserve anonymity, the emitted data describes the *shape* of usage only. Things like tool arguments, resource names, dashboards, queries, log lines, error messages and credentials are never sent, and neither is the Grafana instance's URL, hostname, stack slug, organisation name or organisation ID.
 
 Nothing an MCP client reports about itself - things like name and version - is collected. Any other value that comes from outside the binary is reduced to a fixed vocabulary before being emitted, so we don't emit a potentially-identifying value.
 
 {{< admonition type="note" >}}
-Usage statistics reporting is **currently disabled by default**. This will soon change to enabled by default. There are details on how to opt out in [Opt out](#opt-out).
+Usage statistics reporting is **disabled by default**. To disable reporting explicitly, refer to [Opt out](#opt-out).
 {{< /admonition >}}
 
-## Identifiers
+## Before you begin
 
-There is one identifier, `process_id`: a random UUID generated in memory when the server process starts.
+- Install the Grafana MCP server. Refer to [Set up the Grafana MCP server](../set-up/).
+- Make sure you can change the server's startup flags or environment variables. If you start the server from an MCP client, refer to [Client configuration examples](../set-up/client-configuration-examples/).
 
 ## Understand which data is collected
+
+Each server process generates one identifier, `process_id`, as a random UUID in memory when it starts.
 
 Every event carries the following data:
 
@@ -46,7 +49,7 @@ Every event carries the following data:
 | `tools_called` | Comma-separated names of the tools called since the previous event. | `list_datasources,query_prometheus` |
 | `tool_calls` | A nested object keyed by tool name, each holding `calls` and `errors`. | `{"query_prometheus":{"calls":4,"errors":1}}` |
 | `grafana_version` | The version the Grafana instance reported. This is read from a response the server had already fetched for its own reasons, and truncated to 64 bytes. Absent whenever that version is not already known. | `12.1.0` |
-| `target_kind` | `cloud` or `self_hosted`. | `cloud` |
+| `target_kind` | `cloud` for Grafana Cloud or `self_hosted` for other hostnames. Grafana Cloud instances reached through custom domains report `self_hosted`. | `cloud` |
 | `auth_method` | The credential category the connection resolved, from a fixed vocabulary. | `service_account_token` |
 | `transport` | The transport the server is running: `stdio`, `sse` or `streamable-http`. | `stdio` |
 | `flags` | The **names** of the command-line flags that were set. No flag values are sent. | `disable-write,transport` |
@@ -63,18 +66,20 @@ Every event carries the following data:
 
 Reports are received by Grafana's usage-stats service, the same service that receives usage reports from Grafana, Loki, Mimir and Tempo. On receipt, the service adds two pieces of information derived from the connection rather than from the event:
 
-- A coarse **geographic region**, for example a country or subdivision, taken from headers added by the CDN edge.
+- A coarse **geographic region**, for example, a country or subdivision, taken from headers added by the CDN edge.
 - The **network organisation name** from a whois lookup of the connecting IP address, which typically resolves to your ISP, your cloud provider or your employer's network.
 
 ## Inspect what would be sent
 
-To see exactly what the server would report, set either the `--usage-stats=log` flag or the `GRAFANA_USAGE_STATS=log` environment variable. In this mode each event is printed to stderr and nothing is sent:
+To inspect the report, set either the `--usage-stats=log` flag or the `GRAFANA_USAGE_STATS=log` environment variable. In this mode, the server prints each event to stderr and doesn't send it:
 
 ```shell
 GRAFANA_USAGE_STATS=log mcp-grafana
 ```
 
-Under the `stdio` transport, stderr goes wherever your MCP client sends the server's logs, so read the printed events there rather than in a terminal.
+The server prints a report every four hours and on graceful shutdown. To inspect a report sooner, stop the server gracefully after you run the tool calls you want to inspect. If you run the server in a terminal, press **Ctrl+C**.
+
+Under the `stdio` transport, stderr goes wherever your MCP client sends the server's logs. Read the printed events there.
 
 ## How the report is sent
 
@@ -92,22 +97,29 @@ To send reports somewhere else, set `GRAFANA_USAGE_STATS_ENDPOINT` to another UR
 
 ## Opt out
 
-There are three controls. Precedence is highest first:
+Use one of the following controls. The `--usage-stats` flag overrides `GRAFANA_USAGE_STATS`, and both override `DO_NOT_TRACK`. Unrecognized mode values disable reporting. Only `DO_NOT_TRACK=1` has an effect; other values don't change the reporting mode.
+
+The controls appear in order of precedence, highest first:
 
 1. **`--usage-stats` flag**: set it to `enabled`, `disabled` or `log`.
 
-```shell
-mcp-grafana --usage-stats=disabled
-```
+   ```shell
+   mcp-grafana --usage-stats=disabled
+   ```
 
 2. **`GRAFANA_USAGE_STATS` environment variable**: set it to `enabled`, `disabled` or `log`.
 
-```shell
-export GRAFANA_USAGE_STATS=disabled
-```
+   ```shell
+   export GRAFANA_USAGE_STATS=disabled
+   ```
 
 3. **`DO_NOT_TRACK` environment variable**: set it to `1` to disable reporting, following the cross-tool [DO_NOT_TRACK](https://donottrack.sh/) convention.
 
-```shell
-export DO_NOT_TRACK=1
-```
+   ```shell
+   export DO_NOT_TRACK=1
+   ```
+
+## Next steps
+
+- To configure other server options, refer to [Command-line flags](../configure/command-line-flags/).
+- To monitor your server, refer to [Observability: metrics and tracing](../developer/observability-metrics-and-tracing/).
