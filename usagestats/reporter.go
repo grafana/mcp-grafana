@@ -238,7 +238,7 @@ func (r *Reporter) Disclose() {
 	if !r.Enabled() {
 		return
 	}
-	r.cfg.Logger.Info("Anonymous usage statistics are being reported to Grafana Labs: per-process tool-usage counts, which kinds of MCP client connected, server configuration by flag name, and a coarse description of the Grafana target. No Grafana URL, credentials, tool arguments or resource names are sent. Opt out with --usage-stats=disabled or "+ModeEnvVar+"=disabled, or inspect what would be sent with "+ModeEnvVar+"=log.",
+	r.cfg.Logger.Info("Anonymous usage statistics are being reported to Grafana Labs: per-process tool-usage counts, server configuration by flag name, and a coarse description of the Grafana target. Nothing is collected about the MCP clients that connect, and no Grafana URL, credentials, tool arguments or resource names are sent. Opt out with --usage-stats=disabled or "+ModeEnvVar+"=disabled, or inspect what would be sent with "+ModeEnvVar+"=log.",
 		"mode", string(r.cfg.Mode),
 		"docs", "https://grafana.com/docs/mcp-grafana/latest/anonymous-usage-statistics/",
 	)

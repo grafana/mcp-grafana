@@ -1195,7 +1195,7 @@ curl http://127.0.0.1:8080/healthz
 
 ### Anonymous Usage Statistics
 
-The server can report anonymous usage statistics about itself to Grafana Labs: which tools were called, how many of those calls failed, which kinds of MCP client connected, and how the server is configured. One report covers one server **process** — not one user and not one conversation — and is sent every 4h plus once on shutdown. **Reporting is disabled by default in this release** — the receiving endpoint isn't live yet — and a later release will change the default to enabled with the same opt-out.
+The server can report anonymous usage statistics about itself to Grafana Labs: which tools were called, how many of those calls failed, and how the server is configured. One report covers one server **process** — not one user and not one conversation — and is sent every 4h plus once on shutdown. **Reporting is disabled by default in this release** — the receiving endpoint isn't live yet — and a later release will change the default to enabled with the same opt-out.
 
 Tool arguments, resource names, queries, log lines, error messages and credentials are never sent. Flags are recorded by name only, never by value, and the Grafana instance is described only as `cloud` or `self_hosted` — never by URL, hostname, stack slug or org. Nothing is per user, per session or per client: there is no session identifier on the wire and no way to attribute a tool call to a particular client.
 
