@@ -275,6 +275,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 	flag.BoolVar(&dt.navigation, "disable-navigation", false, "Disable navigation tools")
 	flag.BoolVar(&dt.tempo, "disable-tempo", false, "Disable Tempo tracing tools")
+	flag.BoolVar(&dt.tempo, "disable-proxied", false, "Deprecated: use --disable-tempo instead")
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
@@ -440,29 +441,30 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	}
 }
 
-// sqlCategoryAliases maps deprecated per-dialect category names to the unified
-// "sql" category. When any alias appears in --enabled-tools it is replaced with
-// "sql" and any --disable-sql / --disable-{dialect} flag is cleared, so an
-// explicit opt-in always wins.
-var sqlCategoryAliases = map[string]bool{
-	"clickhouse": true,
-	"snowflake":  true,
-	"athena":     true,
+// categoryAliases maps deprecated category names to their current replacements.
+// When an alias appears in --enabled-tools it is replaced with the target and
+// the target's --disable flag is cleared, so an explicit opt-in always wins.
+var categoryAliases = map[string]string{
+	"clickhouse": "sql",
+	"snowflake":  "sql",
+	"athena":     "sql",
+	"proxied":    "tempo",
 }
 
 // normalizeEnabledTools rewrites the enabled-tools list, replacing deprecated
-// SQL dialect aliases with "sql". If any alias is present, the sql disable flag
-// is cleared so the explicit opt-in overrides --disable-sql.
+// category aliases with their current names. If any alias is present, the
+// target's disable flag is cleared so the explicit opt-in overrides it.
 func (dt *disabledTools) normalizeEnabledTools() {
 	parts := strings.Split(dt.enabledTools, ",")
-	hasSQLAlias := false
+	resolved := map[string]bool{}
 	seen := make(map[string]bool, len(parts))
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
-		if sqlCategoryAliases[p] {
-			hasSQLAlias = true
-			p = "sql"
+		if target, ok := categoryAliases[p]; ok {
+			slog.Warn("Deprecated category alias in --enabled-tools, mapped to new name", "old", p, "new", target)
+			resolved[target] = true
+			p = target
 		}
 		if !seen[p] {
 			seen[p] = true
@@ -470,8 +472,11 @@ func (dt *disabledTools) normalizeEnabledTools() {
 		}
 	}
 	dt.enabledTools = strings.Join(out, ",")
-	if hasSQLAlias {
+	if resolved["sql"] {
 		dt.sql = false
+	}
+	if resolved["tempo"] {
+		dt.tempo = false
 	}
 }
 
@@ -678,9 +683,7 @@ func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy
 // warnLokiEnforcementBypasses logs, at startup, every enabled tool through which
 // an LLM could reach Loki log data WITHOUT going through the enforced Loki
 // backend — so --loki-enforced-matchers would not apply. Each line names the
-// mechanism and the flag that closes it. Proxied tools get an informational
-// note rather than a warning because they currently expose only Tempo (traces),
-// not Loki logs, so they are not a bypass today.
+// mechanism and the flag that closes it.
 func warnLokiEnforcementBypasses(dt disabledTools) {
 	// A category is only a live bypass if it is actually active, which depends on
 	// BOTH the --enabled-tools allowlist and its per-category --disable-* flag
@@ -966,13 +969,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 			server.WithDisableLocalhostProtection(disableLocalhostProtection),
 			// Enable the SDK's idle-session sweeper so per-session transport state
-			// (the tool/resource maps populated by AddSessionTools, keyed by
-			// session ID in the server's shared stores) is freed when a client
-			// disconnects without sending a DELETE. Without it, UnregisterSession
-			// only drops the session handle and those stores grow without bound,
-			// leaking a fixed amount of memory per session that is ever created.
-			// Use the same idle timeout as our own SessionManager reaper so the
-			// two teardown paths stay aligned; a zero value disables both.
+			// is freed when a client disconnects without sending a DELETE.
 			server.WithSessionIdleTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {

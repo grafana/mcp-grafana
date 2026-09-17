@@ -296,70 +296,89 @@ func TestAppendInstructions(t *testing.T) {
 
 func TestNormalizeEnabledTools(t *testing.T) {
 	tests := []struct {
-		name         string
-		enabledTools string
-		disableSQL   bool
-		wantTools    string
-		wantDisabled bool
+		name          string
+		enabledTools  string
+		disableSQL    bool
+		disableTempo  bool
+		wantTools     string
+		wantSQLOff    bool
+		wantTempoOff  bool
 	}{
 		{
 			name:         "clickhouse alias becomes sql",
 			enabledTools: "search,clickhouse",
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "snowflake alias becomes sql",
 			enabledTools: "search,snowflake",
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "athena alias becomes sql",
 			enabledTools: "search,athena",
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "multiple aliases deduplicated",
 			enabledTools: "clickhouse,snowflake,athena",
 			wantTools:    "sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "alias overrides disable-sql",
 			enabledTools: "search,clickhouse",
 			disableSQL:   true,
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "sql without alias preserves disable flag",
 			enabledTools: "search,sql",
 			disableSQL:   true,
 			wantTools:    "search,sql",
-			wantDisabled: true,
+			wantSQLOff:   true,
 		},
 		{
 			name:         "no aliases no change",
 			enabledTools: "search,prometheus",
 			wantTools:    "search,prometheus",
-			wantDisabled: false,
 		},
 		{
 			name:         "alias coexists with sql",
 			enabledTools: "sql,clickhouse",
 			wantTools:    "sql",
-			wantDisabled: false,
+		},
+		{
+			name:         "proxied alias becomes tempo",
+			enabledTools: "search,proxied",
+			wantTools:    "search,tempo",
+		},
+		{
+			name:         "proxied alias overrides disable-tempo",
+			enabledTools: "search,proxied",
+			disableTempo: true,
+			wantTools:    "search,tempo",
+		},
+		{
+			name:         "tempo without alias preserves disable flag",
+			enabledTools: "search,tempo",
+			disableTempo: true,
+			wantTools:    "search,tempo",
+			wantTempoOff: true,
+		},
+		{
+			name:         "proxied coexists with tempo",
+			enabledTools: "tempo,proxied",
+			wantTools:    "tempo",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dt := disabledTools{enabledTools: tc.enabledTools, sql: tc.disableSQL}
+			dt := disabledTools{enabledTools: tc.enabledTools, sql: tc.disableSQL, tempo: tc.disableTempo}
 			dt.normalizeEnabledTools()
 			assert.Equal(t, tc.wantTools, dt.enabledTools)
-			assert.Equal(t, tc.wantDisabled, dt.sql, "sql disabled flag")
+			assert.Equal(t, tc.wantSQLOff, dt.sql, "sql disabled flag")
+			assert.Equal(t, tc.wantTempoOff, dt.tempo, "tempo disabled flag")
 		})
 	}
 }
@@ -368,6 +387,12 @@ func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
 	dt := disabledTools{enabledTools: "clickhouse"}
 	instructions := dt.buildInstructions()
 	assert.Contains(t, instructions, "SQL: Query supported SQL datasources")
+}
+
+func TestBuildInstructions_ProxiedAliasBackCompat(t *testing.T) {
+	dt := disabledTools{enabledTools: "proxied"}
+	instructions := dt.buildInstructions()
+	assert.Contains(t, instructions, "Tempo: Search traces")
 }
 
 func TestParseSlowRequestLogLevel(t *testing.T) {
