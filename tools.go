@@ -80,8 +80,7 @@ func (t *Tool) Register(mcp *server.MCPServer) {
 // resolveTool returns the mcp.Tool to register. When dynamic multi-org is
 // enabled it injects the optional per-call orgId argument into the typed schema
 // and re-serializes; otherwise it returns the tool unchanged. Tools marked
-// NotOrgScoped are left alone. Proxied tools are registered directly (not via
-// this method), so they are never amended.
+// NotOrgScoped are left alone.
 func (t *Tool) resolveTool() mcp.Tool {
 	if !DynamicMultiOrgEnabled || t.inputSchemaProperties == nil || t.notOrgScoped {
 		return t.Tool
