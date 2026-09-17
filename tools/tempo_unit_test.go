@@ -533,7 +533,7 @@ func TestTempoGetAttributeValues_RejectsORFilter(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "OR conditions")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "OR conditions")
 	assert.False(t, called, "an OR filter must be rejected before any request to Tempo")
 }
 
@@ -740,10 +740,10 @@ func TestTempoTraceQLDocs(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			assert.False(t, result.IsError)
-			text := result.Content[0].(mcp.TextContent).Text
+			text := result.Content[0].(*mcp.TextContent).Text
 			assert.Contains(t, text, "TraceQL")
-			assert.Equal(t, "traceql-docs", result.Meta.AdditionalFields["type"])
-			assert.Equal(t, "markdown", result.Meta.AdditionalFields["encoding"])
+			assert.Equal(t, "traceql-docs", result.Meta["type"])
+			assert.Equal(t, "markdown", result.Meta["encoding"])
 		})
 	}
 }
@@ -752,5 +752,5 @@ func TestTempoTraceQLDocsInvalidTopic(t *testing.T) {
 	result, err := getTempoTraceQLDocs(t.Context(), GetTempoTraceQLDocsParams{Topic: "nonsense"})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "invalid topic")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "invalid topic")
 }

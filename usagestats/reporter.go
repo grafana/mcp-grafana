@@ -339,12 +339,12 @@ func (r *Reporter) MCPMiddleware() mcp.Middleware {
 				callReq, ok := req.(*mcp.CallToolRequest)
 				result, err := next(ctx, method, req)
 				if err != nil {
-					if ok && callReq != nil && callReq.Params.Name != "" {
+					if ok && callReq != nil && callReq.Params != nil && callReq.Params.Name != "" {
 						r.recordToolCall(ctx, callReq.Params.Name, true)
 					}
 					return result, err
 				}
-				if ok && callReq != nil {
+				if ok && callReq != nil && callReq.Params != nil {
 					r.recordToolCall(ctx, callReq.Params.Name, isErrorResult(result))
 				}
 				return result, err

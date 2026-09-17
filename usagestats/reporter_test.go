@@ -73,15 +73,15 @@ func (c *collector) rawBodies() []string {
 }
 
 func callRequest(name string) *mcp.CallToolRequest {
-	req := &mcp.CallToolRequest{}
-	req.Params.Name = name
-	return req
+	return &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: name},
+	}
 }
 
 func initRequest(clientName, clientVersion string) *mcp.InitializeRequest {
 	return &mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ClientInfo: mcp.Implementation{Name: clientName, Version: clientVersion},
+		Params: &mcp.InitializeParams{
+			ClientInfo: &mcp.Implementation{Name: clientName, Version: clientVersion},
 		},
 	}
 }
