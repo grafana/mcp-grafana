@@ -482,7 +482,7 @@ type QueryLokiLogsParams struct {
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
-	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once (and per-line structured/parsed metadata is dropped)\\, substantially reducing response size for broad queries. Ignored for metric queries."`
+	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries."`
 }
 
 // QueryMetadata provides context about the query results for AI agents
@@ -505,19 +505,25 @@ type QueryLokiLogsResult struct {
 
 // CompactStream groups log lines that share the same label set. The compact
 // output format emits one CompactStream per distinct stream so labels aren't
-// repeated on every line; per-line structured metadata and parser-extracted
-// labels are intentionally omitted to minimise response size.
+// repeated on every line. Structured metadata and parsed labels that are
+// constant across all lines in the stream appear here; keys that vary are
+// kept per-line on CompactLine.
 type CompactStream struct {
-	Labels map[string]string `json:"labels"`
-	Lines  []CompactLine     `json:"lines"`
+	Labels             map[string]string `json:"labels"`
+	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"`
+	Parsed             map[string]string `json:"parsed,omitempty"`
+	Lines              []CompactLine     `json:"lines"`
 }
 
-// CompactLine is a single log line in a CompactStream, carrying only the
-// timestamp and message. Named fields keep the compact payload self-describing
-// to an LLM while still avoiding the per-line label repetition of full output.
+// CompactLine is a single log line in a CompactStream. It always carries the
+// timestamp and message; structured metadata or parsed labels that vary across
+// lines in the stream are included per-line (constant keys are hoisted to the
+// enclosing CompactStream instead).
 type CompactLine struct {
-	Timestamp string `json:"timestamp"`
-	Line      string `json:"line"`
+	Timestamp          string            `json:"timestamp"`
+	Line               string            `json:"line"`
+	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"`
+	Parsed             map[string]string `json:"parsed,omitempty"`
 }
 
 // LogEntry represents a single log entry or metric sample with metadata.
@@ -718,23 +724,112 @@ func labelsKey(labels map[string]string) string {
 
 // compactLogEntries collapses a flat slice of log entries into one
 // CompactStream per distinct label set, preserving the order in which each
-// stream first appears and the order of lines within it. Per-line structured
-// metadata and parsed labels are dropped — the compact format trades that
-// detail for a much smaller payload on broad, multi-line queries.
+// stream first appears and the order of lines within it.
+//
+// Structured metadata and parsed labels are partitioned: keys whose value is
+// identical across every line in the stream are hoisted to the CompactStream
+// header (emitted once), while keys that vary stay per-line on CompactLine.
 func compactLogEntries(entries []LogEntry) []CompactStream {
-	streams := make([]CompactStream, 0)
+	type streamAccum struct {
+		labels  map[string]string
+		entries []LogEntry
+	}
+
+	accums := make([]streamAccum, 0)
 	index := make(map[string]int, len(entries))
 	for _, e := range entries {
 		key := labelsKey(e.Labels)
 		i, ok := index[key]
 		if !ok {
-			i = len(streams)
+			i = len(accums)
 			index[key] = i
-			streams = append(streams, CompactStream{Labels: e.Labels, Lines: []CompactLine{}})
+			accums = append(accums, streamAccum{labels: e.Labels})
 		}
-		streams[i].Lines = append(streams[i].Lines, CompactLine{Timestamp: e.Timestamp, Line: e.Line})
+		accums[i].entries = append(accums[i].entries, e)
+	}
+
+	streams := make([]CompactStream, 0, len(accums))
+	for _, a := range accums {
+		constMeta, constParsed := partitionConstant(a.entries)
+		lines := make([]CompactLine, 0, len(a.entries))
+		for _, e := range a.entries {
+			lines = append(lines, CompactLine{
+				Timestamp:          e.Timestamp,
+				Line:               e.Line,
+				StructuredMetadata: varyingOnly(e.StructuredMetadata, constMeta),
+				Parsed:             varyingOnly(e.Parsed, constParsed),
+			})
+		}
+		streams = append(streams, CompactStream{
+			Labels:             a.labels,
+			StructuredMetadata: constMeta,
+			Parsed:             constParsed,
+			Lines:              lines,
+		})
 	}
 	return streams
+}
+
+// partitionConstant identifies structured-metadata and parsed-label keys that
+// have the same value on every entry. It returns maps of only the constant
+// keys (nil when empty).
+func partitionConstant(entries []LogEntry) (constMeta, constParsed map[string]string) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	constMeta = cloneMap(entries[0].StructuredMetadata)
+	constParsed = cloneMap(entries[0].Parsed)
+	for _, e := range entries[1:] {
+		pruneChanged(constMeta, e.StructuredMetadata)
+		pruneChanged(constParsed, e.Parsed)
+	}
+	if len(constMeta) == 0 {
+		constMeta = nil
+	}
+	if len(constParsed) == 0 {
+		constParsed = nil
+	}
+	return constMeta, constParsed
+}
+
+// cloneMap returns a shallow copy; nil in → nil out.
+func cloneMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// pruneChanged removes from constant any key whose value differs in current
+// (or is absent from current).
+func pruneChanged(constant, current map[string]string) {
+	for k, v := range constant {
+		if cv, ok := current[k]; !ok || cv != v {
+			delete(constant, k)
+		}
+	}
+}
+
+// varyingOnly returns the subset of entry whose keys are NOT in constant. It
+// returns nil when the result would be empty.
+func varyingOnly(entry, constant map[string]string) map[string]string {
+	if len(entry) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for k, v := range entry {
+		if _, isConst := constant[k]; !isConst {
+			if out == nil {
+				out = make(map[string]string)
+			}
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLogsResult, error) {
