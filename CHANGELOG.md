@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-09-17
+
+### Fixed
+
+- `shorten_url` no longer doubles the Grafana sub-path prefix when generating short links on instances served under a sub-path ([#1205](https://github.com/grafana/mcp-grafana/pull/1205))
+- `get_annotation_tags` now accepts `limit` as a number instead of a string, fixing type-mismatch errors from LLM callers ([#1204](https://github.com/grafana/mcp-grafana/pull/1204))
+- Datasource TLS schema fields no longer include PEM placeholder strings that could confuse LLMs into sending literal placeholder text ([#1200](https://github.com/grafana/mcp-grafana/pull/1200))
+
 ## [1.5.0] - 2026-09-17
 
 ### Added
@@ -484,6 +492,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.5.1]: https://github.com/grafana/mcp-grafana/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/grafana/mcp-grafana/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/grafana/mcp-grafana/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/grafana/mcp-grafana/compare/v1.4.0...v1.4.1
