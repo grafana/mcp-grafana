@@ -5,7 +5,6 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -134,7 +133,30 @@ func TestTempoSearch(t *testing.T) {
 	assert.Equal(t, `{ span.http.status_code >= 500 }`, capturedQuery.Get("q"))
 	assert.Equal(t, "1735689600", capturedQuery.Get("start"))
 	assert.Equal(t, "1735693200", capturedQuery.Get("end"))
-	assert.Equal(t, "application/llm", capturedAccept)
+	assert.Equal(t, "application/vnd.grafana.llm", capturedAccept)
+}
+
+func TestTempoSearch_DefaultTimeBounds(t *testing.T) {
+	var capturedQuery url.Values
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"traces":[]}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         `{ }`,
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.NotEmpty(t, capturedQuery.Get("start"), "start should be set when omitted by caller")
+	assert.NotEmpty(t, capturedQuery.Get("end"), "end should be set when omitted by caller")
 }
 
 func TestTempoMetricsInstant(t *testing.T) {
@@ -165,6 +187,30 @@ func TestTempoMetricsInstant(t *testing.T) {
 	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/metrics/query", capturedPath)
 	assert.Equal(t, "1735689600000000000", capturedQuery.Get("start"))
 	assert.Equal(t, "1735693200000000000", capturedQuery.Get("end"))
+}
+
+func TestTempoMetrics_DefaultTimeBounds(t *testing.T) {
+	var capturedQuery url.Values
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"series":[]}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("query_tempo_metrics", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         `{ } | rate()`,
+		"type":          "range",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.NotEmpty(t, capturedQuery.Get("start"), "start should be set when omitted by caller")
+	assert.NotEmpty(t, capturedQuery.Get("end"), "end should be set when omitted by caller")
 }
 
 func TestTempoMetricsRange(t *testing.T) {
@@ -231,9 +277,11 @@ func TestTempoMetricsInvalidType(t *testing.T) {
 
 func TestTempoGetTrace(t *testing.T) {
 	var capturedPath string
+	var capturedAccept string
 
 	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
+		capturedAccept = r.Header.Get("Accept")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"batches":[{"resource":{"attributes":[]},"scopeSpans":[]}]}`))
 	})
@@ -249,6 +297,7 @@ func TestTempoGetTrace(t *testing.T) {
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
 	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/v2/traces/abc123def456", capturedPath)
+	assert.Equal(t, "application/vnd.grafana.llm", capturedAccept, "should request LLM format without JSON fallback")
 }
 
 func TestTempoTraceDiff(t *testing.T) {
@@ -443,6 +492,27 @@ func TestTempoGetAttributeValues(t *testing.T) {
 	assert.Equal(t, `{ resource.service.name = "frontend" }`, capturedQuery.Get("q"))
 }
 
+func TestTempoGetAttributeValues_RejectsORFilter(t *testing.T) {
+	called := false
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("list_tempo_attribute_values", map[string]any{
+		"datasourceUid": "test-tempo",
+		"name":          "resource.service.name",
+		"filter-query":  `{ resource.service.name = "a" || resource.service.name = "b" }`,
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "OR conditions")
+	assert.False(t, called, "an OR filter must be rejected before any request to Tempo")
+}
+
 func TestTempoSearch_Non200Response(t *testing.T) {
 	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -587,151 +657,23 @@ func TestTempoSearch_499Timeout(t *testing.T) {
 }
 
 func TestTempoTraceQLDocs(t *testing.T) {
-	var capturedPaths []string
-	var capturedMethods []string
-	var capturedSessionIDs []string
-	var capturedAccept string
-
-	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var rpc struct {
-			Method string `json:"method"`
-			Params struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-			} `json:"params"`
-		}
-		_ = json.Unmarshal(body, &rpc)
-
-		capturedPaths = append(capturedPaths, r.URL.Path)
-		capturedMethods = append(capturedMethods, rpc.Method)
-		capturedSessionIDs = append(capturedSessionIDs, r.Header.Get("Mcp-Session-Id"))
-		capturedAccept = r.Header.Get("Accept")
-
-		w.Header().Set("Content-Type", "application/json")
-		if rpc.Method == "initialize" {
-			w.Header().Set("Mcp-Session-Id", "session-xyz")
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
-			return
-		}
-
-		require.Equal(t, "docs-traceql", rpc.Params.Name)
-		require.Equal(t, "structural", rpc.Params.Arguments["name"])
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"# Structural operators\n\n` + "`" + `>>` + "`" + ` matches descendants."}],"isError":false}}`))
-	})
-	defer cleanup()
-
-	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("get_tempo_traceql_docs", map[string]any{
-		"datasourceUid": "test-tempo",
-		"topic":         "structural",
-	}))
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Structural operators")
-
-	// Two round-trips against Tempo's MCP endpoint: initialize, then the call,
-	// with the session id from the first reused on the second.
-	assert.Equal(t, []string{"initialize", "tools/call"}, capturedMethods)
-	assert.Equal(t, []string{"", "session-xyz"}, capturedSessionIDs)
-	for _, p := range capturedPaths {
-		assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/mcp", p)
+	for _, topic := range []string{"basic", "aggregates", "structural", "metrics"} {
+		t.Run(topic, func(t *testing.T) {
+			result, err := getTempoTraceQLDocs(t.Context(), GetTempoTraceQLDocsParams{Topic: topic})
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.False(t, result.IsError)
+			text := result.Content[0].(mcp.TextContent).Text
+			assert.Contains(t, text, "TraceQL")
+			assert.Equal(t, "traceql-docs", result.Meta.AdditionalFields["type"])
+			assert.Equal(t, "markdown", result.Meta.AdditionalFields["encoding"])
+		})
 	}
-	assert.Equal(t, "application/json, text/event-stream", capturedAccept)
 }
 
 func TestTempoTraceQLDocsInvalidTopic(t *testing.T) {
-	called := false
-	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		called = true
-	})
-	defer cleanup()
-
-	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("get_tempo_traceql_docs", map[string]any{
-		"datasourceUid": "test-tempo",
-		"topic":         "nonsense",
-	}))
-
+	result, err := getTempoTraceQLDocs(t.Context(), GetTempoTraceQLDocsParams{Topic: "nonsense"})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "invalid topic")
-	assert.False(t, called, "an invalid topic must be rejected before any request to Tempo")
-}
-
-func TestTempoTraceQLDocsMissingSession(t *testing.T) {
-	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		// initialize succeeds but omits the session header
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
-	})
-	defer cleanup()
-
-	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("get_tempo_traceql_docs", map[string]any{
-		"datasourceUid": "test-tempo",
-		"topic":         "basic",
-	}))
-
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "session id")
-}
-
-func TestTempoMCPToolText(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		body    string
-		want    string
-		wantErr string
-	}{
-		{
-			name: "plain json",
-			body: `{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"hello"}]}}`,
-			want: "hello",
-		},
-		{
-			name: "sse framed",
-			body: "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"framed\"}]}}\n\n",
-			want: "framed",
-		},
-		{
-			name: "data prefix only",
-			body: "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"bare\"}]}}",
-			want: "bare",
-		},
-		{
-			name:    "tool reported error",
-			body:    `{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"required argument \"name\" not found"}],"isError":true}}`,
-			wantErr: "required argument",
-		},
-		{
-			name:    "jsonrpc error",
-			body:    `{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"unknown tool"}}`,
-			wantErr: "unknown tool",
-		},
-		{
-			name:    "no text content",
-			body:    `{"jsonrpc":"2.0","id":2,"result":{"content":[]}}`,
-			wantErr: "no text content",
-		},
-		{
-			name:    "malformed",
-			body:    `not json`,
-			wantErr: "failed to parse",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := tempoMCPToolText(tc.body)
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tc.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
 }
