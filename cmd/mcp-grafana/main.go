@@ -165,9 +165,8 @@ func (dt *disabledTools) writeToolOverridden(names ...string) bool {
 // --enable-write-tools (or its --enable-query shorthand). Use this instead of
 // a bespoke --enable-X bool flag whenever a tool's write behavior is scoped
 // enough to opt back in independently of the rest of --disable-write (see
-// find_error_pattern_logs and find_slow_requests, gated this way because
-// they only create ephemeral Sift investigation records and never touch a
-// Grafana dashboard, alert, or datasource).
+// update_dashboard and the Sift investigation tools, which can be enabled
+// independently without restoring unrelated write operations).
 func (dt *disabledTools) writeToolEnabled(names ...string) bool {
 	return !dt.write || dt.writeToolOverridden(names...)
 }
@@ -231,9 +230,10 @@ type grafanaConfig struct {
 	maxLokiLogLimit int
 
 	// Loki query cost guardrail configuration
-	lokiGuardrailMode     string
-	lokiGuardrailMaxBytes int64
-	lokiGuardrailMaxRange time.Duration
+	lokiGuardrailMode         string
+	lokiGuardrailMaxBytes     int64
+	lokiGuardrailMaxRange     time.Duration
+	lokiAllowedDatasourceUIDs string
 
 	// includeArgsInSpans enables logging of tool arguments in OpenTelemetry spans.
 	includeArgsInSpans bool
@@ -279,7 +279,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
-	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently (e.g. find_error_pattern_logs,find_slow_requests, which only create ephemeral Sift investigation records and never touch a Grafana dashboard, alert, or datasource). Has no effect on a tool whose whole category is disabled, e.g. via --disable-sift.")
+	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently (e.g. update_dashboard or the Sift investigation tools). Has no effect on a tool whose whole category is disabled.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
@@ -314,9 +314,10 @@ func (gc *grafanaConfig) addFlags() {
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 
 	// Loki query cost guardrail flags
-	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode for query_loki_logs: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run; still pays the index/stats round trip), or 'enforce' (reject blocked queries with rewrite guidance). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
+	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run), 'enforce' (reject known violations), or 'strict' (also reject queries that cannot be parsed or cost-estimated). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.lokiGuardrailMaxBytes, "loki-guardrail-max-bytes", 100<<30, "Maximum bytes a single query_loki_logs call may scan, estimated via Loki's index/stats API before running the query. 0 disables the byte-budget check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_BYTES environment variable when the flag is not set.")
 	flag.DurationVar(&gc.lokiGuardrailMaxRange, "loki-guardrail-max-range", 24*time.Hour, "Maximum effective time range for a single query_loki_logs call, including range-vector durations like [30d]. Accepts Go duration strings, e.g. 24h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
+	flag.StringVar(&gc.lokiAllowedDatasourceUIDs, "loki-allowed-datasource-uids", "", "Comma-separated Loki datasource UIDs the Loki tools may use. Strict guardrail mode requires at least one UID. Falls back to GRAFANA_LOKI_ALLOWED_DATASOURCE_UIDS when the flag is not set.")
 
 	// Loki stream-access enforcement flags
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
@@ -351,6 +352,9 @@ func (gc *grafanaConfig) applyLokiGuardrailEnv(setFlags map[string]bool) error {
 		}
 		gc.lokiGuardrailMaxRange = d
 	}
+	if v := os.Getenv("GRAFANA_LOKI_ALLOWED_DATASOURCE_UIDS"); v != "" && !setFlags["loki-allowed-datasource-uids"] {
+		gc.lokiAllowedDatasourceUIDs = v
+	}
 	return nil
 }
 
@@ -375,15 +379,29 @@ func socks5ProxyFromEnv() (string, error) {
 // validation is unit-testable.
 func (gc *grafanaConfig) validateLokiGuardrail() error {
 	switch gc.lokiGuardrailMode {
-	case mcpgrafana.LokiGuardrailOff, mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce:
+	case mcpgrafana.LokiGuardrailOff, mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce, mcpgrafana.LokiGuardrailStrict:
 	default:
-		return fmt.Errorf("invalid Loki guardrail mode %q (--loki-guardrail-mode or GRAFANA_LOKI_GUARDRAIL_MODE): must be one of off, shadow, enforce", gc.lokiGuardrailMode)
+		return fmt.Errorf("invalid Loki guardrail mode %q (--loki-guardrail-mode or GRAFANA_LOKI_GUARDRAIL_MODE): must be one of off, shadow, enforce, strict", gc.lokiGuardrailMode)
 	}
 	if gc.lokiGuardrailMaxBytes < 0 {
 		return fmt.Errorf("invalid Loki guardrail max bytes %d (--loki-guardrail-max-bytes or GRAFANA_LOKI_GUARDRAIL_MAX_BYTES): must be >= 0 (0 disables the byte-budget check)", gc.lokiGuardrailMaxBytes)
 	}
 	if gc.lokiGuardrailMaxRange < 0 {
 		return fmt.Errorf("invalid Loki guardrail max range %s (--loki-guardrail-max-range or GRAFANA_LOKI_GUARDRAIL_MAX_RANGE): must be >= 0 (0 disables the range check)", gc.lokiGuardrailMaxRange)
+	}
+	if gc.lokiGuardrailMode == mcpgrafana.LokiGuardrailStrict {
+		if gc.lokiGuardrailMaxBytes == 0 {
+			return fmt.Errorf("strict Loki guardrail mode requires a positive --loki-guardrail-max-bytes")
+		}
+		if gc.lokiGuardrailMaxRange == 0 {
+			return fmt.Errorf("strict Loki guardrail mode requires a positive --loki-guardrail-max-range")
+		}
+		if len(splitAndTrim(gc.lokiAllowedDatasourceUIDs)) == 0 {
+			return fmt.Errorf("strict Loki guardrail mode requires --loki-allowed-datasource-uids")
+		}
+		if gc.dynamicMultiOrg {
+			return fmt.Errorf("strict Loki guardrail mode is incompatible with --dynamic-multi-org because datasource UIDs are organization-scoped")
+		}
 	}
 	return nil
 }
@@ -411,7 +429,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddQuickwitTools(mcp, enableQueryTools) }, dt.quickwit, "quickwit"},
 		{func(mcp *server.MCPServer) { tools.AddInfluxDBTools(mcp, dt.queryToolsEnabled("influxdb")) }, dt.influxdb, "influxdb"},
 		{func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
-		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},
+		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, dt.writeToolEnabled("update_dashboard")) }, dt.dashboard, "dashboard"},
 		{func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
 		{func(mcp *server.MCPServer) { tools.AddOnCallTools(mcp, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
@@ -840,6 +858,39 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
 		slog.Info("Loki label-matcher enforcement: dashboard snapshots can return log-panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted logs")
 	}
+}
+
+// validateStrictLokiIsolation rejects configurations that expose a path to
+// Loki without passing through the native guardrail. Strict mode is intended
+// to be safe by construction, rather than depending on startup warnings.
+func validateStrictLokiIsolation(mode string, dt disabledTools) error {
+	if mode != mcpgrafana.LokiGuardrailStrict {
+		return nil
+	}
+
+	if !dt.write {
+		return fmt.Errorf("strict Loki guardrail mode requires --disable-write so the allowed datasource cannot be modified through MCP")
+	}
+
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	type bypass struct {
+		category string
+		disabled bool
+	}
+	var active []string
+	for _, b := range []bypass{
+		{category: "api", disabled: dt.api},
+		{category: "rendering", disabled: dt.rendering},
+		{category: "runpanelquery", disabled: dt.runpanelquery},
+	} {
+		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
+			active = append(active, b.category)
+		}
+	}
+	if len(active) > 0 {
+		return fmt.Errorf("strict Loki guardrail mode cannot start while bypass-capable tool categories are enabled: %s", strings.Join(active, ", "))
+	}
+	return nil
 }
 
 func (hsc httpSecurityConfig) corsOrigins() []string {
@@ -1311,6 +1362,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	if err := validateStrictLokiIsolation(gc.lokiGuardrailMode, dt); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if gc.lokiGuardrailMode != mcpgrafana.LokiGuardrailOff {
 		slog.Info("Loki guardrail enabled", "mode", gc.lokiGuardrailMode, "max_bytes", gc.lokiGuardrailMaxBytes, "max_range", gc.lokiGuardrailMaxRange)
 	}
@@ -1327,14 +1382,15 @@ func main() {
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
-		Debug:                   gc.debug,
-		MaxLokiLogLimit:         gc.maxLokiLogLimit,
-		LokiGuardrailMode:       gc.lokiGuardrailMode,
-		LokiGuardrailMaxBytes:   gc.lokiGuardrailMaxBytes,
-		LokiGuardrailMaxRange:   gc.lokiGuardrailMaxRange,
-		IncludeArgumentsInSpans: gc.includeArgsInSpans,
-		Timeout:                 gc.timeout,
-		SOCKS5ProxyURL:          socks5Proxy,
+		Debug:                     gc.debug,
+		MaxLokiLogLimit:           gc.maxLokiLogLimit,
+		LokiGuardrailMode:         gc.lokiGuardrailMode,
+		LokiGuardrailMaxBytes:     gc.lokiGuardrailMaxBytes,
+		LokiGuardrailMaxRange:     gc.lokiGuardrailMaxRange,
+		LokiAllowedDatasourceUIDs: splitAndTrim(gc.lokiAllowedDatasourceUIDs),
+		IncludeArgumentsInSpans:   gc.includeArgsInSpans,
+		Timeout:                   gc.timeout,
+		SOCKS5ProxyURL:            socks5Proxy,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{

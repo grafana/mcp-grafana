@@ -231,6 +231,9 @@ const (
 	// LokiGuardrailEnforce rejects blocked queries with a tool error
 	// containing rewrite guidance.
 	LokiGuardrailEnforce = "enforce"
+	// LokiGuardrailStrict behaves like enforce, but rejects queries whenever
+	// parsing or cost estimation cannot produce a complete verdict.
+	LokiGuardrailStrict = "strict"
 )
 
 // GrafanaConfig represents the full configuration for Grafana clients.
@@ -295,11 +298,11 @@ type GrafanaConfig struct {
 	MaxLokiLogLimit int
 
 	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs.
-	// One of LokiGuardrailOff (default), LokiGuardrailShadow, or
-	// LokiGuardrailEnforce. Loki does not enforce max_query_bytes_read on log
-	// queries without a line filter, so the guardrail requires selective
-	// stream selectors, bounds the effective time range, and pre-checks the
-	// byte estimate from Loki's index/stats API before admitting a query.
+	// One of LokiGuardrailOff (default), LokiGuardrailShadow,
+	// LokiGuardrailEnforce, or LokiGuardrailStrict. Loki does not enforce
+	// max_query_bytes_read on log queries without a line filter, so the guardrail
+	// requires selective stream selectors, bounds the effective time range, and
+	// pre-checks the byte estimate from Loki's index/stats API before admitting a query.
 	LokiGuardrailMode string
 
 	// LokiGuardrailMaxBytes is the maximum number of bytes a single
@@ -311,6 +314,11 @@ type GrafanaConfig struct {
 	// a single query_loki_logs call, including range-vector durations like
 	// [30d]. Zero disables the range check.
 	LokiGuardrailMaxRange time.Duration
+
+	// LokiAllowedDatasourceUIDs, when non-empty, limits every Loki tool to the
+	// listed datasource UIDs. Strict guardrail mode requires this allowlist so
+	// callers cannot select an unrestricted datasource by UID.
+	LokiAllowedDatasourceUIDs []string
 
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server

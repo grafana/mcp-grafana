@@ -244,3 +244,34 @@ func TestQueryLokiLogsFormatValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid format")
 	}
 }
+
+func TestLokiDatasourceAllowlistRejectsUnknownUID(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		LokiAllowedDatasourceUIDs: []string{"limited-loki"},
+	})
+	_, err := lokiBackendForDatasource(ctx, "unrestricted-loki")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not in the configured datasource allowlist")
+}
+
+func TestStrictLokiGuardrailRequiresDatasourceAllowlistAtRuntime(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		LokiGuardrailMode: mcpgrafana.LokiGuardrailStrict,
+	})
+	_, err := lokiBackendForDatasource(ctx, "unrestricted-loki")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires a datasource allowlist")
+}
+
+func TestQueryLokiPatternsRejectedInStrictMode(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		LokiGuardrailMode: mcpgrafana.LokiGuardrailStrict,
+	})
+
+	_, err := queryLokiPatterns(ctx, QueryLokiPatternsParams{
+		DatasourceUID: "loki",
+		LogQL:         `{cluster=~".+"}`,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "patterns endpoint")
+}
