@@ -63,7 +63,7 @@ jobs:
         continue-on-error: true
         uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
         with:
-          command: ./dist/mcp-grafana
+          command: ./dist/mcp-grafana --usage-stats=disabled
           # On fork PRs the get-secrets step is skipped (its output is empty), so
           # short-circuit to an empty key — matching the prior unset-env behavior.
           # The action falls back to tiktoken, which is accurate enough to review
