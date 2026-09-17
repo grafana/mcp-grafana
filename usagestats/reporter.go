@@ -332,7 +332,9 @@ func (r *Reporter) MCPMiddleware() mcp.Middleware {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			if method == "initialize" {
 				result, err := next(ctx, method, req)
-				r.recordInitialize(ctx)
+				if err == nil {
+					r.recordInitialize(ctx)
+				}
 				return result, err
 			}
 			if method == "tools/call" {

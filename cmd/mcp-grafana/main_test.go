@@ -1591,9 +1591,7 @@ func TestEffectiveTLSEnabled(t *testing.T) {
 	withCert := tlsConfig{certFile: "/tmp/c.pem", keyFile: "/tmp/k.pem"}
 
 	assert.True(t, effectiveTLSEnabled("streamable-http", withCert))
-	// run() only hands the cert and key to the streamable-http server, so an
-	// SSE server with them set is still serving plain HTTP.
-	assert.False(t, effectiveTLSEnabled("sse", withCert))
+	assert.True(t, effectiveTLSEnabled("sse", withCert))
 	assert.False(t, effectiveTLSEnabled("stdio", withCert))
 	assert.False(t, effectiveTLSEnabled("streamable-http", tlsConfig{}))
 }

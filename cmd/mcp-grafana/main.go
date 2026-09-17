@@ -541,6 +541,8 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 			if err == nil && method == "tools/list" {
 				if r, ok := result.(*mcp.ListToolsResult); ok {
 					r.CacheScope = "private"
+				} else if result != nil {
+					slog.Warn("tools/list returned unexpected result type; cache scope not set", "type", fmt.Sprintf("%T", result))
 				}
 			}
 			return result, err
@@ -802,13 +804,11 @@ func grafanaTarget(ctx context.Context) usagestats.GrafanaTarget {
 	}
 }
 
-// effectiveTLSEnabled reports whether the server will actually serve HTTPS,
-// which is not the same as TLS material having been configured: the cert and
-// key are only passed to a server in run()'s streamable-http branch, so
-// `-t sse --tls-cert-file=...` serves plain HTTP. Reporting the flag would
-// claim HTTPS for a connection that does not have it.
+// effectiveTLSEnabled reports whether the server will actually serve HTTPS.
+// Both HTTP transports (SSE and streamable-http) pass the TLS config to
+// runHTTPServer; stdio does not serve HTTP at all.
 func effectiveTLSEnabled(transport string, tls tlsConfig) bool {
-	return transport == "streamable-http" && (tls.certFile != "" || tls.keyFile != "")
+	return (transport == "streamable-http" || transport == "sse") && tls.certFile != ""
 }
 
 // effectiveMetricsEnabled reports whether /metrics is actually served.
@@ -823,16 +823,19 @@ func effectiveMetricsEnabled(transport string, metricsEnabled bool) bool {
 // taken before any proxied tool is registered: those names come from a remote
 // MCP server and collapse to a single pseudo-name instead.
 func nativeToolNames(s *mcp.Server) map[string]struct{} {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	go func() { _ = s.Run(context.Background(), serverTransport) }()
+	go func() { _ = s.Run(ctx, serverTransport) }()
 	client := mcp.NewClient(&mcp.Implementation{Name: "tool-enumerator", Version: "0"}, nil)
-	session, err := client.Connect(context.Background(), clientTransport, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		slog.Warn("failed to enumerate native tools for usage stats", "error", err)
 		return nil
 	}
 	defer func() { _ = session.Close() }()
-	result, err := session.ListTools(context.Background(), nil)
+	result, err := session.ListTools(ctx, nil)
 	if err != nil {
 		slog.Warn("failed to list native tools for usage stats", "error", err)
 		return nil
@@ -871,6 +874,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	}
 
 	gc.MeterProvider = o.MeterProvider()
+
+	if (tls.certFile == "") != (tls.keyFile == "") {
+		return fmt.Errorf("incomplete TLS configuration: both --server.tls-cert-file and --server.tls-key-file must be provided together")
+	}
 
 	var clientCache *mcpgrafana.ClientCache
 	if transport != "stdio" {
@@ -999,7 +1006,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		slog.Info("Starting Grafana MCP server using SSE transport",
 			"version", mcpgrafana.Version(), "address", addr, "ssePath", ssePath, "metrics", obs.MetricsEnabled)
-		return runHTTPServer(ctx, httpSrv, "SSE", "", "")
+		return runHTTPServer(ctx, httpSrv, "SSE", tls.certFile, tls.keyFile)
 
 	case "streamable-http":
 		httpFn := mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)
