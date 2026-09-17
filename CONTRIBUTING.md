@@ -86,6 +86,10 @@ make token-check      # on your branch
 
 A tool's cost is almost entirely its description and its JSON schema. If your delta looks larger than you expected, that's usually where to trim — long parameter descriptions and deeply nested schemas are the expensive parts.
 
+## Don't update CHANGELOG.md
+
+The changelog is generated automatically when a release is cut. PRs that touch `CHANGELOG.md` cause merge conflicts for everyone else. Leave it alone — your change will be picked up at release time.
+
 ## Conventions that CI enforces
 
 Run `make lint` and `make test-unit` before pushing. The specifics:
