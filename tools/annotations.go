@@ -234,15 +234,21 @@ var DeleteAnnotationTool = mcpgrafana.MustTool(
 // GetAnnotationTagsInput defines filters for retrieving annotation tags.
 type GetAnnotationTagsInput struct {
 	Tag   *string `json:"tag,omitempty"   jsonschema:"description=Optional filter by tag name"`
-	Limit *string `json:"limit,omitempty" jsonschema:"description=Max results\\, default 100"`
+	Limit *int64  `json:"limit,omitempty" jsonschema:"minimum=1,description=Max results\\, default 100"`
 }
 
 func getAnnotationTags(ctx context.Context, args GetAnnotationTagsInput) (*annotations.GetAnnotationTagsOK, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
+	var limitStr *string
+	if args.Limit != nil {
+		s := strconv.FormatInt(*args.Limit, 10)
+		limitStr = &s
+	}
+
 	req := annotations.GetAnnotationTagsParams{
 		Tag:     args.Tag,
-		Limit:   args.Limit,
+		Limit:   limitStr,
 		Context: ctx,
 	}
 
