@@ -872,7 +872,7 @@ func validateStrictLokiIsolation(mode string, dt disabledTools) error {
 		return fmt.Errorf("strict Loki guardrail mode requires --disable-write so the allowed datasource cannot be modified through MCP")
 	}
 
-	enabledTools := strings.Split(dt.enabledTools, ",")
+	enabledTools := splitAndTrim(dt.enabledTools)
 	type bypass struct {
 		category string
 		disabled bool

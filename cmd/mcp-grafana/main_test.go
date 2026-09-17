@@ -718,6 +718,7 @@ func TestValidateStrictLokiIsolation(t *testing.T) {
 		want   string
 	}{
 		{name: "api", mutate: func(dt *disabledTools) { dt.enabledTools += ",api" }, want: "api"},
+		{name: "api with whitespace", mutate: func(dt *disabledTools) { dt.enabledTools += ", api" }, want: "api"},
 		{name: "rendering", mutate: func(dt *disabledTools) { dt.enabledTools += ",rendering" }, want: "rendering"},
 		{name: "panel query", mutate: func(dt *disabledTools) { dt.enabledTools += ",runpanelquery" }, want: "runpanelquery"},
 		{name: "write tools", mutate: func(dt *disabledTools) { dt.write = false }, want: "--disable-write"},
