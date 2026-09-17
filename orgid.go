@@ -1,8 +1,8 @@
 package mcpgrafana
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
