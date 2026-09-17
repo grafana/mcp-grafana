@@ -5,6 +5,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -81,6 +82,7 @@ func tempoTestContext(t *testing.T, serverURL string) func(mcp.CallToolRequest) 
 		"diff_tempo_traces":           DiffTempoTracesTool,
 		"list_tempo_attribute_names":  ListTempoAttributeNamesTool,
 		"list_tempo_attribute_values": ListTempoAttributeValuesTool,
+		"get_tempo_traceql_docs":      GetTempoTraceQLDocsTool,
 	}
 
 	return func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -494,6 +496,7 @@ func TestAddTempoTools_RegistersAllTools(t *testing.T) {
 		"diff_tempo_traces",
 		"list_tempo_attribute_names",
 		"list_tempo_attribute_values",
+		"get_tempo_traceql_docs",
 	}
 
 	tools := s.ListTools()
@@ -581,4 +584,154 @@ func TestTempoSearch_499Timeout(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "timed out")
+}
+
+func TestTempoTraceQLDocs(t *testing.T) {
+	var capturedPaths []string
+	var capturedMethods []string
+	var capturedSessionIDs []string
+	var capturedAccept string
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var rpc struct {
+			Method string `json:"method"`
+			Params struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		_ = json.Unmarshal(body, &rpc)
+
+		capturedPaths = append(capturedPaths, r.URL.Path)
+		capturedMethods = append(capturedMethods, rpc.Method)
+		capturedSessionIDs = append(capturedSessionIDs, r.Header.Get("Mcp-Session-Id"))
+		capturedAccept = r.Header.Get("Accept")
+
+		w.Header().Set("Content-Type", "application/json")
+		if rpc.Method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", "session-xyz")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
+			return
+		}
+
+		require.Equal(t, "docs-traceql", rpc.Params.Name)
+		require.Equal(t, "structural", rpc.Params.Arguments["name"])
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"# Structural operators\n\n` + "`" + `>>` + "`" + ` matches descendants."}],"isError":false}}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("get_tempo_traceql_docs", map[string]any{
+		"datasourceUid": "test-tempo",
+		"topic":         "structural",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Structural operators")
+
+	// Two round-trips against Tempo's MCP endpoint: initialize, then the call,
+	// with the session id from the first reused on the second.
+	assert.Equal(t, []string{"initialize", "tools/call"}, capturedMethods)
+	assert.Equal(t, []string{"", "session-xyz"}, capturedSessionIDs)
+	for _, p := range capturedPaths {
+		assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/mcp", p)
+	}
+	assert.Equal(t, "application/json, text/event-stream", capturedAccept)
+}
+
+func TestTempoTraceQLDocsInvalidTopic(t *testing.T) {
+	called := false
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("get_tempo_traceql_docs", map[string]any{
+		"datasourceUid": "test-tempo",
+		"topic":         "nonsense",
+	}))
+
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "invalid topic")
+	assert.False(t, called, "an invalid topic must be rejected before any request to Tempo")
+}
+
+func TestTempoTraceQLDocsMissingSession(t *testing.T) {
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// initialize succeeds but omits the session header
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("get_tempo_traceql_docs", map[string]any{
+		"datasourceUid": "test-tempo",
+		"topic":         "basic",
+	}))
+
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "session id")
+}
+
+func TestTempoMCPToolText(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		want    string
+		wantErr string
+	}{
+		{
+			name: "plain json",
+			body: `{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"hello"}]}}`,
+			want: "hello",
+		},
+		{
+			name: "sse framed",
+			body: "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"framed\"}]}}\n\n",
+			want: "framed",
+		},
+		{
+			name: "data prefix only",
+			body: "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"bare\"}]}}",
+			want: "bare",
+		},
+		{
+			name:    "tool reported error",
+			body:    `{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"required argument \"name\" not found"}],"isError":true}}`,
+			wantErr: "required argument",
+		},
+		{
+			name:    "jsonrpc error",
+			body:    `{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"unknown tool"}}`,
+			wantErr: "unknown tool",
+		},
+		{
+			name:    "no text content",
+			body:    `{"jsonrpc":"2.0","id":2,"result":{"content":[]}}`,
+			wantErr: "no text content",
+		},
+		{
+			name:    "malformed",
+			body:    `not json`,
+			wantErr: "failed to parse",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tempoMCPToolText(tc.body)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
