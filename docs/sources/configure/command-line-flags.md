@@ -77,6 +77,14 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--metrics-address`: Optional separate listen address for metrics (for example, `:9090`). If empty, metrics are served on the main HTTP server.
 - `--healthz-address`: Optional separate listen address for `/healthz` (for example, `:8080`). If empty, `/healthz` is served on the main HTTP server. If this matches `--metrics-address`, both routes share one extra listener. The side listener is not wrapped by Host/Origin validation, so Kubernetes probes can reach it while `--address` stays on loopback.
 
+## Configure anonymous usage statistics
+
+- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` to print the report that would be sent to stderr and send nothing. Overrides the `GRAFANA_USAGE_STATS` environment variable. Default: `disabled`.
+
+`GRAFANA_USAGE_STATS_ENDPOINT` changes where reports are sent.
+
+Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the full list of fields, what is never sent, and how to read the data.
+
 ## Configure tool categories
 
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
