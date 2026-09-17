@@ -233,7 +233,7 @@ type SearchTempoTracesParams struct {
 
 type QueryTempoMetricsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
-	Query         string `json:"query" jsonschema:"required,description=TraceQL metrics query: a spanset selector in braces\\, then a pipe\\, then one aggregation\\, optionally grouped by a trailing 'by (...)'. Durations use the 'span:duration' intrinsic rather than a bare 'duration'. Example: '{ } | quantile_over_time(span:duration\\, .99) by (span.name)'. Not PromQL - there is no range selector such as [5m]\\, no 'where' clause\\, and every aggregation except rate carries an '_over_time' suffix."`
+	Query         string `json:"query" jsonschema:"required,description=TraceQL metrics query of the form '{ <selector> } | <aggregation> [by (<attribute>)]'. Example: '{ } | quantile_over_time(span:duration\\, .99) by (span.name)'."`
 	Type          string `json:"type,omitempty" jsonschema:"enum=instant,enum=range,default=range,description=Query type: 'instant' returns a single value at the end of the time range; 'range' returns a time series. Default is 'range'."`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time (RFC3339 format). If not provided will search the past 1 hour."`
 	End           string `json:"end,omitempty" jsonschema:"description=End time (RFC3339 format). If not provided will search the past 1 hour."`
@@ -678,7 +678,7 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
-	"Compute trace-derived metrics using a TraceQL metrics query. Aggregations are rate, count_over_time, sum_over_time, min_over_time, max_over_time, avg_over_time, quantile_over_time and histogram_over_time. Call get_tempo_traceql_docs with topic 'metrics' before writing anything beyond a plain rate or count — the syntax is unlike PromQL and a malformed query returns only a parse error. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
+	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL; call get_tempo_traceql_docs with topic 'metrics' for the reference. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
 	queryTempoMetrics,
 	mcp.WithTitleAnnotation("Query Tempo metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
