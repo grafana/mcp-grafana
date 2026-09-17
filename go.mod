@@ -16,7 +16,7 @@ require (
 	github.com/grafana/pyroscope/api v1.5.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.19
-	github.com/modelcontextprotocol/go-sdk v1.8.0-pre.2
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/prometheus/alertmanager v0.33.1
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/common v0.71.0
