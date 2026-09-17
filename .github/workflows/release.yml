@@ -44,7 +44,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: stable
+          # Pinned to 1.26 until golang/go#81199 is resolved: Go 1.27's
+          # crypto/tls adds ML-DSA signature schemes to the ClientHello that
+          # cause F5 BIG-IP and Palo Alto Prisma Access TLS terminators to
+          # RST the connection.
+          go-version: "1.26"
           # Do not use any caches when creating a release.
           cache: false
 
@@ -85,7 +89,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: stable
+          go-version: "1.26"
           cache: false
 
       - name: Set up uv
