@@ -296,13 +296,13 @@ func TestAppendInstructions(t *testing.T) {
 
 func TestNormalizeEnabledTools(t *testing.T) {
 	tests := []struct {
-		name          string
-		enabledTools  string
-		disableSQL    bool
-		disableTempo  bool
-		wantTools     string
-		wantSQLOff    bool
-		wantTempoOff  bool
+		name         string
+		enabledTools string
+		disableSQL   bool
+		disableTempo bool
+		wantTools    string
+		wantSQLOff   bool
+		wantTempoOff bool
 	}{
 		{
 			name:         "clickhouse alias becomes sql",
@@ -353,10 +353,11 @@ func TestNormalizeEnabledTools(t *testing.T) {
 			wantTools:    "search,tempo",
 		},
 		{
-			name:         "proxied alias overrides disable-tempo",
+			name:         "proxied alias preserves disable-tempo",
 			enabledTools: "search,proxied",
 			disableTempo: true,
 			wantTools:    "search,tempo",
+			wantTempoOff: true,
 		},
 		{
 			name:         "tempo without alias preserves disable flag",

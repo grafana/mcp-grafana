@@ -442,8 +442,14 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 }
 
 // categoryAliases maps deprecated category names to their current replacements.
-// When an alias appears in --enabled-tools it is replaced with the target and
-// the target's --disable flag is cleared, so an explicit opt-in always wins.
+// When an alias appears in --enabled-tools it is replaced with the target name.
+//
+// For aliases that were never in the default --enabled-tools list (the SQL
+// dialects), the target's --disable flag is also cleared so that an explicit
+// opt-in wins over an unrelated --disable-sql. The "proxied" alias is NOT
+// auto-cleared because "proxied" was part of the v1 default list, so existing
+// configs may have both "proxied" in --enabled-tools (carried forward) AND
+// --disable-proxied to turn it off — auto-clearing would silently re-enable it.
 var categoryAliases = map[string]string{
 	"clickhouse": "sql",
 	"snowflake":  "sql",
@@ -452,8 +458,7 @@ var categoryAliases = map[string]string{
 }
 
 // normalizeEnabledTools rewrites the enabled-tools list, replacing deprecated
-// category aliases with their current names. If any alias is present, the
-// target's disable flag is cleared so the explicit opt-in overrides it.
+// category aliases with their current names.
 func (dt *disabledTools) normalizeEnabledTools() {
 	parts := strings.Split(dt.enabledTools, ",")
 	resolved := map[string]bool{}
@@ -472,12 +477,13 @@ func (dt *disabledTools) normalizeEnabledTools() {
 		}
 	}
 	dt.enabledTools = strings.Join(out, ",")
+	// SQL dialect aliases were never in the default list, so their presence is
+	// an explicit opt-in that should override --disable-sql.
 	if resolved["sql"] {
 		dt.sql = false
 	}
-	if resolved["tempo"] {
-		dt.tempo = false
-	}
+	// "proxied" was in the v1 default list, so we intentionally do NOT clear
+	// dt.tempo here — --disable-proxied / --disable-tempo must still win.
 }
 
 // processTools registers enabled tool categories on the server.
