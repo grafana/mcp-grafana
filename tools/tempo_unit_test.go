@@ -159,6 +159,30 @@ func TestTempoSearch_DefaultTimeBounds(t *testing.T) {
 	assert.NotEmpty(t, capturedQuery.Get("end"), "end should be set when omitted by caller")
 }
 
+func TestTempoSearch_PartialTimeBounds(t *testing.T) {
+	var capturedQuery url.Values
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"traces":[]}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         `{ }`,
+		"start":         "2025-01-01T00:00:00Z",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.Equal(t, "1735689600", capturedQuery.Get("start"))
+	assert.NotEmpty(t, capturedQuery.Get("end"), "end should be defaulted when only start is provided")
+}
+
 func TestTempoMetricsInstant(t *testing.T) {
 	var capturedPath string
 	var capturedQuery url.Values
@@ -553,6 +577,44 @@ func TestTempoToolResult_HasMeta(t *testing.T) {
 	require.NotNil(t, result.Meta)
 	assert.Equal(t, "search-results", result.Meta.AdditionalFields["type"])
 	assert.Equal(t, "json", result.Meta.AdditionalFields["encoding"])
+}
+
+func TestTempoFilterHasOR(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{"bare OR", `{ a = "x" || b = "y" }`, true},
+		{"OR inside quotes is OK", `{ span.db.statement = "a || b" }`, false},
+		{"no OR", `{ a = "x" && b = "y" }`, false},
+		{"empty", "", false},
+		{"escaped quote before OR", `{ a = "x\"" || b = "y" }`, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tempoFilterHasOR(tc.query))
+		})
+	}
+}
+
+func TestTempoGetAttributeValues_AllowsORInsideQuotes(t *testing.T) {
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tagValues": [{"type": "string", "value": "test"}]}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("list_tempo_attribute_values", map[string]any{
+		"datasourceUid": "test-tempo",
+		"name":          "span.db.statement",
+		"filter-query":  `{ span.db.statement = "a || b" }`,
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError, "|| inside quotes should not be rejected")
 }
 
 func TestAddTempoTools_RegistersAllTools(t *testing.T) {

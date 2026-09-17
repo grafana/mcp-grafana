@@ -151,24 +151,43 @@ func tempoParseEndToEpochNanos(value string) (string, error) {
 	return fmt.Sprintf("%d", t.UnixNano()), nil
 }
 
-// tempoDefaultTimeBoundsSeconds sets start and end to the past hour when both
-// are empty. Tempo 2.10 interprets omitted bounds as an ingester-only search,
-// silently missing traces already flushed to backend storage.
-func tempoDefaultTimeBoundsSeconds(params url.Values, start, end string) (url.Values, error) {
-	if start == "" && end == "" {
-		now := time.Now()
-		params.Set("start", fmt.Sprintf("%d", now.Add(-time.Hour).Unix()))
-		params.Set("end", fmt.Sprintf("%d", now.Unix()))
-		return params, nil
+// tempoFilterHasOR checks whether a TraceQL filter query contains an OR (||)
+// operator outside of quoted strings. Tempo 2.10 silently reduces unsupported
+// OR filters to empty via ExtractMatchers.
+func tempoFilterHasOR(q string) bool {
+	inQuote := false
+	for i := 0; i < len(q); i++ {
+		switch {
+		case q[i] == '\\' && inQuote:
+			i++ // skip escaped character
+		case q[i] == '"':
+			inQuote = !inQuote
+		case !inQuote && i+1 < len(q) && q[i] == '|' && q[i+1] == '|':
+			return true
+		}
 	}
-	if start != "" {
+	return false
+}
+
+// tempoDefaultTimeBoundsSeconds fills in default start (now-1h) and end (now)
+// for any omitted time bound. Tempo 2.10 interprets omitted bounds as an
+// ingester-only search, silently missing traces already flushed to backend
+// storage.
+func tempoDefaultTimeBoundsSeconds(params url.Values, start, end string) (url.Values, error) {
+	now := time.Now()
+	if start == "" {
+		start = fmt.Sprintf("%d", now.Add(-time.Hour).Unix())
+		params.Set("start", start)
+	} else {
 		epoch, err := tempoParseStartToEpochSeconds(start)
 		if err != nil {
 			return nil, fmt.Errorf("invalid start time: %v", err)
 		}
 		params.Set("start", epoch)
 	}
-	if end != "" {
+	if end == "" {
+		params.Set("end", fmt.Sprintf("%d", now.Unix()))
+	} else {
 		epoch, err := tempoParseEndToEpochSeconds(end)
 		if err != nil {
 			return nil, fmt.Errorf("invalid end time: %v", err)
@@ -181,20 +200,19 @@ func tempoDefaultTimeBoundsSeconds(params url.Values, start, end string) (url.Va
 // tempoDefaultTimeBoundsNanos is like tempoDefaultTimeBoundsSeconds but emits
 // nanosecond-precision epoch values, as required by the metrics endpoints.
 func tempoDefaultTimeBoundsNanos(params url.Values, start, end string) (url.Values, error) {
-	if start == "" && end == "" {
-		now := time.Now()
+	now := time.Now()
+	if start == "" {
 		params.Set("start", fmt.Sprintf("%d", now.Add(-time.Hour).UnixNano()))
-		params.Set("end", fmt.Sprintf("%d", now.UnixNano()))
-		return params, nil
-	}
-	if start != "" {
+	} else {
 		epoch, err := tempoParseStartToEpochNanos(start)
 		if err != nil {
 			return nil, fmt.Errorf("invalid start time: %v", err)
 		}
 		params.Set("start", epoch)
 	}
-	if end != "" {
+	if end == "" {
+		params.Set("end", fmt.Sprintf("%d", now.UnixNano()))
+	} else {
 		epoch, err := tempoParseEndToEpochNanos(end)
 		if err != nil {
 			return nil, fmt.Errorf("invalid end time: %v", err)
@@ -466,7 +484,7 @@ func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValues
 
 	params := url.Values{}
 	if args.FilterQuery != "" {
-		if strings.Contains(args.FilterQuery, "||") {
+		if tempoFilterHasOR(args.FilterQuery) {
 			return mcp.NewToolResultError("OR conditions (||) are not supported in filter queries — Tempo silently reduces them to an empty filter, returning unfiltered values. Use separate calls for each alternative instead."), nil
 		}
 		params.Set("q", args.FilterQuery)
@@ -550,23 +568,19 @@ Aggregates are used in pipelines with ` + "`|`" + `:
 
 	"structural": `# TraceQL: Structural Operators
 
-Structural operators let you query parent-child and ancestor-descendant relationships between spans.
+Structural operators query relationships between spans. The result is always the right-hand spanset.
 
-## Parent (>>)
-Match spans that are direct parents of other spans:
-- ` + "`{ resource.service.name = \"frontend\" } >> { resource.service.name = \"backend\" }`" + ` — frontend spans that directly call backend
+## Child (>>)
+The right-hand spans are direct children of the left-hand spans:
+- ` + "`{ resource.service.name = \"frontend\" } >> { resource.service.name = \"backend\" }`" + ` — backend spans directly called by frontend
 
-## Child (<<)
-Match spans that are direct children:
-- ` + "`{ resource.service.name = \"backend\" } << { resource.service.name = \"database\" }`" + ` — backend spans called by database
+## Parent (<<)
+The right-hand spans are direct parents of the left-hand spans:
+- ` + "`{ resource.service.name = \"database\" } << { resource.service.name = \"backend\" }`" + ` — backend spans that are parents of database spans
 
-## Ancestor (>>>)
-Match spans anywhere in the ancestor chain (not just direct parent):
-- ` + "`{ resource.service.name = \"gateway\" } >>> { status = error }`" + ` — gateway spans with any descendant error
-
-## Descendant (<<<)
-Match spans anywhere in the descendant chain:
-- ` + "`{ status = error } <<< { resource.service.name = \"gateway\" }`" + ` — error spans with gateway ancestor
+## Descendant (>>)
+` + "`>>`" + ` matches only direct parent-child. To match across multiple levels, use a pipeline or nest structural operators:
+- ` + "`{ resource.service.name = \"gateway\" } >> { } >> { status = error }`" + ` — error spans two levels below gateway
 
 ## Sibling (~)
 Match spans that share the same parent:
@@ -579,7 +593,7 @@ Structural queries can include attribute filters on both sides:
 ## Negation with !
 Negate structural operators:
 - ` + "`{ resource.service.name = \"frontend\" } !>> { status = error }`" + ` — frontend spans with no direct error children
-- ` + "`{ } !>>> { status = error }`" + ` — spans with no error descendants`,
+- ` + "`{ } !<< { status = error }`" + ` — spans that are not parents of error spans`,
 
 	"metrics": `# TraceQL: Metrics Queries
 
