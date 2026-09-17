@@ -346,7 +346,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		// Need to dereference the unmarshaled arguments
 		of := reflect.ValueOf(unmarshaledArgs)
-		if of.Kind() != reflect.Ptr || !of.Elem().CanInterface() {
+		if of.Kind() != reflect.Pointer || !of.Elem().CanInterface() {
 			err := errors.New("arguments must be a struct")
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "invalid arguments structure")
@@ -407,7 +407,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		span.SetStatus(codes.Ok, "tool execution completed")
 
 		// Check if the first return value is nil (only for pointer, interface, map, etc.)
-		isNilable := output[0].Kind() == reflect.Ptr ||
+		isNilable := output[0].Kind() == reflect.Pointer ||
 			output[0].Kind() == reflect.Interface ||
 			output[0].Kind() == reflect.Map ||
 			output[0].Kind() == reflect.Slice ||

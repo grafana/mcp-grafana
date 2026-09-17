@@ -16,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -557,25 +556,7 @@ func appendInstructions(base, extra string) string {
 func newServer(serverName string, dt disabledTools, obs *observability.Observability, instructionsAppend string) *server.MCPServer {
 	hooks := &server.Hooks{}
 
-	// Ensure ListToolsResult always includes resultType, cacheScope, and ttlMs.
-	hooks.OnAfterListTools = append(hooks.OnAfterListTools,
-		func(_ context.Context, _ any, _ *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
-			if result == nil {
-				return
-			}
-			if result.ResultType == "" {
-				result.ResultType = mcp.ResultTypeComplete
-			}
-			if result.CacheScope == "" {
-				result.CacheScope = mcp.CacheScopePrivate
-			}
-			if result.TTLMs == nil {
-				ttl := int64(0)
-				result.TTLMs = &ttl
-			}
-		},
-	)
-
+	// Merge observability hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
 	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)

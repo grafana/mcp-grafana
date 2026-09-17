@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-09-14
+
+### Added
+
+- Optional `version` parameter on `get_dashboard_by_uid` to retrieve a specific saved version of a dashboard. New `list_dashboard_versions` tool returns version metadata (version number, author, timestamp, message) ([#1158](https://github.com/grafana/mcp-grafana/pull/1158))
+
+### Fixed
+
+- Removed unconditional `tools/list` response field injection (`resultType`, `cacheScope`, `ttlMs`) that broke legacy MCP clients which validate against the base protocol schema ([#1179](https://github.com/grafana/mcp-grafana/pull/1179))
+
 ## [1.4.1] - 2026-09-11
 
 ### Added
@@ -459,6 +469,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.4.2]: https://github.com/grafana/mcp-grafana/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/grafana/mcp-grafana/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/grafana/mcp-grafana/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/grafana/mcp-grafana/compare/v1.2.0...v1.3.0
