@@ -1520,11 +1520,8 @@ func TestCategoryReport(t *testing.T) {
 }
 
 func TestNativeToolNamesFromRegistrations(t *testing.T) {
-	obs, err := observability.Setup(observability.Config{})
-	require.NoError(t, err)
-	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
-
-	names := nativeToolNames(s)
+	dt := disabledTools{enabledTools: "search"}
+	names := nativeToolNames(dt)
 	assert.Contains(t, names, "search_dashboards")
 	assert.NotEmpty(t, names)
 }

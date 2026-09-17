@@ -542,7 +542,7 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 				if r, ok := result.(*mcp.ListToolsResult); ok {
 					r.CacheScope = "private"
 				} else if result != nil {
-					slog.Warn("tools/list returned unexpected result type; cache scope not set", "type", fmt.Sprintf("%T", result))
+					slog.Error("tools/list returned unexpected result type; cache scope defaults to public — update this assertion for the new go-sdk type", "type", fmt.Sprintf("%T", result))
 				}
 			}
 			return result, err
@@ -819,12 +819,15 @@ func effectiveMetricsEnabled(transport string, metricsEnabled bool) bool {
 // bounds the tool names the usage-statistics reporter may emit, so it must be
 // taken before any proxied tool is registered: those names come from a remote
 // MCP server and collapse to a single pseudo-name instead.
-func nativeToolNames(s *mcp.Server) map[string]struct{} {
+func nativeToolNames(dt disabledTools) map[string]struct{} {
+	bare := mcp.NewServer(&mcp.Implementation{Name: "enumerator", Version: "0"}, nil)
+	dt.processTools(bare)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	go func() { _ = s.Run(ctx, serverTransport) }()
+	go func() { _ = bare.Run(ctx, serverTransport) }()
 	client := mcp.NewClient(&mcp.Implementation{Name: "tool-enumerator", Version: "0"}, nil)
 	session, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
@@ -904,7 +907,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	usage.Disclose()
 
 	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend)
-	usage.SetNativeTools(nativeToolNames(s))
+	usage.SetNativeTools(nativeToolNames(dt))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

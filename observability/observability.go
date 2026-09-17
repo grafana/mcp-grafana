@@ -287,7 +287,7 @@ func toolNameFromRequest(method string, req mcp.Request) (string, bool) {
 		return "", false
 	}
 	callReq, ok := req.(*mcp.CallToolRequest)
-	if !ok || callReq == nil {
+	if !ok || callReq == nil || callReq.Params == nil {
 		return "", false
 	}
 	return callReq.Params.Name, true
@@ -300,7 +300,7 @@ func toolArgsFromRequest(method string, req mcp.Request) map[string]any {
 		return nil
 	}
 	callReq, ok := req.(*mcp.CallToolRequest)
-	if !ok || callReq == nil || len(callReq.Params.Arguments) == 0 {
+	if !ok || callReq == nil || callReq.Params == nil || len(callReq.Params.Arguments) == 0 {
 		return nil
 	}
 	var args map[string]any
