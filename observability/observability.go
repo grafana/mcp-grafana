@@ -446,9 +446,11 @@ const (
 // creation.
 const ToolPhaseMetaKey = attrKeyToolPhase
 
-// metricDimValueOther is the single bucket every non-allowlisted value collapses
-// into.
-const metricDimValueOther = "other"
+// ValueOther is the single bucket every non-allowlisted value collapses
+// into. Exported because the usage-statistics reporter clamps its own
+// vocabularies with the same sentinel: two spellings of "not allowlisted"
+// would let one of them drift and start carrying unbounded values.
+const ValueOther = "other"
 
 // metricDimSet declares which dimensions a given tool may contribute as BOUNDED
 // metric labels, and for each one the exact set of values permitted. A nil set
@@ -462,21 +464,21 @@ type metricDimSet struct {
 // toolMetricDims is the opt-in allowlist of which dimensions each tool may emit
 // as metric labels, and which values those labels may carry.
 // A label is emitted only for a listed tool, only for a dimension that tool
-// opts into, and only with a value in that dimension's set - everything else becomes metricDimValueOther
+// opts into, and only with a value in that dimension's set - everything else becomes ValueOther
 var toolMetricDims = map[string]metricDimSet{
-	"alerting_manage_rules": {operations: valueSet("list", "get", "versions", "create", "update", "delete")},
-	"alerting_manage_routing": {operations: valueSet(
+	"alerting_manage_rules": {operations: ValueSet("list", "get", "versions", "create", "update", "delete")},
+	"alerting_manage_routing": {operations: ValueSet(
 		"get_notification_policies", "get_contact_points", "get_contact_point",
 		"get_time_intervals", "get_time_interval",
 	)},
-	"agento11y_manage_conversations": {operations: valueSet("list", "search", "get")},
-	"agento11y_manage_generations":   {operations: valueSet("get", "scores")},
-	"agento11y_manage_experiments": {operations: valueSet(
+	"agento11y_manage_conversations": {operations: ValueSet("list", "search", "get")},
+	"agento11y_manage_generations":   {operations: ValueSet("get", "scores")},
+	"agento11y_manage_experiments": {operations: ValueSet(
 		"list", "get", "get_report", "list_trials", "list_scores",
 		"get_trial", "list_trial_scores", "list_trial_artifacts", "list_facets",
 		"update", "cancel",
 	)},
-	"agento11y_manage_test_suites": {operations: valueSet(
+	"agento11y_manage_test_suites": {operations: ValueSet(
 		"list_suites", "get_suite", "list_test_cases", "get_test_case",
 		"create_suite", "update_suite", "create_draft_version", "publish_version",
 		"upsert_test_case", "delete_test_case",
@@ -486,18 +488,18 @@ var toolMetricDims = map[string]metricDimSet{
 		// Mirrors dsPhaseSchema/dsPhaseCreated in tools/datasources.go, which
 		// sets these on the result _meta. Duplicated rather than shared because
 		// tools imports this package, so the constants cannot be imported back.
-		phases: valueSet("schema", "created"),
+		phases: ValueSet("schema", "created"),
 	},
 }
 
 // datasourcePluginTypes bounds create_datasource's mcp.tool.resource_type label
 // to the plugin types we ship a schema for. Types outside the set remain
-// creatable — they just report as metricDimValueOther rather than each becoming
+// creatable — they just report as ValueOther rather than each becoming
 // its own series.
-var datasourcePluginTypes = valueSet(datasourceschemas.KnownPluginTypes()...)
+var datasourcePluginTypes = ValueSet(datasourceschemas.KnownPluginTypes()...)
 
-// valueSet builds a membership set for metricDimSet.
-func valueSet(values ...string) map[string]struct{} {
+// ValueSet builds a membership set for an allowlist, for use with BoundedValue.
+func ValueSet(values ...string) map[string]struct{} {
 	set := make(map[string]struct{}, len(values))
 	for _, v := range values {
 		set[v] = struct{}{}
@@ -505,17 +507,22 @@ func valueSet(values ...string) map[string]struct{} {
 	return set
 }
 
-// boundedMetricValue maps v onto the allowed value set: v itself when allowed,
-// metricDimValueOther when not, and "" when absent — an unset argument keeps the
+// BoundedValue maps v onto the allowed value set: v itself when allowed,
+// ValueOther when not, and "" when absent — an unset argument keeps the
 // label off the series entirely rather than counting as "other".
-func boundedMetricValue(v string, allowed map[string]struct{}) string {
+//
+// This is the one clamp for every bounded vocabulary in the server, metric
+// label or usage-statistics field alike. A second copy is a privacy bug
+// waiting to happen, not untidiness: the copy that stops being updated is the
+// one that starts emitting user-supplied strings.
+func BoundedValue(v string, allowed map[string]struct{}) string {
 	if v == "" {
 		return ""
 	}
 	if _, ok := allowed[v]; ok {
 		return v
 	}
-	return metricDimValueOther
+	return ValueOther
 }
 
 // toolArgDims holds the tool-call argument dimensions used to enrich telemetry.
@@ -610,13 +617,13 @@ func ToolMetricDimensions(toolName string, args map[string]any, result any) Tool
 	allowed := toolMetricDims[toolName]
 	var d ToolMetricDims
 	if allowed.operations != nil {
-		d.Operation = boundedMetricValue(stringArg(args, "operation"), allowed.operations)
+		d.Operation = BoundedValue(stringArg(args, "operation"), allowed.operations)
 	}
 	if allowed.resourceTypes != nil {
-		d.ResourceType = boundedMetricValue(stringArg(args, "type"), allowed.resourceTypes)
+		d.ResourceType = BoundedValue(stringArg(args, "type"), allowed.resourceTypes)
 	}
 	if allowed.phases != nil {
-		d.Phase = boundedMetricValue(toolPhaseFromResult(result), allowed.phases)
+		d.Phase = BoundedValue(toolPhaseFromResult(result), allowed.phases)
 	}
 	return d
 }
