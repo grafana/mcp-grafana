@@ -214,12 +214,21 @@ func shortenURL(ctx context.Context, longURL string) (string, error) {
 	if !strings.HasPrefix(path, "/") {
 		return "", fmt.Errorf("url must include an absolute path")
 	}
-	// Grafana's /api/short-urls endpoint rejects absolute paths
-	// (messageId "shorturl.absolute-path") and requires the path to be
-	// relative, so strip the leading slash before submitting.
-	path = strings.TrimPrefix(path, "/")
 
-	// /api/short-urls rejects absolute paths, so strip the leading slash.
+	// When Grafana is served from a sub-path (e.g. root_url includes
+	// "/grafana"), the deeplink URL contains that prefix. Grafana's /goto
+	// redirect prepends the sub-path itself, so we must strip it here to
+	// avoid doubling (e.g. "/grafana/grafana/d/…" → 404).
+	publicParsed, err := url.Parse(publicBaseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid public base url: %w", err)
+	}
+	if basePath := strings.TrimRight(publicParsed.Path, "/"); basePath != "" {
+		path = strings.TrimPrefix(path, basePath)
+	}
+
+	// Grafana's /api/short-urls endpoint rejects absolute paths
+	// (messageId "shorturl.absolute-path"), so strip the leading slash.
 	relativePath := strings.TrimPrefix(path, "/")
 
 	payload, err := json.Marshal(map[string]string{"path": relativePath})

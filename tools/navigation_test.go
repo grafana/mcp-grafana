@@ -591,6 +591,25 @@ func TestShortenURL(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "missing url field")
 	})
+
+	t.Run("Strips sub-path prefix so /goto does not double it", func(t *testing.T) {
+		var capturedPath string
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			capturedPath = body["path"]
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"uid":"sub123","url":"https://grafana.example.com/grafana/goto/sub123"}`))
+		}))
+
+		ctx := newShortenTestContext(ts.URL, "https://grafana.example.com/grafana", "")
+
+		result, err := shortenURL(ctx, "https://grafana.example.com/grafana/d/dash1?from=now-3h&to=now")
+		require.NoError(t, err)
+		assert.Equal(t, "d/dash1?from=now-3h&to=now", capturedPath)
+		assert.Equal(t, "https://grafana.example.com/grafana/goto/sub123", result)
+	})
 }
 
 func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
