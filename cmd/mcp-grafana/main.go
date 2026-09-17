@@ -16,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -92,6 +91,7 @@ var categoryDescription = map[string]string{
 	"admin":         "Admin: List teams and perform administrative tasks.",
 	"pyroscope":     "Pyroscope: Profile applications and fetch profiling data.",
 	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries, with optional built-in shortening.",
+	"tempo":         "Tempo: Search traces with TraceQL, compute trace-derived metrics, fetch and diff traces, and explore trace attributes.",
 	"annotations":   "Annotations: Create and manage dashboard annotations.",
 	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
 	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
@@ -125,7 +125,7 @@ var categoryDescriptionNoQuery = map[string]string{
 
 // queryOnlyCategories register no tools at all when their query tools are
 // disabled, because every tool they contain executes a query.
-var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery"}
+var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo"}
 
 // mutatingQueryCategories hold query tools that pass raw SQL or InfluxQL to the
 // datasource unfiltered: query_clickhouse can run DROP TABLE, query_influxdb can
@@ -210,7 +210,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write, query, enableQuery,
+	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, write, query, enableQuery,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -257,7 +257,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -275,7 +275,8 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
 	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 	flag.BoolVar(&dt.navigation, "disable-navigation", false, "Disable navigation tools")
-	flag.BoolVar(&dt.proxied, "disable-proxied", false, "Disable proxied tools (tools from external MCP servers)")
+	flag.BoolVar(&dt.tempo, "disable-tempo", false, "Disable Tempo tracing tools")
+	flag.BoolVar(&dt.tempo, "disable-proxied", false, "Deprecated: use --disable-tempo instead")
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
@@ -421,6 +422,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddAdminTools, dt.admin, "admin"},
 		{func(mcp *server.MCPServer) { tools.AddPyroscopeTools(mcp, enableQueryTools) }, dt.pyroscope, "pyroscope"},
 		{func(mcp *server.MCPServer) { tools.AddNavigationTools(mcp, enableWriteTools) }, dt.navigation, "navigation"},
+		{func(mcp *server.MCPServer) { tools.AddTempoTools(mcp, enableQueryTools) }, dt.tempo, "tempo"},
 		{func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, dt.annotations, "annotations"},
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
 		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
@@ -488,29 +490,35 @@ func (dt *disabledTools) categoryRegistersTools(e toolEntry, enabledTools []stri
 	return true
 }
 
-// sqlCategoryAliases maps deprecated per-dialect category names to the unified
-// "sql" category. When any alias appears in --enabled-tools it is replaced with
-// "sql" and any --disable-sql / --disable-{dialect} flag is cleared, so an
-// explicit opt-in always wins.
-var sqlCategoryAliases = map[string]bool{
-	"clickhouse": true,
-	"snowflake":  true,
-	"athena":     true,
+// categoryAliases maps deprecated category names to their current replacements.
+// When an alias appears in --enabled-tools it is replaced with the target name.
+//
+// For aliases that were never in the default --enabled-tools list (the SQL
+// dialects), the target's --disable flag is also cleared so that an explicit
+// opt-in wins over an unrelated --disable-sql. The "proxied" alias is NOT
+// auto-cleared because "proxied" was part of the v1 default list, so existing
+// configs may have both "proxied" in --enabled-tools (carried forward) AND
+// --disable-proxied to turn it off — auto-clearing would silently re-enable it.
+var categoryAliases = map[string]string{
+	"clickhouse": "sql",
+	"snowflake":  "sql",
+	"athena":     "sql",
+	"proxied":    "tempo",
 }
 
 // normalizeEnabledTools rewrites the enabled-tools list, replacing deprecated
-// SQL dialect aliases with "sql". If any alias is present, the sql disable flag
-// is cleared so the explicit opt-in overrides --disable-sql.
+// category aliases with their current names.
 func (dt *disabledTools) normalizeEnabledTools() {
 	parts := strings.Split(dt.enabledTools, ",")
-	hasSQLAlias := false
+	resolved := map[string]bool{}
 	seen := make(map[string]bool, len(parts))
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
-		if sqlCategoryAliases[p] {
-			hasSQLAlias = true
-			p = "sql"
+		if target, ok := categoryAliases[p]; ok {
+			slog.Warn("Deprecated category alias in --enabled-tools, mapped to new name", "old", p, "new", target)
+			resolved[target] = true
+			p = target
 		}
 		if !seen[p] {
 			seen[p] = true
@@ -518,9 +526,13 @@ func (dt *disabledTools) normalizeEnabledTools() {
 		}
 	}
 	dt.enabledTools = strings.Join(out, ",")
-	if hasSQLAlias {
+	// SQL dialect aliases were never in the default list, so their presence is
+	// an explicit opt-in that should override --disable-sql.
+	if resolved["sql"] {
 		dt.sql = false
 	}
+	// "proxied" was in the v1 default list, so we intentionally do NOT clear
+	// dt.tempo here — --disable-proxied / --disable-tempo must still win.
 }
 
 // processTools registers enabled tool categories on the server.
@@ -564,11 +576,7 @@ func (dt *disabledTools) buildInstructions() string {
 		}
 	}
 
-	// Proxied tools are registered via hooks (not maybeAddTools), so they
-	// are not in toolEntries. Include their description when enabled.
-	if !dt.proxied {
-		capabilities = append(capabilities, "Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.")
-	}
+	// Tempo tools are now registered like any other category — no special hooks.
 
 	var b strings.Builder
 	b.WriteString("This server provides access to your Grafana instance and the surrounding ecosystem.\n\n")
@@ -598,74 +606,12 @@ func appendInstructions(base, extra string) string {
 	return base
 }
 
-func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, usage *usagestats.Reporter, sessionIdleTimeoutMinutes int, instructionsAppend string) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
-	sm := mcpgrafana.NewSessionManager(
-		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute),
-		mcpgrafana.WithSessionMeterProvider(obs.MeterProvider()),
-	)
-
-	// Declare variables that will be initialized after server creation.
-	// The hooks below capture these by pointer, so they must be declared first.
-	var stm *mcpgrafana.ToolManager
-	var s *server.MCPServer
-
-	// Create hooks
-	hooks := &server.Hooks{
-		OnRegisterSession:   []server.OnRegisterSessionHookFunc{sm.CreateSession},
-		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
-	}
-
-	// Add proxied tools hooks if enabled and we're not running in stdio mode.
-	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session tools
-	// are not supported).
-	if transport != "stdio" && !dt.proxied {
-		// ensureSessionRegistered registers an ephemeral session in MCPServer.sessions
-		// if it's not already there. This is needed for horizontal scaling: when a
-		// request lands on a pod that didn't handle the initialize call, the SDK
-		// creates an ephemeral session that isn't registered, causing AddSessionTools
-		// to fail with ErrSessionNotFound. RegisterSession uses LoadOrStore
-		// internally, so this is a no-op for already-registered sessions.
-		ensureSessionRegistered := func(ctx context.Context) {
-			if s != nil {
-				if session := server.ClientSessionFromContext(ctx); session != nil {
-					_ = s.RegisterSession(ctx, session)
-				}
-			}
-		}
-
-		// OnBeforeListTools: Discover, connect, and register tools
-		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
-			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
-				}
-			},
-		}
-
-		// OnBeforeCallTool: Fallback in case client calls tool without listing first
-		hooks.OnBeforeCallTool = []server.OnBeforeCallToolFunc{
-			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
-				}
-			},
-		}
-	}
+func newServer(serverName string, dt disabledTools, obs *observability.Observability, usage *usagestats.Reporter, instructionsAppend string) *server.MCPServer {
+	hooks := &server.Hooks{}
 
 	// Merge observability and usage-statistics hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks(), usage.Hooks())
 
-	// Register tools and build the instruction string from enabled categories.
-	// processTools both registers tools on the server and collects descriptions
-	// of enabled categories, so we need a temporary nil server reference first.
-	// Instead, we split: compute instructions from flags, then create server,
-	// then register tools.
 	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)
 
 	serverOpts := []server.ServerOption{
@@ -673,29 +619,13 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 		server.WithHooks(hooks),
 	}
 	if mcpgrafana.DynamicMultiOrgEnabled {
-		// Honor an optional per-call "orgId" argument so a single connection can
-		// target multiple Grafana organizations (overrides the connection-level
-		// org for that call). Only wired in when --dynamic-multi-org is set.
 		serverOpts = append(serverOpts, server.WithToolHandlerMiddleware(mcpgrafana.OrgIDOverrideMiddleware))
 	}
-	s = server.NewMCPServer(serverName, mcpgrafana.Version(), serverOpts...)
-
-	// Initialize ToolManager now that server is created
-	stm = mcpgrafana.NewToolManager(sm, s,
-		mcpgrafana.WithProxiedTools(!dt.proxied),
-		mcpgrafana.WithToolManagerLogger(slog.Default()),
-		mcpgrafana.WithToolManagerMeterProvider(obs.MeterProvider()),
-	)
-
-	// Give the SessionManager a reference to the MCPServer so the reaper can
-	// unregister sessions from the SDK's internal session map.
-	// (NewToolManager above already wires the SessionManager's ToolManager
-	// reference back onto sm, so no separate SetToolManager call is needed here.)
-	sm.SetMCPServer(s)
+	s := server.NewMCPServer(serverName, mcpgrafana.Version(), serverOpts...)
 
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
-	return s, stm, sm
+	return s
 }
 
 type tlsConfig struct {
@@ -801,9 +731,7 @@ func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy
 // warnLokiEnforcementBypasses logs, at startup, every enabled tool through which
 // an LLM could reach Loki log data WITHOUT going through the enforced Loki
 // backend — so --loki-enforced-matchers would not apply. Each line names the
-// mechanism and the flag that closes it. Proxied tools get an informational
-// note rather than a warning because they currently expose only Tempo (traces),
-// not Loki logs, so they are not a bypass today.
+// mechanism and the flag that closes it.
 func warnLokiEnforcementBypasses(dt disabledTools) {
 	// A category is only a live bypass if it is actually active, which depends on
 	// BOTH the --enabled-tools allowlist and its per-category --disable-* flag
@@ -833,9 +761,6 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 		slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
 			"disable_with", "--disable-assistant",
 			"reason", "ask_assistant delegates to Grafana Assistant, which reads Loki server-side across all streams; enforced matchers are not applied to what it reports back")
-	}
-	if isCategoryEnabled(enabledTools, dt.proxied, "proxied") {
-		slog.Info("Loki label-matcher enforcement: proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today — this would change if proxying is extended to log datasources (disable with --disable-proxied)")
 	}
 	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
 		slog.Info("Loki label-matcher enforcement: dashboard snapshots can return log-panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted logs")
@@ -1062,21 +987,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// once the server has registered its tools, and is handed over below.
 	us.Transport = transport
 	// Normalise first: processTools and buildInstructions each do this to their
-	// own copy of dt, rewriting the deprecated SQL dialect aliases to "sql" and
-	// clearing --disable-sql when one is named. Reading dt before that reported
-	// the flags as typed rather than the categories the server actually
-	// registered — e.g. --enabled-tools=search,clickhouse --disable-sql would
-	// register the SQL tools and report sql as disabled.
+	// own copy of dt, rewriting the deprecated category aliases and
+	// clearing the target's disable flag when appropriate. Reading dt before
+	// that reported the flags as typed rather than the categories the server
+	// actually registered.
 	dt.normalizeEnabledTools()
 	us.EnabledTools, us.DisabledTools = dt.categoryReport()
 	us.TLSEnabled = effectiveTLSEnabled(transport, tls)
 	us.MetricsEnabled = effectiveMetricsEnabled(transport, obs.MetricsEnabled)
 	us.DynamicMultiOrg = mcpgrafana.DynamicMultiOrgEnabled
-	// Mirrors WithProxiedTools(!dt.proxied): the proxied token in
-	// --enabled-tools does not gate proxied tools, only --disable-proxied
-	// does, so deriving this from the category selection reported them
-	// disabled while the server was using them.
-	us.ProxiedEnabled = !dt.proxied
 	us.Target = grafanaTarget
 	// The other half of us.Flags: flag.Visit sees only flags, and container
 	// deployments configure almost entirely by environment variable.
@@ -1084,8 +1003,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	usage := usagestats.New(us)
 	usage.Disclose()
 
-	s, tm, sm := newServer(obs.ServerName, transport, dt, o, usage, sessionIdleTimeoutMinutes, instructionsAppend)
-	defer sm.Close()
+	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend)
 	usage.SetNativeTools(nativeToolNames(s))
 
 	// Create a context that will be cancelled on shutdown
@@ -1139,14 +1057,6 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		cf := mcpgrafana.ComposedStdioContextFunc(gc)
 		srv.SetContextFunc(cf)
 
-		// For stdio (single-tenant), initialize proxied tools on the server directly
-		if !dt.proxied {
-			stdioCtx := cf(ctx)
-			if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
-				slog.Error("failed to initialize proxied tools for stdio", "error", err)
-			}
-		}
-
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())
 
 		err := srv.Listen(ctx, os.Stdin, os.Stdout)
@@ -1182,19 +1092,13 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		httpSrv := &http.Server{Addr: addr}
 		opts := []server.StreamableHTTPOption{
 			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)),
-			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
+			server.WithStateLess(true), // Always stateless — no per-session tool registration needed
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
 			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 			server.WithDisableLocalhostProtection(disableLocalhostProtection),
 			// Enable the SDK's idle-session sweeper so per-session transport state
-			// (the tool/resource maps populated by AddSessionTools, keyed by
-			// session ID in the server's shared stores) is freed when a client
-			// disconnects without sending a DELETE. Without it, UnregisterSession
-			// only drops the session handle and those stores grow without bound,
-			// leaking a fixed amount of memory per session that is ever created.
-			// Use the same idle timeout as our own SessionManager reaper so the
-			// two teardown paths stay aligned; a zero value disables both.
+			// is freed when a client disconnects without sending a DELETE.
 			server.WithSessionIdleTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {

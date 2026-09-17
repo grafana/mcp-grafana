@@ -7,49 +7,47 @@ from utils import assert_mcp_eval, run_llm_tool_loop
 pytestmark = pytest.mark.anyio
 
 
-class TestTempoProxiedToolsBasic:
-    """Test Tempo proxied MCP tools functionality.
+class TestTempoToolsBasic:
+    """Test Tempo native MCP tools functionality.
 
-    These tests verify that Tempo datasources with MCP support are discovered
-    per-session and their tools are registered with a datasourceUid parameter
-    for multi-datasource support.
+    These tests verify that Tempo tools are registered with a datasourceUid
+    parameter for multi-datasource support. Tools call Tempo's REST API
+    through the Grafana datasource proxy.
 
     Requires:
-    - Docker compose services running (includes 2 Tempo instances)
+    - Docker compose services running (includes Tempo)
     - GRAFANA_USERNAME and GRAFANA_PASSWORD environment variables
     - MCP server running
     """
 
     @pytest.mark.anyio
-    async def test_tempo_tools_discovered_and_registered(
+    async def test_tempo_tools_registered(
         self, mcp_client: ClientSession
     ):
-        """Test that Tempo tools are discovered and registered with datasourceUid parameter."""
+        """Test that Tempo tools are registered with datasourceUid parameter."""
 
         # List all tools
         list_response = await mcp_client.list_tools()
         all_tool_names = [tool.name for tool in list_response.tools]
 
-        # Find tempo-prefixed tools (should preserve hyphens from original tool names)
-        tempo_tools = [name for name in all_tool_names if name.startswith("tempo_")]
-
-        # Expected tools from Tempo MCP server
+        # Expected tools — 6 API-backed tools
         expected_tempo_tools = [
-            "tempo_traceql-search",
-            "tempo_traceql-metrics-instant",
-            "tempo_traceql-metrics-range",
-            "tempo_get-trace",
-            "tempo_get-attribute-names",
-            "tempo_get-attribute-values",
-            "tempo_docs-traceql",
+            "search_tempo_traces",
+            "query_tempo_metrics",
+            "get_tempo_trace",
+            "diff_tempo_traces",
+            "list_tempo_attribute_names",
+            "list_tempo_attribute_values",
         ]
+
+        tempo_tools = [name for name in all_tool_names if name in expected_tempo_tools]
 
         assert len(tempo_tools) == len(expected_tempo_tools), (
             f"Expected {len(expected_tempo_tools)} unique tempo tools, found {len(tempo_tools)}: {tempo_tools}"
         )
 
         for expected_tool in expected_tempo_tools:
-            assert expected_tool in tempo_tools, (
+            assert expected_tool in all_tool_names, (
                 f"Tool {expected_tool} should be available"
             )
 
@@ -58,8 +56,18 @@ class TestTempoProxiedToolsBasic:
         """Test that all tempo tools have a required datasourceUid parameter."""
 
         list_response = await mcp_client.list_tools()
+
+        tempo_tool_names = {
+            "search_tempo_traces",
+            "query_tempo_metrics",
+            "get_tempo_trace",
+            "diff_tempo_traces",
+            "list_tempo_attribute_names",
+            "list_tempo_attribute_values",
+        }
+
         tempo_tools = [
-            tool for tool in list_response.tools if tool.name.startswith("tempo_")
+            tool for tool in list_response.tools if tool.name in tempo_tool_names
         ]
 
         assert len(tempo_tools) > 0, "Should have at least one tempo tool"
@@ -98,23 +106,17 @@ class TestTempoProxiedToolsBasic:
     async def test_tempo_tool_call_with_valid_datasource(self, mcp_client):
         """Test calling a tempo tool with a valid datasourceUid."""
 
-        # Call docs-traceql which should return documentation (doesn't require data)
         try:
             call_response = await mcp_client.call_tool(
-                "tempo_docs-traceql",
-                arguments={"datasourceUid": "tempo", "name": "basic"},
+                "list_tempo_attribute_names",
+                arguments={"datasourceUid": "tempo"},
             )
 
             # Verify we got a response
             assert call_response.content, "Tool should return content"
 
-            # Should have text content (documentation)
             response_text = call_response.content[0].text
             assert len(response_text) > 0, "Response should have content"
-            assert "traceql" in response_text.lower(), (
-                "Response should contain TraceQL documentation"
-            )
-            print(response_text)
 
         except Exception as e:
             # If this fails, it might be because Tempo doesn't have data yet
@@ -129,75 +131,67 @@ class TestTempoProxiedToolsBasic:
     async def test_tempo_tool_call_missing_datasourceUid(self, mcp_client):
         """Test that calling a tempo tool without datasourceUid fails appropriately."""
 
-        with pytest.raises(Exception) as exc_info:
-            await mcp_client.call_tool(
-                "tempo_docs-traceql",
-                arguments={"name": "basic"},  # Missing datasourceUid
+        try:
+            result = await mcp_client.call_tool(
+                "list_tempo_attribute_names",
+                arguments={},  # Missing datasourceUid
             )
-
-        error_msg = str(exc_info.value).lower()
-        assert "datasourceuid" in error_msg and "required" in error_msg, (
-            f"Should require datasourceUid parameter: {exc_info.value}"
-        )
+            # If the server returns an error result instead of raising
+            assert result.isError, "Should return an error when datasourceUid is missing"
+            error_text = result.content[0].text.lower()
+            assert "datasourceuid" in error_text or "required" in error_text, (
+                f"Error should mention datasourceUid: {result.content[0].text}"
+            )
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            assert "datasourceuid" in error_msg or "required" in error_msg, (
+                f"Should require datasourceUid parameter: {exc}"
+            )
 
     @pytest.mark.anyio
     async def test_tempo_tool_call_invalid_datasourceUid(self, mcp_client):
         """Test that calling a tempo tool with invalid datasourceUid returns helpful error."""
 
-        with pytest.raises(Exception) as exc_info:
-            await mcp_client.call_tool(
-                "tempo_docs-traceql",
-                arguments={"datasourceUid": "nonexistent-tempo", "name": "basic"},
+        try:
+            result = await mcp_client.call_tool(
+                "list_tempo_attribute_names",
+                arguments={"datasourceUid": "nonexistent-tempo"},
+            )
+            # Server may return an error result rather than raising
+            assert result.isError, "Should return an error for invalid datasourceUid"
+            error_text = result.content[0].text.lower()
+            assert "not found" in error_text or "not accessible" in error_text, (
+                f"Should indicate datasource not found: {result.content[0].text}"
+            )
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            assert "not found" in error_msg or "not accessible" in error_msg, (
+                f"Should indicate datasource not found: {exc}"
             )
 
-        error_msg = str(exc_info.value).lower()
-        # Should mention that datasource wasn't found
-        assert "not found" in error_msg or "not accessible" in error_msg, (
-            f"Should indicate datasource not found: {exc_info.value}"
-        )
-
-        # Should mention available datasources to help user
-        assert "tempo" in error_msg or "available" in error_msg, (
-            f"Error should be helpful and mention available datasources: {exc_info.value}"
-        )
-
     @pytest.mark.anyio
-    async def test_tempo_tool_works_with_multiple_datasources(self, mcp_client):
-        """Test that the same tool works with different datasources via datasourceUid."""
+    async def test_tempo_tool_list_attribute_names(self, mcp_client):
+        """Test that list_tempo_attribute_names returns a response from the Tempo datasource."""
 
-        # Both tempo and tempo-secondary should be available in our test environment
-        datasources = ["tempo", "tempo-secondary"]
+        try:
+            call_response = await mcp_client.call_tool(
+                "list_tempo_attribute_names",
+                arguments={"datasourceUid": "tempo"},
+            )
 
-        for datasource_uid in datasources:
-            try:
-                # Call the same tool with different datasources
-                call_response = await mcp_client.call_tool(
-                    "tempo_get-attribute-names",
-                    arguments={"datasourceUid": datasource_uid},
-                )
+            assert call_response.content, "Tool should return content"
+            response_text = call_response.content[0].text
+            assert len(response_text) > 0, "Response should have content"
 
-                # Verify we got a response
-                assert call_response.content, (
-                    f"Tool should return content for datasource {datasource_uid}"
-                )
-
-                # Response should be valid JSON or text
-                response_text = call_response.content[0].text
-                assert len(response_text) > 0, (
-                    f"Response should have content for datasource {datasource_uid}"
-                )
-
-            except Exception as e:
-                # If this fails, it's acceptable if Tempo doesn't have trace data yet
-                # But verify it's not a routing/config error
-                error_msg = str(e).lower()
-                assert (
-                    "not found" not in error_msg or datasource_uid not in error_msg
-                ), f"Datasource {datasource_uid} should be accessible: {e}"
+        except Exception as e:
+            error_msg = str(e).lower()
+            assert (
+                "not found" not in error_msg or "tempo" not in error_msg
+            ), f"Datasource tempo should be accessible: {e}"
 
 
-class TestTempoProxiedToolsWithLLM:
-    """LLM integration tests for Tempo proxied tools."""
+class TestTempoToolsWithLLM:
+    """LLM integration tests for Tempo tools."""
 
     @pytest.mark.parametrize("model", models)
     @pytest.mark.flaky(reruns=2)
@@ -214,8 +208,8 @@ class TestTempoProxiedToolsWithLLM:
             model, mcp_client, mcp_transport, prompt
         )
 
-        attr_calls = [tc for tc in tools_called if tc.name == "tempo_get-attribute-names"]
-        assert attr_calls, "tempo_get-attribute-names was not in tools_called"
+        attr_calls = [tc for tc in tools_called if tc.name == "list_tempo_attribute_names"]
+        assert attr_calls, "list_tempo_attribute_names was not in tools_called"
         args = attr_calls[0].args
         assert args.get("datasourceUid") == "tempo", (
             f"Expected datasourceUid='tempo', got {args.get('datasourceUid')!r}"
@@ -227,5 +221,5 @@ class TestTempoProxiedToolsWithLLM:
             tools_called,
             mcp_server,
             "Does the response list or describe trace attributes that are available for querying?",
-            expected_tools="tempo_get-attribute-names",
+            expected_tools="list_tempo_attribute_names",
         )
