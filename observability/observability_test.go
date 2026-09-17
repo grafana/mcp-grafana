@@ -947,7 +947,7 @@ func TestToolMetricDimensions(t *testing.T) {
 		// way, so without value bounding the label would take the caller's string.
 		got := ToolMetricDimensions("alerting_manage_rules",
 			map[string]any{"operation": "attacker-chosen-" + strings.Repeat("x", 32)}, nil)
-		assert.Equal(t, ToolMetricDims{Operation: metricDimValueOther}, got)
+		assert.Equal(t, ToolMetricDims{Operation: ValueOther}, got)
 	})
 
 	t.Run("un-allowlisted datasource type collapses to other", func(t *testing.T) {
@@ -955,7 +955,7 @@ func TestToolMetricDimensions(t *testing.T) {
 		// on the schema-guidance path, so this is the reachable-with-2xx case.
 		got := ToolMetricDimensions("create_datasource",
 			map[string]any{"type": "not-a-real-plugin-2f8c"}, nil)
-		assert.Equal(t, ToolMetricDims{ResourceType: metricDimValueOther}, got)
+		assert.Equal(t, ToolMetricDims{ResourceType: ValueOther}, got)
 	})
 
 	t.Run("absent argument stays empty rather than other", func(t *testing.T) {
@@ -1080,11 +1080,11 @@ func TestToolMetricDimensionsPhaseIsBounded(t *testing.T) {
 			name:     "opted-in tool collapses an unexpected phase to other",
 			toolName: "create_datasource",
 			result:   mkResult(map[string]any{ToolPhaseMetaKey: "not-a-real-phase-7b1e"}),
-			want:     metricDimValueOther,
+			want:     ValueOther,
 		},
 		{
 			// Absent stays absent rather than becoming "other", matching
-			// boundedMetricValue's semantics for the other dimensions.
+			// BoundedValue's semantics for the other dimensions.
 			name:     "meta without a phase key stays empty",
 			toolName: "create_datasource",
 			result:   mkResult(map[string]any{"other": "x"}),

@@ -20,6 +20,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
+	"github.com/grafana/mcp-grafana/usagestats"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -50,7 +51,7 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
 		defer sm.Close()
 
 		session := &testClientSession{id: "should-persist"}
@@ -402,7 +403,7 @@ func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 1, "")
+		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 1, "")
 		defer sm.Close()
 
 		session := &testClientSession{id: "custom-ttl"}
@@ -1089,7 +1090,7 @@ func TestValidateServerName(t *testing.T) {
 
 func TestNewServer_DefaultServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1098,7 +1099,7 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 
 func TestNewServer_CustomServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, _, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1108,9 +1109,9 @@ func TestNewServer_CustomServerName(t *testing.T) {
 func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 	obs := newTestObservability(t)
 
-	sAlpha, _, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	sAlpha, _, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
 	defer smAlpha.Close()
-	sBeta, _, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	sBeta, _, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
 	defer smBeta.Close()
 
 	nameAlpha := getServerNameFromInitialize(t, sAlpha)
@@ -1123,7 +1124,7 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 
 func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, _, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1566,7 +1567,7 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 // error (-32603) with a bare Go unmarshal message. See issue #830.
 func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, 0, "")
+	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
 	defer sm.Close()
 
 	c, err := client.NewInProcessClient(s)
@@ -1589,4 +1590,103 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 	require.NoError(t, err, "a schema type mismatch must not surface as a JSON-RPC protocol error")
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "a schema type mismatch must surface as a structured tool error")
+}
+
+func TestCategoryReport(t *testing.T) {
+	dt := disabledTools{enabledTools: "search,alerting,oncall,not-a-real-category", oncall: true, dashboard: true}
+	enabled, disabled := dt.categoryReport()
+
+	assert.ElementsMatch(t, []string{"search", "alerting"}, enabled)
+	// Every category a --disable-* flag turned off, whether or not
+	// --enabled-tools named it. An unrecognised category name from
+	// --enabled-tools appears in neither list.
+	assert.ElementsMatch(t, []string{"dashboard", "oncall"}, disabled)
+}
+
+func TestNativeToolNamesFromRegistrations(t *testing.T) {
+	obs, err := observability.Setup(observability.Config{})
+	require.NoError(t, err)
+	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
+	defer sm.Close()
+
+	names := nativeToolNames(s)
+	assert.Contains(t, names, "search_dashboards")
+	assert.NotEmpty(t, names)
+}
+
+// TestCategoryReportNormalisesAliases: --enabled-tools=clickhouse is rewritten
+// to sql and clears --disable-sql, so the report must say sql is enabled
+// rather than repeating the flags as typed.
+func TestCategoryReportNormalisesAliases(t *testing.T) {
+	dt := disabledTools{enabledTools: "search,clickhouse", sql: true}
+	dt.normalizeEnabledTools()
+	enabled, disabled := dt.categoryReport()
+
+	assert.Contains(t, enabled, "sql")
+	assert.NotContains(t, disabled, "sql")
+	assert.NotContains(t, enabled, "clickhouse")
+}
+
+// TestCategoryReportHonoursWriteAndQueryGates: a category can survive
+// --enabled-tools and still register no tool, because --disable-write empties
+// assistant and --disable-query empties the query-only categories.
+// categoryReport reported those as enabled while the server exposed nothing,
+// which made tool availability look unrelated to tool usage. It shares
+// categoryRegistersTools with buildInstructions so the two cannot drift again.
+func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
+	t.Run("assistant is empty without write tools", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "assistant", write: true}
+		enabled, disabled := dt.categoryReport()
+
+		assert.NotContains(t, enabled, "assistant")
+		// Not disabled either: no --disable-assistant was passed. The two
+		// lists are deliberately not complements.
+		assert.NotContains(t, disabled, "assistant")
+	})
+
+	t.Run("assistant is reported when write tools are enabled", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "assistant"}
+		enabled, _ := dt.categoryReport()
+
+		assert.Contains(t, enabled, "assistant")
+	})
+
+	t.Run("query-only categories are empty without query tools", func(t *testing.T) {
+		dt := disabledTools{enabledTools: strings.Join(queryOnlyCategories, ",") + ",search", query: true}
+		enabled, _ := dt.categoryReport()
+
+		for _, category := range queryOnlyCategories {
+			assert.NotContains(t, enabled, category, "%s registers nothing with --disable-query", category)
+		}
+		// A category that is not query-only still registers its other tools.
+		assert.Contains(t, enabled, "search")
+	})
+
+	t.Run("agrees with the capabilities advertised to the agent", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "assistant,search", write: true}
+		enabled, _ := dt.categoryReport()
+		instructions := (&disabledTools{enabledTools: "assistant,search", write: true}).buildInstructions()
+
+		assert.NotContains(t, enabled, "assistant")
+		assert.NotContains(t, instructions, "Assistant")
+	})
+}
+
+func TestEffectiveTLSEnabled(t *testing.T) {
+	withCert := tlsConfig{certFile: "/tmp/c.pem", keyFile: "/tmp/k.pem"}
+
+	assert.True(t, effectiveTLSEnabled("streamable-http", withCert))
+	// run() only hands the cert and key to the streamable-http server, so an
+	// SSE server with them set is still serving plain HTTP.
+	assert.False(t, effectiveTLSEnabled("sse", withCert))
+	assert.False(t, effectiveTLSEnabled("stdio", withCert))
+	assert.False(t, effectiveTLSEnabled("streamable-http", tlsConfig{}))
+}
+
+func TestEffectiveMetricsEnabled(t *testing.T) {
+	assert.True(t, effectiveMetricsEnabled("streamable-http", true))
+	assert.True(t, effectiveMetricsEnabled("sse", true))
+	// registerOps is never called for stdio, so nothing serves /metrics.
+	assert.False(t, effectiveMetricsEnabled("stdio", true))
+	assert.False(t, effectiveMetricsEnabled("streamable-http", false))
 }
