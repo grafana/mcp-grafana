@@ -705,13 +705,10 @@ func splitAndTrim(s string) []string {
 	return out
 }
 
-// isBenignStdioClose returns true for the normal stdin-EOF error the go-sdk
-// surfaces when the stdio transport shuts down. Defensive: the current go-sdk
-// (v1.8+) returns nil or context.Canceled on clean shutdown, but earlier
-// versions wrapped an unexported "server is closing" error. The string match
-// is kept as a safety net for version skew.
+// isBenignStdioClose returns true for errors the go-sdk surfaces during
+// normal stdio transport shutdown (stdin EOF or connection teardown).
 func isBenignStdioClose(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "server is closing")
+	return errors.Is(err, mcp.ErrConnectionClosed)
 }
 
 // runHTTPServer starts an *http.Server and blocks until ctx is cancelled or
@@ -912,9 +909,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Registered after sm.Close and the observability shutdown so it runs
-	// before them: the final flush needs the session state that sm.Close tears
-	// down, and it logs through the handler o.Shutdown removes.
+	// Registered after the observability shutdown so it runs before it:
+	// the final flush logs through the handler o.Shutdown removes.
 	defer usage.Shutdown()
 	usage.Start(ctx)
 

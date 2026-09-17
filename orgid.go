@@ -2,6 +2,7 @@ package mcpgrafana
 
 import (
 	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -52,7 +53,11 @@ func OrgIDOverrideMiddleware() mcp.Middleware {
 				return next(ctx, method, req)
 			}
 			callReq, ok := req.(*mcp.CallToolRequest)
-			if !ok || callReq == nil || len(callReq.Params.Arguments) == 0 {
+			if !ok || callReq == nil || callReq.Params == nil || len(callReq.Params.Arguments) == 0 {
+				return next(ctx, method, req)
+			}
+
+			if !bytes.Contains(callReq.Params.Arguments, []byte(`"orgId"`)) {
 				return next(ctx, method, req)
 			}
 

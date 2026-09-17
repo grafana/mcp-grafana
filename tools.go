@@ -505,9 +505,17 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 // already-serialized InputSchema (any that marshals to JSON). This avoids
 // re-reflecting the handler struct a second time in MustTool.
 func parseInputSchema(schema any) (schemaType string, properties map[string]any, required []string) {
-	b, err := json.Marshal(schema)
-	if err != nil {
-		return "object", nil, nil
+	var b []byte
+	switch v := schema.(type) {
+	case json.RawMessage:
+		b = v
+	case []byte:
+		b = v
+	default:
+		var err error
+		if b, err = json.Marshal(schema); err != nil {
+			return "object", nil, nil
+		}
 	}
 	var s toolArgumentsSchema
 	if err := json.Unmarshal(b, &s); err != nil {
