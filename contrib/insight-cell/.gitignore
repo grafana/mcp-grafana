@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+
+# Never commit secrets or local config
+.env
+.env.*
+!.env.example
+
+# Local editor / OS
+.DS_Store
+.vscode/
