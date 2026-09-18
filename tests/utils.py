@@ -82,7 +82,15 @@ async def run_llm_tool_loop(
     mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     tools = await get_converted_tools(mcp_client)
     messages = [
-        Message(role="system", content="You are a helpful assistant."),
+        Message(
+            role="system",
+            content=(
+                "You are a helpful assistant with access to Grafana tools. "
+                "Use the available tools to fulfill the user's request. "
+                "Discover missing datasource UIDs and other identifiers using the tools "
+                "rather than asking the user follow-up questions."
+            ),
+        ),
         Message(role="user", content=prompt),
     ]
     tools_called: List[MCPToolCall] = []
