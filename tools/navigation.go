@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -318,30 +317,30 @@ var GenerateDeeplink = mcpgrafana.MustTool(
 	"generate_deeplink",
 	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to also attempt a /goto/<uid> short URL; if shortening fails, the full deeplink is returned.",
 	generateDeeplink,
-	mcp.WithTitleAnnotation("Generate navigation deeplink"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Generate navigation deeplink"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
 	"generate_deeplink",
 	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). In read-only mode, shorten=true is accepted but ignored and the full deeplink is returned.",
 	generateDeeplinkReadOnly,
-	mcp.WithTitleAnnotation("Generate navigation deeplink"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Generate navigation deeplink"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddNavigationTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddNavigationTools(s *mcp.Server, enableWriteTools bool) {
 	if enableWriteTools {
-		GenerateDeeplink.Register(mcp)
+		GenerateDeeplink.Register(s)
 		return
 	}
-	GenerateDeeplinkReadOnly.Register(mcp)
+	GenerateDeeplinkReadOnly.Register(s)
 }
 
 // buildDashboardTargetURL returns the dashboard or provisioning-preview URL
