@@ -8,7 +8,10 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture
 def grafana_env():
-    env = {"GRAFANA_URL": os.environ.get("GRAFANA_URL", "http://localhost:3000")}
+    env = {
+        "GRAFANA_URL": os.environ.get("GRAFANA_URL", "http://localhost:3000"),
+        "GRAFANA_USAGE_STATS": "disabled",
+    }
     # Check for the new service account token environment variable first
     if key := os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN"):
         env["GRAFANA_SERVICE_ACCOUNT_TOKEN"] = key

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-09-17
+
+### Fixed
+
+- `shorten_url` no longer doubles the Grafana sub-path prefix when generating short links on instances served under a sub-path ([#1205](https://github.com/grafana/mcp-grafana/pull/1205))
+- `get_annotation_tags` now accepts `limit` as a number instead of a string, fixing type-mismatch errors from LLM callers ([#1204](https://github.com/grafana/mcp-grafana/pull/1204))
+- Datasource TLS schema fields no longer include PEM placeholder strings that could confuse LLMs into sending literal placeholder text ([#1200](https://github.com/grafana/mcp-grafana/pull/1200))
+
+## [1.5.0] - 2026-09-17
+
+### Added
+
+- Anonymous usage statistics reporting with per-process event unit, configurable via `--usage-stats` / `GRAFANA_USAGE_STATS` (modes: `enabled`, `disabled`, `log`; default disabled). Supports `DO_NOT_TRACK=1`, reports tool call counts and server configuration with no PII, and flushes on a 4-hour interval and at shutdown ([#1188](https://github.com/grafana/mcp-grafana/pull/1188))
+- `UserAgent` field on `GrafanaConfig` for identifying API callers in outbound Grafana requests ([#1187](https://github.com/grafana/mcp-grafana/pull/1187))
+
+### Fixed
+
+- `query_loki_logs` now preserves structured metadata when using the compact output format ([#1196](https://github.com/grafana/mcp-grafana/pull/1196))
+
+### Changed
+
+- Tempo tools now use direct HTTP calls to the Tempo API instead of proxying through an MCP layer, improving reliability and reducing overhead ([#1194](https://github.com/grafana/mcp-grafana/pull/1194))
+
 ## [1.4.2] - 2026-09-14
 
 ### Added
@@ -469,6 +492,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.5.1]: https://github.com/grafana/mcp-grafana/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/grafana/mcp-grafana/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/grafana/mcp-grafana/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/grafana/mcp-grafana/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/grafana/mcp-grafana/compare/v1.3.0...v1.4.0
