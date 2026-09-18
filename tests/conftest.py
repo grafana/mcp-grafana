@@ -49,7 +49,10 @@ def mcp_url():
 
 @pytest.fixture
 def grafana_env():
-    env = {"GRAFANA_URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL)}
+    env = {
+        "GRAFANA_URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
+        "GRAFANA_USAGE_STATS": "disabled",
+    }
     # Check for the new service account token environment variable first
     if key := os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN"):
         env["GRAFANA_SERVICE_ACCOUNT_TOKEN"] = key
