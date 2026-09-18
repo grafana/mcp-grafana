@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -433,9 +435,21 @@ func TestParseSlowRequestLogLevel(t *testing.T) {
 	}
 }
 
+// testBinaryPath returns a per-test output path for `go build -o`. Windows
+// refuses to exec a binary without the .exe suffix, so the suffix follows
+// the host OS rather than being hardcoded.
+func testBinaryPath(t *testing.T) string {
+	t.Helper()
+	name := "mcp-grafana"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(t.TempDir(), name)
+}
+
 func TestVersionOutput(t *testing.T) {
 	t.Run("without ldflags returns non-empty version", func(t *testing.T) {
-		bin := t.TempDir() + "/mcp-grafana"
+		bin := testBinaryPath(t)
 		build := exec.Command("go", "build", "-o", bin, ".")
 		out, err := build.CombinedOutput()
 		require.NoError(t, err, "go build failed: %s", out)
@@ -446,7 +460,7 @@ func TestVersionOutput(t *testing.T) {
 	})
 
 	t.Run("ldflags version takes precedence", func(t *testing.T) {
-		bin := t.TempDir() + "/mcp-grafana"
+		bin := testBinaryPath(t)
 		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana.version=v1.2.3", "-o", bin, ".")
 		out, err := build.CombinedOutput()
 		require.NoError(t, err, "go build failed: %s", out)
@@ -743,7 +757,7 @@ func TestHTTPSecurityConfigPolicy(t *testing.T) {
 // Exercise the binary so the test covers both the SDK's loopback check and
 // our Host/Origin middleware, including how the CLI wires them together.
 func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
-	bin := t.TempDir() + "/mcp-grafana"
+	bin := testBinaryPath(t)
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".")
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "go build failed: %s", out)
