@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 // lokiBackend abstracts the differences between datasource types that serve
@@ -69,6 +71,15 @@ type lokiQueryResult struct {
 // they don't have to re-fetch it (mirroring backendForDatasource in
 // prom_backend.go).
 func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, error) {
+	config := mcpgrafana.GrafanaConfigFromContext(ctx)
+	allowed := config.LokiAllowedDatasourceUIDs
+	if config.LokiGuardrailMode == mcpgrafana.LokiGuardrailStrict && len(allowed) == 0 {
+		return nil, fmt.Errorf("strict Loki guardrail mode requires a datasource allowlist")
+	}
+	if len(allowed) > 0 && !slices.Contains(allowed, uid) {
+		return nil, fmt.Errorf("loki datasource %q is not in the configured datasource allowlist", uid)
+	}
+
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
