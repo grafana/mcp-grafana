@@ -226,6 +226,18 @@ func TestGuardrailMetricsFailOpen(t *testing.T) {
 	})
 }
 
+func TestGuardrailMetricsStrictIncompleteEvaluationIsBlocked(t *testing.T) {
+	end := time.Now()
+	reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailStrict, 100<<30, 24*time.Hour)
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+
+	require.Error(t, guardLokiQuery(ctx, newBrokenStatsBackend(t), `{namespace="foo", app="bar"}`, "range", end.Add(-time.Hour), end))
+
+	counts := guardrailCounts(t, reader)
+	assert.Equal(t, map[string]int64{"backend=loki,reason=evaluation": 1}, counts["mcp.loki_guardrail.blocked"])
+	assert.Empty(t, counts["mcp.loki_guardrail.fail_open"])
+}
+
 // Guardrail mode off short-circuits before any instrument is touched: an
 // unguarded query must not show up as admitted.
 func TestGuardrailMetricsOffRecordsNothing(t *testing.T) {
