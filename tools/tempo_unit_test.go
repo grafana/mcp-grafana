@@ -739,3 +739,47 @@ func TestTempoTraceQLDocsInvalidTopic(t *testing.T) {
 	require.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "invalid topic")
 }
+
+func TestAnnotateTraceQLParseError(t *testing.T) {
+	parseErr := "tempo API returned 400: query parse error. Consult TraceQL docs tools: parse error at line 1, col 1: syntax error: unexpected quantile_over_time"
+	got := annotateTraceQLParseError(parseErr)
+
+	// The original message must survive; the hint is additive.
+	assert.Contains(t, got, "unexpected quantile_over_time")
+	// A copyable correct query, plus the habits that actually cause the failures.
+	assert.Contains(t, got, "quantile_over_time(span:duration, .99) by (span.name)")
+	assert.Contains(t, got, "[5m]")
+	assert.Contains(t, got, "span:duration")
+	assert.Contains(t, got, "_over_time")
+	assert.Contains(t, got, "get_tempo_traceql_docs")
+}
+
+func TestAnnotateTraceQLParseErrorLeavesOtherErrorsAlone(t *testing.T) {
+	for _, msg := range []string{
+		"tempo API returned 499: query timed out - try narrowing the time range or simplifying the query",
+		"datasource abc is of type loki, not tempo",
+		"request failed: connection refused",
+	} {
+		assert.Equal(t, msg, annotateTraceQLParseError(msg), "non-parse errors must pass through untouched")
+	}
+}
+
+func TestQueryTempoMetricsAnnotatesParseErrors(t *testing.T) {
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("query parse error. Consult TraceQL docs tools: parse error at line 1, col 1: syntax error: unexpected rate"))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("query_tempo_metrics", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         `rate(span.http.method = "POST" [5m])`,
+	}))
+
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	text := result.Content[0].(mcp.TextContent).Text
+	assert.Contains(t, text, "unexpected rate")
+	assert.Contains(t, text, "quantile_over_time(span:duration, .99)")
+}
