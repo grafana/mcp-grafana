@@ -12,10 +12,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -28,16 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testClientSession implements server.ClientSession for unit tests.
-type testClientSession struct {
-	id string
-}
-
-func (s *testClientSession) SessionID() string                                   { return s.id }
-func (s *testClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return nil }
-func (s *testClientSession) Initialize()                                         {}
-func (s *testClientSession) Initialized() bool                                   { return true }
-
 func newTestObservability(t *testing.T) *observability.Observability {
 	t.Helper()
 	obs, err := observability.Setup(observability.Config{})
@@ -46,24 +37,6 @@ func newTestObservability(t *testing.T) *observability.Observability {
 		_ = obs.Shutdown(context.Background())
 	})
 	return obs
-}
-
-func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
-	obs := newTestObservability(t)
-	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-		defer sm.Close()
-
-		session := &testClientSession{id: "should-persist"}
-		sm.CreateSession(context.Background(), session)
-
-		// Advance the fake clock well beyond any reasonable reaper interval.
-		// With reaper disabled (TTL=0), the session must survive.
-		time.Sleep(time.Hour)
-
-		_, exists := sm.GetSession("should-persist")
-		assert.True(t, exists, "Session should persist when idle timeout is 0 (reaper disabled)")
-	})
 }
 
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
@@ -115,7 +88,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		{
 			name:         "empty enabled list shows no capabilities",
 			enabledTools: "",
-			disableFlags: map[string]bool{"proxied": true},
+			disableFlags: map[string]bool{"tempo": true},
 			wantContains: []string{
 				"No tool categories are currently enabled.",
 			},
@@ -125,7 +98,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "agento11y excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -153,7 +126,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "assistant excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -266,8 +239,8 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				if tc.disableFlags["prometheus"] {
 					dt.prometheus = true
 				}
-				if tc.disableFlags["proxied"] {
-					dt.proxied = true
+				if tc.disableFlags["tempo"] {
+					dt.tempo = true
 				}
 				if tc.disableFlags["agento11y"] {
 					dt.agento11y = true
@@ -329,67 +302,87 @@ func TestNormalizeEnabledTools(t *testing.T) {
 		name         string
 		enabledTools string
 		disableSQL   bool
+		disableTempo bool
 		wantTools    string
-		wantDisabled bool
+		wantSQLOff   bool
+		wantTempoOff bool
 	}{
 		{
 			name:         "clickhouse alias becomes sql",
 			enabledTools: "search,clickhouse",
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "snowflake alias becomes sql",
 			enabledTools: "search,snowflake",
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "athena alias becomes sql",
 			enabledTools: "search,athena",
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "multiple aliases deduplicated",
 			enabledTools: "clickhouse,snowflake,athena",
 			wantTools:    "sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "alias overrides disable-sql",
 			enabledTools: "search,clickhouse",
 			disableSQL:   true,
 			wantTools:    "search,sql",
-			wantDisabled: false,
 		},
 		{
 			name:         "sql without alias preserves disable flag",
 			enabledTools: "search,sql",
 			disableSQL:   true,
 			wantTools:    "search,sql",
-			wantDisabled: true,
+			wantSQLOff:   true,
 		},
 		{
 			name:         "no aliases no change",
 			enabledTools: "search,prometheus",
 			wantTools:    "search,prometheus",
-			wantDisabled: false,
 		},
 		{
 			name:         "alias coexists with sql",
 			enabledTools: "sql,clickhouse",
 			wantTools:    "sql",
-			wantDisabled: false,
+		},
+		{
+			name:         "proxied alias becomes tempo",
+			enabledTools: "search,proxied",
+			wantTools:    "search,tempo",
+		},
+		{
+			name:         "proxied alias preserves disable-tempo",
+			enabledTools: "search,proxied",
+			disableTempo: true,
+			wantTools:    "search,tempo",
+			wantTempoOff: true,
+		},
+		{
+			name:         "tempo without alias preserves disable flag",
+			enabledTools: "search,tempo",
+			disableTempo: true,
+			wantTools:    "search,tempo",
+			wantTempoOff: true,
+		},
+		{
+			name:         "proxied coexists with tempo",
+			enabledTools: "tempo,proxied",
+			wantTools:    "tempo",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dt := disabledTools{enabledTools: tc.enabledTools, sql: tc.disableSQL}
+			dt := disabledTools{enabledTools: tc.enabledTools, sql: tc.disableSQL, tempo: tc.disableTempo}
 			dt.normalizeEnabledTools()
 			assert.Equal(t, tc.wantTools, dt.enabledTools)
-			assert.Equal(t, tc.wantDisabled, dt.sql, "sql disabled flag")
+			assert.Equal(t, tc.wantSQLOff, dt.sql, "sql disabled flag")
+			assert.Equal(t, tc.wantTempoOff, dt.tempo, "tempo disabled flag")
 		})
 	}
 }
@@ -400,23 +393,10 @@ func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
 	assert.Contains(t, instructions, "SQL: Query supported SQL datasources")
 }
 
-func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
-	obs := newTestObservability(t)
-	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 1, "")
-		defer sm.Close()
-
-		session := &testClientSession{id: "custom-ttl"}
-		sm.CreateSession(context.Background(), session)
-
-		// Advance the fake clock past the 1-minute TTL.
-		// The reaper runs every TTL/2 (30s), so by 2 minutes
-		// it will have fired and reaped the idle session.
-		time.Sleep(2 * time.Minute)
-
-		_, exists := sm.GetSession("custom-ttl")
-		assert.False(t, exists, "Session should be reaped after exceeding the 1-minute idle timeout")
-	})
+func TestBuildInstructions_ProxiedAliasBackCompat(t *testing.T) {
+	dt := disabledTools{enabledTools: "proxied"}
+	instructions := dt.buildInstructions()
+	assert.Contains(t, instructions, "Tempo: Search traces")
 }
 
 func TestParseSlowRequestLogLevel(t *testing.T) {
@@ -455,9 +435,21 @@ func TestParseSlowRequestLogLevel(t *testing.T) {
 	}
 }
 
+// testBinaryPath returns a per-test output path for `go build -o`. Windows
+// refuses to exec a binary without the .exe suffix, so the suffix follows
+// the host OS rather than being hardcoded.
+func testBinaryPath(t *testing.T) string {
+	t.Helper()
+	name := "mcp-grafana"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(t.TempDir(), name)
+}
+
 func TestVersionOutput(t *testing.T) {
 	t.Run("without ldflags returns non-empty version", func(t *testing.T) {
-		bin := t.TempDir() + "/mcp-grafana"
+		bin := testBinaryPath(t)
 		build := exec.Command("go", "build", "-o", bin, ".")
 		out, err := build.CombinedOutput()
 		require.NoError(t, err, "go build failed: %s", out)
@@ -468,7 +460,7 @@ func TestVersionOutput(t *testing.T) {
 	})
 
 	t.Run("ldflags version takes precedence", func(t *testing.T) {
-		bin := t.TempDir() + "/mcp-grafana"
+		bin := testBinaryPath(t)
 		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana.version=v1.2.3", "-o", bin, ".")
 		out, err := build.CombinedOutput()
 		require.NoError(t, err, "go build failed: %s", out)
@@ -765,7 +757,7 @@ func TestHTTPSecurityConfigPolicy(t *testing.T) {
 // Exercise the binary so the test covers both the SDK's loopback check and
 // our Host/Origin middleware, including how the CLI wires them together.
 func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
-	bin := t.TempDir() + "/mcp-grafana"
+	bin := testBinaryPath(t)
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".")
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "go build failed: %s", out)
@@ -802,7 +794,7 @@ func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
 					port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 					require.NoError(t, listener.Close())
 					addr := "127.0.0.1:" + port
-					args := []string{"--transport=" + transport, "--address=0.0.0.0:" + port, "--enabled-tools=", "--disable-proxied"}
+					args := []string{"--transport=" + transport, "--address=0.0.0.0:" + port, "--enabled-tools=", "--disable-tempo"}
 					args = append(args, tc.flags...)
 					cmd := exec.CommandContext(t.Context(), bin, args...)
 					cmd.Env = env
@@ -1090,8 +1082,7 @@ func TestValidateServerName(t *testing.T) {
 
 func TestNewServer_DefaultServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-	defer sm.Close()
+	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "mcp-grafana", name)
@@ -1099,8 +1090,7 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 
 func TestNewServer_CustomServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-	defer sm.Close()
+	s := newServer("my-custom-server", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-server", name)
@@ -1109,10 +1099,9 @@ func TestNewServer_CustomServerName(t *testing.T) {
 func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 	obs := newTestObservability(t)
 
-	sAlpha, _, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-	defer smAlpha.Close()
-	sBeta, _, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-	defer smBeta.Close()
+	sAlpha := newServer("instance-alpha", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+
+	sBeta := newServer("instance-beta", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
 
 	nameAlpha := getServerNameFromInitialize(t, sAlpha)
 	nameBeta := getServerNameFromInitialize(t, sBeta)
@@ -1124,8 +1113,7 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 
 func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-	defer sm.Close()
+	s := newServer("my-custom-instance", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-instance", name)
@@ -1567,8 +1555,7 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 // error (-32603) with a bare Go unmarshal message. See issue #830.
 func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-	defer sm.Close()
+	s := newServer(defaultServerName, disabledTools{enabledTools: "datasource"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
 
 	c, err := client.NewInProcessClient(s)
 	require.NoError(t, err)
@@ -1606,8 +1593,7 @@ func TestCategoryReport(t *testing.T) {
 func TestNativeToolNamesFromRegistrations(t *testing.T) {
 	obs, err := observability.Setup(observability.Config{})
 	require.NoError(t, err)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), 0, "")
-	defer sm.Close()
+	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
 
 	names := nativeToolNames(s)
 	assert.Contains(t, names, "search_dashboards")

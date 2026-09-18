@@ -300,7 +300,7 @@ func TestGetAnnotationTags_UsesCorrectQueryParams(t *testing.T) {
 
 	ctx := mockCtxWithClient(server)
 	tag := "error"
-	limit := "50"
+	limit := int64(50)
 
 	_, err := getAnnotationTags(ctx, GetAnnotationTagsInput{
 		Tag:   &tag,

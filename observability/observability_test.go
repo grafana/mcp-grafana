@@ -1032,10 +1032,9 @@ func TestToolMetricDimensions(t *testing.T) {
 }
 
 func TestToolMetricDimensionsPhaseIsBounded(t *testing.T) {
-	// Phase comes from the result's _meta, and a proxied tool's result is
-	// produced by a remote MCP server rather than by this repo — so the phase
-	// must be bounded by the allowlist exactly like the argument-derived
-	// dimensions, not trusted to be low-cardinality.
+	// Phase comes from the result's _meta and must be bounded by the
+	// allowlist exactly like the argument-derived dimensions, not trusted
+	// to be low-cardinality.
 	mkResult := func(meta map[string]any) *mcp.CallToolResult {
 		r := mcp.NewToolResultText("{}")
 		if meta != nil {
@@ -1054,7 +1053,7 @@ func TestToolMetricDimensionsPhaseIsBounded(t *testing.T) {
 			// The case that matters: a tool proxied from an MCP-enabled
 			// datasource can put anything in _meta, and it must not reach a label.
 			name:     "tool absent from the allowlist contributes no phase",
-			toolName: "tempo_traceql-search",
+			toolName: "search_tempo_traces",
 			result:   mkResult(map[string]any{ToolPhaseMetaKey: "attacker-chosen-" + strings.Repeat("x", 32)}),
 			want:     "",
 		},
@@ -1142,7 +1141,7 @@ func TestToolMetricDimensionsPhaseIsBounded(t *testing.T) {
 	t.Run("buildOperationAttrs drops an un-allowlisted tool's phase", func(t *testing.T) {
 		obs := &Observability{}
 		req := &mcp.CallToolRequest{}
-		req.Params.Name = "tempo_traceql-search"
+		req.Params.Name = "search_tempo_traces"
 
 		attrs := obs.buildOperationAttrs(context.Background(), "tools/call", req,
 			mkResult(map[string]any{ToolPhaseMetaKey: "remote-chosen"}), nil)
