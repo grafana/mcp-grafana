@@ -14,6 +14,19 @@ wheels/
 # UI app build artifacts
 ui/*/node_modules/
 
+# Stray binaries from `go build ./cmd/mcp-grafana` without -o dist/.
+# Leading slash pins these to the repo root so they cannot shadow the ui/ sources
+# or anything named mcp-grafana deeper in the tree.
+/mcp-grafana
+/mcp-grafana-*
+
+# JetBrains IDE state (.vscode and .cursor are already covered above)
+.idea/
+
+# Saved tool results used by the UI apps' dev fixture loader. Regenerable, and they
+# go stale as soon as the tool's output shape changes, so they stay out of git.
+ui/*/fixture-*.json
+
 # Virtual environments
 .venv
 .envrc

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -23,6 +24,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
+	MaxDataPoints  int               `json:"maxDataPoints,omitempty" jsonschema:"description=Prometheus panels only: maximum points per series (default 500). The query step is derived from this and the time range\\, the way a Grafana panel derives its step from its pixel width. Raise it only if you need finer resolution than a chart can show. Other datasources bound their own result size (Loki by entry limit\\, SQL and InfluxDB via the $__interval macro) and ignore this."`
 	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Fallback datasource type used only when the datasource cannot be read (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres). When the datasource is readable its real type is used and this is ignored."`
 }
 
@@ -61,6 +63,7 @@ type singlePanelQueryParams struct {
 	Variables  map[string]string
 	DsUID      string
 	DsType     string
+	MaxPoints  int
 }
 
 // panelInfo contains extracted information about a panel
@@ -119,6 +122,7 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 			Variables:  args.Variables,
 			DsUID:      args.DatasourceUID,
 			DsType:     args.DatasourceType,
+			MaxPoints:  args.MaxDataPoints,
 		})
 		if err != nil {
 			errs[panelID] = err.Error()
@@ -229,7 +233,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 	switch normalizeDatasourceType(datasourceType) {
 	case "prometheus":
-		results, err = executePrometheusQuery(ctx, datasourceUID, query, params.Start, params.End)
+		results, err = executePrometheusQuery(ctx, datasourceUID, query, params.Start, params.End, params.MaxPoints)
 	case "loki":
 		results, err = executeLokiQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "clickhouse":
@@ -541,7 +545,38 @@ func firstTemplateVariableValues(values templateVariableValues) map[string]strin
 }
 
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
-func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
+// defaultMaxDataPoints is the per-series point budget when the caller gives none.
+// A few hundred points is all a chart a few hundred pixels wide can show, and it is
+// the same reasoning Grafana uses to turn a panel's width into maxDataPoints.
+const defaultMaxDataPoints = 500
+
+// minStepSeconds keeps short ranges at the resolution this tool has always used
+// rather than making them finer than before.
+const minStepSeconds = 60
+
+// prometheusStepSeconds bounds the result size by range rather than leaving the step
+// fixed. Prometheus is the only executor here that needs it: Loki caps entries with
+// its own limit, and the SQL and InfluxDB paths take their granularity from the
+// panel query's own $__interval macro (see substituteGrafanaMacros), so only this
+// one chose a server-side step independent of the range. A fixed one-minute step is fine for an hour and ruinous for a week: seven
+// days of it is 10,080 points per series, which pushed a six-series panel to 1.9 MB
+// and past the tool-output limit of every host, so the caller got nothing at all.
+func prometheusStepSeconds(startTime, endTime time.Time, maxPoints int) int {
+	if maxPoints <= 0 {
+		maxPoints = defaultMaxDataPoints
+	}
+	rangeSeconds := int(endTime.Sub(startTime).Seconds())
+	if rangeSeconds <= 0 {
+		return minStepSeconds
+	}
+	step := (rangeSeconds + maxPoints - 1) / maxPoints // ceil
+	if step < minStepSeconds {
+		step = minStepSeconds
+	}
+	return step
+}
+
+func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string, maxPoints int) (model.Value, error) {
 	// Parse time range for macro substitution
 	startTime, err := parseTime(start)
 	if err != nil {
@@ -560,7 +595,7 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 		Expr:          query,
 		StartTime:     start,
 		EndTime:       end,
-		StepSeconds:   60, // Default 1-minute resolution
+		StepSeconds:   prometheusStepSeconds(startTime, endTime, maxPoints),
 		QueryType:     "range",
 	})
 }
@@ -989,15 +1024,49 @@ func truncateString(s string, maxLen int) string {
 }
 
 // RunPanelQuery is the tool definition for running panel queries
+// runPanelQueryApp wraps runPanelQuery so the tool *result* carries
+// _meta.ui.resourceUri.
+//
+// WithUIResource on the tool definition is not sufficient: hosts key inline MCP
+// App rendering off the result's metadata, and MustTool's default path marshals a
+// struct return straight to a JSON text block with no _meta at all. content[0]
+// stays byte-identical to that JSON so text-only hosts and the app's own parser
+// are unaffected, and the struct also rides structuredContent for hosts that read
+// the spec channel.
+func runPanelQueryApp(ctx context.Context, args RunPanelQueryParams) (*mcp.CallToolResult, error) {
+	result, err := runPanelQuery(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal panel query result: %w", err)
+	}
+	return &mcp.CallToolResult{
+		Result: mcp.Result{
+			Meta: &mcp.Meta{
+				AdditionalFields: map[string]any{
+					"ui": map[string]any{"resourceUri": mcpgrafana.PanelEmbedResourceURI},
+				},
+			},
+		},
+		Content:           []mcp.Content{mcp.TextContent{Type: "text", Text: string(payload)}},
+		StructuredContent: result,
+	}, nil
+}
+
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
 	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, InfluxDB\\, BigQuery\\, MSSQL\\, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
-	runPanelQuery,
+	runPanelQueryApp,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
+	// Hosts that support MCP Apps render the results as live Grafana panels. Hosts
+	// that do not simply ignore the metadata and show the text result.
+	mcpgrafana.WithUIResource(mcpgrafana.PanelEmbedResourceURI),
 )
 
 // AddRunPanelQueryTools registers run panel query tools with the MCP server.

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Grafana Panels</title>
+<style>
+  /* Host tokens with conservative fallbacks. applyHostStyleVariables overwrites
+     these on :root with the host's real palette, and <grafana-panel> reads the same
+     names, so the panels and this page stay in step automatically. */
+  :root {
+    --color-background-primary: #ffffff;
+    --color-background-secondary: #f4f5f5;
+    --color-text-primary: #16191d;
+    --color-text-secondary: #5a636d;
+    --color-border-primary: #e1e4e8;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-text-md-size: 14px;
+    --border-radius-md: 6px;
+    --grafana-embed-theme: light;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 12px;
+    background: var(--color-background-primary);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-text-md-size);
+    line-height: 1.5;
+  }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  .meta { font-size: 12px; color: var(--color-text-secondary); }
+  .controls { display: flex; gap: 6px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .controls span { font-size: 12px; color: var(--color-text-secondary); margin-right: 2px; }
+  button {
+    font: inherit;
+    font-size: 12px;
+    padding: 3px 10px;
+    color: var(--color-text-primary);
+    background: var(--color-background-secondary);
+    border: 1px solid var(--color-border-primary);
+    border-radius: var(--border-radius-md);
+    cursor: pointer;
+  }
+  button[aria-pressed="true"] { border-color: var(--color-text-primary); }
+  /* Host prose interleaved with Grafana panels: the whole point. */
+  .note { font-size: 13px; color: var(--color-text-secondary); margin: 0 0 10px; }
+  .panel { margin-bottom: 18px; }
+  .panel h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+  .panel .q {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    margin: 0 0 6px;
+    overflow-wrap: anywhere;
+  }
+  #status, #error { font-size: 13px; padding: 10px 0; }
+  #error { color: #c4314b; }
+</style>
+</head>
+<body>
+  <header>
+    <h1 id="title">Grafana panels</h1>
+    <span class="meta" id="meta"></span>
+  </header>
+  <div id="error" hidden></div>
+  <div class="controls" id="controls" hidden>
+    <span>Time range</span>
+    <button data-range="15m">15m</button>
+    <button data-range="1h">1h</button>
+    <button data-range="6h">6h</button>
+    <button data-range="24h">24h</button>
+    <button data-range="7d">7d</button>
+    <button data-range="30d">30d</button>
+  </div>
+  <p class="note" id="note" hidden></p>
+  <div id="panels"></div>
+  <div id="status">Waiting for panel data…</div>
+  <script type="module" src="./src/mcp-app.ts"></script>
+</body>
+</html>

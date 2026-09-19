@@ -10,6 +10,7 @@ import (
 const (
 	appMIMEType            = "text/html;profile=mcp-app"
 	PanelViewerResourceURI = "ui://mcp-grafana/panel-viewer.html"
+	PanelEmbedResourceURI  = "ui://mcp-grafana/panel-embed.html"
 
 	// UIContentKindDeeplink is the `_meta.ui.kind` value for a Grafana deeplink.
 	UIContentKindDeeplink = "deeplink"
@@ -43,6 +44,19 @@ func NewUIContentMeta(kind string) *mcp.Meta {
 	}
 }
 
+// staticAppResource serves an embedded MCP App HTML bundle at uri.
+func staticAppResource(uri, html string) server.ResourceHandlerFunc {
+	return func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      uri,
+				MIMEType: appMIMEType,
+				Text:     html,
+			},
+		}, nil
+	}
+}
+
 // RegisterAppResources registers MCP App UI resources with the server.
 func RegisterAppResources(s *server.MCPServer) {
 	s.AddResource(
@@ -52,14 +66,16 @@ func RegisterAppResources(s *server.MCPServer) {
 			mcp.WithResourceDescription("Interactive HTML viewer for Grafana panel images"),
 			mcp.WithMIMEType(appMIMEType),
 		),
-		func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			return []mcp.ResourceContents{
-				mcp.TextResourceContents{
-					URI:      PanelViewerResourceURI,
-					MIMEType: appMIMEType,
-					Text:     panelViewerAppHTML,
-				},
-			}, nil
-		},
+		staticAppResource(PanelViewerResourceURI, panelViewerAppHTML),
+	)
+
+	s.AddResource(
+		mcp.NewResource(
+			PanelEmbedResourceURI,
+			"Grafana Panels",
+			mcp.WithResourceDescription("Live Grafana panels rendered with Grafana's own visualization pipeline, with a time-range control"),
+			mcp.WithMIMEType(appMIMEType),
+		),
+		staticAppResource(PanelEmbedResourceURI, panelEmbedAppHTML),
 	)
 }
