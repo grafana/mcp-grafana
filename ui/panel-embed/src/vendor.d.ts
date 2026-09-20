@@ -9,7 +9,10 @@ declare module "*/grafana-embed.mjs" {
     matrix: Array<{ metric: Record<string, string>; values?: Array<[number, string]> }>,
     opts?: { unit?: string; fallbackName?: string }
   ): unknown[];
-  export function framesFromQueryResponse(response: unknown): unknown[];
+  /** A /api/ds/query response body: { results: { <refId>: { frames } } }. */
+  export function framesFromQueryResponse(body: {
+    results: Record<string, { frames?: unknown[] } | undefined>;
+  }): unknown[];
   export function staticDataProvider(frames: unknown[]): EmbedDataProvider;
   export function registeredPanelTypes(): string[];
 }

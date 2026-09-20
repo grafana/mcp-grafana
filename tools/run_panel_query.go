@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,6 +44,17 @@ type PanelQueryResult struct {
 	Query          string      `json:"query"`
 	Results        interface{} `json:"results"`
 	Hints          []string    `json:"hints,omitempty"`
+
+	// PanelSpec is how the panel draws, as the classic v1 panel JSON the
+	// dashboard already stores: type, title, options and fieldConfig. A viewer
+	// that renders these results can only guess at units, thresholds, axis
+	// placement and per-series overrides without it, so a panel reconstructed
+	// from the query alone looks like a different panel.
+	//
+	// Queries are left out because they are already above, and transformations
+	// because nothing downstream applies them - a panel that has any gets a hint
+	// instead of a spec that would quietly overstate the fidelity.
+	PanelSpec map[string]interface{} `json:"panelSpec,omitempty"`
 }
 
 // RunPanelQueryResult contains the result of running panel queries
@@ -74,6 +86,9 @@ type panelInfo struct {
 	DatasourceType string
 	Query          string
 	RawTarget      map[string]interface{} // For CloudWatch and other complex query types
+
+	Spec               map[string]interface{} // How the panel draws; see PanelQueryResult.PanelSpec
+	HasTransformations bool
 }
 
 // runPanelQuery executes one or more dashboard panel queries with optional time range and variable overrides
@@ -267,6 +282,13 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		hints = generatePanelQueryHints(datasourceType, query)
 	}
 
+	// Said out loud because the gap is invisible otherwise: the results below are
+	// the panel's query output, and a transformation sits between that and what the
+	// panel shows, so a value someone is looking for may not appear here at all.
+	if panelData.HasTransformations {
+		hints = append(hints, "this panel applies transformations, which are not applied to these results; what the panel shows in Grafana may differ")
+	}
+
 	return &PanelQueryResult{
 		PanelID:        params.PanelID,
 		PanelTitle:     panelData.Title,
@@ -275,6 +297,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		Query:          query,
 		Results:        results,
 		Hints:          hints,
+		PanelSpec:      panelData.Spec,
 	}, nil
 }
 
@@ -400,6 +423,11 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 		Title: safeString(panel, "title"),
 	}
 
+	// Read before the target checks below, so a panel whose query cannot be
+	// extracted still reports why rather than failing twice over.
+	info.Spec = panelRenderSpec(panel)
+	info.HasTransformations = len(safeArray(panel, "transformations")) > 0
+
 	// Extract query from targets
 	targets := safeArray(panel, "targets")
 	if len(targets) == 0 {
@@ -449,6 +477,29 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	info.Query = query
 
 	return info, nil
+}
+
+// panelRenderSpec copies the keys that decide how a panel draws into a standalone
+// object. Classic v1 panel JSON rather than Dashboard v2 PanelKind, because that is
+// what the dashboard stores and what a renderer accepts directly: converting here
+// would be a lossy round trip for no reader's benefit.
+//
+// Returns nil when the panel declares no type. A spec without one cannot select a
+// renderer, and a caller is better served by an absent field than by an object that
+// looks usable and is not.
+func panelRenderSpec(panel map[string]interface{}) map[string]interface{} {
+	if safeString(panel, "type") == "" {
+		return nil
+	}
+
+	spec := make(map[string]interface{}, 4)
+	for _, key := range []string{"type", "title", "options", "fieldConfig"} {
+		if value, ok := panel[key]; ok && value != nil {
+			spec[key] = value
+		}
+	}
+
+	return spec
 }
 
 // extractTemplateVariableValues extracts all selected values of each dashboard
@@ -1023,16 +1074,99 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// RunPanelQuery is the tool definition for running panel queries
+// summarizePanelQueryResult describes a result in the few lines a model needs to
+// reason about it: which panels ran, against what, how much came back, and what
+// failed. The samples themselves are not summarized because a model cannot do
+// anything with a truncated series that it could not do with this.
+//
+// This exists so the payload does not have to be the model's copy too. A single
+// panel over a modest window is tens of thousands of tokens of timestamps, and it
+// grows with every panel the caller asks for - the feature gets more expensive the
+// better it works.
+func summarizePanelQueryResult(result *RunPanelQueryResult) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "Ran %d panel quer%s on dashboard %s over %s to %s.\n",
+		len(result.Results)+len(result.Errors),
+		map[bool]string{true: "y", false: "ies"}[len(result.Results)+len(result.Errors) == 1],
+		result.DashboardUID, result.TimeRange.Start, result.TimeRange.End)
+
+	// Sorted, because map iteration order would reshuffle the summary between two
+	// identical calls and make a diff of two runs unreadable.
+	ids := make([]int, 0, len(result.Results))
+	for id := range result.Results {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+
+	for _, id := range ids {
+		panel := result.Results[id]
+		fmt.Fprintf(&b, "\n- panel %d %q (%s): %s\n  query: %s\n",
+			id, panel.PanelTitle, panel.DatasourceType, describePanelResults(panel.Results),
+			truncateString(panel.Query, 300))
+		if panel.PanelSpec == nil {
+			fmt.Fprint(&b, "  no panel spec: a viewer cannot reproduce this panel's appearance\n")
+		}
+		for _, hint := range panel.Hints {
+			fmt.Fprintf(&b, "  hint: %s\n", hint)
+		}
+	}
+
+	errIDs := make([]int, 0, len(result.Errors))
+	for id := range result.Errors {
+		errIDs = append(errIDs, id)
+	}
+	sort.Ints(errIDs)
+	for _, id := range errIDs {
+		fmt.Fprintf(&b, "\n- panel %d failed: %s\n", id, result.Errors[id])
+	}
+
+	fmt.Fprint(&b, "\nThe data itself is attached for the viewer to render; ask for a specific "+
+		"panel or a narrower window if you need to read values yourself.\n")
+
+	return b.String()
+}
+
+// describePanelResults counts what a datasource returned, for the datasources whose
+// result shape is known here. Anything else gets the one thing that is always true
+// and still worth saying, which is whether it came back empty.
+func describePanelResults(results interface{}) string {
+	switch v := results.(type) {
+	case model.Matrix:
+		return fmt.Sprintf("%d series", len(v))
+	case model.Vector:
+		return fmt.Sprintf("%d samples", len(v))
+	case []LogEntry:
+		return fmt.Sprintf("%d log lines", len(v))
+	case *sqldialect.SQLQueryResult:
+		return fmt.Sprintf("%d rows", v.RowCount)
+	case *InfluxDBQueryResult:
+		return fmt.Sprintf("%d rows", v.RowCount)
+	}
+
+	if isEmptyPanelResult(results) {
+		return "no data"
+	}
+
+	return "data returned"
+}
+
 // runPanelQueryApp wraps runPanelQuery so the tool *result* carries
 // _meta.ui.resourceUri.
 //
 // WithUIResource on the tool definition is not sufficient: hosts key inline MCP
 // App rendering off the result's metadata, and MustTool's default path marshals a
-// struct return straight to a JSON text block with no _meta at all. content[0]
-// stays byte-identical to that JSON so text-only hosts and the app's own parser
-// are unaffected, and the struct also rides structuredContent for hosts that read
-// the spec channel.
+// struct return straight to a JSON text block with no _meta at all.
+//
+// Two content items rather than one. The first is a summary addressed to both
+// audiences, the second the full payload addressed to the user, which is the
+// standard MCP signal for "render this, do not read it into the conversation"
+// (`annotations.audience`, base spec, not the Apps extension - the extension's
+// `visibility` governs who may *call a tool*, not who reads a content item).
+// Audience is advisory, so a host that ignores it still receives everything it
+// received before, just preceded by a summary. The payload also rides
+// structuredContent, and carries `_meta.ui.kind` so an app can find it without
+// depending on content order.
 func runPanelQueryApp(ctx context.Context, args RunPanelQueryParams) (*mcp.CallToolResult, error) {
 	result, err := runPanelQuery(ctx, args)
 	if err != nil {
@@ -1050,7 +1184,23 @@ func runPanelQueryApp(ctx context.Context, args RunPanelQueryParams) (*mcp.CallT
 				},
 			},
 		},
-		Content:           []mcp.Content{mcp.TextContent{Type: "text", Text: string(payload)}},
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Annotated: mcp.Annotated{
+					Annotations: &mcp.Annotations{Audience: []mcp.Role{mcp.RoleAssistant, mcp.RoleUser}},
+				},
+				Type: "text",
+				Text: summarizePanelQueryResult(result),
+			},
+			mcp.TextContent{
+				Annotated: mcp.Annotated{
+					Annotations: &mcp.Annotations{Audience: []mcp.Role{mcp.RoleUser}},
+				},
+				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindPanelQuery),
+				Type: "text",
+				Text: string(payload),
+			},
+		},
 		StructuredContent: result,
 	}, nil
 }

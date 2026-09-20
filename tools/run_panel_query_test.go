@@ -3,10 +3,12 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/grafana/mcp-grafana/tools/sql"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1517,4 +1519,138 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 
 	assert.Equal(t, "my-cluster", result[0])
 	assert.Equal(t, "static-value", result[1])
+}
+
+func TestPanelRenderSpec(t *testing.T) {
+	t.Run("keeps what decides how the panel draws, drops the rest", func(t *testing.T) {
+		fieldConfig := map[string]interface{}{
+			"defaults":  map[string]interface{}{"unit": "reqps"},
+			"overrides": []interface{}{map[string]interface{}{"matcher": map[string]interface{}{"id": "byName"}}},
+		}
+		options := map[string]interface{}{"legend": map[string]interface{}{"placement": "right"}}
+
+		spec := panelRenderSpec(map[string]interface{}{
+			"id":              7,
+			"type":            "timeseries",
+			"title":           "p95 latency",
+			"options":         options,
+			"fieldConfig":     fieldConfig,
+			"targets":         []interface{}{map[string]interface{}{"expr": "up"}},
+			"transformations": []interface{}{map[string]interface{}{"id": "reduce"}},
+			"gridPos":         map[string]interface{}{"h": 8},
+		})
+
+		assert.Equal(t, map[string]interface{}{
+			"type":        "timeseries",
+			"title":       "p95 latency",
+			"options":     options,
+			"fieldConfig": fieldConfig,
+		}, spec)
+	})
+
+	t.Run("omits absent keys rather than emitting empty ones", func(t *testing.T) {
+		// A renderer distinguishes "no overrides configured" from "overrides I was
+		// not told about"; an empty fieldConfig here would assert the first.
+		spec := panelRenderSpec(map[string]interface{}{"type": "stat"})
+
+		assert.Equal(t, map[string]interface{}{"type": "stat"}, spec)
+	})
+
+	t.Run("nil without a type, because nothing can select a renderer", func(t *testing.T) {
+		assert.Nil(t, panelRenderSpec(map[string]interface{}{"title": "No type"}))
+	})
+}
+
+func TestExtractPanelInfoCapturesRenderSpec(t *testing.T) {
+	panel := map[string]interface{}{
+		"id":    3,
+		"type":  "timeseries",
+		"title": "Errors",
+		"datasource": map[string]interface{}{
+			"uid":  "prometheus-uid",
+			"type": "prometheus",
+		},
+		"targets":         []interface{}{map[string]interface{}{"expr": "up"}},
+		"transformations": []interface{}{map[string]interface{}{"id": "reduce"}},
+	}
+
+	info, err := extractPanelInfo(panel, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, "timeseries", info.Spec["type"])
+	assert.Equal(t, "Errors", info.Spec["title"])
+	assert.True(t, info.HasTransformations, "a panel carrying transformations has to say so")
+}
+
+func TestDescribePanelResults(t *testing.T) {
+	assert.Equal(t, "2 series", describePanelResults(model.Matrix{{}, {}}))
+	assert.Equal(t, "1 samples", describePanelResults(model.Vector{{}}))
+	assert.Equal(t, "3 log lines", describePanelResults([]LogEntry{{}, {}, {}}))
+	assert.Equal(t, "4 rows", describePanelResults(&sql.SQLQueryResult{RowCount: 4}))
+	// A known shape reports its count even at zero: "0 series" says the query ran
+	// and matched nothing, which "no data" leaves ambiguous.
+	assert.Equal(t, "0 series", describePanelResults(model.Matrix{}))
+	assert.Equal(t, "data returned", describePanelResults(map[string]interface{}{"something": "else"}))
+	assert.Equal(t, "no data", describePanelResults(nil))
+}
+
+func TestSummarizePanelQueryResult(t *testing.T) {
+	result := &RunPanelQueryResult{
+		DashboardUID: "abc123",
+		TimeRange:    QueryTimeRange{Start: "now-6h", End: "now"},
+		Results: map[int]*PanelQueryResult{
+			2: {
+				PanelID:        2,
+				PanelTitle:     "Errors",
+				DatasourceType: "prometheus",
+				Query:          "rate(errors[5m])",
+				Results: model.Matrix{
+					{Metric: model.Metric{"__name__": "errors"}, Values: []model.SamplePair{{Timestamp: 1700000000000, Value: 42.5}}},
+					{},
+					{},
+				},
+				PanelSpec: map[string]interface{}{"type": "timeseries"},
+				Hints:     []string{"this panel applies transformations, which are not applied to these results; what the panel shows in Grafana may differ"},
+			},
+			1: {
+				PanelID:        1,
+				PanelTitle:     "Latency",
+				DatasourceType: "prometheus",
+				Query:          "histogram_quantile(0.95, rate(x[5m]))",
+				Results:        model.Matrix{{}},
+			},
+		},
+		Errors: map[int]string{9: "extracting panel info: panel has no query targets"},
+	}
+
+	summary := summarizePanelQueryResult(result)
+
+	assert.Contains(t, summary, "Ran 3 panel queries on dashboard abc123 over now-6h to now")
+	assert.Contains(t, summary, `panel 2 "Errors" (prometheus): 3 series`)
+	assert.Contains(t, summary, "hint: this panel applies transformations")
+	assert.Contains(t, summary, "panel 9 failed: extracting panel info: panel has no query targets")
+
+	// A panel with no spec is called out, because a viewer silently drawing its own
+	// idea of the panel is the failure this whole field exists to prevent.
+	assert.Contains(t, summary, "no panel spec")
+	assert.Equal(t, 1, strings.Count(summary, "no panel spec"), "only the panel that lacks one")
+
+	// Ordered, so two runs of the same query diff cleanly.
+	assert.Less(t, strings.Index(summary, "panel 1"), strings.Index(summary, "panel 2"))
+
+	// The samples stay out: that is the point of the summary.
+	assert.NotContains(t, summary, "42.5")
+	assert.NotContains(t, summary, "1700000000000")
+}
+
+func TestSummarizePanelQueryResultSingular(t *testing.T) {
+	summary := summarizePanelQueryResult(&RunPanelQueryResult{
+		DashboardUID: "abc123",
+		TimeRange:    QueryTimeRange{Start: "now-1h", End: "now"},
+		Results: map[int]*PanelQueryResult{
+			1: {PanelID: 1, PanelTitle: "Only", DatasourceType: "prometheus", Results: model.Matrix{{}}, PanelSpec: map[string]interface{}{"type": "timeseries"}},
+		},
+	})
+
+	assert.Contains(t, summary, "Ran 1 panel query on dashboard")
 }

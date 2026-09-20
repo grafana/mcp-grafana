@@ -14,6 +14,12 @@ const (
 
 	// UIContentKindDeeplink is the `_meta.ui.kind` value for a Grafana deeplink.
 	UIContentKindDeeplink = "deeplink"
+
+	// UIContentKindPanelQuery marks the content item carrying a run_panel_query
+	// payload. An app locates it structurally instead of parsing whichever text
+	// block happens to come first, which is what lets the result also carry a
+	// short summary written for the model.
+	UIContentKindPanelQuery = "panel-query"
 )
 
 // WithUIResource attaches a _meta.ui.resourceUri to a tool definition,

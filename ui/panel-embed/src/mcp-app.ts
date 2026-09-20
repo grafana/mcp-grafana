@@ -49,6 +49,10 @@ interface PanelResult {
   query?: string;
   datasourceType?: string;
   results?: unknown;
+  /** Classic v1 panel JSON from the dashboard: how the panel actually draws. */
+  panelSpec?: Record<string, unknown>;
+  /** Things the tool could only say in words, e.g. unapplied transformations. */
+  hints?: string[];
 }
 
 interface RunPanelQueryResult {
@@ -76,8 +80,28 @@ function clearError() {
   el.error.hidden = true;
 }
 
-/** Classic v1 panel JSON: the embed accepts it directly, alongside Dashboard v2. */
-function panelJson(title: string, unit?: string) {
+/**
+ * Body height per panel type. A timeseries and a flamegraph do not want the same
+ * default; these are the values grafana-assistant-app arrived at for the same job
+ * (apps/plugin/src/features/canvas/utils/panelHeights.ts).
+ */
+const PANEL_HEIGHTS: Record<string, number> = { logs: 420, flamegraph: 420, traces: 560 };
+const PANEL_HEIGHT_DEFAULT = 280;
+
+function panelHeight(spec: Record<string, unknown> | undefined) {
+  const type = typeof spec?.type === "string" ? spec.type : undefined;
+  return (type && PANEL_HEIGHTS[type]) || PANEL_HEIGHT_DEFAULT;
+}
+
+/**
+ * The panel to draw when the tool gave us no spec: an older server, or a panel whose
+ * JSON carries no type.
+ *
+ * Deliberately plain. It is a stand-in, not a guess at the real panel - inventing
+ * thresholds or units here would make a wrong panel look authoritative, and the
+ * heading already says which panel this is meant to be.
+ */
+function fallbackPanelJson(title: string, unit?: string) {
   return {
     type: "timeseries",
     title,
@@ -103,8 +127,13 @@ function panelJson(title: string, unit?: string) {
  * path. A raw Prometheus matrix is the shape today's tools return, so both are
  * accepted and the response shape decides.
  */
+/** A Grafana /api/ds/query response body, as opposed to a raw Prometheus matrix. */
+function isQueryResponseBody(value: unknown): value is { results: Record<string, { frames?: unknown[] }> } {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && "results" in value;
+}
+
 function framesFor(results: unknown, title: string): unknown[] {
-  if (results && typeof results === "object" && "results" in (results as object)) {
+  if (isQueryResponseBody(results)) {
     try {
       return framesFromQueryResponse(results);
     } catch {
@@ -167,8 +196,12 @@ function renderPanels(payload: RunPanelQueryResult) {
         wrapper.appendChild(query);
       }
 
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.hidden = true;
+      wrapper.appendChild(hint);
+
       element = document.createElement("grafana-panel") as GrafanaPanelElement;
-      element.setAttribute("height", "260");
       applyWindow(element);
       // A user zoom on any panel re-queries every panel, so they stay comparable.
       element.addEventListener("timerangechange", (event) => {
@@ -181,7 +214,19 @@ function renderPanels(payload: RunPanelQueryResult) {
       mounted.set(key, element);
     }
 
-    element.panel = panelJson(title);
+    // Shown rather than swallowed: the tool says here when what it returned does
+    // not match what Grafana draws, and a panel that looks right while being wrong
+    // is worse than one that admits it.
+    const hint = element.closest(".panel")?.querySelector<HTMLElement>(".hint");
+    if (hint) {
+      hint.textContent = (panel.hints ?? []).join(" ");
+      hint.hidden = !hint.textContent;
+    }
+
+    // The panel the user clicked, not this app's idea of it: units, thresholds,
+    // axis placement and per-series overrides all live in the dashboard's own JSON.
+    element.panel = panel.panelSpec ?? fallbackPanelJson(title);
+    element.setAttribute("height", String(panelHeight(panel.panelSpec)));
     element.frames = frames;
   }
 
@@ -203,27 +248,58 @@ function renderPanels(payload: RunPanelQueryResult) {
   }
 }
 
-function handleToolResult(result: { content?: Array<{ type: string; text?: string }>; structuredContent?: unknown; isError?: boolean }) {
-  const text = result.content?.find((item) => item.type === "text")?.text ?? "";
+/** `_meta.ui.kind` of the content item carrying the payload, set by the server. */
+const PANEL_QUERY_KIND = "panel-query";
+
+type ToolResultContent = { type: string; text?: string; _meta?: { ui?: { kind?: string } } };
+
+/**
+ * Pick the payload out of a tool result.
+ *
+ * Three channels, because hosts disagree about which survive: some drop
+ * structuredContent, and Claude Desktop turns an embedded json block into text. The
+ * result also leads with a summary written for the model, so "the first text block"
+ * is no longer the payload - the tagged item is found by its kind, and the untagged
+ * fallback tries every block rather than assuming a position.
+ */
+function payloadFromToolResult(result: { content?: ToolResultContent[]; structuredContent?: unknown }): unknown {
+  if (result.structuredContent && typeof result.structuredContent === "object") {
+    return result.structuredContent;
+  }
+
+  const items = result.content ?? [];
+  const tagged = items.find((item) => item._meta?.ui?.kind === PANEL_QUERY_KIND);
+  for (const item of tagged ? [tagged] : items) {
+    if (item.type !== "text" || !item.text) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(item.text);
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+    } catch {
+      // A summary rather than the payload; keep looking.
+    }
+  }
+
+  return undefined;
+}
+
+function handleToolResult(result: { content?: ToolResultContent[]; structuredContent?: unknown; isError?: boolean }) {
   if (result.isError) {
+    const text = result.content?.find((item) => item.type === "text")?.text ?? "";
     showError(`Tool error: ${text.slice(0, 400)}`);
     return;
   }
   clearError();
 
-  let payload: unknown = result.structuredContent;
-  if (!payload && text) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      el.status.textContent = "Could not parse the tool result";
-      return;
-    }
-  }
-  if (!payload || typeof payload !== "object") {
-    el.status.textContent = "Query returned no data";
+  const payload = payloadFromToolResult(result);
+  if (!payload) {
+    el.status.textContent = "Could not read the tool result";
     return;
   }
+
   renderPanels(payload as RunPanelQueryResult);
 }
 
