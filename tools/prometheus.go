@@ -214,7 +214,7 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 	}
 	// Prometheus has no offset parameter, so later pages require fetching earlier names too.
 	if page > maxPrometheusMetricNames/limit {
-		return nil, fmt.Errorf("page * limit must not exceed %d; narrow the regex or request an earlier page", maxPrometheusMetricNames)
+		return nil, fmt.Errorf("page * limit must not exceed %d; reduce page or limit", maxPrometheusMetricNames)
 	}
 
 	var re *regexp.Regexp
@@ -254,7 +254,7 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Filters metric names using the provided regex. Supports pagination (page * limit must not exceed 10000) and an optional time range to restrict results to metrics active within that window.",
+	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Filters metric names using the provided regex. Supports pagination (page * limit must not exceed 10000) and an optional time range to restrict results to metrics active within that window. Cloud Monitoring ignores the time range.",
 	listPrometheusMetricNames,
 	mcp.WithTitleAnnotation("List Prometheus metric names"),
 	mcp.WithIdempotentHintAnnotation(true),
