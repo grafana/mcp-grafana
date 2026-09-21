@@ -12,6 +12,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/observability"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +27,7 @@ func TestPrometheusDiscoveryResponseHistograms(t *testing.T) {
 			registry := prometheus.NewRegistry()
 			exporter, err := otelprom.New(otelprom.WithRegisterer(registry))
 			require.NoError(t, err)
-			provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
+			provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter), sdkmetric.WithView(observability.PrometheusDiscoveryHistogramView()))
 			t.Cleanup(func() { require.NoError(t, provider.Shutdown(t.Context())) })
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +73,9 @@ func TestPrometheusDiscoveryResponseHistograms(t *testing.T) {
 					require.Len(t, family.Metric, 1)
 					histogram := family.Metric[0].GetHistogram()
 					require.NotNil(t, histogram)
+					require.NotNil(t, histogram.Schema, "expected a native histogram")
+					assert.NotEmpty(t, histogram.PositiveSpan)
+					assert.Empty(t, histogram.Bucket, "must not export classic buckets")
 					assert.EqualValues(t, 1, histogram.GetSampleCount())
 					found[family.GetName()] = histogram.GetSampleSum()
 				}
@@ -101,7 +105,7 @@ func TestPrometheusResponseHistogramOnlyCountsCompleteSuccessfulBodies(t *testin
 			registry := prometheus.NewRegistry()
 			exporter, err := otelprom.New(otelprom.WithRegisterer(registry))
 			require.NoError(t, err)
-			provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
+			provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter), sdkmetric.WithView(observability.PrometheusDiscoveryHistogramView()))
 			t.Cleanup(func() { require.NoError(t, provider.Shutdown(t.Context())) })
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tc.incomplete {

@@ -71,18 +71,20 @@ The high-cardinality **target** of a call (the datasource `uid`, else `name`) is
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `mcp_prometheus_metric_names_response_size_bytes` | Histogram | Bytes consumed from complete successful HTTP responses to `/api/v1/label/__name__/values`, after HTTP decompression |
-| `mcp_prometheus_metric_names_count` | Histogram | Number of metric names decoded successfully by `list_prometheus_metric_names`, before local pagination |
+| `mcp_prometheus_metric_names_response_size_bytes` | Native histogram | Bytes consumed from complete successful HTTP responses to `/api/v1/label/__name__/values`, after HTTP decompression |
+| `mcp_prometheus_metric_names_count` | Native histogram | Number of metric names decoded successfully by `list_prometheus_metric_names`, before local pagination |
 
 These measure the upstream response, not the final page returned to the caller. The byte histogram includes the JSON envelope and excludes non-2xx responses and incomplete body reads. Neither histogram includes Cloud Monitoring's descriptor API. No datasource IDs, metric names, or regexes are added as labels.
 
 For example, the p95 response size over the last hour is:
 
 ```promql
-histogram_quantile(0.95, sum by (le) (rate(mcp_prometheus_metric_names_response_size_bytes_bucket[1h])))
+histogram_quantile(0.95, sum(rate(mcp_prometheus_metric_names_response_size_bytes[1h])))
 ```
 
-Embedders that disable the global OpenTelemetry meter provider must set `GrafanaConfig.MeterProvider` to their exporting provider.
+Bucket boundaries are chosen automatically by OpenTelemetry's base-2 exponential aggregation. The SDK adjusts resolution within a 160-bucket budget, with a maximum scale of 8. Scraping must support native histograms.
+
+Embedders must install `sdkmetric.WithView(observability.PrometheusDiscoveryHistogramView())` on their exporting provider and pass it through `GrafanaConfig.MeterProvider` when the global provider is disabled.
 
 ### Loki cost guardrail metrics
 
