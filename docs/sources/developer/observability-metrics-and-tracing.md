@@ -74,7 +74,7 @@ The high-cardinality **target** of a call (the datasource `uid`, else `name`) is
 | `mcp_metric_names_response_size_bytes` | Native histogram | Bytes consumed from complete successful discovery HTTP responses, after HTTP decompression |
 | `mcp_metric_names_count` | Native histogram | Number of metric names decoded successfully before local filtering and pagination |
 
-These measure the upstream response, not the final page returned to the caller. The byte histogram includes the JSON envelope and excludes non-2xx responses and incomplete body reads. The bounded `backend` label distinguishes `prometheus` (including compatible backends) from `cloud_monitoring`. Cloud Monitoring measures the full descriptor response; metadata-query fetches are excluded. Descriptor payloads contain more than names, so compare byte distributions by backend. No datasource IDs, metric names, or regexes are added as labels.
+These metrics help us understand the responses we get from prometheus-type backends when discovering available metric names. The metrics only measure the sizes of successful responses. The bounded `backend` label distinguishes `prometheus` (including compatible backends) from `cloud_monitoring`. Unlike the prometheus backend, Cloud Monitoring measures the full descriptor response, which contain more than just names, so comparing response byte sizes between the two backends is not meaningful.
 
 For example, the p95 response size over the last hour is:
 
@@ -82,9 +82,7 @@ For example, the p95 response size over the last hour is:
 histogram_quantile(0.95, sum by (backend) (rate(mcp_metric_names_response_size_bytes[1h])))
 ```
 
-Bucket boundaries are chosen automatically by OpenTelemetry's base-2 exponential aggregation. The SDK adjusts resolution within a 160-bucket budget, with a maximum scale of 8. Scraping must support native histograms.
-
-Embedders must install `sdkmetric.WithView(observability.MetricNamesHistogramView())` on their exporting provider and pass it through `GrafanaConfig.MeterProvider` when the global provider is disabled.
+These metrics use Native Histograms, so the scraper must also support native histograms.
 
 ### Loki cost guardrail metrics
 
