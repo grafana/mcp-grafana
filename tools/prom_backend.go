@@ -188,7 +188,7 @@ func (b *prometheusBackend) MetricNames(ctx context.Context, re *regexp.Regexp, 
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
-	recordPrometheusMetricNames(ctx, len(values))
+	recordMetricNames(ctx, "prometheus", len(values))
 	result := make([]string, len(values))
 	for i, value := range values {
 		result[i] = string(value)

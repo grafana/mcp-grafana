@@ -67,24 +67,24 @@ Arguments are raw client input, so the two argument-derived labels are allowlist
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
 
-### Prometheus metric-name discovery
+### Metric-name discovery
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `mcp_prometheus_metric_names_response_size_bytes` | Native histogram | Bytes consumed from complete successful HTTP responses to `/api/v1/label/__name__/values`, after HTTP decompression |
-| `mcp_prometheus_metric_names_count` | Native histogram | Number of metric names decoded successfully by `list_prometheus_metric_names`, before local pagination |
+| `mcp_metric_names_response_size_bytes` | Native histogram | Bytes consumed from complete successful discovery HTTP responses, after HTTP decompression |
+| `mcp_metric_names_count` | Native histogram | Number of metric names decoded successfully before local filtering and pagination |
 
-These measure the upstream response, not the final page returned to the caller. The byte histogram includes the JSON envelope and excludes non-2xx responses and incomplete body reads. Neither histogram includes Cloud Monitoring's descriptor API. No datasource IDs, metric names, or regexes are added as labels.
+These measure the upstream response, not the final page returned to the caller. The byte histogram includes the JSON envelope and excludes non-2xx responses and incomplete body reads. The bounded `backend` label distinguishes `prometheus` (including compatible backends) from `cloud_monitoring`. Cloud Monitoring measures the full descriptor response; metadata-query fetches are excluded. Descriptor payloads contain more than names, so compare byte distributions by backend. No datasource IDs, metric names, or regexes are added as labels.
 
 For example, the p95 response size over the last hour is:
 
 ```promql
-histogram_quantile(0.95, sum(rate(mcp_prometheus_metric_names_response_size_bytes[1h])))
+histogram_quantile(0.95, sum by (backend) (rate(mcp_metric_names_response_size_bytes[1h])))
 ```
 
 Bucket boundaries are chosen automatically by OpenTelemetry's base-2 exponential aggregation. The SDK adjusts resolution within a 160-bucket budget, with a maximum scale of 8. Scraping must support native histograms.
 
-Embedders must install `sdkmetric.WithView(observability.PrometheusDiscoveryHistogramView())` on their exporting provider and pass it through `GrafanaConfig.MeterProvider` when the global provider is disabled.
+Embedders must install `sdkmetric.WithView(observability.MetricNamesHistogramView())` on their exporting provider and pass it through `GrafanaConfig.MeterProvider` when the global provider is disabled.
 
 ### Loki cost guardrail metrics
 

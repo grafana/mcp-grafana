@@ -261,7 +261,7 @@ func Setup(cfg Config) (_ *Observability, err error) {
 	provider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(exporter),
 		sdkmetric.WithResource(res),
-		sdkmetric.WithView(PrometheusDiscoveryHistogramView()),
+		sdkmetric.WithView(MetricNamesHistogramView()),
 	)
 
 	// Register as global MeterProvider so otelhttp instrumentation uses it
