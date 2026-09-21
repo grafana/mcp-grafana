@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -183,9 +184,27 @@ func (b *cloudMonitoringBackend) LabelValues(ctx context.Context, labelName stri
 	return b.labelValuesViaQuery(ctx, labelName, matchers, start, end)
 }
 
+func (b *cloudMonitoringBackend) MetricNames(ctx context.Context, re *regexp.Regexp, limit int, _, _ time.Time) ([]string, error) {
+	// The Cloud Monitoring plugin doesn't support limits or regex matching, so do all of that in the client.
+	names, err := b.metricNames(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]string, 0, min(limit, len(names)))
+	for _, name := range names {
+		if re == nil || re.MatchString(name) {
+			matches = append(matches, name)
+			if len(matches) == limit {
+				break
+			}
+		}
+	}
+	return matches, nil
+}
+
 // MetricMetadata returns metadata for metrics by fetching metric descriptors.
 func (b *cloudMonitoringBackend) MetricMetadata(ctx context.Context, metric string, limit int) (map[string][]promv1.Metadata, error) {
-	descriptors, err := b.fetchMetricDescriptors(ctx)
+	descriptors, err := b.fetchMetricDescriptors(ctx, false)
 	if err != nil {
 		return nil, fmt.Errorf("fetching metric descriptors: %w", err)
 	}
@@ -211,7 +230,7 @@ func (b *cloudMonitoringBackend) MetricMetadata(ctx context.Context, metric stri
 
 // metricNames returns metric type names from metric descriptors.
 func (b *cloudMonitoringBackend) metricNames(ctx context.Context, matchers []string) ([]string, error) {
-	descriptors, err := b.fetchMetricDescriptors(ctx)
+	descriptors, err := b.fetchMetricDescriptors(ctx, true)
 	if err != nil {
 		return nil, fmt.Errorf("fetching metric descriptors: %w", err)
 	}
@@ -275,7 +294,7 @@ func (b *cloudMonitoringBackend) labelValuesViaQuery(ctx context.Context, labelN
 // fetchMetricDescriptors calls the Cloud Monitoring plugin's /metricDescriptors/ resource endpoint.
 // The Grafana plugin handles GCP API pagination internally and returns all descriptors
 // as a flat JSON array (not the raw GCP API wrapper).
-func (b *cloudMonitoringBackend) fetchMetricDescriptors(ctx context.Context) ([]gcpMetricDescriptor, error) {
+func (b *cloudMonitoringBackend) fetchMetricDescriptors(ctx context.Context, recordDiscoveryMetrics bool) ([]gcpMetricDescriptor, error) {
 	project, err := b.project()
 	if err != nil {
 		return nil, err
@@ -303,11 +322,19 @@ func (b *cloudMonitoringBackend) fetchMetricDescriptors(ctx context.Context) ([]
 		return nil, fmt.Errorf("metric descriptors returned status %d: %s", resp.StatusCode, string(body[:min(len(body), 1024)]))
 	}
 
+	// Metadata queries share this endpoint but must not enter the discovery histograms.
+	if recordDiscoveryMetrics {
+		recordMetricNamesResponseSize(ctx, "cloud_monitoring", int64(len(body)))
+	}
+
 	var descriptors []gcpMetricDescriptor
 	if err := json.Unmarshal(body, &descriptors); err != nil {
 		return nil, fmt.Errorf("unmarshaling metric descriptors: %w", err)
 	}
 
+	if recordDiscoveryMetrics {
+		recordMetricNames(ctx, "cloud_monitoring", len(descriptors))
+	}
 	return descriptors, nil
 }
 
