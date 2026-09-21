@@ -1197,7 +1197,8 @@ func main() {
 	}
 
 	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, usageStats, *healthzAddress, *instructionsAppend); err != nil {
-		panic(err)
+		slog.Error("Fatal error", "error", err)
+		os.Exit(1)
 	}
 }
 
