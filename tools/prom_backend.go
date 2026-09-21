@@ -119,7 +119,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,
-		RoundTripper: rt,
+		RoundTripper: &prometheusMetricNamesTransport{underlying: rt},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating Prometheus client: %w", err)
@@ -188,6 +188,7 @@ func (b *prometheusBackend) MetricNames(ctx context.Context, re *regexp.Regexp, 
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
+	recordPrometheusMetricNames(ctx, len(values))
 	result := make([]string, len(values))
 	for i, value := range values {
 		result[i] = string(value)

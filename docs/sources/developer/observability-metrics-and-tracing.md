@@ -67,6 +67,23 @@ Arguments are raw client input, so the two argument-derived labels are allowlist
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
 
+### Prometheus metric-name discovery
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_prometheus_metric_names_response_size_bytes` | Histogram | Bytes consumed from complete successful HTTP responses to `/api/v1/label/__name__/values`, after HTTP decompression |
+| `mcp_prometheus_metric_names_count` | Histogram | Number of metric names decoded successfully by `list_prometheus_metric_names`, before local pagination |
+
+These measure the upstream response, not the final page returned to the caller. The byte histogram includes the JSON envelope and excludes non-2xx responses and incomplete body reads. Neither histogram includes Cloud Monitoring's descriptor API. No datasource IDs, metric names, or regexes are added as labels.
+
+For example, the p95 response size over the last hour is:
+
+```promql
+histogram_quantile(0.95, sum by (le) (rate(mcp_prometheus_metric_names_response_size_bytes_bucket[1h])))
+```
+
+Embedders that disable the global OpenTelemetry meter provider must set `GrafanaConfig.MeterProvider` to their exporting provider.
+
 ### Loki cost guardrail metrics
 
 When the [Loki query cost guardrail](../../configure/command-line-flags/) is enabled (`--loki-guardrail-mode` is `shadow` or `enforce`), every `query_loki_logs` call it evaluates increments exactly one of four counters:
