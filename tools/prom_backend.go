@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,6 +30,9 @@ type promBackend interface {
 
 	// LabelValues returns values for a label, optionally filtered by matchers and time range.
 	LabelValues(ctx context.Context, labelName string, matchers []string, start, end time.Time) ([]string, error)
+
+	// MetricNames returns matching metric names, limited where the backend supports it.
+	MetricNames(ctx context.Context, re *regexp.Regexp, limit int, start, end time.Time) ([]string, error)
 
 	// MetricMetadata returns metadata about metrics (description, type, unit).
 	MetricMetadata(ctx context.Context, metric string, limit int) (map[string][]promv1.Metadata, error)
@@ -168,6 +172,25 @@ func (b *prometheusBackend) LabelValues(ctx context.Context, labelName string, m
 	result := make([]string, len(values))
 	for i, v := range values {
 		result[i] = string(v)
+	}
+	return result, nil
+}
+
+func (b *prometheusBackend) MetricNames(ctx context.Context, re *regexp.Regexp, limit int, start, end time.Time) ([]string, error) {
+	var matchers []string
+	if re != nil {
+		// PromQL regexes are anchored and dot matches newlines by default; preserve Go's MatchString semantics.
+		pattern := "(?s:.*)(?-s:" + re.String() + ")(?s:.*)"
+		// The non-empty matcher keeps regexes like ".*" valid as a series selector.
+		matchers = []string{fmt.Sprintf(`{__name__!="",__name__=~%q}`, pattern)}
+	}
+	values, _, err := b.api.LabelValues(ctx, "__name__", matchers, start, end, promv1.WithLimit(uint64(limit)))
+	if err != nil {
+		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
+	}
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = string(value)
 	}
 	return result, nil
 }

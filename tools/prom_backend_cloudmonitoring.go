@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -181,6 +182,24 @@ func (b *cloudMonitoringBackend) LabelValues(ctx context.Context, labelName stri
 	}
 
 	return b.labelValuesViaQuery(ctx, labelName, matchers, start, end)
+}
+
+func (b *cloudMonitoringBackend) MetricNames(ctx context.Context, re *regexp.Regexp, limit int, _, _ time.Time) ([]string, error) {
+	// The Cloud Monitoring plugin returns all descriptors and cannot apply Prometheus matchers or limits.
+	names, err := b.metricNames(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]string, 0, min(limit, len(names)))
+	for _, name := range names {
+		if re == nil || re.MatchString(name) {
+			matches = append(matches, name)
+			if len(matches) == limit {
+				break
+			}
+		}
+	}
+	return matches, nil
 }
 
 // MetricMetadata returns metadata for metrics by fetching metric descriptors.
