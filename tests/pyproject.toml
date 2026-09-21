@@ -13,7 +13,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "anyio>=4.9.0",
+    "anyio>=4.14.2",
     "deepeval>=1.0.0",
     "litellm>=1.84.0,<1.85",
     "mcp>=1.9.3",
