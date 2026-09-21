@@ -31,7 +31,7 @@ type promBackend interface {
 	// LabelValues returns values for a label, optionally filtered by matchers and time range.
 	LabelValues(ctx context.Context, labelName string, matchers []string, start, end time.Time) ([]string, error)
 
-	// MetricNames returns matching metric names, limited where the backend supports it.
+	// MetricNames returns metric names which match the regex, with an optional limit on results.
 	MetricNames(ctx context.Context, re *regexp.Regexp, limit int, start, end time.Time) ([]string, error)
 
 	// MetricMetadata returns metadata about metrics (description, type, unit).
@@ -179,7 +179,7 @@ func (b *prometheusBackend) LabelValues(ctx context.Context, labelName string, m
 func (b *prometheusBackend) MetricNames(ctx context.Context, re *regexp.Regexp, limit int, start, end time.Time) ([]string, error) {
 	var matchers []string
 	if re != nil {
-		// PromQL regexes are anchored and dot matches newlines by default; preserve Go's MatchString semantics.
+		// make the regex matching behavior behave like the previous client-side Go matching behaviour
 		pattern := "(?s:.*)(?-s:" + re.String() + ")(?s:.*)"
 		// The non-empty matcher keeps regexes like ".*" valid as a series selector.
 		matchers = []string{fmt.Sprintf(`{__name__!="",__name__=~%q}`, pattern)}

@@ -185,7 +185,7 @@ func (b *cloudMonitoringBackend) LabelValues(ctx context.Context, labelName stri
 }
 
 func (b *cloudMonitoringBackend) MetricNames(ctx context.Context, re *regexp.Regexp, limit int, _, _ time.Time) ([]string, error) {
-	// The Cloud Monitoring plugin returns all descriptors and cannot apply Prometheus matchers or limits.
+	// The Cloud Monitoring plugin doesn't support limits or regex matching, so do all of that in the client.
 	names, err := b.metricNames(ctx, nil)
 	if err != nil {
 		return nil, err
