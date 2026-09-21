@@ -188,6 +188,8 @@ var QueryPrometheus = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
+const maxPrometheusMetricNames = 10_000
+
 type ListPrometheusMetricNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Regex         string `json:"regex" jsonschema:"description=The regex to match against the metric names"`
@@ -199,19 +201,29 @@ type ListPrometheusMetricNamesParams struct {
 }
 
 func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) ([]string, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
-	if err != nil {
-		return nil, fmt.Errorf("getting backend: %w", err)
-	}
-
 	limit := args.Limit
 	if limit == 0 {
 		limit = 10
 	}
-
 	page := args.Page
 	if page == 0 {
 		page = 1
+	}
+	if limit < 1 || page < 1 {
+		return nil, fmt.Errorf("limit and page must be positive")
+	}
+	// Prometheus has no offset parameter, so later pages require fetching earlier names too.
+	if page > maxPrometheusMetricNames/limit {
+		return nil, fmt.Errorf("page * limit must not exceed %d; reduce page or limit", maxPrometheusMetricNames)
+	}
+
+	var re *regexp.Regexp
+	if args.Regex != "" {
+		var err error
+		re, err = regexp.Compile(args.Regex)
+		if err != nil {
+			return nil, fmt.Errorf("compiling regex: %w", err)
+		}
 	}
 
 	startTime, err := parseStartTime(args.StartRFC3339)
@@ -223,45 +235,26 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Get all metric names via the backend
-	allNames, err := backend.LabelValues(ctx, "__name__", nil, startTime, endTime)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
+	if err != nil {
+		return nil, fmt.Errorf("getting backend: %w", err)
+	}
+	end := page * limit
+	matches, err := backend.MetricNames(ctx, re, end, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
 
-	// Filter by regex if provided
-	var matches []string
-	if args.Regex != "" {
-		re, err := regexp.Compile(args.Regex)
-		if err != nil {
-			return nil, fmt.Errorf("compiling regex: %w", err)
-		}
-		for _, val := range allNames {
-			if re.MatchString(val) {
-				matches = append(matches, val)
-			}
-		}
-	} else {
-		matches = allNames
-	}
-
-	// Apply pagination
-	start := (page - 1) * limit
-	end := start + limit
+	start := end - limit
 	if start >= len(matches) {
-		matches = []string{}
-	} else if end > len(matches) {
-		matches = matches[start:]
-	} else {
-		matches = matches[start:end]
+		return []string{}, nil
 	}
-
-	return matches, nil
+	return matches[start:min(end, len(matches))], nil
 }
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Retrieves all metric names and filters them using the provided regex. Supports pagination and an optional time range to restrict results to metrics active within that window.",
+	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Filters metric names using the provided regex. Supports pagination (page * limit must not exceed 10000) and an optional time range to restrict results to metrics active within that window. Cloud Monitoring ignores the time range.",
 	listPrometheusMetricNames,
 	mcp.WithTitleAnnotation("List Prometheus metric names"),
 	mcp.WithIdempotentHintAnnotation(true),

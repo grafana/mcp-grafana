@@ -33,6 +33,8 @@ In your MCP client, ask the assistant to query Prometheus. For example, you migh
 
 Ask the assistant to list metric names, label names, or label values for a given selector. The server exposes tools that call the Prometheus API (metric metadata, label names, label values). Use these to explore what’s available before writing PromQL.
 
+`list_prometheus_metric_names` defaults to 10 results per page. The product of `page` and `limit` must not exceed 10,000. If it does and you need to explore > 10,000 results, narrow the regex to get fewer results. For Prometheus-compatible backends, regex filtering and the fetch limit are sent to the datasource, which must support the `limit` parameter to bound the response. Cloud Monitoring continues to filter metric descriptors locally.
+
 ## Next steps
 
 - [Query logs with Loki](../query-logs-with-loki/) for log and LogQL use cases.

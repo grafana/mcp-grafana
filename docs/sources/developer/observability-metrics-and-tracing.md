@@ -67,6 +67,23 @@ Arguments are raw client input, so the two argument-derived labels are allowlist
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
 
+### Metric-name discovery
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_metric_names_response_size_bytes` | Native histogram | Bytes consumed from complete successful discovery HTTP responses, after HTTP decompression |
+| `mcp_metric_names_count` | Native histogram | Number of metric names decoded successfully before local filtering and pagination |
+
+These metrics help us understand the responses we get from prometheus-type backends when discovering available metric names. The metrics only measure the sizes of successful responses. The bounded `backend` label distinguishes `prometheus` (including compatible backends) from `cloud_monitoring`. Unlike the prometheus backend, Cloud Monitoring measures the full descriptor response, which contain more than just names, so comparing response byte sizes between the two backends is not meaningful.
+
+For example, the p95 response size over the last hour is:
+
+```promql
+histogram_quantile(0.95, sum by (backend) (rate(mcp_metric_names_response_size_bytes[1h])))
+```
+
+These metrics use Native Histograms, so the scraper must also support native histograms.
+
 ### Loki cost guardrail metrics
 
 When the [Loki query cost guardrail](../../configure/command-line-flags/) is enabled (`--loki-guardrail-mode` is `shadow` or `enforce`), every `query_loki_logs` call it evaluates increments exactly one of four counters:
