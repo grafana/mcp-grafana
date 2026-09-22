@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/tools/sql"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

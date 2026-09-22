@@ -1,4 +1,4 @@
-module github.com/grafana/mcp-grafana
+module github.com/grafana/mcp-grafana/v2
 
 go 1.26.5
 

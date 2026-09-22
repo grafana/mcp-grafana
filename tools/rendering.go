@@ -14,7 +14,7 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // StringOrSlice is a type that can be unmarshaled from either a JSON string

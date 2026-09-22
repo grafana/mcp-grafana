@@ -14,8 +14,8 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	datasourceschemas "github.com/grafana/mcp-grafana/v2/tools/datasource_schemas"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

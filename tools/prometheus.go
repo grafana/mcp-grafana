@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"

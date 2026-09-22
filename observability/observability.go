@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
+	datasourceschemas "github.com/grafana/mcp-grafana/v2/tools/datasource_schemas"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"

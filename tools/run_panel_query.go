@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	sqldialect "github.com/grafana/mcp-grafana/tools/sql"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
 )

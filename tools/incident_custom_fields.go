@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/grafana/incident-go"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // Grafana IRM exposes both incident custom fields and incident labels through

@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/grafana/mcp-grafana/observability"
+	"github.com/grafana/mcp-grafana/v2/observability"
 )
 
 // collector is a test endpoint that records the events posted to it.

@@ -19,10 +19,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/observability"
-	"github.com/grafana/mcp-grafana/tools"
-	"github.com/grafana/mcp-grafana/usagestats"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/observability"
+	"github.com/grafana/mcp-grafana/v2/tools"
+	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )

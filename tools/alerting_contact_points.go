@@ -9,7 +9,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/alertmanager/config"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 type ListContactPointsParams struct {
