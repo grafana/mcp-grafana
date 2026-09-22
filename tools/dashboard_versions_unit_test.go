@@ -326,3 +326,13 @@ func TestDecodeDashboardVersionList(t *testing.T) {
 		assert.Equal(t, "admin", versions[0].CreatedBy)
 	})
 }
+
+func TestUpdateDashboard_PatchValueSchemaHasTypeKeyword(t *testing.T) {
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(UpdateDashboard.Tool.InputSchema.(json.RawMessage), &schema))
+	properties := schema["properties"].(map[string]any)
+	ops := properties["operations"].(map[string]any)
+	items := ops["items"].(map[string]any)
+	value := items["properties"].(map[string]any)["value"].(map[string]any)
+	assert.Contains(t, value, "type", "PatchOperation.Value schema must carry a 'type' validation keyword")
+}
