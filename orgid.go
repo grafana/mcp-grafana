@@ -95,6 +95,11 @@ func orgIDFromArguments(args map[string]any) (int64, bool) {
 	var orgID int64
 	switch v := raw.(type) {
 	case float64:
+		// JSON numbers decode to float64, so truncating would silently accept a
+		// fractional orgId and target a different org than asked for (2.9 -> 2).
+		// The same guard rejects NaN (which is never equal to its truncation) and
+		// infinities, and values at or beyond int64, whose conversion would be
+		// undefined.
 		if v != math.Trunc(v) || math.IsInf(v, 0) || v >= math.MaxInt64 {
 			return 0, false
 		}

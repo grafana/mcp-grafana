@@ -584,6 +584,12 @@ var jsonSchemaReflector = jsonschema.Reflector{
 	FieldNameTag:               "",
 	IgnoredTypes:               nil,
 	Lookup:                     nil,
+	// Mapper handles Go interface{}/any types which the jsonschema library
+	// would otherwise emit as bare boolean `true` schemas. Some LLM providers
+	// (e.g. Fireworks AI) reject bare boolean schemas. We map them to an empty
+	// object schema {} instead. The non-nil Extras field prevents the library's
+	// MarshalJSON from collapsing the empty schema back to `true`.
+	// See: https://github.com/grafana/mcp-grafana/issues/594
 	Mapper: func(t reflect.Type) *jsonschema.Schema {
 		if t.Kind() == reflect.Interface {
 			return &jsonschema.Schema{Extras: map[string]any{}}
