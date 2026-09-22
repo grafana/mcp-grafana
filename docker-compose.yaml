@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    image: grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,elasticsearch 12.6.2
@@ -122,7 +122,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
+    image: grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -155,7 +155,7 @@ services:
       - "4318:4318"   # OTLP HTTP receiver
 
   alertmanager:
-    image: prom/alertmanager:v0.34.0@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
     ports:
       - "9093:9093"
     volumes:
