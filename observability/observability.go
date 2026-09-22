@@ -394,8 +394,8 @@ type metricDimSet struct {
 // A label is emitted only for a listed tool, only for a dimension that tool
 // opts into, and only with a value in that dimension's set - everything else becomes ValueOther
 var toolMetricDims = map[string]metricDimSet{
-	"alerting_get_rules":    {operations: ValueSet("list", "get", "versions")},
-	"alerting_manage_rules": {operations: ValueSet("list", "get", "versions", "create", "update", "delete")},
+	"alerting_rules_read":  {operations: ValueSet("list", "get", "versions")},
+	"alerting_rules_write": {operations: ValueSet("list", "get", "versions", "create", "update", "delete")},
 	"alerting_manage_routing": {operations: ValueSet(
 		"get_notification_policies", "get_contact_points", "get_contact_point",
 		"get_time_intervals", "get_time_interval",

@@ -59,7 +59,7 @@ For `tools/call`, `mcp_server_operation_duration_seconds` can carry up to three 
 
 | Label | Source | Notes |
 |-------|--------|-------|
-| `mcp_tool_operation` | the tool's `operation` argument | Multiplexer tools only (e.g. `alerting_manage_rules`); one of the tool's declared operations, else `other`. |
+| `mcp_tool_operation` | the tool's `operation` argument | Multiplexer tools only (e.g. `alerting_rules_write`); one of the tool's declared operations, else `other`. |
 | `mcp_tool_resource_type` | the tool's `type` argument | e.g. the datasource plugin type on `create_datasource`; a plugin type the server ships a schema for, else `other`. |
 | `mcp_tool_phase` | the tool's result `_meta` | Phase of a multi-call flow (e.g. `create_datasource` schema guidance vs. actual creation). |
 

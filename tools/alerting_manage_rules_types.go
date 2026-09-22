@@ -588,7 +588,7 @@ type listFilterParams struct {
 	Matchers       []string `json:"matchers,omitempty" jsonschema:"description=Label matchers to filter alert instances. Each string is a Prometheus-style matcher e.g. 'severity=\"critical\"'\\, 'env!=\"dev\"'\\, 'team=~\"backend.*\"'. Requires Grafana 12.4+."`
 }
 
-// ManageRulesReadParams is the param struct for alerting_get_rules.
+// ManageRulesReadParams is the param struct for alerting_rules_read.
 type ManageRulesReadParams struct {
 	listFilterParams
 
@@ -623,7 +623,7 @@ func (p ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
 	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 }
 
-// ManageRulesReadWriteParams is the param struct for alerting_manage_rules.
+// ManageRulesReadWriteParams is the param struct for alerting_rules_write.
 type ManageRulesReadWriteParams struct {
 	listFilterParams
 

@@ -573,7 +573,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 
 	t.Run("allowlisted operation tool emits operation", func(t *testing.T) {
 		ctx := context.Background()
-		req := newTestCallToolRequest("alerting_manage_rules", map[string]any{"operation": "list"})
+		req := newTestCallToolRequest("alerting_rules_write", map[string]any{"operation": "list"})
 
 		attrs := obs.testBuildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
@@ -660,7 +660,7 @@ func TestToolMetricDimensions(t *testing.T) {
 	}
 
 	t.Run("allowlisted operation tool returns operation only", func(t *testing.T) {
-		got := ToolMetricDimensions("alerting_manage_rules",
+		got := ToolMetricDimensions("alerting_rules_write",
 			map[string]any{"operation": "list", "type": "should-be-ignored"}, nil)
 		assert.Equal(t, ToolMetricDims{Operation: "list"}, got)
 	})
@@ -672,7 +672,7 @@ func TestToolMetricDimensions(t *testing.T) {
 	})
 
 	t.Run("un-allowlisted operation value collapses to other", func(t *testing.T) {
-		got := ToolMetricDimensions("alerting_manage_rules",
+		got := ToolMetricDimensions("alerting_rules_write",
 			map[string]any{"operation": "attacker-chosen-" + strings.Repeat("x", 32)}, nil)
 		assert.Equal(t, ToolMetricDims{Operation: ValueOther}, got)
 	})
@@ -684,7 +684,7 @@ func TestToolMetricDimensions(t *testing.T) {
 	})
 
 	t.Run("absent argument stays empty rather than other", func(t *testing.T) {
-		got := ToolMetricDimensions("alerting_manage_rules", map[string]any{}, nil)
+		got := ToolMetricDimensions("alerting_rules_write", map[string]any{}, nil)
 		assert.Equal(t, ToolMetricDims{}, got)
 	})
 
@@ -717,7 +717,7 @@ func TestToolMetricDimensions(t *testing.T) {
 	})
 
 	t.Run("nil result yields empty phase", func(t *testing.T) {
-		got := ToolMetricDimensions("alerting_manage_rules", map[string]any{"operation": "get"}, nil)
+		got := ToolMetricDimensions("alerting_rules_write", map[string]any{"operation": "get"}, nil)
 		assert.Equal(t, "", got.Phase)
 	})
 
@@ -770,7 +770,7 @@ func TestToolMetricDimensionsPhaseIsBounded(t *testing.T) {
 		},
 		{
 			name:     "allowlisted tool that does not opt into phases contributes no phase",
-			toolName: "alerting_manage_rules",
+			toolName: "alerting_rules_write",
 			result:   mkResult(mcp.Meta{ToolPhaseMetaKey: "created"}),
 			want:     "",
 		},

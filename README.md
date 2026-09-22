@@ -354,11 +354,11 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_cloudwatch`                | CloudWatch*               | Execute CloudWatch metric queries                                                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `query_elasticsearch`             | Elasticsearch/OpenSearch* | Query Elasticsearch or OpenSearch using Lucene syntax or Query DSL                                           | `datasources:query`                                    | `datasources:uid:datasource-uid`                    |
 | `query_quickwit`                  | Quickwit*                 | Query Quickwit using Lucene syntax or Query DSL                                                              | `datasources:query`                                    | `datasources:uid:quickwit-uid`                      |
-| `alerting_get_rules`              | Alerting                  | List and inspect alert rules (list, get, versions)                                                           | `alert.rules:read`                                     | `folders:*` or `folders:uid:alerts-folder`          |
-| `alerting_manage_rules`           | Alerting                  | Create, update, and delete alert rules                                                                       | `alert.rules:read` + `alert.rules:write`               | `folders:*` or `folders:uid:alerts-folder`          |
+| `alerting_rules_read`             | Alerting                  | List and inspect alert rules (list, get, versions)                                                           | `alert.rules:read`                                     | `folders:*` or `folders:uid:alerts-folder`          |
+| `alerting_rules_write`            | Alerting                  | Create, update, and delete alert rules                                                                       | `alert.rules:read` + `alert.rules:write`               | `folders:*` or `folders:uid:alerts-folder`          |
 | `alerting_manage_routing`         | Alerting                  | Manage notification policies, contact points, and time intervals                                             | `alert.notifications:read`                             | Global scope                                        |
-| `alerting_get_silences`           | Alerting                  | List and inspect alerting silences (list, get)                                                               | `alert.instances:read`                                 | Global scope                                        |
-| `alerting_manage_silences`        | Alerting                  | Create, update, and expire alerting silences                                                                 | `alert.instances:read` + `alert.instances:write`       | Global scope                                        |
+| `alerting_silences_read`          | Alerting                  | List and inspect alerting silences (list, get)                                                               | `alert.instances:read`                                 | Global scope                                        |
+| `alerting_silences_write`         | Alerting                  | Create, update, and expire alerting silences                                                                 | `alert.instances:read` + `alert.instances:write`       | Global scope                                        |
 | `list_oncall_schedules`           | OnCall                    | List schedules from Grafana OnCall                                                                           | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
 | `get_oncall_shift`                | OnCall                    | Get details for a specific OnCall shift                                                                      | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
 | `get_current_oncall_users`        | OnCall                    | Get users currently on-call for a specific schedule                                                          | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
@@ -515,8 +515,8 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `update_incident`
 
 **Alerting Tools:**
-- `alerting_manage_rules` (create, update, delete operations)
-- `alerting_manage_silences` (create, update, delete operations)
+- `alerting_rules_write` (create, update, delete operations)
+- `alerting_silences_write` (create, update, delete operations)
 
 **OnCall Tools:**
 - `update_alert_group`
