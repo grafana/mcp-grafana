@@ -1626,7 +1626,8 @@ func TestSummarizePanelQueryResult(t *testing.T) {
 	summary := summarizePanelQueryResult(result)
 
 	assert.Contains(t, summary, "Ran 3 panel queries on dashboard abc123 over now-6h to now")
-	assert.Contains(t, summary, `panel 2 "Errors" (prometheus): 3 series`)
+	assert.Contains(t, summary, `panel 2 "Errors" (prometheus)`)
+	assert.Contains(t, summary, "query: 3 series | rate(errors[5m])")
 	assert.Contains(t, summary, "hint: this panel applies transformations")
 	assert.Contains(t, summary, "panel 9 failed: extracting panel info: panel has no query targets")
 
@@ -1641,6 +1642,29 @@ func TestSummarizePanelQueryResult(t *testing.T) {
 	// The samples stay out: that is the point of the summary.
 	assert.NotContains(t, summary, "42.5")
 	assert.NotContains(t, summary, "1700000000000")
+}
+
+func TestSummarizePanelQueryResultNamesEveryLayer(t *testing.T) {
+	// A panel drawn from one of two queries is a different panel, so the summary has to
+	// let the caller see it got both - otherwise it goes looking for the rest itself.
+	summary := summarizePanelQueryResult(&RunPanelQueryResult{
+		DashboardUID: "abc123",
+		TimeRange:    QueryTimeRange{Start: "now-6h", End: "now"},
+		Results: map[int]*PanelQueryResult{
+			1: {
+				PanelID:    1,
+				PanelTitle: "GC pause",
+				PanelSpec:  map[string]interface{}{"type": "timeseries"},
+				Queries: []PanelQueryExecution{
+					{RefID: "A", Query: "go_gc_duration_seconds{quantile=\"1.0\"}", Results: model.Matrix{{}, {}}},
+					{RefID: "B", Query: "rate(go_gc_duration_seconds_sum[5m])", Results: model.Matrix{{}}},
+				},
+			},
+		},
+	})
+
+	assert.Contains(t, summary, `A: 2 series | go_gc_duration_seconds{quantile="1.0"}`)
+	assert.Contains(t, summary, "B: 1 series | rate(go_gc_duration_seconds_sum[5m])")
 }
 
 func TestSummarizePanelQueryResultSingular(t *testing.T) {

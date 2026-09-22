@@ -20,7 +20,7 @@ import (
 type RunPanelQueryParams struct {
 	DashboardUID   string            `json:"dashboardUid" jsonschema:"required,description=Dashboard UID"`
 	PanelIDs       []int             `json:"panelIds" jsonschema:"required,description=Panel IDs to execute (one or more)"`
-	QueryIndex     *int              `json:"queryIndex,omitempty" jsonschema:"description=Index of the query to execute per panel (0-based\\, defaults to 0). Use get_dashboard_panel_queries to see all queries."`
+	QueryIndex     *int              `json:"queryIndex,omitempty" jsonschema:"description=Index of a single query to execute per panel (0-based). Omit this to run every query the panel has\\, which is what reproduces the panel: a panel's queries are layers of one picture. Use get_dashboard_panel_queries to see them."`
 	Start          string            `json:"start" jsonschema:"description=Override start time (e.g. 'now-1h'\\, RFC3339\\, Unix ms)"`
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
@@ -45,6 +45,12 @@ type PanelQueryResult struct {
 	Results        interface{} `json:"results"`
 	Hints          []string    `json:"hints,omitempty"`
 
+	// Queries holds every query that ran, present only when the panel has more than
+	// one. A panel's queries are layers of one picture - max and average of the same
+	// metric, say - so returning one of them returns a different panel. Omitting this
+	// for single-query panels keeps the common result the shape it has always been.
+	Queries []PanelQueryExecution `json:"queries,omitempty"`
+
 	// PanelSpec is how the panel draws, as the classic v1 panel JSON the
 	// dashboard already stores: type, title, options and fieldConfig. A viewer
 	// that renders these results can only guess at units, thresholds, axis
@@ -55,6 +61,19 @@ type PanelQueryResult struct {
 	// because nothing downstream applies them - a panel that has any gets a hint
 	// instead of a spec that would quietly overstate the fidelity.
 	PanelSpec map[string]interface{} `json:"panelSpec,omitempty"`
+
+	// How many queries the panel declares, so the caller loop knows whether it has
+	// them all. Unexported: it is scaffolding for assembling the result, not part of
+	// it.
+	targetCount int
+}
+
+// PanelQueryExecution is one of a panel's queries and what it returned.
+type PanelQueryExecution struct {
+	RefID   string      `json:"refId,omitempty"`
+	Query   string      `json:"query"`
+	Results interface{} `json:"results"`
+	Hints   []string    `json:"hints,omitempty"`
 }
 
 // RunPanelQueryResult contains the result of running panel queries
@@ -89,6 +108,8 @@ type panelInfo struct {
 
 	Spec               map[string]interface{} // How the panel draws; see PanelQueryResult.PanelSpec
 	HasTransformations bool
+	RefID              string // The target's refId, which names this layer of the panel
+	TargetCount        int    // How many queries the panel has in total
 }
 
 // runPanelQuery executes one or more dashboard panel queries with optional time range and variable overrides
@@ -128,22 +149,51 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 
 	// Execute each panel query
 	for _, panelID := range args.PanelIDs {
-		result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{
-			DB:         db,
-			PanelID:    panelID,
-			QueryIndex: queryIndex,
-			Start:      start,
-			End:        end,
-			Variables:  args.Variables,
-			DsUID:      args.DatasourceUID,
-			DsType:     args.DatasourceType,
-			MaxPoints:  args.MaxDataPoints,
-		})
+		run := func(index int) (*PanelQueryResult, error) {
+			return runSinglePanelQuery(ctx, singlePanelQueryParams{
+				DB:         db,
+				PanelID:    panelID,
+				QueryIndex: index,
+				Start:      start,
+				End:        end,
+				Variables:  args.Variables,
+				DsUID:      args.DatasourceUID,
+				DsType:     args.DatasourceType,
+				MaxPoints:  args.MaxDataPoints,
+			})
+		}
+
+		result, err := run(queryIndex)
 		if err != nil {
 			errs[panelID] = err.Error()
-		} else {
-			results[panelID] = result
+			continue
 		}
+
+		// Without an explicit queryIndex, run the panel's remaining queries too. A
+		// panel's queries are layers of one picture - the max and the average of a
+		// metric, say - so answering with the first alone answers with a different
+		// panel, and a caller that notices goes looking for the rest.
+		if args.QueryIndex == nil {
+			for index := 1; index < result.targetCount; index++ {
+				next, nextErr := run(index)
+				if nextErr != nil {
+					// One unrunnable layer does not invalidate the others; say so
+					// against the query rather than dropping the whole panel.
+					result.Queries = append(result.Queries, PanelQueryExecution{
+						Query: fmt.Sprintf("query %d could not run: %s", index, nextErr.Error()),
+					})
+					continue
+				}
+				result.Queries = append(result.Queries, next.Queries...)
+			}
+		}
+
+		// Only worth carrying when there is more than one layer to distinguish.
+		if len(result.Queries) < 2 {
+			result.Queries = nil
+		}
+
+		results[panelID] = result
 	}
 
 	return &RunPanelQueryResult{
@@ -298,6 +348,13 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		Results:        results,
 		Hints:          hints,
 		PanelSpec:      panelData.Spec,
+		Queries: []PanelQueryExecution{{
+			RefID:   panelData.RefID,
+			Query:   query,
+			Results: results,
+			Hints:   hints,
+		}},
+		targetCount: panelData.TargetCount,
 	}, nil
 }
 
@@ -447,6 +504,8 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 
 	// Store raw target for CloudWatch and other complex query types
 	info.RawTarget = target
+	info.RefID = safeString(target, "refId")
+	info.TargetCount = len(targets)
 
 	// Extract datasource - prefer target-level (more specific) over panel-level.
 	// This handles "Mixed" datasource panels where each target specifies its own datasource.
@@ -1101,9 +1160,18 @@ func summarizePanelQueryResult(result *RunPanelQueryResult) string {
 
 	for _, id := range ids {
 		panel := result.Results[id]
-		fmt.Fprintf(&b, "\n- panel %d %q (%s): %s\n  query: %s\n",
-			id, panel.PanelTitle, panel.DatasourceType, describePanelResults(panel.Results),
-			truncateString(panel.Query, 300))
+		fmt.Fprintf(&b, "\n- panel %d %q (%s)\n", id, panel.PanelTitle, panel.DatasourceType)
+
+		// Every layer, named, because a panel drawn from one of two queries is a
+		// different panel and the caller has to be able to tell that it got both.
+		for _, execution := range panelExecutions(panel) {
+			label := execution.RefID
+			if label == "" {
+				label = "query"
+			}
+			fmt.Fprintf(&b, "  %s: %s | %s\n", label, describePanelResults(execution.Results),
+				truncateString(execution.Query, 240))
+		}
 		if panel.PanelSpec == nil {
 			fmt.Fprint(&b, "  no panel spec: a viewer cannot reproduce this panel's appearance\n")
 		}
@@ -1125,6 +1193,16 @@ func summarizePanelQueryResult(result *RunPanelQueryResult) string {
 		"panel or a narrower window if you need to read values yourself.\n")
 
 	return b.String()
+}
+
+// panelExecutions is every query that ran for a panel, whether it carries the
+// multi-query list or only the single-query fields.
+func panelExecutions(panel *PanelQueryResult) []PanelQueryExecution {
+	if len(panel.Queries) > 0 {
+		return panel.Queries
+	}
+
+	return []PanelQueryExecution{{Query: panel.Query, Results: panel.Results, Hints: panel.Hints}}
 }
 
 // describePanelResults counts what a datasource returned, for the datasources whose
@@ -1172,10 +1250,45 @@ func runPanelQueryApp(ctx context.Context, args RunPanelQueryParams) (*mcp.CallT
 	if err != nil {
 		return nil, err
 	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		return nil, fmt.Errorf("marshal panel query result: %w", err)
+	summary := summarizePanelQueryResult(result)
+	content := []mcp.Content{
+		mcp.TextContent{
+			Annotated: mcp.Annotated{
+				Annotations: &mcp.Annotations{Audience: []mcp.Role{mcp.RoleAssistant, mcp.RoleUser}},
+			},
+			Type: "text",
+			Text: summary,
+		},
 	}
+
+	// The samples ride along only where something can draw them. On a host that cannot
+	// render the app they are unusable by definition - nothing will plot them, and a
+	// model handed tens of thousands of timestamps does not learn anything the summary
+	// did not already say. Claude Code's terminal is the case in point: it renders no
+	// app, spills a large result to a file, and the agent ends up running jq over it.
+	if mcpgrafana.HostRendersApps(ctx) {
+		payload, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("marshal panel query result: %w", err)
+		}
+		content = append(content, mcp.TextContent{
+			Annotated: mcp.Annotated{
+				Annotations: &mcp.Annotations{Audience: []mcp.Role{mcp.RoleUser}},
+			},
+			Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindPanelQuery),
+			Type: "text",
+			Text: string(payload),
+		})
+	} else {
+		content = append(content, mcp.TextContent{
+			Annotated: mcp.Annotated{
+				Annotations: &mcp.Annotations{Audience: []mcp.Role{mcp.RoleAssistant, mcp.RoleUser}},
+			},
+			Type: "text",
+			Text: renderUnavailableNote,
+		})
+	}
+
 	return &mcp.CallToolResult{
 		Result: mcp.Result{
 			Meta: &mcp.Meta{
@@ -1184,26 +1297,20 @@ func runPanelQueryApp(ctx context.Context, args RunPanelQueryParams) (*mcp.CallT
 				},
 			},
 		},
-		Content: []mcp.Content{
-			mcp.TextContent{
-				Annotated: mcp.Annotated{
-					Annotations: &mcp.Annotations{Audience: []mcp.Role{mcp.RoleAssistant, mcp.RoleUser}},
-				},
-				Type: "text",
-				Text: summarizePanelQueryResult(result),
-			},
-			mcp.TextContent{
-				Annotated: mcp.Annotated{
-					Annotations: &mcp.Annotations{Audience: []mcp.Role{mcp.RoleUser}},
-				},
-				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindPanelQuery),
-				Type: "text",
-				Text: string(payload),
-			},
-		},
+		Content: content,
+		// structuredContent stays populated either way: a host that renders reads the
+		// payload from here when it drops content items, and one that does not ignores
+		// it without putting it in front of the model.
 		StructuredContent: result,
 	}, nil
 }
+
+// renderUnavailableNote tells the model why it is holding a description rather than a
+// chart, so it reports that instead of inventing one or digging for data that is not
+// there.
+const renderUnavailableNote = "This client does not render Grafana panels inline, so the samples were not sent. " +
+	"Say so rather than describing the shape of data you cannot see. To see the panel itself, open it in a client " +
+	"that supports MCP Apps, such as Cursor or the Claude Code desktop app."
 
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",

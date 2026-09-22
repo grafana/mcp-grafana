@@ -43,12 +43,21 @@ function applyWindow(element: GrafanaPanelElement) {
   }
 }
 
+/** One of a panel's queries. A panel's queries are layers of the same picture. */
+interface PanelQueryExecution {
+  refId?: string;
+  query?: string;
+  results?: unknown;
+}
+
 interface PanelResult {
   panelId?: number;
   panelTitle?: string;
   query?: string;
   datasourceType?: string;
   results?: unknown;
+  /** Present when the panel has more than one query. */
+  queries?: PanelQueryExecution[];
   /** Classic v1 panel JSON from the dashboard: how the panel actually draws. */
   panelSpec?: Record<string, unknown>;
   /** Things the tool could only say in words, e.g. unapplied transformations. */
@@ -174,7 +183,12 @@ function renderPanels(payload: RunPanelQueryResult) {
   const rendered: string[] = [];
   for (const [key, panel] of entries) {
     const title = panel.panelTitle || panel.query || `Panel ${key}`;
-    const frames = framesFor(panel.results, title);
+    // Every query the panel declares, concatenated. Grafana draws a multi-query panel
+    // by putting all of its series on one set of axes and letting the panel's own
+    // overrides style them, which is exactly what handing the element one frame list
+    // does - the `^avg - .*` style override finds its series by name either way.
+    const executions = panel.queries?.length ? panel.queries : [{ query: panel.query, results: panel.results }];
+    const frames = executions.flatMap((execution) => framesFor(execution.results, title));
     if (frames.length === 0) {
       continue;
     }
@@ -189,10 +203,13 @@ function renderPanels(payload: RunPanelQueryResult) {
       heading.textContent = title;
       wrapper.appendChild(heading);
 
-      if (panel.query) {
+      for (const execution of executions) {
+        if (!execution.query) {
+          continue;
+        }
         const query = document.createElement("p");
         query.className = "q";
-        query.textContent = panel.query;
+        query.textContent = execution.refId ? `${execution.refId}: ${execution.query}` : execution.query;
         wrapper.appendChild(query);
       }
 

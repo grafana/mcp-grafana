@@ -22,6 +22,35 @@ const (
 	UIContentKindPanelQuery = "panel-query"
 )
 
+// uiExtensionID is the MCP Apps extension a host negotiates at initialize when it can
+// render an app. Declared in the ext-apps specification.
+const uiExtensionID = "io.modelcontextprotocol/ui"
+
+// HostRendersApps reports whether this session's client said it can render MCP Apps.
+//
+// Worth asking rather than assuming, because the alternative is to hand every host the
+// data an app would have drawn. `annotations.audience` looks like it should cover this
+// and does not: it is advisory, and Claude Code ignores it - a payload addressed to the
+// user still lands in the model's tool result, where a large one gets spilled to a file
+// that the agent then picks apart with jq. Capability negotiation is the one signal a
+// server can actually act on.
+func HostRendersApps(ctx context.Context) bool {
+	session, ok := server.ClientSessionFromContext(ctx).(server.SessionWithClientInfo)
+	if !ok {
+		return false
+	}
+
+	return AdvertisesUIExtension(session.GetClientCapabilities())
+}
+
+// AdvertisesUIExtension is the decision itself, split out so it can be tested without
+// standing up a session.
+func AdvertisesUIExtension(capabilities mcp.ClientCapabilities) bool {
+	_, declared := capabilities.Extensions[uiExtensionID]
+
+	return declared
+}
+
 // WithUIResource attaches a _meta.ui.resourceUri to a tool definition,
 // linking it to an MCP App HTML resource for inline rendering.
 func WithUIResource(resourceURI string) mcp.ToolOption {
