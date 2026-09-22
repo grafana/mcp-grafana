@@ -14,9 +14,9 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/observability"
-	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/observability"
+	datasourceschemas "github.com/grafana/mcp-grafana/v2/tools/datasource_schemas"
 )
 
 const (

@@ -11,7 +11,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/prometheus/model/labels"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, error) {

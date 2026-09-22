@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/observability"
-	"github.com/grafana/mcp-grafana/usagestats"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/observability"
+	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -458,7 +458,7 @@ func TestVersionOutput(t *testing.T) {
 
 	t.Run("ldflags version takes precedence", func(t *testing.T) {
 		bin := testBinaryPath(t)
-		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana.version=v1.2.3", "-o", bin, ".")
+		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana/v2.version=v1.2.3", "-o", bin, ".")
 		out, err := build.CombinedOutput()
 		require.NoError(t, err, "go build failed: %s", out)
 

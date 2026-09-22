@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/sync/singleflight"
 )

@@ -7,7 +7,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 const manageRoutingDescription = `Manage Grafana alerting routing configuration, including notification policies, contact points and time intervals.

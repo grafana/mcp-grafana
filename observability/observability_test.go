@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
+	datasourceschemas "github.com/grafana/mcp-grafana/v2/tools/datasource_schemas"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

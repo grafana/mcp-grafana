@@ -818,7 +818,7 @@ Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception
      to specify the directory where the binary should be installed. This should also be in your `$PATH`.
 
      ```bash
-     GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
+     GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/v2/cmd/mcp-grafana@latest
      ```
 
    - **Deploy to Kubernetes using Helm**: use the [Helm chart from the Grafana helm-charts repository](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp)
