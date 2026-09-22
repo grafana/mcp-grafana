@@ -32,6 +32,7 @@ Some tool categories are disabled by default:
 - **examples** – Query examples for datasource types.
 - **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
 - **cloudwatch** – CloudWatch tools.
+- **cloudlogging** – Google Cloud Logging tools (requires the `googlecloud-logging-datasource` plugin).
 - **elasticsearch** – Elasticsearch query tool.
 - **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
