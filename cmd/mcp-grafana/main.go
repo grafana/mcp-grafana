@@ -958,14 +958,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		return nil
 
 	case "sse":
-		// TODO(go-sdk): The go-sdk SSE transport does not forward the initial
-		// GET request's HTTP headers (Authorization, X-Grafana-Api-Key,
-		// X-Grafana-Org-Id, forwarded headers) to the MCP middleware layer.
-		// GrafanaContextMiddleware falls back to environment credentials, which
-		// matches the pre-migration behavior (mark3labs also used env-var
-		// credentials for SSE). Per-session header capture requires either
-		// go-sdk support for per-session context or a per-session server
-		// factory — tracked for a follow-up.
+		// TODO(go-sdk): The go-sdk SSE transport does not populate
+		// RequestExtra.Header on message POSTs, so GrafanaContextMiddleware
+		// cannot read per-request credentials. This is a regression: the
+		// previous mark3labs SDK ran WithSSEContextFunc on each POST with the
+		// full http.Request. GrafanaContextMiddleware now falls back to
+		// environment credentials for SSE connections.
+		// SSE is deprecated in the MCP spec (superseded by streamable-http,
+		// which propagates headers correctly). Fixing this for SSE requires
+		// either upstream go-sdk support or per-connection server instances.
 		httpFn := mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)
 		// OrgID must be registered before GrafanaContext: AddReceivingMiddleware
 		// wraps the previous handler, so the last-registered middleware is outermost
@@ -1055,6 +1056,7 @@ func main() {
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
+	_ = flag.Int("session-idle-timeout-minutes", 30, "Deprecated: the official go-sdk manages sessions internally. This flag is ignored.")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
