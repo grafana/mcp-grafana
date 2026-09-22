@@ -49,7 +49,7 @@ jobs:
       - name: Get secrets
         id: get-secrets
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: grafana/shared-workflows/actions/get-vault-secrets@3b321a9af994a0b7d8caa3130f3cd9b5cc08fd7a # get-vault-secrets/v2.0.2
+        uses: grafana/shared-workflows/actions/get-vault-secrets@2f1ddaf3ce1aa677356243d0dd584be33cfa35e3 # get-vault-secrets/v2.1
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
