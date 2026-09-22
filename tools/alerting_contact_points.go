@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
@@ -29,6 +30,48 @@ type contactPointSummary struct {
 	UID  string  `json:"uid"`
 	Name string  `json:"name"`
 	Type *string `json:"type,omitempty"`
+}
+
+var contactPointUIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,40}$`)
+
+func createContactPoint(ctx context.Context, args ManageRoutingReadWriteParams) (*contactPointSummary, error) {
+	if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+		return nil, fmt.Errorf("create contact point: datasource_uid is not supported; only Grafana-managed contact points can be created")
+	}
+	if args.Name == nil || strings.TrimSpace(*args.Name) == "" {
+		return nil, fmt.Errorf("create contact point: name is required")
+	}
+	if strings.TrimSpace(args.Type) == "" {
+		return nil, fmt.Errorf("create contact point: type is required")
+	}
+	if len(args.Settings) == 0 {
+		return nil, fmt.Errorf("create contact point: settings must be a non-empty object")
+	}
+	if args.UID != "" && !contactPointUIDPattern.MatchString(args.UID) {
+		return nil, fmt.Errorf("create contact point: uid must contain 1 to 40 letters, digits, hyphens or underscores")
+	}
+
+	// Let Grafana validate the integration type and its settings: the generated
+	// client's enum can lag behind the integrations supported by the server.
+	params := provisioning.NewPostContactpointsParams().WithContext(ctx).WithBody(&models.EmbeddedContactPoint{
+		Name:                  *args.Name,
+		Type:                  &args.Type,
+		Settings:              args.Settings,
+		UID:                   args.UID,
+		DisableResolveMessage: args.DisableResolveMessage,
+	})
+	// Match alert-rule creation: keep the resource editable in the UI by default.
+	if args.DisableProvenance == nil || *args.DisableProvenance {
+		header := "true"
+		params.WithXDisableProvenance(&header)
+	}
+	client := mcpgrafana.GrafanaClientFromContext(ctx)
+	resp, err := client.Provisioning.PostContactpoints(params)
+	if err != nil {
+		return nil, fmt.Errorf("create contact point: %w", err)
+	}
+	// Settings may contain secrets. Return only the same metadata used by listing.
+	return &contactPointSummary{UID: resp.Payload.UID, Name: resp.Payload.Name, Type: resp.Payload.Type}, nil
 }
 
 func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
