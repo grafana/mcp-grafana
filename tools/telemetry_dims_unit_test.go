@@ -24,6 +24,7 @@ func TestToolMetricDimsMatchToolEnums(t *testing.T) {
 		toolName string
 		params   any
 	}{
+		{"alerting_get_rules", ManageRulesReadParams{}},
 		{"alerting_manage_rules", ManageRulesReadWriteParams{}},
 		{"alerting_manage_routing", ManageRoutingParams{}},
 		{"agento11y_manage_conversations", ManageAgento11yConversationsParams{}},

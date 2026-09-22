@@ -210,6 +210,7 @@ When enabled, the following writes are disabled:
 **Alerting tools**
 
 - `alerting_manage_rules` (create, update, delete)
+- `alerting_manage_silences` (create, update, delete)
 
 **OnCall tools**
 
