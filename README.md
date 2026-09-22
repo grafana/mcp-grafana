@@ -1239,7 +1239,6 @@ When using the SSE or streamable HTTP transports, enable Prometheus metrics with
 | Metric | Type | Description |
 |--------|------|-------------|
 | `mcp_server_operation_duration_seconds` | Histogram | Duration of MCP operations (labels: `mcp_method_name`, `gen_ai_tool_name`, `error_type`, `network_transport`, `mcp_protocol_version`) |
-| `mcp_server_session_duration_seconds` | Histogram | Duration of MCP client sessions (labels: `network_transport`, `mcp_protocol_version`) |
 | `http_server_request_duration_seconds` | Histogram | Duration of HTTP server requests (from otelhttp) |
 
 **Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.

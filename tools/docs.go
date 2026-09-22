@@ -9,8 +9,7 @@ import (
 
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -164,11 +163,11 @@ var SearchDocsTool = mcpgrafana.MustTool(
 	"search_docs",
 	"Search Grafana documentation. Returns matching pages with title, URL, description, and product. Call with no query to list available product groups.",
 	searchDocs,
-	mcp.WithTitleAnnotation("Search Docs"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.WithTitleAnnotation("Search Docs"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 ).NotOrgScoped()
 
 // Get doc
@@ -233,15 +232,15 @@ var GetDocTool = mcpgrafana.MustTool(
 	"get_doc",
 	"Fetch a Grafana documentation page. Set outline_only=true to get the heading structure first, then call again with a section name for bounded retrieval.",
 	getDoc,
-	mcp.WithTitleAnnotation("Get Doc"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.WithTitleAnnotation("Get Doc"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 ).NotOrgScoped()
 
 // AddDocsTools registers all documentation tools on the MCP server.
-func AddDocsTools(mcp *server.MCPServer) {
-	SearchDocsTool.Register(mcp)
-	GetDocTool.Register(mcp)
+func AddDocsTools(s *mcp.Server) {
+	SearchDocsTool.Register(s)
+	GetDocTool.Register(s)
 }

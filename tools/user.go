@@ -5,8 +5,7 @@ import (
 	"fmt"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // UserInfoParams takes no arguments.
@@ -47,13 +46,13 @@ var UserInfoTool = mcpgrafana.MustTool(
 	"user_info",
 	"Get information about the current Grafana identity: login, email, name, whether it is a Grafana (server) admin, the current organization, and the organizations it can access (with roles). Call this to discover which orgId values are valid before targeting a specific organization, and to understand the identity's capabilities.",
 	getUserInfo,
-	mcp.WithTitleAnnotation("Get current user info"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get current user info"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddUserTools(s *server.MCPServer) {
+func AddUserTools(s *mcp.Server) {
 	UserInfoTool.Register(s)
 }

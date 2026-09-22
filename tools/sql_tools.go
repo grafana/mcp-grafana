@@ -12,8 +12,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/tools/sql"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // queryRunner implements sql.QueryRunner using the tools-internal HTTP helpers.
@@ -271,47 +270,47 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 
 Example: SELECT timestamp, message FROM logs WHERE $__timeFilter(timestamp) LIMIT 100`,
 	querySQLHandler,
-	mcp.WithTitleAnnotation("Query SQL"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query SQL"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ListSQLDatabases = mcpgrafana.MustTool(
 	"list_sql_databases",
 	"List databases, schemas, or catalogs from a supported SQL datasource. Returns the organizational units available for use with list_sql_tables. For Athena: omit catalog to list catalogs, or pass catalog to list databases in it.",
 	listSQLDatabasesHandler,
-	mcp.WithTitleAnnotation("List SQL databases"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List SQL databases"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ListSQLTables = mcpgrafana.MustTool(
 	"list_sql_tables",
 	"START HERE for SQL datasources: List tables from a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Returns table names, schemas, and metadata. NEXT: Use describe_sql_table to see column schemas.",
 	listSQLTablesHandler,
-	mcp.WithTitleAnnotation("List SQL tables"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List SQL tables"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var DescribeSQLTable = mcpgrafana.MustTool(
 	"describe_sql_table",
 	"Get column schema for a table in a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). NEXT: Use query_sql with discovered column names.",
 	describeSQLTableHandler,
-	mcp.WithTitleAnnotation("Describe SQL table"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Describe SQL table"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddSQLTools(s *server.MCPServer, enableQueryTools bool) {
+func AddSQLTools(s *mcp.Server, enableQueryTools bool) {
 	if enableQueryTools {
 		QuerySQL.Register(s)
 	}

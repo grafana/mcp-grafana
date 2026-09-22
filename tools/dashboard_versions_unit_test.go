@@ -17,7 +17,7 @@ import (
 func TestGetDashboardByUID_Version(t *testing.T) {
 	t.Run("advertises version as a positive integer", func(t *testing.T) {
 		var schema map[string]any
-		require.NoError(t, json.Unmarshal(GetDashboardByUID.Tool.RawInputSchema, &schema))
+		require.NoError(t, json.Unmarshal(GetDashboardByUID.Tool.InputSchema.(json.RawMessage), &schema))
 		properties, ok := schema["properties"].(map[string]any)
 		require.True(t, ok)
 		versionSchema, ok := properties["version"].(map[string]any)
@@ -139,7 +139,7 @@ func TestListDashboardVersions(t *testing.T) {
 
 	t.Run("advertises limit and start as positive integers", func(t *testing.T) {
 		var schema map[string]any
-		require.NoError(t, json.Unmarshal(ListDashboardVersions.Tool.RawInputSchema, &schema))
+		require.NoError(t, json.Unmarshal(ListDashboardVersions.Tool.InputSchema.(json.RawMessage), &schema))
 		properties, ok := schema["properties"].(map[string]any)
 		require.True(t, ok)
 		for _, name := range []string{"limit", "start"} {

@@ -6,7 +6,6 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	"github.com/mark3labs/mcp-go/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -157,9 +156,9 @@ var ManageRouting = mcpgrafana.MustTool(
 	"alerting_manage_routing",
 	manageRoutingDescription,
 	manageRouting,
-	mcp.WithTitleAnnotation("Manage alerting routing"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage alerting routing"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
