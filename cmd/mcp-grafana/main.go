@@ -549,11 +549,39 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 		}
 	})
 
+	// Recovery middleware is outermost so it catches panics from all inner
+	// middleware and tool handlers. The mark3labs SDK had built-in recovery;
+	// the go-sdk does not, so we add it here.
+	s.AddReceivingMiddleware(recoveryMiddleware())
+
 	// OrgID middleware is registered per-transport in run(), not here, so
 	// that HTTP transports can place it inside GrafanaContextMiddleware
 	// (the go-sdk's addMiddleware wraps outermost-last).
 
 	return s
+}
+
+func recoveryMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (result mcp.Result, err error) {
+			defer func() {
+				if p := recover(); p != nil {
+					slog.Error("panic in MCP handler", "method", method, "panic", p)
+					if method == "tools/call" {
+						result = &mcp.CallToolResult{
+							Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("internal error: %v", p)}},
+							IsError: true,
+						}
+						err = nil
+					} else {
+						result = nil
+						err = fmt.Errorf("internal error: %v", p)
+					}
+				}
+			}()
+			return next(ctx, method, req)
+		}
+	}
 }
 
 type tlsConfig struct {

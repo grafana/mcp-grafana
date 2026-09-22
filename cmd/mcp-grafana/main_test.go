@@ -1613,3 +1613,19 @@ func TestListToolsResult_ReturnsTools(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Tools, "tools/list should return registered tools")
 }
+
+func TestRecoveryMiddleware_CatchesPanic(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	mcp.AddTool(s, &mcp.Tool{Name: "panicking_tool"}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		panic("boom")
+	})
+	s.AddReceivingMiddleware(recoveryMiddleware())
+
+	session := connectTestClient(t, s)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "panicking_tool"})
+	require.NoError(t, err, "a panicking tool must not surface as a protocol error")
+	require.NotNil(t, result)
+	assert.True(t, result.IsError, "a panicking tool must surface as a tool error")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "boom")
+}
