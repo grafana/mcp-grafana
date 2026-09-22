@@ -549,14 +549,11 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 		}
 	})
 
-	// Recovery middleware is outermost so it catches panics from all inner
-	// middleware and tool handlers. The mark3labs SDK had built-in recovery;
-	// the go-sdk does not, so we add it here.
-	s.AddReceivingMiddleware(recoveryMiddleware())
-
-	// OrgID middleware is registered per-transport in run(), not here, so
-	// that HTTP transports can place it inside GrafanaContextMiddleware
-	// (the go-sdk's addMiddleware wraps outermost-last).
+	// OrgID and GrafanaContext middleware are registered per-transport in
+	// run(), not here, so that HTTP transports can place OrgID inside
+	// GrafanaContext (the go-sdk's addMiddleware wraps outermost-last).
+	// Recovery middleware is also registered in run() — after all other
+	// middleware — so it is truly outermost and catches panics everywhere.
 
 	return s
 }
@@ -968,6 +965,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if mcpgrafana.DynamicMultiOrgEnabled {
 			s.AddReceivingMiddleware(mcpgrafana.OrgIDOverrideMiddleware())
 		}
+		s.AddReceivingMiddleware(recoveryMiddleware())
 
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())
 
@@ -996,6 +994,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			s.AddReceivingMiddleware(mcpgrafana.OrgIDOverrideMiddleware())
 		}
 		s.AddReceivingMiddleware(mcpgrafana.GrafanaContextMiddleware(httpFn))
+		s.AddReceivingMiddleware(recoveryMiddleware())
 
 		sseHandler := mcp.NewSSEHandler(func(_ *http.Request) *mcp.Server { return s }, &mcp.SSEOptions{
 			DisableLocalhostProtection: disableLocalhostProtection,
@@ -1034,6 +1033,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			s.AddReceivingMiddleware(mcpgrafana.OrgIDOverrideMiddleware())
 		}
 		s.AddReceivingMiddleware(mcpgrafana.GrafanaContextMiddleware(httpFn))
+		s.AddReceivingMiddleware(recoveryMiddleware())
 
 		streamHandler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{
 			Stateless:                  true,
