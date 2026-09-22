@@ -98,6 +98,7 @@ var categoryDescription = map[string]string{
 	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
+	"cloudlogging":  "Google Cloud Logging: Query logs with the Cloud Logging query language and list projects, log buckets, and views.",
 	"examples":      "Examples: Query example tools.",
 	"sql":           "SQL: Query supported SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL) via Grafana with macro substitution, schema discovery, and variable support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
@@ -116,12 +117,13 @@ var categoryDescription = map[string]string{
 // when query_prometheus is not registered sends the model after a tool that
 // isn't there, so these say what the category can still do.
 var categoryDescriptionNoQuery = map[string]string{
-	"prometheus": "Prometheus: Retrieve metric metadata and explore metric names and label names/values. Query execution is disabled.",
-	"loki":       "Loki: Retrieve log metadata and index stats, explore label names/values, and audit label strategy. Log query execution is disabled.",
-	"pyroscope":  "Pyroscope: Explore profile types and label names/values. Query execution is disabled.",
-	"cloudwatch": "CloudWatch: List AWS CloudWatch namespaces, metrics, and dimensions. Query execution is disabled.",
-	"sql":        "SQL: List tables and describe table schemas in SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Query execution is disabled.",
-	"graphite":   "Graphite: List Graphite metrics and tags. Query execution is disabled.",
+	"prometheus":   "Prometheus: Retrieve metric metadata and explore metric names and label names/values. Query execution is disabled.",
+	"loki":         "Loki: Retrieve log metadata and index stats, explore label names/values, and audit label strategy. Log query execution is disabled.",
+	"pyroscope":    "Pyroscope: Explore profile types and label names/values. Query execution is disabled.",
+	"cloudwatch":   "CloudWatch: List AWS CloudWatch namespaces, metrics, and dimensions. Query execution is disabled.",
+	"cloudlogging": "Google Cloud Logging: List GCP projects, log buckets, and views. Query execution is disabled.",
+	"sql":          "SQL: List tables and describe table schemas in SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Query execution is disabled.",
+	"graphite":     "Graphite: List Graphite metrics and tags. Query execution is disabled.",
 }
 
 // queryOnlyCategories register no tools at all when their query tools are
@@ -211,7 +213,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, write, query, enableQuery,
+	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -286,6 +288,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
+	flag.BoolVar(&dt.cloudlogging, "disable-cloudlogging", false, "Disable Google Cloud Logging tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.sql, "disable-sql", false, "Disable SQL tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL)")
 	flag.BoolVar(&dt.sql, "disable-clickhouse", false, "Deprecated: use --disable-sql instead")
@@ -428,6 +431,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
 		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{func(mcp *server.MCPServer) { tools.AddCloudWatchTools(mcp, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
+		{func(mcp *server.MCPServer) { tools.AddCloudLoggingTools(mcp, enableQueryTools) }, dt.cloudlogging, "cloudlogging"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
 		{func(mcp *server.MCPServer) { tools.AddSQLTools(mcp, dt.queryToolsEnabled("sql")) }, dt.sql, "sql"},
 		{func(mcp *server.MCPServer) { tools.AddRunPanelQueryTools(mcp, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
