@@ -873,10 +873,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		return fmt.Errorf("failed to setup observability: %w", err)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := o.Shutdown(shutdownCtx); err != nil {
-			slog.Error("failed to shutdown observability", "error", err)
+			slog.Warn("observability shutdown incomplete (telemetry endpoint may be unreachable)", "error", err)
 		}
 	}()
 

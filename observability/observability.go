@@ -233,22 +233,38 @@ func Setup(cfg Config) (_ *Observability, err error) {
 // Shutdown gracefully shuts down the observability providers. Errors from all
 // providers are collected so one provider's failure doesn't mask another's.
 func (o *Observability) Shutdown(ctx context.Context) error {
-	var errs []error
+	var wg sync.WaitGroup
+	errs := make([]error, 3)
+
 	if o.tracerProvider != nil {
-		if err := o.tracerProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("tracer provider shutdown: %w", err))
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := o.tracerProvider.Shutdown(ctx); err != nil {
+				errs[0] = fmt.Errorf("tracer provider shutdown: %w", err)
+			}
+		}()
 	}
 	if o.loggerProvider != nil {
-		if err := o.loggerProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("logger provider shutdown: %w", err))
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := o.loggerProvider.Shutdown(ctx); err != nil {
+				errs[1] = fmt.Errorf("logger provider shutdown: %w", err)
+			}
+		}()
 	}
 	if o.meterProvider != nil {
-		if err := o.meterProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("meter provider shutdown: %w", err))
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := o.meterProvider.Shutdown(ctx); err != nil {
+				errs[2] = fmt.Errorf("meter provider shutdown: %w", err)
+			}
+		}()
 	}
+
+	wg.Wait()
 	return errors.Join(errs...)
 }
 
