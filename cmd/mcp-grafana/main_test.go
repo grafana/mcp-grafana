@@ -1623,9 +1623,8 @@ func TestRecoveryMiddleware_CatchesPanic(t *testing.T) {
 
 	session := connectTestClient(t, s)
 
-	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "panicking_tool"})
-	require.NoError(t, err, "a panicking tool must not surface as a protocol error")
-	require.NotNil(t, result)
-	assert.True(t, result.IsError, "a panicking tool must surface as a tool error")
-	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "boom")
+	_, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "panicking_tool"})
+	require.Error(t, err, "a panicking tool must return an error")
+	assert.Contains(t, err.Error(), "internal error")
+	assert.NotContains(t, err.Error(), "boom", "panic details must not leak to the client")
 }

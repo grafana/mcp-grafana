@@ -567,16 +567,8 @@ func recoveryMiddleware() mcp.Middleware {
 			defer func() {
 				if p := recover(); p != nil {
 					slog.Error("panic in MCP handler", "method", method, "panic", p)
-					if method == "tools/call" {
-						result = &mcp.CallToolResult{
-							Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("internal error: %v", p)}},
-							IsError: true,
-						}
-						err = nil
-					} else {
-						result = nil
-						err = fmt.Errorf("internal error: %v", p)
-					}
+					result = nil
+					err = fmt.Errorf("internal error")
 				}
 			}()
 			return next(ctx, method, req)
