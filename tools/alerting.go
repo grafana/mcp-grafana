@@ -13,36 +13,38 @@ const (
 	DefaultListContactPointsLimit = 100
 )
 
-const manageAlertRulesDescriptionFmt = `%s
+const getAlertRulesDescription = `List and inspect Grafana alert rules with filtering capabilities.
 
 When to use:
 - Understanding why an alert is or isn't firing
 - Auditing alert rule configuration (queries, conditions, labels, notification settings)
 - Finding alert rules by state, folder, group, or name
+- Comparing rule versions to see what changed
+
+When NOT to use:
+- Creating, updating, or deleting alert rules (use alerting_manage_rules)
+- Checking how alerts are routed to receivers (use alerting_manage_routing)`
+
+const manageAlertRulesDescriptionFmt = `Manage Grafana alert rules: create, update, and delete.
+
+When to use:
+- Creating, updating, or deleting alert rules
 %s
 When NOT to use:
-- Checking how alerts are routed to receivers (use alerting_manage_routing)%s`
+- Listing or inspecting alert rules (use alerting_get_rules)
+- Checking how alerts are routed to receivers (use alerting_manage_routing)`
 
-func manageAlertRulesDescription(readOnly bool) string {
-	if readOnly {
-		return fmt.Sprintf(manageAlertRulesDescriptionFmt,
-			"List and inspect Grafana alert rules with filtering capabilities.",
-			"- Comparing rule versions to see what changed\n",
-			"\n- Modifying or creating alert rules (read-only tool)",
-		)
-	}
+func manageAlertRulesDescription() string {
 	return fmt.Sprintf(manageAlertRulesDescriptionFmt,
-		"Manage Grafana alert rules with full CRUD capabilities and filtering.",
-		"- Creating, updating, or deleting alert rules\n- Comparing rule versions to see what changed\n",
-		"",
+		"\nTo update a rule, first use alerting_get_rules with operation 'get' to retrieve its full configuration, then call this tool with operation 'update' and all required fields plus your changes.\n",
 	)
 }
 
-var ManageRulesRead = mcpgrafana.MustTool(
-	"alerting_manage_rules",
-	manageAlertRulesDescription(true),
+var GetRules = mcpgrafana.MustTool(
+	"alerting_get_rules",
+	getAlertRulesDescription,
 	manageRulesRead,
-	mcpgrafana.WithTitleAnnotation("Manage alert rules"),
+	mcpgrafana.WithTitleAnnotation("Get alert rules"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
@@ -51,7 +53,7 @@ var ManageRulesRead = mcpgrafana.MustTool(
 
 var ManageRulesReadWrite = mcpgrafana.MustTool(
 	"alerting_manage_rules",
-	manageAlertRulesDescription(false),
+	manageAlertRulesDescription(),
 	manageRulesReadWrite,
 	mcpgrafana.WithTitleAnnotation("Manage alert rules"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
@@ -60,15 +62,13 @@ var ManageRulesReadWrite = mcpgrafana.MustTool(
 )
 
 func AddAlertingTools(s *mcp.Server, enableWriteTools bool) {
+	GetRules.Register(s)
 	if enableWriteTools {
 		ManageRulesReadWrite.Register(s)
-	} else {
-		ManageRulesRead.Register(s)
 	}
 	ManageRouting.Register(s)
+	GetSilences.Register(s)
 	if enableWriteTools {
 		ManageSilencesReadWrite.Register(s)
-	} else {
-		ManageSilencesRead.Register(s)
 	}
 }

@@ -16,18 +16,18 @@ import (
 
 func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, error) {
 	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		return nil, fmt.Errorf("alerting_get_rules: %w", err)
 	}
 
 	switch args.Operation {
 	case "list":
 		opts, err := args.toGetRulesOpts()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_get_rules: %w", err)
 		}
 		selectors, err := args.parseLabelSelectors()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_get_rules: %w", err)
 		}
 		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
 			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
@@ -38,7 +38,7 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 	case "versions":
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	default:
-		return nil, fmt.Errorf("alerting_manage_rules: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("alerting_get_rules: unknown operation %q", args.Operation)
 	}
 }
 
