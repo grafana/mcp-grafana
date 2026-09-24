@@ -138,6 +138,49 @@ func TestCloudLoggingEntriesFromResponse_MissingFieldsTolerated(t *testing.T) {
 	assert.Nil(t, entries[0].Labels)
 }
 
+func TestCloudLoggingEntriesFromResponse_LegacyLayoutRejected(t *testing.T) {
+	frame := data.NewFrame("A",
+		data.NewField("time", nil, []time.Time{time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}),
+		data.NewField("content", data.Labels{"severity": "ERROR", "id": "abc"}, []string{"old style body"}),
+	)
+	frame.Meta = &data.FrameMeta{PreferredVisualization: data.VisTypeLogs}
+	resp := &backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{frame}},
+	}}
+
+	_, err := cloudLoggingEntriesFromResponse(resp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), MinCloudLoggingPluginVersion)
+	assert.Contains(t, err.Error(), CloudLoggingDatasourceType)
+}
+
+func TestCloudLoggingEntriesFromResponse_EpochTimestamps(t *testing.T) {
+	want := time.Date(2026, 2, 2, 19, 5, 0, 0, time.UTC)
+	frame := data.NewFrame("A",
+		data.NewField("timestamp", nil, []int64{want.UnixMilli()}),
+		data.NewField("body", nil, []string{"epoch int64"}),
+	)
+	resp := &backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{frame}},
+	}}
+	entries, err := cloudLoggingEntriesFromResponse(resp)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.True(t, want.Equal(entries[0].Timestamp), "int64 epoch ms should decode to %s, got %s", want, entries[0].Timestamp)
+
+	frame = data.NewFrame("A",
+		data.NewField("timestamp", nil, []float64{float64(want.UnixMilli())}),
+		data.NewField("body", nil, []string{"epoch float64"}),
+	)
+	resp = &backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{frame}},
+	}}
+	entries, err = cloudLoggingEntriesFromResponse(resp)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.True(t, want.Equal(entries[0].Timestamp), "float64 epoch ms should decode to %s, got %s", want, entries[0].Timestamp)
+}
+
 func TestCloudLoggingEntriesFromResponse_Empty(t *testing.T) {
 	resp := &backend.QueryDataResponse{Responses: backend.Responses{
 		"A": backend.DataResponse{Frames: data.Frames{}},

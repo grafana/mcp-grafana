@@ -24,6 +24,8 @@ const (
 	DefaultCloudLoggingLimit = 100
 
 	MaxCloudLoggingLimit = 1000
+
+	MinCloudLoggingPluginVersion = "1.8.0"
 )
 
 // cloudLoggingClient queries a Google Cloud Logging datasource through Grafana.
@@ -181,13 +183,17 @@ func cloudLoggingEntriesFromResponse(resp *backend.QueryDataResponse) ([]CloudLo
 			if frame == nil {
 				continue
 			}
-			entries = append(entries, cloudLoggingEntriesFromFrame(frame)...)
+			frameEntries, err := cloudLoggingEntriesFromFrame(frame)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, frameEntries...)
 		}
 	}
 	return entries, nil
 }
 
-func cloudLoggingEntriesFromFrame(frame *data.Frame) []CloudLoggingEntry {
+func cloudLoggingEntriesFromFrame(frame *data.Frame) ([]CloudLoggingEntry, error) {
 	fieldByName := make(map[string]*data.Field, len(frame.Fields))
 	for _, f := range frame.Fields {
 		if f != nil {
@@ -195,17 +201,16 @@ func cloudLoggingEntriesFromFrame(frame *data.Frame) []CloudLoggingEntry {
 		}
 	}
 
+	if isLegacyCloudLoggingFrame(fieldByName) {
+		return nil, fmt.Errorf("the Google Cloud Logging datasource plugin returned the pre-%s frame layout (fields time/content); upgrade the %s plugin to %s or later",
+			MinCloudLoggingPluginVersion, CloudLoggingDatasourceType, MinCloudLoggingPluginVersion)
+	}
+
 	n := frame.Rows()
 	entries := make([]CloudLoggingEntry, 0, n)
 	for i := 0; i < n; i++ {
 		e := CloudLoggingEntry{}
-		if f := fieldByName["timestamp"]; f != nil {
-			if ts, ok := f.ConcreteAt(i); ok {
-				if t, ok := ts.(time.Time); ok {
-					e.Timestamp = t
-				}
-			}
-		}
+		e.Timestamp = fieldTime(fieldByName["timestamp"], i)
 		e.Body = fieldString(fieldByName["body"], i)
 		e.Severity = fieldString(fieldByName["severity"], i)
 		e.ID = fieldString(fieldByName["id"], i)
@@ -226,7 +231,44 @@ func cloudLoggingEntriesFromFrame(frame *data.Frame) []CloudLoggingEntry {
 		}
 		entries = append(entries, e)
 	}
-	return entries
+	return entries, nil
+}
+
+// isLegacyCloudLoggingFrame reports whether the frame uses the pre-1.8.0 time/content layout.
+func isLegacyCloudLoggingFrame(fieldByName map[string]*data.Field) bool {
+	_, hasTime := fieldByName["time"]
+	_, hasContent := fieldByName["content"]
+	_, hasTimestamp := fieldByName["timestamp"]
+	_, hasBody := fieldByName["body"]
+	return (hasTime || hasContent) && !hasTimestamp && !hasBody
+}
+
+// fieldTime returns the time value of field f at row i, or the zero time if absent.
+func fieldTime(f *data.Field, i int) time.Time {
+	if f == nil {
+		return time.Time{}
+	}
+	v, ok := f.ConcreteAt(i)
+	if !ok {
+		return time.Time{}
+	}
+	switch t := v.(type) {
+	case time.Time:
+		return t
+	case *time.Time:
+		if t != nil {
+			return *t
+		}
+	case int64:
+		return time.UnixMilli(t).UTC()
+	case float64:
+		return time.UnixMilli(int64(t)).UTC()
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, t); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 // fieldString returns the string value of field f at row i, or "" if absent.

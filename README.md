@@ -115,7 +115,7 @@ Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, an
 
 ### Google Cloud Logging Querying
 
-> **Note:** Google Cloud Logging tools are **disabled by default**. To enable them, add `cloudlogging` to your `--enabled-tools` flag. Requires the [Google Cloud Logging datasource plugin](https://grafana.com/grafana/plugins/googlecloud-logging-datasource/) (`googlecloud-logging-datasource`).
+> **Note:** Google Cloud Logging tools are **disabled by default**. To enable them, add `cloudlogging` to your `--enabled-tools` flag. Requires the [Google Cloud Logging datasource plugin](https://grafana.com/grafana/plugins/googlecloud-logging-datasource/) (`googlecloud-logging-datasource`) version 1.8.0 or later, which needs Grafana 11.2+. Older plugin versions return a different response layout and `query_cloud_logging` reports an error asking for an upgrade.
 
 - **List Cloud Logging projects:** Discover the GCP project IDs the datasource can read logs from.
 - **List Cloud Logging buckets and views:** Discover log buckets and log views to scope a query.
