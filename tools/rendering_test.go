@@ -640,6 +640,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.True(t, ok, "second content item should be TextContent")
 		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
 		assertDeeplinkMeta(t, textContent)
+		assert.Equal(t, map[string]any{"deeplink": server.URL + "/d/test-dash"}, result.StructuredContent)
 	})
 
 	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {

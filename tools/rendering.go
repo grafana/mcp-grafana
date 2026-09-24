@@ -183,6 +183,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 
 	// Use the public base URL, not config.URL, which may be an in-cluster
 	// endpoint the browser can't reach.
+	var structured any
 	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil && deeplinkResolvesInRenderOrg(ctx, renderOrg) {
 		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
 			content = append(content, mcp.TextContent{
@@ -190,11 +191,16 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 				Type: "text",
 				Text: deeplink,
 			})
+			// Also in structuredContent: some hosts (e.g. Claude) don't forward
+			// content items' _meta to the MCP App, so the viewer can't find the
+			// link in content alone.
+			structured = map[string]any{"deeplink": deeplink}
 		}
 	}
 
 	return &mcp.CallToolResult{
-		Content: content,
+		Content:           content,
+		StructuredContent: structured,
 	}, nil
 }
 
