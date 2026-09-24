@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,30 +66,48 @@ func TestBuildCloudLoggingPayload(t *testing.T) {
 	assert.Equal(t, "my-project", q.ProjectID)
 	assert.Equal(t, "global/buckets/_Default", q.BucketID)
 	assert.Equal(t, "_AllLogs", q.ViewID)
-	assert.Equal(t, 50, q.MaxDataPoints)
+	assert.Equal(t, 51, q.MaxDataPoints)
 
 	payload = buildCloudLoggingPayload("gcl-uid", "p", "", "", "", from, to, 0)
-	assert.Equal(t, DefaultCloudLoggingLimit, payload["queries"].([]map[string]interface{})[0]["maxDataPoints"])
+	assert.Equal(t, DefaultCloudLoggingLimit+1, payload["queries"].([]map[string]interface{})[0]["maxDataPoints"])
 	payload = buildCloudLoggingPayload("gcl-uid", "p", "", "", "", from, to, 5000)
-	assert.Equal(t, MaxCloudLoggingLimit, payload["queries"].([]map[string]interface{})[0]["maxDataPoints"])
+	assert.Equal(t, MaxCloudLoggingLimit+1, payload["queries"].([]map[string]interface{})[0]["maxDataPoints"])
 }
 
 func newCloudLoggingTestFrame() *data.Frame {
-	ts := []time.Time{
-		time.Date(2026, 2, 2, 19, 5, 0, 0, time.UTC),
-		time.Date(2026, 2, 2, 19, 4, 0, 0, time.UTC),
-	}
+	return newCloudLoggingTestFrameN(2)
+}
+
+func newCloudLoggingTestFrameN(rows int) *data.Frame {
+	base := time.Date(2026, 2, 2, 19, 5, 0, 0, time.UTC)
 	trace1 := "projects/p/traces/abc"
+	ts := make([]time.Time, rows)
+	bodies := make([]string, rows)
+	severities := make([]string, rows)
+	ids := make([]string, rows)
+	labels := make([]json.RawMessage, rows)
+	traces := make([]*string, rows)
+	for i := 0; i < rows; i++ {
+		ts[i] = base.Add(-time.Duration(i) * time.Minute)
+		bodies[i] = fmt.Sprintf("line %d", i+1)
+		severities[i] = "INFO"
+		ids[i] = fmt.Sprintf("id-%d", i+1)
+		labels[i] = json.RawMessage(`null`)
+	}
+	bodies[0] = "first line"
+	severities[0] = "ERROR"
+	labels[0] = json.RawMessage(`{"resource.type":"k8s_container","k8s-pod/app":"api"}`)
+	traces[0] = &trace1
+	if rows > 1 {
+		bodies[1] = "second line"
+	}
 	frame := data.NewFrame("A",
 		data.NewField("timestamp", nil, ts),
-		data.NewField("body", nil, []string{"first line", "second line"}),
-		data.NewField("severity", nil, []string{"ERROR", "INFO"}),
-		data.NewField("id", nil, []string{"id-1", "id-2"}),
-		data.NewField("labels", nil, []json.RawMessage{
-			json.RawMessage(`{"resource.type":"k8s_container","k8s-pod/app":"api"}`),
-			json.RawMessage(`null`),
-		}),
-		data.NewField("traceId", nil, []*string{&trace1, nil}),
+		data.NewField("body", nil, bodies),
+		data.NewField("severity", nil, severities),
+		data.NewField("id", nil, ids),
+		data.NewField("labels", nil, labels),
+		data.NewField("traceId", nil, traces),
 	)
 	frame.Meta = &data.FrameMeta{Type: data.FrameTypeLogLines, PreferredVisualization: data.VisTypeLogs}
 	return frame
@@ -317,21 +336,27 @@ func TestQueryCloudLogging_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "bucketId is required")
 }
 
-func TestQueryCloudLogging_EndToEnd(t *testing.T) {
-	var gotBody map[string]interface{}
+func newCloudLoggingQueryMock(t *testing.T, rows int, gotBody *map[string]interface{}) context.Context {
+	t.Helper()
 	_, ctx := newCloudLoggingMockGrafana(t, CloudLoggingDatasourceType, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/ds/query" {
 			http.NotFound(w, r)
 			return
 		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		require.NoError(t, json.NewDecoder(r.Body).Decode(gotBody))
 
 		resp := &backend.QueryDataResponse{Responses: backend.Responses{
-			"A": backend.DataResponse{Frames: data.Frames{newCloudLoggingTestFrame()}},
+			"A": backend.DataResponse{Frames: data.Frames{newCloudLoggingTestFrameN(rows)}},
 		}}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	})
+	return ctx
+}
+
+func TestQueryCloudLogging_EndToEnd(t *testing.T) {
+	var gotBody map[string]interface{}
+	ctx := newCloudLoggingQueryMock(t, 2, &gotBody)
 
 	result, err := queryCloudLogging(ctx, CloudLoggingQueryParams{
 		DatasourceUID: "gcl-uid",
@@ -346,9 +371,14 @@ func TestQueryCloudLogging_EndToEnd(t *testing.T) {
 
 	assert.Equal(t, 2, result.EntryCount)
 	assert.Equal(t, 2, result.Limit)
-	assert.True(t, result.Truncated, "hitting the limit must flag truncation")
+	assert.False(t, result.Truncated, "exactly limit entries is not truncation")
 	assert.Nil(t, result.Hints)
 	assert.Equal(t, "first line", result.Entries[0].Body)
+	assert.True(t, time.Date(2026, 2, 2, 19, 5, 0, 0, time.UTC).Equal(result.Entries[0].Timestamp),
+		"timestamp must survive the /api/ds/query JSON round trip, got %s", result.Entries[0].Timestamp)
+	assert.Equal(t, "ERROR", result.Entries[0].Severity)
+	assert.Equal(t, "projects/p/traces/abc", result.Entries[0].TraceID)
+	assert.JSONEq(t, `{"resource.type":"k8s_container","k8s-pod/app":"api"}`, string(result.Entries[0].Labels))
 
 	assert.Equal(t, "1770058800000", gotBody["from"])
 	assert.Equal(t, "1770062400000", gotBody["to"])
@@ -357,7 +387,28 @@ func TestQueryCloudLogging_EndToEnd(t *testing.T) {
 	q := queries[0].(map[string]interface{})
 	assert.Equal(t, `severity>=ERROR`, q["queryText"])
 	assert.Equal(t, "my-project", q["projectId"])
-	assert.Equal(t, float64(2), q["maxDataPoints"])
+	assert.Equal(t, float64(3), q["maxDataPoints"], "one extra row is requested to detect truncation")
+}
+
+func TestQueryCloudLogging_Truncated(t *testing.T) {
+	var gotBody map[string]interface{}
+	ctx := newCloudLoggingQueryMock(t, 3, &gotBody)
+
+	result, err := queryCloudLogging(ctx, CloudLoggingQueryParams{
+		DatasourceUID: "gcl-uid",
+		ProjectID:     "my-project",
+		Limit:         2,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.True(t, result.Truncated)
+	assert.Equal(t, 2, result.EntryCount)
+	assert.Equal(t, 2, result.Limit)
+	require.Len(t, result.Entries, 2)
+	assert.Equal(t, "first line", result.Entries[0].Body)
+	assert.Equal(t, "second line", result.Entries[1].Body)
+	assert.Nil(t, result.Hints)
 }
 
 func TestQueryCloudLogging_EmptyResultHasHints(t *testing.T) {

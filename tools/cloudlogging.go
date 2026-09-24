@@ -162,7 +162,7 @@ func buildCloudLoggingPayload(datasourceUID, projectID, filter, bucketID, viewID
 		"projectId":     projectID,
 		"bucketId":      bucketID,
 		"viewId":        viewID,
-		"maxDataPoints": normalizeCloudLoggingLimit(limit),
+		"maxDataPoints": normalizeCloudLoggingLimit(limit) + 1,
 	}
 	return dsQueryPayload(from, to, q)
 }
@@ -345,11 +345,16 @@ func queryCloudLogging(ctx context.Context, args CloudLoggingQueryParams) (*Clou
 		return nil, err
 	}
 
+	truncated := len(entries) > limit
+	if truncated {
+		entries = entries[:limit]
+	}
+
 	result := &CloudLoggingQueryResult{
 		Entries:    entries,
 		EntryCount: len(entries),
 		Limit:      limit,
-		Truncated:  len(entries) >= limit,
+		Truncated:  truncated,
 	}
 
 	if result.EntryCount == 0 {
