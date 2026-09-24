@@ -390,3 +390,28 @@ func TestQueryLokiLogsFormatValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid format")
 	}
 }
+
+func TestQueryLokiRequiresLogQL(t *testing.T) {
+	for _, logql := range []string{"", "  "} {
+		_, err := queryLokiLogs(context.Background(), QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         logql,
+		})
+		require.Error(t, err)
+		assert.Equal(t, "logql is required", err.Error())
+
+		_, err = queryLokiStats(context.Background(), QueryLokiStatsParams{
+			DatasourceUID: "loki",
+			LogQL:         logql,
+		})
+		require.Error(t, err)
+		assert.Equal(t, "logql is required", err.Error())
+
+		_, err = queryLokiPatterns(context.Background(), QueryLokiPatternsParams{
+			DatasourceUID: "loki",
+			LogQL:         logql,
+		})
+		require.Error(t, err)
+		assert.Equal(t, "logql is required", err.Error())
+	}
+}
