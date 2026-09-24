@@ -28,8 +28,8 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 - `-t` / `--transport`: Transport type (`stdio`, `sse`, or `streamable-http`). Default: `stdio`.
 - `--address`: Host and port for the SSE or streamable-http server. Default: `localhost:8000`.
-- `--base-path`: Base path for the SSE or streamable-http server.
-- `--endpoint-path`: HTTP path for the streamable-http MCP endpoint. Default: `/mcp`.
+- `--base-path`: Base path for the SSE or streamable-http server. With `--base-path /my-base`, SSE is at `/my-base/sse` and streamable-http at `/my-base/mcp`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers and always stay at the server root, never under this prefix.
+- `--endpoint-path`: HTTP path for the streamable-http MCP endpoint, appended to `--base-path`. Default: `/mcp`.
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
 ## Configure HTTP transport security

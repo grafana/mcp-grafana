@@ -232,7 +232,7 @@ type SearchTempoTracesParams struct {
 
 type QueryTempoMetricsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
-	Query         string `json:"query" jsonschema:"required,description=TraceQL metrics query string (e.g. '{ } | count_over_time()' or '{ } | rate()')."`
+	Query         string `json:"query" jsonschema:"required,description=TraceQL metrics query of the form '{ <selector> } | <aggregation> [by (<attribute>)]'. Example: '{ } | quantile_over_time(span:duration\\, .99) by (span.name)'."`
 	Type          string `json:"type,omitempty" jsonschema:"enum=instant,enum=range,default=range,description=Query type: 'instant' returns a single value at the end of the time range; 'range' returns a time series. Default is 'range'."`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time (RFC3339 format). If not provided will search the past 1 hour."`
 	End           string `json:"end,omitempty" jsonschema:"description=End time (RFC3339 format). If not provided will search the past 1 hour."`
@@ -327,10 +327,27 @@ func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.
 
 	body, err := backend.doGet(ctx, endpoint, params)
 	if err != nil {
-		return mcpgrafana.NewToolResultError(err.Error()), nil
+		return mcpgrafana.NewToolResultError(annotateTraceQLParseError(err.Error())), nil
 	}
 
 	return tempoToolResult(body, resultType, "json"), nil
+}
+
+// annotateTraceQLParseError appends a worked example to a Tempo parse error.
+// Tempo reports the offending column and says to consult its docs, but returns
+// nothing to pattern-match against, and the common failures are PromQL habits
+// (a [5m] range selector, a where clause, by() ahead of the aggregation, a bare
+// duration) that one correct query rules out. Only fires on a rejected query,
+// so it costs nothing on the success path.
+func annotateTraceQLParseError(msg string) string {
+	if !strings.Contains(msg, "parse error") {
+		return msg
+	}
+	return msg + "\n\nTraceQL metrics queries take the form '{ <spanset filter> } | <aggregation> [by (<attribute>)]'." +
+		"\nWorking example: {resource.service.name=\"checkout\"} | quantile_over_time(span:duration, .99) by (span.name)" +
+		"\nCommon mistakes: a PromQL range selector such as [5m]; a 'where' clause; 'by (...)' placed before the aggregation instead of after;" +
+		" a bare 'duration' instead of the 'span:duration' intrinsic; an aggregation name missing its '_over_time' suffix (count_over_time, not count)." +
+		"\nCall get_tempo_traceql_docs with topic 'metrics' for the full reference."
 }
 
 func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
@@ -659,7 +676,7 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
-	"Compute trace-derived metrics using a TraceQL metrics query. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
+	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL; call get_tempo_traceql_docs with topic 'metrics' for the reference. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
 	queryTempoMetrics,
 	mcpgrafana.WithTitleAnnotation("Query Tempo metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

@@ -832,6 +832,10 @@ func varyingOnly(entry, constant map[string]string) map[string]string {
 }
 
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLogsResult, error) {
+	if strings.TrimSpace(args.LogQL) == "" {
+		return nil, fmt.Errorf("logql is required")
+	}
+
 	format := strings.ToLower(strings.TrimSpace(args.Format))
 	switch format {
 	case "", "full", "compact":
@@ -1042,6 +1046,10 @@ type QueryLokiStatsParams struct {
 // queryLokiStats queries stats from a Loki-compatible datasource. On
 // VictoriaLogs only the entries count is populated (no chunks/streams/bytes).
 func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, error) {
+	if strings.TrimSpace(args.LogQL) == "" {
+		return nil, fmt.Errorf("logql is required")
+	}
+
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
@@ -1085,6 +1093,10 @@ type QueryLokiPatternsParams struct {
 // datasource. VictoriaLogs has no equivalent endpoint and surfaces a clear
 // error from the backend.
 func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pattern, error) {
+	if strings.TrimSpace(args.LogQL) == "" {
+		return nil, fmt.Errorf("logql is required")
+	}
+
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki backend: %w", err)

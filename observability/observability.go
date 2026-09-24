@@ -210,6 +210,7 @@ func Setup(cfg Config) (_ *Observability, err error) {
 	provider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(exporter),
 		sdkmetric.WithResource(res),
+		sdkmetric.WithView(MetricNamesHistogramView()),
 	)
 
 	otel.SetMeterProvider(provider)

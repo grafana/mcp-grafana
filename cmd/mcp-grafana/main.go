@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -855,7 +856,157 @@ func nativeToolNames(dt disabledTools) map[string]struct{} {
 	return names
 }
 
+// normalizeBasePath canonicalises --base-path to "" (server root) or to
+// "/prefix" without a trailing slash, so every mux pattern derived from it
+// agrees.
+func normalizeBasePath(basePath string) string {
+	joined := path.Join("/", basePath)
+	if joined == "/" {
+		return ""
+	}
+	return joined
+}
+
+// newHTTPMux builds the mux shared by the SSE and streamable-http transports,
+// carrying the MCP handler only. The operational endpoints are added by
+// registerOps, which decides per endpoint whether it stays on this mux or
+// moves to its own listener.
+//
+// mcpPattern is the ServeMux pattern the MCP handler is mounted on.
+// callerToken, when non-empty, gates the MCP handler behind bearer auth — the
+// operational endpoints stay open so probes and scrapers keep working.
+// corsOrigins wraps the MCP handler in CORS handling outside the auth check,
+// so browser preflights are answered without a token.
+//
+// /healthz and /metrics are internal-only endpoints consumed by
+// infrastructure (liveness probes, scrapers), not by MCP clients, so
+// registerOps mounts them at the server root only — never under --base-path.
+// Putting them on the same prefix as the application endpoints would make it
+// harder for a reverse proxy to expose the API while keeping these internal.
+func newHTTPMux(mcpPattern string, mcpHandler http.Handler, callerToken string, corsOrigins []string) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle(mcpPattern, corsMiddleware(corsOrigins, withCallerAuth(callerToken, observability.WrapHandler(mcpHandler, mcpPattern))))
+	return mux
+}
+
+// newSSEMux mounts the SSE handler at <base>/sse.
+//
+// basePath must already be normalized by the caller (normalizeBasePath).
+func newSSEMux(mcpHandler http.Handler, basePath, callerToken string, corsOrigins []string) *http.ServeMux {
+	return newHTTPMux(sseEndpointPath(basePath), mcpHandler, callerToken, corsOrigins)
+}
+
+// sseEndpointPath is where the SSE handler listens. The go-sdk SSEHandler
+// serves both the event stream (GET) and the session's message POSTs
+// (?sessionid=...) on the path it is mounted at, so one exact mount covers
+// the whole transport.
+func sseEndpointPath(basePath string) string {
+	return basePath + "/sse"
+}
+
+// newStreamableHTTPMux mounts the streamable-http handler.
+//
+// mcpEndpoint must already be computed by the caller (streamableEndpointPath).
+func newStreamableHTTPMux(mcpHandler http.Handler, mcpEndpoint, callerToken string, corsOrigins []string) *http.ServeMux {
+	return newHTTPMux(mcpEndpoint, mcpHandler, callerToken, corsOrigins)
+}
+
+// streamableEndpointPath is where the streamable-http server listens once
+// --base-path is taken into account.
+func streamableEndpointPath(basePath, endpointPath string) string {
+	joined := path.Join("/", basePath, endpointPath)
+	// path.Join drops a trailing slash, but to ServeMux that slash is the
+	// difference between an exact mount and a subtree. --endpoint-path=/mcp/
+	// mounted a subtree before --base-path reached this transport, and a
+	// client pointed at that URL must keep working, so carry the slash over.
+	if joined != "/" && strings.HasSuffix(endpointPath, "/") {
+		joined += "/"
+	}
+	return joined
+}
+
+// operationalMounts lists the patterns registerOps mounts on the MCP
+// listener alongside the MCP handler. Each is only there when it has no
+// address of its own: --healthz-address and --metrics-address move the
+// endpoint to a side listener, and metrics off means nothing is mounted at
+// all — in those cases the path is free for the MCP handler.
+func operationalMounts(healthzAddress string, obs observability.Config) []string {
+	var mounts []string
+	if healthzAddress == "" {
+		mounts = append(mounts, "/healthz")
+	}
+	if obs.MetricsEnabled && obs.MetricsAddress == "" {
+		mounts = append(mounts, "/metrics")
+	}
+	return mounts
+}
+
+// checkMountPattern rejects a pattern ServeMux would not serve as the literal
+// path it was written as. ServeMux reads a pattern as "[METHOD ]/path", so a
+// space or tab turns the first segment into a method and panics on
+// registration; '{' opens a wildcard segment, which registers fine but then
+// matches paths nobody asked for.
+func checkMountPattern(pattern string) error {
+	i := strings.IndexAny(pattern, " \t{")
+	if i < 0 {
+		return nil
+	}
+	return fmt.Errorf("resolves to %q, which is not a route path: %q cannot appear in one", pattern, pattern[i])
+}
+
+// validateMountFlags rejects --base-path / --endpoint-path values the HTTP
+// transports could not serve. ServeMux panics both on a malformed pattern and
+// on the duplicate registration a reserved path would cause, so these are
+// caught at flag-parsing time rather than half-way through starting a server.
+//
+// The checks run on the resolved pattern, not on the raw flags: --endpoint-path
+// is joined with --base-path and cleaned on the way to the mux, so "healthz",
+// "/healthz/" and "/foo/../metrics" all reach an operational path too.
+func validateMountFlags(transport, basePath, endpointPath, healthzAddress string, obs observability.Config) error {
+	raw := basePath
+	basePath = normalizeBasePath(basePath)
+	// "..", "." and "/foo/../.." all clean to the server root, so a prefix the
+	// operator wrote would silently become no prefix at all — with the MCP
+	// routes then served at every path their reverse proxy exposes. An empty
+	// flag is the honest way to ask for that.
+	if basePath == "" && strings.Trim(raw, "/") != "" {
+		return fmt.Errorf("invalid --base-path: %q resolves to the server root; leave it unset to serve without a prefix", raw)
+	}
+	switch transport {
+	case "sse":
+		// The SSE handler is mounted at <base>/sse, which can never equal one
+		// of the operational paths — only syntax can go wrong.
+		if err := checkMountPattern(sseEndpointPath(basePath)); err != nil {
+			return fmt.Errorf("invalid --base-path: %w", err)
+		}
+	case "streamable-http":
+		flags := "--endpoint-path"
+		if basePath != "" {
+			flags = "--base-path with --endpoint-path"
+		}
+		// Empty is not "the default": it mounts the MCP handler on the whole
+		// listener, answering every path that nothing else claims. ServeMux
+		// used to reject the empty pattern outright; keep that loud.
+		if endpointPath == "" {
+			return fmt.Errorf("invalid %s: cannot be empty; use %q to serve MCP at the server root", flags, "/")
+		}
+		mcpEndpoint := streamableEndpointPath(basePath, endpointPath)
+		if err := checkMountPattern(mcpEndpoint); err != nil {
+			return fmt.Errorf("invalid %s: %w", flags, err)
+		}
+		if slices.Contains(operationalMounts(healthzAddress, obs), mcpEndpoint) {
+			return fmt.Errorf("invalid %s: resolves to %q, which is served at the server root as an operational endpoint", flags, mcpEndpoint)
+		}
+	}
+	return nil
+}
+
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, us usagestats.Config, healthzAddress, instructionsAppend string) error {
+	// --base-path feeds every mux pattern, so normalize it once here and let
+	// every mux mount read the same value. main() has already rejected values
+	// these mounts could not serve.
+	basePath = normalizeBasePath(basePath)
+
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -991,19 +1142,13 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			DisableLocalhostProtection: disableLocalhostProtection,
 		})
 
-		mux := http.NewServeMux()
-		// The go-sdk SSEHandler serves the SSE stream at its mount path.
-		// Default to "/sse" for backwards compatibility (mark3labs served
-		// at {basePath}/sse internally); a non-empty --base-path is used
-		// as the mount prefix.
-		ssePath := "/sse"
-		if basePath != "" {
-			ssePath = strings.TrimRight(basePath, "/") + "/sse"
-		}
-		mux.Handle(ssePath, corsMiddleware(hsc.corsOrigins(), withCallerAuth(callerToken, observability.WrapHandler(
+		ssePath := sseEndpointPath(basePath)
+		mux := newSSEMux(
 			mcpgrafana.ValidateGrafanaURLMiddleware(sseHandler), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
-			ssePath,
-		))))
+			basePath,
+			callerToken,
+			hsc.corsOrigins(),
+		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
@@ -1032,11 +1177,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			DisableLocalhostProtection: disableLocalhostProtection,
 		})
 
-		mux := http.NewServeMux()
-		mux.Handle(endpointPath, corsMiddleware(hsc.corsOrigins(), withCallerAuth(callerToken, observability.WrapHandler(
+		// --base-path is documented for this transport too, so fold it into the
+		// endpoint the server listens on.
+		mcpEndpoint := streamableEndpointPath(basePath, endpointPath)
+		mux := newStreamableHTTPMux(
 			mcpgrafana.ValidateGrafanaURLMiddleware(streamHandler), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
-			endpointPath,
-		))))
+			mcpEndpoint,
+			callerToken,
+			hsc.corsOrigins(),
+		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
@@ -1045,7 +1194,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
-			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
+			"version", mcpgrafana.Version(), "address", addr, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, httpSrv, "StreamableHTTP", tls.certFile, tls.keyFile)
 
 	default:
@@ -1065,8 +1214,8 @@ func main() {
 	var serverName string
 	flag.StringVar(&serverName, "server-name", defaultServerName, "Server name used in the MCP handshake and OTel service.name. Overrides GRAFANA_MCP_SERVER_NAME env var.")
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
-	basePath := flag.String("base-path", "", "Base path for the sse server")
-	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
+	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server. /healthz and /metrics are always served at the root, not under this prefix")
+	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server, appended to --base-path")
 	_ = flag.Int("session-idle-timeout-minutes", 30, "Deprecated: the official go-sdk manages sessions internally. This flag is ignored.")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
@@ -1148,6 +1297,11 @@ func main() {
 	}
 	if gc.lokiGuardrailMode != mcpgrafana.LokiGuardrailOff {
 		slog.Info("Loki guardrail enabled", "mode", gc.lokiGuardrailMode, "max_bytes", gc.lokiGuardrailMaxBytes, "max_range", gc.lokiGuardrailMaxRange)
+	}
+
+	if err := validateMountFlags(transport, *basePath, *endpointPath, *healthzAddress, obs); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
 
 	socks5Proxy, err := socks5ProxyFromEnv()
