@@ -406,5 +406,12 @@ func TestQueryLokiRequiresLogQL(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.Equal(t, "logql is required", err.Error())
+
+		_, err = queryLokiPatterns(context.Background(), QueryLokiPatternsParams{
+			DatasourceUID: "loki",
+			LogQL:         logql,
+		})
+		require.Error(t, err)
+		assert.Equal(t, "logql is required", err.Error())
 	}
 }

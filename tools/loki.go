@@ -1094,6 +1094,10 @@ type QueryLokiPatternsParams struct {
 // datasource. VictoriaLogs has no equivalent endpoint and surfaces a clear
 // error from the backend.
 func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pattern, error) {
+	if strings.TrimSpace(args.LogQL) == "" {
+		return nil, fmt.Errorf("logql is required")
+	}
+
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
