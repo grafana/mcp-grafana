@@ -17,10 +17,11 @@
       }
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: var(--bg); }
+    /* --font-sans comes from the host; fall back to Grafana's font stack. */
+    body { background: var(--bg); font-family: var(--font-sans, Inter, Helvetica, Arial, sans-serif); }
     img { max-width: 100%; height: auto; display: block; }
     .status { color: var(--text-secondary); font-style: italic; font-size: 13px; padding: 12px; }
-    .deeplink { padding: 8px 0 4px; font-size: 13px; }
+    .deeplink { padding: 8px 0 4px; font-size: 12px; font-weight: 500; }
     .deeplink a { color: var(--link); text-decoration: none; }
     .deeplink a:hover { text-decoration: underline; }
   </style>
