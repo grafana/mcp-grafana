@@ -209,6 +209,14 @@ func TestParseCloudLoggingStringList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{}, got)
 
+	got, err = parseCloudLoggingStringList([]byte(`["","global/buckets/_Default"," "]`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"global/buckets/_Default"}, got)
+
+	got, err = parseCloudLoggingStringList([]byte(`[""]`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, got)
+
 	_, err = parseCloudLoggingStringList([]byte(`{"not":"a list"}`))
 	require.Error(t, err)
 }
@@ -220,7 +228,7 @@ func TestCloudLoggingClient_Resource(t *testing.T) {
 		gotQuery = r.URL.RawQuery
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`["_AllLogs","_Default"]`))
+		_, _ = w.Write([]byte(`["","_AllLogs","_Default"]`))
 	}))
 	t.Cleanup(ts.Close)
 

@@ -95,12 +95,15 @@ func (c *cloudLoggingClient) resourceStrings(ctx context.Context, path string, p
 
 // parseCloudLoggingStringList decodes a JSON string array, mapping null to an empty slice.
 func parseCloudLoggingStringList(body []byte) ([]string, error) {
-	var items []string
-	if err := json.Unmarshal(body, &items); err != nil {
+	var raw []string
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
-	if items == nil {
-		items = []string{}
+	items := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if strings.TrimSpace(item) != "" {
+			items = append(items, item)
+		}
 	}
 	return items, nil
 }
