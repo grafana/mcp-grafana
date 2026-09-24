@@ -1712,6 +1712,102 @@ func TestStdioBackendTransportTokenRotation(t *testing.T) {
 	assert.Contains(t, authHeaders, "Bearer token-a")
 }
 
+// TestTokenFileRefreshRoundTripperLeavesRequestAlone covers the two ways the
+// refresh layer must stay invisible outside its own header: it must not write
+// through to the request it was handed, and it must not add a bearer token to a
+// request that AuthRoundTripper has already marked as on-behalf-of.
+func TestTokenFileRefreshRoundTripperLeavesRequestAlone(t *testing.T) {
+	writeToken := func(t *testing.T, contents string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "service-account-token")
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+		return path
+	}
+
+	t.Run("does not mutate the caller's request", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: http.StatusOK}, nil
+		}}
+		rt := newTokenFileRefreshRoundTripper(mock, writeToken(t, "fresh-token"), slog.New(slog.DiscardHandler))
+
+		req, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer stale-token")
+
+		_, err = rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		require.NotSame(t, req, capturedReq)
+		assert.Equal(t, "Bearer fresh-token", capturedReq.Header.Get("Authorization"))
+		assert.Equal(t, "Bearer stale-token", req.Header.Get("Authorization"),
+			"the request owned by the caller must keep its original header")
+	})
+
+	t.Run("keeps on-behalf-of auth instead of adding a bearer token", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: http.StatusOK}, nil
+		}}
+		rt := newTokenFileRefreshRoundTripper(mock, writeToken(t, "service-account-token"), slog.New(slog.DiscardHandler))
+
+		req, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Access-Token", "access-token")
+		req.Header.Set("X-Grafana-Id", "id-token")
+
+		_, err = rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "access-token", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "id-token", capturedReq.Header.Get("X-Grafana-Id"))
+		assert.Empty(t, capturedReq.Header.Get("Authorization"),
+			"a request authenticated on behalf of a user must not also carry the service-account token")
+	})
+}
+
+// TestBuildTransportKeepsOnBehalfOfAuthWithTokenFile checks the composed
+// transport rather than the layer in isolation: with a token file configured,
+// the refresh layer sits inside AuthRoundTripper, so an OBO request must still
+// reach Grafana with the impersonated identity and nothing else.
+func TestBuildTransportKeepsOnBehalfOfAuthWithTokenFile(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "service-account-token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("service-account-token"), 0o600))
+
+	var mu sync.Mutex
+	var seen []http.Header
+	ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Clone())
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cfg := GrafanaConfig{
+		URL:         ts.URL,
+		AccessToken: "access-token",
+		IDToken:     "id-token",
+		TokenFile:   tokenFile,
+	}
+	rt, err := BuildTransport(&cfg, nil)
+	require.NoError(t, err)
+
+	ctx := WithGrafanaConfig(context.Background(), cfg)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/ds/query", nil)
+	require.NoError(t, err)
+	_, err = (&http.Client{Transport: rt}).Do(req)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, seen, 1)
+	assert.Equal(t, "access-token", seen[0].Get("X-Access-Token"))
+	assert.Equal(t, "id-token", seen[0].Get("X-Grafana-Id"))
+	assert.Empty(t, seen[0].Get("Authorization"))
+}
+
 func newTestHTTPServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(handler)

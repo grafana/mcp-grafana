@@ -749,7 +749,8 @@ func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey stri
 // request and overwrites the Authorization header with the freshly read value.
 // It is installed below AuthRoundTripper so it wins on the Authorization header;
 // the startup token baked into the config/context is only a fallback for when
-// the file read fails (see #987).
+// the file read fails (see #987). Requests that already carry on-behalf-of
+// headers are left untouched so the impersonated identity keeps winning.
 type tokenFileRefreshRoundTripper struct {
 	tokenFile  string
 	logger     *slog.Logger
@@ -762,10 +763,22 @@ func (rt *tokenFileRefreshRoundTripper) RoundTrip(req *http.Request) (*http.Resp
 		rt.logger.Warn("Failed to re-read GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, keeping previously loaded token", "path", rt.tokenFile, "error", err)
 		return rt.underlying.RoundTrip(req)
 	}
-	if trimmed := strings.TrimSpace(string(token)); trimmed != "" {
-		req.Header.Set("Authorization", "Bearer "+trimmed)
+	trimmed := strings.TrimSpace(string(token))
+	if trimmed == "" {
+		return rt.underlying.RoundTrip(req)
 	}
-	return rt.underlying.RoundTrip(req)
+	// AuthRoundTripper sets X-Access-Token/X-Grafana-Id for on-behalf-of auth and
+	// deliberately leaves Authorization empty. A bearer header on the same request
+	// makes the credential ambiguous, and Grafana can then authenticate as the
+	// service account instead of the impersonated user, so leave OBO requests be.
+	if req.Header.Get("X-Access-Token") != "" || req.Header.Get("X-Grafana-Id") != "" {
+		return rt.underlying.RoundTrip(req)
+	}
+	// A RoundTripper must not mutate the request it is handed; every other
+	// middleware in this file clones before writing headers.
+	clonedReq := req.Clone(req.Context())
+	clonedReq.Header.Set("Authorization", "Bearer "+trimmed)
+	return rt.underlying.RoundTrip(clonedReq)
 }
 
 func newTokenFileRefreshRoundTripper(rt http.RoundTripper, tokenFile string, logger *slog.Logger) *tokenFileRefreshRoundTripper {
