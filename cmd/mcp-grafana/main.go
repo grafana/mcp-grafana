@@ -177,6 +177,11 @@ type disabledTools struct {
 type grafanaConfig struct {
 	debug bool
 
+	// Request-selected Grafana targets for HTTP transports.
+	allowURLOverride bool
+	allowedURLs      string
+
+	// TLS configuration
 	tlsCertFile   string
 	tlsKeyFile    string
 	tlsCAFile     string
@@ -245,6 +250,8 @@ func (dt *disabledTools) addFlags() {
 
 func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
+	flag.BoolVar(&gc.allowURLOverride, "allow-grafana-url-override", false, "Enable X-Grafana-URL selection for HTTP/SSE requests. Falls back to GRAFANA_ALLOW_URL_OVERRIDE. Without --allowed-grafana-urls, callers may target any HTTP(S) URL reachable by this server.")
+	flag.StringVar(&gc.allowedURLs, "allowed-grafana-urls", "", "Optional comma-separated exact Grafana base URLs allowed when --allow-grafana-url-override is enabled. Falls back to GRAFANA_ALLOWED_URLS.")
 
 	flag.StringVar(&gc.tlsCertFile, "tls-cert-file", "", "Path to TLS certificate file for client authentication")
 	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
@@ -266,6 +273,29 @@ func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", false, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema.")
 }
 
+// applyGrafanaURLOverrideEnv uses the same flag-over-environment precedence as
+// the other Grafana options. An explicitly empty allowlist flag clears an
+// inherited list; an explicitly false switch disables an inherited true value.
+func (gc *grafanaConfig) applyGrafanaURLOverrideEnv(setFlags map[string]bool) error {
+	if !setFlags["allow-grafana-url-override"] {
+		if raw, ok := os.LookupEnv("GRAFANA_ALLOW_URL_OVERRIDE"); ok {
+			value, err := strconv.ParseBool(raw)
+			if err != nil {
+				return fmt.Errorf("invalid GRAFANA_ALLOW_URL_OVERRIDE: %w", err)
+			}
+			gc.allowURLOverride = value
+		}
+	}
+	if !setFlags["allowed-grafana-urls"] {
+		gc.allowedURLs = os.Getenv("GRAFANA_ALLOWED_URLS")
+	}
+	return nil
+}
+
+// applyLokiGuardrailEnv fills guardrail settings from GRAFANA_LOKI_GUARDRAIL_*
+// environment variables for flags not set on the command line. Explicit flags
+// win; the env fallback exists because container/sidecar deployments (the
+// guardrail's main audience) configure via environment.
 func (gc *grafanaConfig) applyLokiGuardrailEnv(setFlags map[string]bool) error {
 	if v := os.Getenv("GRAFANA_LOKI_GUARDRAIL_MODE"); v != "" && !setFlags["loki-guardrail-mode"] {
 		gc.lokiGuardrailMode = v
@@ -617,6 +647,19 @@ func checkCallerAuthPolicy(transport, address, token string, logger *slog.Logger
 	logger.Error("SECURITY: serving on a non-loopback address with NO caller authentication. Anyone who can reach this address can invoke MCP tools and use any Grafana credentials the server is configured with. This will become a startup error in a future release: set --server-auth-token (or "+serverAuthTokenEnvVar+") to require a bearer token.", "address", address)
 }
 
+func validateGrafanaURLOverridePolicy(transport string, cfg mcpgrafana.GrafanaConfig) error {
+	if transport != "sse" && transport != "streamable-http" {
+		return nil
+	}
+	if len(cfg.AllowedGrafanaURLs) > 0 && !cfg.AllowGrafanaURLOverride {
+		return fmt.Errorf("--allowed-grafana-urls requires --allow-grafana-url-override")
+	}
+	return nil
+}
+
+// withCallerAuth wraps h with bearer-token authentication when a token is
+// configured, and returns it unchanged otherwise. Only the MCP endpoint is
+// wrapped; health/metrics endpoints stay open.
 func withCallerAuth(token string, h http.Handler) http.Handler {
 	if token == "" {
 		return h
@@ -1006,6 +1049,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// every mux mount read the same value. main() has already rejected values
 	// these mounts could not serve.
 	basePath = normalizeBasePath(basePath)
+	callerToken := ca.resolveToken()
+	if err := validateGrafanaURLOverridePolicy(transport, gc); err != nil {
+		return err
+	}
 
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
@@ -1090,9 +1137,11 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
-	callerToken := ca.resolveToken()
 	if transport == "sse" || transport == "streamable-http" {
 		checkCallerAuthPolicy(transport, addr, callerToken, slog.Default())
+		if gc.AllowGrafanaURLOverride && len(gc.AllowedGrafanaURLs) == 0 {
+			slog.Error("SECURITY: unrestricted Grafana URL overrides are enabled. Every MCP caller can make requests to arbitrary HTTP(S) targets reachable by this server, including internal services. Use an authenticating proxy that authorizes targets and supplies matching tokens, and restrict outbound network access. An allowlist alone is not a substitute for these controls.")
+		}
 		if callerToken != "" && mcpgrafana.ForwardsAuthorizationHeader() {
 			return fmt.Errorf("refusing to start: caller authentication is enabled (--server-auth-token / %s) while GRAFANA_FORWARD_HEADERS forwards the Authorization header. Authorization is reserved for MCP caller authentication and would leak to Grafana. Remove Authorization from GRAFANA_FORWARD_HEADERS, or unset the caller token to run in proxy-forwarding mode", serverAuthTokenEnvVar)
 		}
@@ -1123,7 +1172,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		// cannot read per-request credentials. This is a regression: the
 		// previous mark3labs SDK ran WithSSEContextFunc on each POST with the
 		// full http.Request. GrafanaContextMiddleware now falls back to
-		// environment credentials for SSE connections.
+		// environment credentials for SSE connections. For the same reason
+		// X-Grafana-URL overrides cannot work over SSE: the target selected
+		// on the stream's GET carries through, but the caller's token on each
+		// POST does not, so those calls fail closed without credentials.
 		// SSE is deprecated in the MCP spec (superseded by streamable-http,
 		// which propagates headers correctly). Fixing this for SSE requires
 		// either upstream go-sdk support or per-connection server instances.
@@ -1144,7 +1196,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 
 		ssePath := sseEndpointPath(basePath)
 		mux := newSSEMux(
-			mcpgrafana.ValidateGrafanaURLMiddleware(sseHandler), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
+			mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, sseHandler),
 			basePath,
 			callerToken,
 			hsc.corsOrigins(),
@@ -1181,7 +1233,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		// endpoint the server listens on.
 		mcpEndpoint := streamableEndpointPath(basePath, endpointPath)
 		mux := newStreamableHTTPMux(
-			mcpgrafana.ValidateGrafanaURLMiddleware(streamHandler), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
+			mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, streamHandler),
 			mcpEndpoint,
 			callerToken,
 			hsc.corsOrigins(),
@@ -1291,6 +1343,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	if err := gc.applyGrafanaURLOverrideEnv(setFlags); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if err := gc.validateLokiGuardrail(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -1314,6 +1370,7 @@ func main() {
 
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:                   gc.debug,
+		AllowGrafanaURLOverride: gc.allowURLOverride,
 		MaxLokiLogLimit:         gc.maxLokiLogLimit,
 		LokiGuardrailMode:       gc.lokiGuardrailMode,
 		LokiGuardrailMaxBytes:   gc.lokiGuardrailMaxBytes,
@@ -1321,6 +1378,15 @@ func main() {
 		IncludeArgumentsInSpans: gc.includeArgsInSpans,
 		Timeout:                 gc.timeout,
 		SOCKS5ProxyURL:          socks5Proxy,
+	}
+	grafanaConfig.AllowedGrafanaURLs, err = mcpgrafana.ParseGrafanaURLOverrides(gc.allowedURLs)
+	if err != nil {
+		source := "--allowed-grafana-urls"
+		if !setFlags["allowed-grafana-urls"] {
+			source = "GRAFANA_ALLOWED_URLS"
+		}
+		fmt.Fprintf(os.Stderr, "invalid %s: %v\n", source, err)
+		os.Exit(2)
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{

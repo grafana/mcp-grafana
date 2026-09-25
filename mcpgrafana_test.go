@@ -1185,6 +1185,10 @@ func TestDebugLoggingRedactsSensitiveHeaders(t *testing.T) {
 		APIKey: "glsa_supersecrettoken1234",
 		Debug:  true,
 		Logger: logger,
+		ExtraHeaders: map[string]string{
+			"X-Grafana-Service-Account-Token": "glsa_forwarded_secret_1234",
+			"X-Grafana-Api-Key":               "legacy_forwarded_secret_1234",
+		},
 	}
 	transport, err := BuildTransport(cfg, mock, WithoutOtel())
 	require.NoError(t, err)
@@ -1195,10 +1199,14 @@ func TestDebugLoggingRedactsSensitiveHeaders(t *testing.T) {
 
 	// The actual request to the server must still carry the real token.
 	assert.Equal(t, "Bearer glsa_supersecrettoken1234", capturedReq.Header.Get("Authorization"))
+	assert.Equal(t, "glsa_forwarded_secret_1234", capturedReq.Header.Get("X-Grafana-Service-Account-Token"))
+	assert.Equal(t, "legacy_forwarded_secret_1234", capturedReq.Header.Get("X-Grafana-Api-Key"))
 
 	// The debug log output must NOT contain the full token.
 	logOutput := buf.String()
 	assert.NotContains(t, logOutput, "glsa_supersecrettoken1234")
+	assert.NotContains(t, logOutput, "glsa_forwarded_secret_1234")
+	assert.NotContains(t, logOutput, "legacy_forwarded_secret_1234")
 	// But it should contain the redacted version.
 	assert.Contains(t, logOutput, "Bear***1234")
 }
