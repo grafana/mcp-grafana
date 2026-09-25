@@ -6,15 +6,14 @@
 package tools
 
 import (
-	"encoding/base64"
 	"net/url"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // These match testdata/provisioning-repo-seed.sh and the seeded git repo.
@@ -119,19 +118,18 @@ func TestRenderProvisioningPreview_Integration(t *testing.T) {
 			require.False(t, result.IsError, "render returned an error result: %+v", result.Content)
 			require.Len(t, result.Content, 2)
 
-			img, ok := result.Content[0].(mcp.ImageContent)
+			img, ok := result.Content[0].(*mcp.ImageContent)
 			require.True(t, ok, "expected ImageContent at index 0, got %T", result.Content[0])
 			assert.Equal(t, "image/png", img.MIMEType)
 
-			data, err := base64.StdEncoding.DecodeString(img.Data)
-			require.NoError(t, err)
+			data := img.Data
 			require.NotEmpty(t, data, "rendered PNG should not be empty")
 			// PNG magic number.
 			assert.Equal(t, []byte{0x89, 'P', 'N', 'G'}, data[:4], "rendered image should be a PNG")
 
 			// Provisioning previews must use the /dashboard/provisioning
 			// route, not the stored-dashboard /d/<uid> route.
-			deeplink, ok := result.Content[1].(mcp.TextContent)
+			deeplink, ok := result.Content[1].(*mcp.TextContent)
 			require.True(t, ok, "expected TextContent at index 1, got %T", result.Content[1])
 			require.NotEmpty(t, deeplink.Text, "deeplink text should not be empty")
 
@@ -147,8 +145,7 @@ func TestRenderProvisioningPreview_Integration(t *testing.T) {
 
 			// _meta.ui.kind marker that the panel viewer keys off.
 			require.NotNil(t, deeplink.Meta)
-			require.NotNil(t, deeplink.Meta.AdditionalFields)
-			ui, ok := deeplink.Meta.AdditionalFields["ui"].(map[string]any)
+			ui, ok := deeplink.Meta["ui"].(map[string]any)
 			require.True(t, ok, "expected _meta.ui to be a map")
 			assert.Equal(t, mcpgrafana.UIContentKindDeeplink, ui["kind"])
 		})

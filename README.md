@@ -158,14 +158,6 @@ Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, an
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, adding activities, and reading or setting custom fields.
 
-### Sift Investigations
-
-- **List Sift investigations:** Retrieve a list of Sift investigations, with support for a limit parameter.
-- **Get Sift investigation:** Retrieve details of a specific Sift investigation by its UUID.
-- **Get Sift analyses:** Retrieve a specific analysis from a Sift investigation.
-- **Find error patterns in logs:** Detect elevated error patterns in Loki logs using Sift.
-- **Find slow requests:** Detect slow requests using Sift (Tempo).
-
 ### Alerting
 
 - **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana. Supports both Grafana-managed rules and datasource-managed rules from Prometheus or Loki datasources.
@@ -247,7 +239,7 @@ Each tool requires specific RBAC permissions to function properly. When creating
 
 Tip: If you're not familiar with Grafana RBAC or you want a quicker, simpler setup instead of configuring many granular scopes, you can assign a built-in role such as `Editor` to the service account. The `Editor` role grants broad read/write access that will allow most MCP server operations; it is less granular (and therefore less restrictive) than manually-applied scopes, so use it only when convenience is more important than strict least-privilege access.
 
-**Note:** Grafana Incident and Sift tools use basic Grafana roles instead of fine-grained RBAC permissions:
+**Note:** Grafana Incident tools use basic Grafana roles instead of fine-grained RBAC permissions:
 - **Viewer role:** Required for read-only operations (list incidents, get investigations)
 - **Editor role:** Required for write operations (create incidents, modify investigations)
 
@@ -354,9 +346,11 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_cloudwatch`                | CloudWatch*               | Execute CloudWatch metric queries                                                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `query_elasticsearch`             | Elasticsearch/OpenSearch* | Query Elasticsearch or OpenSearch using Lucene syntax or Query DSL                                           | `datasources:query`                                    | `datasources:uid:datasource-uid`                    |
 | `query_quickwit`                  | Quickwit*                 | Query Quickwit using Lucene syntax or Query DSL                                                              | `datasources:query`                                    | `datasources:uid:quickwit-uid`                      |
-| `alerting_manage_rules`           | Alerting                  | Manage alert rules (list, get, versions, create, update, delete)                                             | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder`          |
+| `alerting_rules_read`             | Alerting                  | List and inspect alert rules (list, get, versions)                                                           | `alert.rules:read`                                     | `folders:*` or `folders:uid:alerts-folder`          |
+| `alerting_rules_write`            | Alerting                  | Create, update, and delete alert rules                                                                       | `alert.rules:read` + `alert.rules:write`               | `folders:*` or `folders:uid:alerts-folder`          |
 | `alerting_manage_routing`         | Alerting                  | Manage notification policies, contact points, and time intervals                                             | `alert.notifications:read`                             | Global scope                                        |
-| `alerting_manage_silences`        | Alerting                  | Manage alerting silences (list, get, create, update, expire)                                                 | `alert.instances:read` + `alert.instances:write` for mutations | Global scope                                        |
+| `alerting_silences_read`          | Alerting                  | List and inspect alerting silences (list, get)                                                               | `alert.instances:read`                                 | Global scope                                        |
+| `alerting_silences_write`         | Alerting                  | Create, update, and expire alerting silences                                                                 | `alert.instances:read` + `alert.instances:write`       | Global scope                                        |
 | `list_oncall_schedules`           | OnCall                    | List schedules from Grafana OnCall                                                                           | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
 | `get_oncall_shift`                | OnCall                    | Get details for a specific OnCall shift                                                                      | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
 | `get_current_oncall_users`        | OnCall                    | Get users currently on-call for a specific schedule                                                          | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
@@ -365,11 +359,6 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_alert_groups`               | OnCall                    | List alert groups from Grafana OnCall with filtering options                                                 | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `get_alert_group`                 | OnCall                    | Get a specific alert group from Grafana OnCall by its ID                                                     | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `update_alert_group`              | OnCall                    | Acknowledge, unacknowledge, resolve, or unresolve an alert group                                             | `grafana-oncall-app.alert-groups:write` (and `:read`)  | Plugin-specific scopes                              |
-| `get_sift_investigation`          | Sift                      | Retrieve an existing Sift investigation by its UUID                                                          | Viewer role                                            | N/A                                                 |
-| `get_sift_analysis`               | Sift                      | Retrieve a specific analysis from a Sift investigation                                                       | Viewer role                                            | N/A                                                 |
-| `list_sift_investigations`        | Sift                      | Retrieve a list of Sift investigations with an optional limit                                                | Viewer role                                            | N/A                                                 |
-| `find_error_pattern_logs`         | Sift                      | Finds elevated error patterns in Loki logs.                                                                  | Editor role                                            | N/A                                                 |
-| `find_slow_requests`              | Sift                      | Finds slow requests from the relevant tempo datasources.                                                     | Editor role                                            | N/A                                                 |
 | `list_pyroscope_label_names`      | Pyroscope                 | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_label_values`     | Pyroscope                 | List label values matching a selector for a label name                                                       | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_profile_types`    | Pyroscope                 | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
@@ -414,6 +403,9 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it
 
+> [!NOTE]
+> Over SSE, per-request headers do not reach tool calls: `X-Grafana-Service-Account-Token` / `X-Grafana-API-Key`, `X-Grafana-Org-Id`, and headers listed in `GRAFANA_FORWARD_HEADERS` have no effect, tool calls use the server's environment credentials, and `X-Grafana-URL` overrides do not work. Use streamable-http when each caller needs its own Grafana URL, credentials, or organization.
+
 **HTTP Transport Security (SSE / streamable-http only):**
 
 `Host`/`Origin` validation is enforced on *every* route on the MCP listener — `/sse`, `/mcp`, and `/healthz` / `/metrics` when they share that listener — so a DNS-rebinding browser cannot reach any of them. Stdio transport is unaffected. `--healthz-address` and `--metrics-address` start a separate listener that is not wrapped.
@@ -431,7 +423,7 @@ Optionally require MCP clients to authenticate *to the server*. This is separate
 
 Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
 
-**Grafana URL overrides (SSE / streamable-http only):**
+**Grafana URL overrides (streamable-http only):**
 
 > [!WARNING]
 > URL overrides let MCP callers select outbound HTTP(S) destinations. An allowlist limits URLs but does not authenticate callers or bind tokens to targets.
@@ -453,7 +445,7 @@ If `--server-auth-token` is configured, also send `Authorization: Bearer <MCP ca
 
 The allowlist matches exact base URLs, including scheme, port, and path; wildcards are not supported. Grafana authentication is not an SSRF defense.
 
-For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, environment basic authentication, `GRAFANA_EXTRA_HEADERS`, or client certificates. TLS verification remains enabled even if `--tls-skip-verify` is set; a configured CA file still applies. Headers explicitly forwarded from that request still apply. Redirects and other Grafana API requests outside the selected base URL are blocked. Requests without `X-Grafana-URL` retain the usual `GRAFANA_URL` and environment credential behavior. This option applies to SSE and streamable HTTP only. For SSE, include both selection headers on each message POST; headers on the initial SSE GET do not carry over to tool calls.
+For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, environment basic authentication, `GRAFANA_EXTRA_HEADERS`, or client certificates. TLS verification remains enabled even if `--tls-skip-verify` is set; a configured CA file still applies. Headers explicitly forwarded from that request still apply. Redirects and other Grafana API requests outside the selected base URL are blocked. Requests without `X-Grafana-URL` retain the usual `GRAFANA_URL` and environment credential behavior. This option applies to streamable HTTP only. It does not work over SSE, which does not pass per-request headers to tool calls; a selected URL there is used without the caller's token, so the calls fail.
 
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
@@ -473,9 +465,6 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 **Anonymous Usage Statistics:**
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
-**Session Management:**
-- `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
-
 **Tool Configuration:**
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
@@ -491,7 +480,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
-- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently (e.g. `find_error_pattern_logs,find_slow_requests`). Has no effect on a tool whose whole category is disabled, e.g. via `--disable-sift`.
+- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -500,7 +489,6 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-oncall`: Disable oncall tools
 - `--disable-asserts`: Disable asserts tools
-- `--disable-sift`: Disable sift tools
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
@@ -539,8 +527,8 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `update_incident`
 
 **Alerting Tools:**
-- `alerting_manage_rules` (create, update, delete operations)
-- `alerting_manage_silences` (create, update, delete operations)
+- `alerting_rules_write` (create, update, delete operations)
+- `alerting_silences_write` (create, update, delete operations)
 
 **OnCall Tools:**
 - `update_alert_group`
@@ -549,12 +537,6 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `create_annotation`
 - `update_annotation`
 - `delete_annotation`
-
-**Sift Tools:**
-- `find_error_pattern_logs` (creates investigations)
-- `find_slow_requests` (creates investigations)
-
-These only create ephemeral Sift investigation records via the Sift API — they never touch a Grafana dashboard, alert, or datasource. Without them, `list_sift_investigations`/`get_sift_investigation`/`get_sift_analysis` have nothing to list or get. Pass `--enable-write-tools=find_error_pattern_logs,find_slow_requests` to keep them registered under `--disable-write`.
 
 **Snapshot Tools:**
 - `create_snapshot`
@@ -677,7 +659,7 @@ Surrounding whitespace (including a trailing newline) is trimmed from the file c
 You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
-- **HTTP header:** Set `X-Grafana-Org-Id` when using SSE or streamable HTTP transports (header takes precedence over environment variable - meaning you can set a default org as well).
+- **HTTP header:** Set `X-Grafana-Org-Id` when using the streamable HTTP transport (header takes precedence over environment variable - meaning you can set a default org as well).
 
 When an organization ID is provided, the MCP server will set the `X-Grafana-Org-Id` header on all requests to Grafana, ensuring that operations are performed within the specified organization context.
 
@@ -756,11 +738,11 @@ The URL must use the `socks5://` or `socks5h://` scheme (Go treats them identica
 
 An invalid proxy URL is a startup error, and if building a proxied connection fails at runtime the server fails closed rather than silently sending Grafana traffic directly.
 
-### Forwarding Headers from the Client (SSE/Streamable-HTTP Only)
+### Forwarding Headers from the Client (Streamable-HTTP Only)
 
 When the MCP server runs behind a gateway or reverse proxy that handles SSO (e.g. an AWS ALB with OIDC), each user's session cookie must reach Grafana so it can associate the request with the authenticated user. The `GRAFANA_FORWARD_HEADERS` environment variable enables this by specifying a comma-separated allowlist of header names to copy from the **incoming** HTTP request to every outbound Grafana API request.
 
-This only applies when using SSE (`-t sse`) or streamable-http (`-t streamable-http`) transports. It has no effect in stdio mode.
+This only applies when using the streamable-http (`-t streamable-http`) transport. It has no effect in stdio or SSE mode.
 
 **Example: forward the session cookie**
 
@@ -844,7 +826,7 @@ Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception
      to specify the directory where the binary should be installed. This should also be in your `$PATH`.
 
      ```bash
-     GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
+     GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/v2/cmd/mcp-grafana@latest
      ```
 
    - **Deploy to Kubernetes using Helm**: use the [Helm chart from the Grafana helm-charts repository](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp)
@@ -1090,7 +1072,6 @@ The TLS configuration is applied to all HTTP clients used by the MCP server, inc
 - Prometheus datasource clients
 - Loki datasource clients
 - Incident management clients
-- Sift investigation clients
 - Alerting clients
 - Asserts clients
 
@@ -1226,7 +1207,7 @@ curl http://localhost:8000/my-base/healthz  # 404
 
 ### Anonymous Usage Statistics
 
-The server can report anonymous usage statistics about itself to Grafana Labs: which tools were called, how many of those calls failed, and how the server is configured. One report covers one server **process** — not one user and not one conversation — and is sent every 4h plus once on shutdown. **Reporting is disabled by default in this release** — the receiving endpoint isn't live yet — and a later release will change the default to enabled with the same opt-out.
+The server can report anonymous usage statistics about itself to Grafana Labs: which tools were called, how many of those calls failed, and how the server is configured. One report covers one server **process** — not one user and not one conversation — and is sent every 4h plus once on shutdown. **Reporting is enabled by default**. To opt out, set `--usage-stats=disabled`, `GRAFANA_USAGE_STATS=disabled`, or `DO_NOT_TRACK=1`.
 
 Tool arguments, resource names, queries, log lines, error messages and credentials are never sent. Flags are recorded by name only, never by value, and the Grafana instance is described only as `cloud` or `self_hosted` — never by URL, hostname, stack slug or org. Nothing is per user, per session or per client: there is no session identifier on the wire and no way to attribute a tool call to a particular client.
 
@@ -1270,7 +1251,6 @@ When using the SSE or streamable HTTP transports, enable Prometheus metrics with
 | Metric | Type | Description |
 |--------|------|-------------|
 | `mcp_server_operation_duration_seconds` | Histogram | Duration of MCP operations (labels: `mcp_method_name`, `gen_ai_tool_name`, `error_type`, `network_transport`, `mcp_protocol_version`) |
-| `mcp_server_session_duration_seconds` | Histogram | Duration of MCP client sessions (labels: `network_transport`, `mcp_protocol_version`) |
 | `http_server_request_duration_seconds` | Histogram | Duration of HTTP server requests (from otelhttp) |
 
 **Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
@@ -1421,7 +1401,6 @@ How it works:
 >
 > - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 > - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-> - `--disable-sift` — Sift investigations analyze Loki logs server-side across all streams.
 > - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too.
 >
 > The server logs a warning at startup naming each of these that is still enabled.

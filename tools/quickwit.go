@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const quickwitDatasourceType = "quickwit-quickwit-datasource"
@@ -259,18 +258,18 @@ var QueryQuickwit = mcpgrafana.MustTool(
 	"query_quickwit",
 	"Executes a search query against a Quickwit datasource and retrieves matching documents. Supports Lucene query syntax (e.g., 'severity_text:ERROR AND service_name:api') and partial Elasticsearch-compatible Query DSL JSON. The timestamp field is resolved from Quickwit index metadata (not jsonData.timeField). Returns a list of documents with their index, ID, source fields, and optional score. Use this to search logs or other indexed data stored in Quickwit. Defaults to 10 results and sorts by the index timestamp field in descending order (newest first).",
 	queryQuickwit,
-	mcp.WithTitleAnnotation("Query Quickwit"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Quickwit"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddQuickwitTools registers all Quickwit tools with the MCP server.
 // Every tool in this category executes a query, so nothing is registered when
 // enableQueryTools is false.
-func AddQuickwitTools(mcp *server.MCPServer, enableQueryTools bool) {
+func AddQuickwitTools(s *mcp.Server, enableQueryTools bool) {
 	if enableQueryTools {
-		QueryQuickwit.Register(mcp)
+		QueryQuickwit.Register(s)
 	}
 }

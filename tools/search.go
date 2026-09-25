@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/search"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 var dashboardTypeStr = "dash-db"
@@ -117,11 +116,11 @@ var SearchDashboards = mcpgrafana.MustTool(
 	"search_dashboards",
 	"Search Grafana dashboards by query and/or folderUid, tag, and starred. Returns matching dashboards with title, UID, folder, tags, and URL.",
 	searchDashboards,
-	mcp.WithTitleAnnotation("Search dashboards"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Search dashboards"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type SearchFoldersParams struct {
@@ -149,14 +148,14 @@ var SearchFolders = mcpgrafana.MustTool(
 	"search_folders",
 	"Search for Grafana folders by a query string. Returns matching folders with details like title, UID, and URL.",
 	searchFolders,
-	mcp.WithTitleAnnotation("Search folders"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Search folders"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddSearchTools(mcp *server.MCPServer) {
-	SearchDashboards.Register(mcp)
-	SearchFolders.Register(mcp)
+func AddSearchTools(s *mcp.Server) {
+	SearchDashboards.Register(s)
+	SearchFolders.Register(s)
 }

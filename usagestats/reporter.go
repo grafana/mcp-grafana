@@ -18,10 +18,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/grafana/mcp-grafana/observability"
+	"github.com/grafana/mcp-grafana/v2/observability"
 )
 
 const (
@@ -61,7 +60,7 @@ const ProxiedToolName = "proxied"
 type TargetFunc func(ctx context.Context) GrafanaTarget
 
 // Config is the static half of a report: everything that is fixed for the
-// process. The rest is accumulated by the hooks.
+// process. The rest is accumulated by the middleware.
 type Config struct {
 	Mode     Mode
 	Endpoint string
@@ -100,7 +99,7 @@ type Config struct {
 	// The server's tool registrations are the single definition of this set;
 	// it is not restated here. SetNativeTools supplies it when the server is
 	// built after the Reporter, which it must be because the Reporter provides
-	// the server's hooks.
+	// the server's middleware.
 	NativeTools map[string]struct{}
 
 	// Target resolves the Grafana target. A nil Target leaves the Grafana
@@ -152,18 +151,13 @@ func newCounters() *counters {
 
 // Reporter accumulates this process's usage and flushes it to the endpoint.
 // A Reporter whose mode is not explicitly enabling collects nothing and opens
-// no connection; its Hooks are empty and its Start and Shutdown are no-ops.
+// no connection; its middleware is a no-op and its Start and Shutdown are
+// no-ops.
 //
 // The unit is the process rather than the MCP session because a session is not
-// something every transport has. Verified against mcp-go v1.0.0: protocol
-// version 2026-07-28 removed protocol-level sessions (SEP-2567), so
-// server/streamable_http.go:647 forces isInitializeRequest to false for it and
-// the registration at :998 — gated on `isInitializeRequest && sessionID != ""`
-// — never runs. A per-session reporter would therefore produce no events at
-// all for a client on that version. The tool-call hooks are unaffected:
-// HandleMessage is reached at :881 and fires hooks.afterCallTool at
-// request_handler.go:527 regardless of whether a session was registered, so
-// counting at process scope sees every call either way.
+// something every transport has. The go-sdk's middleware fires on every
+// request regardless of session state, so counting at process scope sees
+// every call.
 type Reporter struct {
 	cfg       Config
 	processID string
@@ -325,62 +319,47 @@ func (r *Reporter) Shutdown() {
 	})
 }
 
-// Hooks returns the MCP server hooks that collect usage. Merge them with the
-// server's other hooks via observability.MergeHooks.
+// MCPMiddleware returns an mcp.Middleware that collects usage statistics.
 //
 // There are no session hooks: the unit is the process, and depending on
 // session registration is exactly what would blind this on the streamable-http
 // transport (see the Reporter doc comment).
-func (r *Reporter) Hooks() *server.Hooks {
+func (r *Reporter) MCPMiddleware() mcp.Middleware {
 	if !r.Enabled() {
-		return &server.Hooks{}
+		return func(next mcp.MethodHandler) mcp.MethodHandler { return next }
 	}
-	return &server.Hooks{
-		OnAfterInitialize: []server.OnAfterInitializeFunc{
-			func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
-				if message == nil {
-					return
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "initialize" {
+				result, err := next(ctx, method, req)
+				if err == nil {
+					r.recordInitialize(ctx)
 				}
-				r.recordInitialize(ctx)
-			},
-		},
-		OnAfterCallTool: []server.OnAfterCallToolFunc{
-			func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
-				if message == nil {
-					return
+				return result, err
+			}
+			if method == "tools/call" {
+				callReq, ok := req.(*mcp.CallToolRequest)
+				result, err := next(ctx, method, req)
+				if err != nil {
+					if ok && callReq != nil && callReq.Params != nil && callReq.Params.Name != "" {
+						r.recordToolCall(ctx, callReq.Params.Name, true)
+					}
+					return result, err
 				}
-				r.recordToolCall(ctx, message.Params.Name, isErrorResult(result))
-			},
-		},
-		OnError: []server.OnErrorHookFunc{
-			func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
-				// A tools/call that never reached OnAfterCallTool: the handler
-				// returned an error, or the tool does not exist.
-				if method != "tools/call" {
-					return
+				if ok && callReq != nil && callReq.Params != nil {
+					r.recordToolCall(ctx, callReq.Params.Name, isErrorResult(result))
 				}
-				req, ok := message.(*mcp.CallToolRequest)
-				if !ok || req == nil {
-					return
-				}
-				// mcp-go calls onError with a zero-valued request when the
-				// tools capability is unsupported or the tools/call payload
-				// fails to unmarshal. No tool was named, so there is nothing
-				// to attribute; counting it would report a phantom proxied
-				// call, since toolKey("") falls through to the sentinel.
-				if req.Params.Name == "" {
-					return
-				}
-				r.recordToolCall(ctx, req.Params.Name, true)
-			},
-		},
+				return result, err
+			}
+			return next(ctx, method, req)
+		}
 	}
 }
 
 // isErrorResult reports whether a tool returned an error result. A tool that
 // answers with isError=true succeeded at the protocol level but failed at the
 // task, which is what "which tools error" is asking about.
-func isErrorResult(result any) bool {
+func isErrorResult(result mcp.Result) bool {
 	res, ok := result.(*mcp.CallToolResult)
 	return ok && res != nil && res.IsError
 }

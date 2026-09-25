@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,12 +19,10 @@ import (
 	"testing"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/observability"
-	"github.com/grafana/mcp-grafana/usagestats"
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/observability"
+	"github.com/grafana/mcp-grafana/v2/usagestats"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +47,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 	}{
 		{
 			name:         "all defaults include Loki and Prometheus",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,annotations,rendering",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,annotations,rendering",
 			wantContains: []string{
 				"Prometheus:",
 				"Loki:",
@@ -99,7 +96,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "agento11y excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -127,7 +124,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "assistant excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -462,7 +459,7 @@ func TestVersionOutput(t *testing.T) {
 
 	t.Run("ldflags version takes precedence", func(t *testing.T) {
 		bin := testBinaryPath(t)
-		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana.version=v1.2.3", "-o", bin, ".")
+		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana/v2.version=v1.2.3", "-o", bin, ".")
 		out, err := build.CombinedOutput()
 		require.NoError(t, err, "go build failed: %s", out)
 
@@ -893,49 +890,25 @@ func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
 	}
 }
 
-// TestSSEServerSuppressesWildcardCORS pins the load-bearing assumption behind
-// corsOrigins(): that passing any non-empty AllowedOrigins through
-// WithSSECORS makes mcp-go's corsConfig.enabled() return true, suppressing
-// the historical Access-Control-Allow-Origin: * default on /sse.
-//
-// The control sub-test boots an SSE server without our opt-in and asserts the
-// wildcard IS emitted, documenting the regression scenario. If a future
-// mcp-go bump removes the historical default, the control fails and we know
-// the sentinel workaround can be removed.
-func TestSSEServerSuppressesWildcardCORS(t *testing.T) {
-	hitSSE := func(t *testing.T, opts ...server.SSEOption) http.Header {
-		t.Helper()
-		mcpServer := server.NewMCPServer("test", "0")
-		sse := server.NewSSEServer(mcpServer, opts...)
-		ts := httptest.NewServer(sse)
-		t.Cleanup(ts.Close)
+// A browser client on an allowed origin must be able to send the Grafana
+// selection headers the server documents, and responses vary by Origin.
+func TestCORSMiddlewarePreflight(t *testing.T) {
+	h := corsMiddleware([]string{"https://app.example"}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("preflight must not reach the MCP handler")
+	}))
+	req := httptest.NewRequest(http.MethodOptions, "/mcp", nil)
+	req.Header.Set("Origin", "https://app.example")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
 
-		// Abort as soon as we have headers — SSE keeps the stream open.
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
-		require.NoError(t, err)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			require.NoError(t, err)
-		}
-		require.NotNil(t, resp)
-		t.Cleanup(func() { _ = resp.Body.Close() })
-		return resp.Header
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, "https://app.example", rec.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "Origin", rec.Header().Get("Vary"))
+	allowed := strings.Split(rec.Header().Get("Access-Control-Allow-Headers"), ", ")
+	for _, name := range []string{"X-Grafana-URL", "X-Grafana-Service-Account-Token", "X-Grafana-API-Key", "X-Grafana-Org-Id", "Mcp-Session-Id", "Last-Event-ID"} {
+		assert.Contains(t, allowed, name)
 	}
-
-	t.Run("control: mcp-go emits the wildcard by default", func(t *testing.T) {
-		h := hitSSE(t)
-		assert.Equal(t, "*", h.Get("Access-Control-Allow-Origin"),
-			"mcp-go's historical default changed — sentinel workaround in corsOrigins() may be removable")
-	})
-
-	t.Run("opt-in via corsOrigins sentinel suppresses the wildcard", func(t *testing.T) {
-		hsc := httpSecurityConfig{}
-		h := hitSSE(t, server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)))
-		assert.Empty(t, h.Get("Access-Control-Allow-Origin"),
-			"sentinel did not suppress wildcard — mcp-go CORS contract may have changed")
-	})
 }
 
 func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
@@ -945,20 +918,18 @@ func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 		want           []string
 	}{
 		{
-			// The sentinel keeps mcp-go's corsConfig.enabled() true so its
-			// SSE default of Access-Control-Allow-Origin: * is suppressed.
-			name: "unset returns the .invalid sentinel",
-			want: []string{"https://mcp-grafana.invalid"},
+			name: "unset returns nil",
+			want: nil,
 		},
 		{
-			name:           "comma-only returns the sentinel",
+			name:           "comma-only returns nil",
 			allowedOrigins: ", ,",
-			want:           []string{"https://mcp-grafana.invalid"},
+			want:           nil,
 		},
 		{
-			name:           "explicit origins pass through lowercased",
+			name:           "explicit origins pass through trimmed",
 			allowedOrigins: "HTTPS://App.Example, https://other.example",
-			want:           []string{"https://app.example", "https://other.example"},
+			want:           []string{"HTTPS://App.Example", "https://other.example"},
 		},
 	}
 	for _, tc := range cases {
@@ -969,16 +940,22 @@ func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 	}
 }
 
-func getServerNameFromInitialize(t *testing.T, s *server.MCPServer) string {
+// connectTestClient creates an in-memory client session to a server for testing.
+func connectTestClient(t *testing.T, s *mcp.Server) *mcp.ClientSession {
 	t.Helper()
-	c, err := client.NewInProcessClient(s)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() { _ = s.Run(context.Background(), serverTransport) }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(context.Background(), clientTransport, nil)
 	require.NoError(t, err)
-	require.NoError(t, c.Start(context.Background()))
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
 
-	result, err := c.Initialize(context.Background(), mcp.InitializeRequest{})
-	require.NoError(t, err)
-	return result.ServerInfo.Name
+func getServerNameFromInitialize(t *testing.T, s *mcp.Server) string {
+	t.Helper()
+	session := connectTestClient(t, s)
+	return session.InitializeResult().ServerInfo.Name
 }
 
 func TestResolveServerName(t *testing.T) {
@@ -1309,24 +1286,15 @@ func registerAllCategories(t *testing.T, dt disabledTools) map[string]bool {
 	}
 	dt.enabledTools = strings.Join(categories, ",")
 
-	srv := server.NewMCPServer("test", "0")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	dt.processTools(srv)
 
-	response := srv.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	raw, err := json.Marshal(response)
+	session := connectTestClient(t, srv)
+	result, err := session.ListTools(context.Background(), nil)
 	require.NoError(t, err)
 
-	var listed struct {
-		Result struct {
-			Tools []struct {
-				Name string `json:"name"`
-			} `json:"tools"`
-		} `json:"result"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &listed))
-
-	names := make(map[string]bool, len(listed.Result.Tools))
-	for _, tool := range listed.Result.Tools {
+	names := make(map[string]bool, len(result.Tools))
+	for _, tool := range result.Tools {
 		names[tool.Name] = true
 	}
 	return names
@@ -1403,57 +1371,18 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	}
 }
 
-// See issue #744: --disable-write left the Sift read tools (list/get) with
-// nothing to list or get, since the investigation-creation tools were gated
-// by the same flag. --enable-write-tools restores just those two, by name.
-func TestProcessTools_DisableWriteRemovesSiftInvestigationTools(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{write: true})
-	assert.False(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be gone with --disable-write")
-	assert.False(t, names["find_slow_requests"], "find_slow_requests should be gone with --disable-write")
-	assert.True(t, names["list_sift_investigations"], "read-only sift tools should survive --disable-write")
-	assert.True(t, names["get_sift_investigation"], "read-only sift tools should survive --disable-write")
-	assert.True(t, names["get_sift_analysis"], "read-only sift tools should survive --disable-write")
-}
-
-func TestProcessTools_EnableWriteToolsRestoresSiftInvestigationTools(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
-	assert.True(t, names["find_error_pattern_logs"], "find_error_pattern_logs should be restored by --enable-write-tools")
-	assert.True(t, names["find_slow_requests"], "find_slow_requests should be restored by --enable-write-tools")
-	// The override is scoped by name: real write tools stay gone.
-	assert.False(t, names["update_dashboard"], "--enable-write-tools must not re-enable unrelated write tools")
-	assert.False(t, names["create_folder"], "--enable-write-tools must not re-enable unrelated write tools")
-}
-
-// A space after the comma (a natural way to write the flag by hand) must not
-// prevent the match. Exercised directly against writeToolOverridden with a
-// single name, since AddSiftTools ORs both Sift tool names together and
-// would pass even if only one of them matched.
 func TestWriteToolOverridden_TrimsWhitespaceAroundNames(t *testing.T) {
-	dt := &disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs, find_slow_requests"}
-	assert.True(t, dt.writeToolOverridden("find_slow_requests"), "trailing name after a space-separated comma should still match")
+	dt := &disabledTools{write: true, writeToolOverrides: "query_sql, query_influxdb"}
+	assert.True(t, dt.writeToolOverridden("query_influxdb"), "trailing name after a space-separated comma should still match")
 
-	dt = &disabledTools{write: true, writeToolOverrides: " find_error_pattern_logs"}
-	assert.True(t, dt.writeToolOverridden("find_error_pattern_logs"), "leading whitespace before a name should still match")
-}
-
-// AddSiftTools only exposes one bool for both investigation-creation tools,
-// so naming just one of them in --enable-write-tools restores both.
-func TestProcessTools_EnableWriteToolsPartialSiftListRestoresBoth(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "find_error_pattern_logs"})
-	assert.True(t, names["find_error_pattern_logs"])
-	assert.True(t, names["find_slow_requests"])
+	dt = &disabledTools{write: true, writeToolOverrides: " query_sql"}
+	assert.True(t, dt.writeToolOverridden("query_sql"), "leading whitespace before a name should still match")
 }
 
 func TestProcessTools_EnableWriteToolsAloneChangesNothing(t *testing.T) {
 	defaults := registerAllCategories(t, disabledTools{})
-	names := registerAllCategories(t, disabledTools{writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
+	names := registerAllCategories(t, disabledTools{writeToolOverrides: "query_sql,query_influxdb"})
 	assert.Equal(t, defaults, names, "--enable-write-tools on its own should be a no-op")
-}
-
-func TestProcessTools_DisableSiftBeatsEnableWriteTools(t *testing.T) {
-	names := registerAllCategories(t, disabledTools{sift: true, writeToolOverrides: "find_error_pattern_logs,find_slow_requests"})
-	assert.False(t, names["find_error_pattern_logs"], "sift should be gone: --disable-sift wins over --enable-write-tools")
-	assert.False(t, names["list_sift_investigations"], "sift should be gone: --disable-sift wins over --enable-write-tools")
 }
 
 // --enable-query is documented as a shorthand for naming the four raw-SQL
@@ -1558,21 +1487,11 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 	obs := newTestObservability(t)
 	s := newServer(defaultServerName, disabledTools{enabledTools: "datasource"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
 
-	c, err := client.NewInProcessClient(s)
-	require.NoError(t, err)
-	require.NoError(t, c.Start(context.Background()))
-	t.Cleanup(func() { _ = c.Close() })
+	session := connectTestClient(t, s)
 
-	_, err = c.Initialize(context.Background(), mcp.InitializeRequest{})
-	require.NoError(t, err)
-
-	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "list_datasources",
-			// "type" is declared as a string in ListDatasourcesParams; send a
-			// number instead, matching issue #830's exact repro.
-			Arguments: map[string]any{"type": 42},
-		},
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "list_datasources",
+		Arguments: map[string]any{"type": 42},
 	})
 
 	require.NoError(t, err, "a schema type mismatch must not surface as a JSON-RPC protocol error")
@@ -1592,11 +1511,8 @@ func TestCategoryReport(t *testing.T) {
 }
 
 func TestNativeToolNamesFromRegistrations(t *testing.T) {
-	obs, err := observability.Setup(observability.Config{})
-	require.NoError(t, err)
-	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
-
-	names := nativeToolNames(s)
+	dt := disabledTools{enabledTools: "search"}
+	names := nativeToolNames(dt)
 	assert.Contains(t, names, "search_dashboards")
 	assert.NotEmpty(t, names)
 }
@@ -1663,9 +1579,7 @@ func TestEffectiveTLSEnabled(t *testing.T) {
 	withCert := tlsConfig{certFile: "/tmp/c.pem", keyFile: "/tmp/k.pem"}
 
 	assert.True(t, effectiveTLSEnabled("streamable-http", withCert))
-	// run() only hands the cert and key to the streamable-http server, so an
-	// SSE server with them set is still serving plain HTTP.
-	assert.False(t, effectiveTLSEnabled("sse", withCert))
+	assert.True(t, effectiveTLSEnabled("sse", withCert))
 	assert.False(t, effectiveTLSEnabled("stdio", withCert))
 	assert.False(t, effectiveTLSEnabled("streamable-http", tlsConfig{}))
 }
@@ -1678,9 +1592,36 @@ func TestEffectiveMetricsEnabled(t *testing.T) {
 	assert.False(t, effectiveMetricsEnabled("streamable-http", false))
 }
 
+// TestListToolsResult_ReturnsTools verifies that tools/list returns the
+// expected tools via the go-sdk. The mark3labs-specific resultType/cacheScope/
+// ttlMs fields (#1140) are handled natively by the go-sdk's Cacheable struct.
+func TestListToolsResult_ReturnsTools(t *testing.T) {
+	obs := newTestObservability(t)
+	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+
+	session := connectTestClient(t, s)
+	result, err := session.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Tools, "tools/list should return registered tools")
+}
+
+func TestRecoveryMiddleware_CatchesPanic(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	mcp.AddTool(s, &mcp.Tool{Name: "panicking_tool"}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		panic("boom")
+	})
+	s.AddReceivingMiddleware(recoveryMiddleware())
+
+	session := connectTestClient(t, s)
+
+	_, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "panicking_tool"})
+	require.Error(t, err, "a panicking tool must return an error")
+	assert.Contains(t, err.Error(), "internal error")
+	assert.NotContains(t, err.Error(), "boom", "panic details must not leak to the client")
+}
+
 // Regression test for https://github.com/grafana/mcp-grafana/issues/1021:
-// the SSE handler was mounted on an exact-match pattern so nothing under
-// --base-path was routed to it at all. /healthz and /metrics are
+// nothing under --base-path was routed to the SSE handler at all. /healthz and /metrics are
 // internal-only endpoints and stay mounted at the server root regardless of
 // --base-path.
 func TestHTTPMuxHonoursBasePath(t *testing.T) {
@@ -1721,24 +1662,24 @@ func TestHTTPMuxHonoursBasePath(t *testing.T) {
 			{
 				name:     "no base path",
 				basePath: "",
-				mcpPaths: []string{"/sse", "/message"},
+				mcpPaths: []string{"/sse"},
 			},
 			{
 				name:          "base path without trailing slash",
 				basePath:      "/my-custom-base",
-				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
-				unroutedPaths: []string{"/sse", "/message"},
+				mcpPaths:      []string{"/my-custom-base/sse"},
+				unroutedPaths: []string{"/sse"},
 			},
 			{
 				name:          "base path with trailing slash",
 				basePath:      "/my-custom-base/",
-				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
-				unroutedPaths: []string{"/sse", "/message"},
+				mcpPaths:      []string{"/my-custom-base/sse"},
+				unroutedPaths: []string{"/sse"},
 			},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				mux := newSSEMux(mcpHandler, normalizeBasePath(tc.basePath), "")
+				mux := newSSEMux(mcpHandler, normalizeBasePath(tc.basePath), "", nil)
 				require.Empty(t, registerOps(mux, obs, "", metricsCfg),
 					"ops share the MCP listener when no ops address is set")
 				for _, p := range tc.mcpPaths {
@@ -1755,14 +1696,12 @@ func TestHTTPMuxHonoursBasePath(t *testing.T) {
 					assert.Equal(t, http.StatusNotFound, code, "GET %s", p)
 				}
 				// /healthz and /metrics are internal-only and must never answer
-				// under --base-path. The SSE mux uses a subtree pattern, so a
-				// request for <base>/healthz falls through to the MCP handler
-				// rather than 404ing — it must not reach the operational one.
+				// under --base-path.
 				if base := normalizeBasePath(tc.basePath); base != "" {
-					_, body := get(t, mux, base+"/healthz")
-					assert.Equal(t, mcpBody, body, "GET %s/healthz reached the operational health handler", base)
-					_, body = get(t, mux, base+"/metrics")
-					assert.Equal(t, mcpBody, body, "GET %s/metrics reached the operational metrics handler", base)
+					code, _ := get(t, mux, base+"/healthz")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/healthz", base)
+					code, _ = get(t, mux, base+"/metrics")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/metrics", base)
 				}
 			})
 		}
@@ -1789,7 +1728,7 @@ func TestHTTPMuxHonoursBasePath(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				mux := newStreamableHTTPMux(mcpHandler, streamableEndpointPath(tc.basePath, tc.endpointPath), "")
+				mux := newStreamableHTTPMux(mcpHandler, streamableEndpointPath(tc.basePath, tc.endpointPath), "", nil)
 				require.Empty(t, registerOps(mux, obs, "", metricsCfg),
 					"ops share the MCP listener when no ops address is set")
 				assertBody(t, mux, tc.mcpPath, mcpBody)
@@ -1809,7 +1748,7 @@ func TestHTTPMuxHonoursBasePath(t *testing.T) {
 	})
 
 	t.Run("metrics are absent when disabled", func(t *testing.T) {
-		mux := newSSEMux(mcpHandler, normalizeBasePath("/my-custom-base"), "")
+		mux := newSSEMux(mcpHandler, normalizeBasePath("/my-custom-base"), "", nil)
 		require.Empty(t, registerOps(mux, newTestObservability(t), "", observability.Config{}))
 		code, _ := get(t, mux, "/metrics")
 		assert.Equal(t, http.StatusNotFound, code, "GET /metrics with metrics disabled")
@@ -1887,7 +1826,7 @@ func TestValidateMountFlags(t *testing.T) {
 			require.NoError(t, setupErr)
 			t.Cleanup(func() { _ = o.Shutdown(context.Background()) })
 			mount := func() {
-				mux := newStreamableHTTPMux(noop, got, "")
+				mux := newStreamableHTTPMux(noop, got, "", nil)
 				registerOps(mux, o, tc.healthzAddress, tc.obs)
 			}
 
@@ -1898,7 +1837,7 @@ func TestValidateMountFlags(t *testing.T) {
 					// "/" is a pattern ServeMux takes: the objection is that it
 					// answers every unclaimed path on the listener, not that it
 					// panics. Prove it is a catch-all rather than a crash.
-					mux := newStreamableHTTPMux(noop, got, "")
+					mux := newStreamableHTTPMux(noop, got, "", nil)
 					registerOps(mux, o, tc.healthzAddress, tc.obs)
 					rec := httptest.NewRecorder()
 					mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
@@ -1911,7 +1850,7 @@ func TestValidateMountFlags(t *testing.T) {
 					mcp := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 						_, _ = w.Write([]byte("mcp"))
 					})
-					mux := newStreamableHTTPMux(mcp, got, "")
+					mux := newStreamableHTTPMux(mcp, got, "", nil)
 					registerOps(mux, o, tc.healthzAddress, tc.obs)
 					rec := httptest.NewRecorder()
 					mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/not-the-endpoint", nil))
@@ -1931,7 +1870,7 @@ func TestValidateMountFlags(t *testing.T) {
 				mcp := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					_, _ = w.Write([]byte("mcp"))
 				})
-				mux := newStreamableHTTPMux(mcp, got, "")
+				mux := newStreamableHTTPMux(mcp, got, "", nil)
 				registerOps(mux, o, tc.healthzAddress, tc.obs)
 				rec := httptest.NewRecorder()
 				mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, got, nil))
@@ -1946,16 +1885,6 @@ func TestValidateMountFlags(t *testing.T) {
 					assert.Equal(t, http.StatusTemporaryRedirect, rec.Code,
 						"POST %s must redirect into the subtree, method intact", bare)
 				}
-			}
-
-			// mcp-go normalizes what WithEndpointPath is handed as
-			// "/" + strings.Trim(p, "/"), and does not clean "..". We hand it
-			// the already-resolved path, so the two agree — this pins that.
-			// Hand it the raw flag instead and "/foo/../mcp" would mount at
-			// "/mcp" while the SDK advertised "/foo/../mcp".
-			if !strings.HasSuffix(got, "/") {
-				assert.Equal(t, "/"+strings.Trim(got, "/"), got,
-					"the mounted path must survive mcp-go's own normalization unchanged")
 			}
 		})
 	}
@@ -1989,11 +1918,11 @@ func TestValidateMountFlags_EndpointPathIgnoredByOtherTransports(t *testing.T) {
 	}
 }
 
-// A base path is only ever mounted as a subtree, so it cannot collide with an
+// The SSE handler is mounted at <base>/sse, so it cannot collide with an
 // operational endpoint — but it still has to parse as a pattern.
 func TestValidateMountFlags_SSEBasePath(t *testing.T) {
 	assert.NoError(t, validateMountFlags("sse", "/healthz", "", "", observability.Config{MetricsEnabled: true}),
-		"--base-path /healthz mounts /healthz/, which does not collide with /healthz")
+		"--base-path /healthz mounts /healthz/sse, which does not collide with /healthz")
 
 	err := validateMountFlags("sse", "/my base", "", "", observability.Config{})
 	require.Error(t, err)
@@ -2004,8 +1933,8 @@ func TestValidateMountFlags_SSEBasePath(t *testing.T) {
 	// it from the raw flag through normalizeBasePath, and the error quotes what
 	// was checked — so a base path whose raw and normalized forms differ pins
 	// the two together. Drop the normalization on either side and this reads
-	// "/my base//".
+	// "/my base//sse".
 	err = validateMountFlags("sse", "/my base/", "", "", observability.Config{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), strconv.Quote(normalizeBasePath("/my base/")+"/"))
+	assert.Contains(t, err.Error(), strconv.Quote(sseEndpointPath(normalizeBasePath("/my base/"))))
 }

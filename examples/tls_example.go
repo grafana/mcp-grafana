@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"os"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/tools"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/tools"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
@@ -32,23 +32,17 @@ func main() {
 }
 
 func basicTLSExample() {
-	// Create a TLS config that skips certificate verification
-	// This is useful for testing against self-signed certificates
 	tlsConfig := &mcpgrafana.TLSConfig{SkipVerify: true}
 
-	// Create a Grafana config with TLS support
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:     true,
 		TLSConfig: tlsConfig,
 	}
 
-	// Create a context function that includes TLS configuration
 	contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 
-	// Test the context function
 	ctx := contextFunc(context.Background())
 
-	// Verify the configuration is applied
 	retrievedConfig := mcpgrafana.GrafanaConfigFromContext(ctx)
 	if retrievedConfig.TLSConfig != nil {
 		fmt.Printf("✓ TLS configuration applied: SkipVerify=%v\n", retrievedConfig.TLSConfig.SkipVerify)
@@ -58,20 +52,16 @@ func basicTLSExample() {
 }
 
 func fullTLSExample() {
-	// Example paths for certificate files
-	// In a real scenario, these would point to actual certificate files
 	certFile := "/path/to/client.crt"
 	keyFile := "/path/to/client.key"
 	caFile := "/path/to/ca.crt"
 
-	// Create TLS config with client certificates and CA verification
 	tlsConfig := &mcpgrafana.TLSConfig{
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   caFile,
 	}
 
-	// Create Grafana config with TLS support
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:     false,
 		TLSConfig: tlsConfig,
@@ -84,15 +74,12 @@ func fullTLSExample() {
 	fmt.Printf("  - Skip verify: %v\n", tlsConfig.SkipVerify)
 	fmt.Printf("  - Debug mode: %v\n", grafanaConfig.Debug)
 
-	// Create context functions for different transport types
 	stdioFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
-	sseFunc := mcpgrafana.ComposedSSEContextFunc(grafanaConfig)
 	httpFunc := mcpgrafana.ComposedHTTPContextFunc(grafanaConfig)
 
 	fmt.Printf("✓ Context functions created for all transport types\n")
 
 	_ = stdioFunc
-	_ = sseFunc
 	_ = httpFunc
 }
 
@@ -112,29 +99,24 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 }
 
 // Create MCP server
-s := server.NewMCPServer("mcp-grafana", "1.0.0")
+s := mcp.NewServer(&mcp.Implementation{Name: "mcp-grafana", Version: "1.0.0"}, nil)
 
 // Add tools
 tools.AddSearchTools(s)
 tools.AddDatasourceTools(s, false)
-// ... add other tools as needed
 
-// Create stdio server with TLS support
-srv := server.NewStdioServer(s)
-srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
-
-// Start server
-srv.Listen(ctx, os.Stdin, os.Stdout)`)
+// Set up context and run
+cf := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
+ctx := cf(context.Background())
+s.Run(ctx, &mcp.StdioTransport{})`)
 }
 
 func runServerWithTLS() {
-	// Set up environment variables (in practice, these would be set externally)
 	if os.Getenv("GRAFANA_URL") == "" {
 		if err := os.Setenv("GRAFANA_URL", "https://localhost:3000"); err != nil {
 			log.Printf("Failed to set GRAFANA_URL: %v", err)
 		}
 	}
-	// Check for service account token first, then fall back to deprecated API key
 	if os.Getenv("GRAFANA_SERVICE_ACCOUNT_TOKEN") == "" {
 		if os.Getenv("GRAFANA_API_KEY") == "" {
 			fmt.Println("Warning: Neither GRAFANA_SERVICE_ACCOUNT_TOKEN nor GRAFANA_API_KEY is set")
@@ -143,42 +125,33 @@ func runServerWithTLS() {
 		}
 	}
 
-	// Create TLS configuration that skips verification for demo purposes
-	// In production, you would use real certificates
 	tlsConfig := &mcpgrafana.TLSConfig{SkipVerify: true}
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:     true,
 		TLSConfig: tlsConfig,
 	}
 
-	// Create MCP server
-	s := server.NewMCPServer("mcp-grafana-tls-example", "1.0.0")
+	s := mcp.NewServer(&mcp.Implementation{Name: "mcp-grafana-tls-example", Version: "1.0.0"}, nil)
 
-	// Add some basic tools
 	tools.AddSearchTools(s)
-	tools.AddDatasourceTools(s, false) // Read-only mode (no write tools)
-	tools.AddDashboardTools(s, false)  // Read-only mode (no write tools)
+	tools.AddDatasourceTools(s, false)
+	tools.AddDashboardTools(s, false)
 
-	// Create stdio server with TLS-enabled context function
-	srv := server.NewStdioServer(s)
-	srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
+	cf := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
+	ctx := cf(context.Background())
 
 	fmt.Printf("Starting MCP Grafana server with TLS support...\n")
 	fmt.Printf("Grafana URL: %s\n", os.Getenv("GRAFANA_URL"))
 	fmt.Printf("TLS Skip Verify: %v\n", tlsConfig.SkipVerify)
 
-	// Start the server
-	ctx := context.Background()
-	if err := srv.Listen(ctx, os.Stdin, os.Stdout); err != nil {
+	if err := s.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
 
-// Example of creating custom HTTP clients with TLS configuration
 func customClientExample() { //nolint:unused // Example function for documentation
 	ctx := context.Background()
 
-	// Add Grafana configuration to context
 	tlsConfig := &mcpgrafana.TLSConfig{
 		CertFile: "/path/to/cert.pem",
 		KeyFile:  "/path/to/key.pem",
@@ -188,15 +161,13 @@ func customClientExample() { //nolint:unused // Example function for documentati
 		TLSConfig: tlsConfig,
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, config)
-	_ = ctx // Use ctx to avoid ineffectual assignment warning
+	_ = ctx
 
-	// Create custom HTTP transport with TLS
 	transport, err := tlsConfig.HTTPTransport(http.DefaultTransport.(*http.Transport))
 	if err != nil {
 		log.Fatalf("Failed to create transport: %v", err)
 	}
 
-	// Use the transport in your HTTP client
 	_ = transport
 	fmt.Println("✓ Custom HTTP transport created with TLS configuration")
 }

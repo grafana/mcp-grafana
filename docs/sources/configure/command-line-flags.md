@@ -30,7 +30,6 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--address`: Host and port for the SSE or streamable-http server. Default: `localhost:8000`.
 - `--base-path`: Base path for the SSE or streamable-http server. With `--base-path /my-base`, SSE is at `/my-base/sse` and streamable-http at `/my-base/mcp`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers and always stay at the server root, never under this prefix.
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint, appended to `--base-path`. Default: `/mcp`.
-- `--session-idle-timeout-minutes`: Idle timeout for streamable-http sessions, in minutes. Sessions with no activity for this duration are automatically reaped. Set to `0` to disable. Default: `30`.
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
 ## Configure HTTP transport security
@@ -76,14 +75,14 @@ Deploy behind an authenticating proxy that authorizes each caller's target, remo
 Without a URL allowlist, a fake request token can cause requests to any reachable HTTP(S) service, including internal and metadata services.
 {{< /admonition >}}
 
-On SSE and streamable-http transports, callers can select a Grafana instance for each request. This is disabled by default.
+On the streamable-http transport, callers can select a Grafana instance for each request. This is disabled by default.
 
 - `--allow-grafana-url-override`: Enable selection through `X-Grafana-URL`. Falls back to `GRAFANA_ALLOW_URL_OVERRIDE` when the flag is not set.
 - `--allowed-grafana-urls`: Optional comma-separated list of exact Grafana base URLs that callers may select. Falls back to `GRAFANA_ALLOWED_URLS` when the flag is not set. It requires the enable switch; an explicitly empty flag clears an inherited list.
 
 For a large fleet selected by a proxy, `GRAFANA_ALLOW_URL_OVERRIDE=true` enables selection without listing every instance in `GRAFANA_ALLOWED_URLS`. The deployment controls in the warning above still apply. The proxy must send both `X-Grafana-URL: <target base URL>` and `X-Grafana-Service-Account-Token: <token for that target>` on each MCP request. The deprecated `X-Grafana-API-Key` header also works. The server uses the token from that request and does not send its environment Grafana credentials to a selected target. If caller authentication is configured, the `Authorization` header carries the separate MCP caller token.
 
-Without `--allowed-grafana-urls`, the server logs a security error at startup. Outbound Grafana requests are pinned to the selected base URL, including across redirects. For SSE, include the selection headers on every message POST; headers on the initial GET do not carry over to tool calls.
+Without `--allowed-grafana-urls`, the server logs a security error at startup. Outbound Grafana requests are pinned to the selected base URL, including across redirects. Selection does not work over SSE, which does not pass per-request headers to tool calls; a selected URL there is used without the caller's token, so the calls fail.
 
 ## Configure debug and logging
 
@@ -98,7 +97,7 @@ Without `--allowed-grafana-urls`, the server logs a security error at startup. O
 
 ## Configure anonymous usage statistics
 
-- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` to print the report that would be sent to stderr and send nothing. Overrides the `GRAFANA_USAGE_STATS` environment variable. Default: `disabled`.
+- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` to print the report that would be sent to stderr and send nothing. Overrides the `GRAFANA_USAGE_STATS` environment variable. Default: `enabled`.
 
 `GRAFANA_USAGE_STATS_ENDPOINT` changes where reports are sent.
 
@@ -108,7 +107,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
-  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
+  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
 
   Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
 
@@ -128,7 +127,6 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-folder`: Disable folder tools.
 - `--disable-oncall`: Disable OnCall tools.
 - `--disable-asserts`: Disable Asserts tools.
-- `--disable-sift`: Disable Sift tools.
 - `--disable-admin`: Disable admin tools.
 - `--disable-pyroscope`: Disable Pyroscope tools.
 - `--disable-navigation`: Disable navigation (deeplink) tools.
@@ -201,7 +199,6 @@ Enforcement applies only to the Loki query tools. Other tools can reach Loki log
 
 - `--disable-api`: `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 - `--disable-rendering`: `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-- `--disable-sift`: Sift investigations analyze Loki logs server-side across all streams.
 - `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too.
 
 The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Loki datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Tempo tools expose only traces, not Loki logs, so they are not a bypass. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
@@ -229,7 +226,8 @@ When enabled, the following writes are disabled:
 
 **Alerting tools**
 
-- `alerting_manage_rules` (create, update, delete)
+- `alerting_rules_write` (create, update, delete)
+- `alerting_silences_write` (create, update, delete)
 
 **OnCall tools**
 
@@ -240,11 +238,6 @@ When enabled, the following writes are disabled:
 - `create_annotation`
 - `update_annotation`
 - `delete_annotation`
-
-**Sift tools**
-
-- `find_error_pattern_logs` (creates investigations)
-- `find_slow_requests` (creates investigations)
 
 **Snapshot tools**
 

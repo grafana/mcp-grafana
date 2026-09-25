@@ -37,7 +37,7 @@ jobs:
       - name: Generate token baseline
         uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
         with:
-          command: ./dist/mcp-grafana
+          command: ./dist/mcp-grafana --usage-stats=disabled
           anthropic-api-key: ${{ fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY }}
           all-providers: true
           output: token-baseline.json

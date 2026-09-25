@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 
 	"github.com/grafana/grafana-openapi-client-go/client/annotations"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -58,11 +57,11 @@ var GetAnnotationsTool = mcpgrafana.MustTool(
 	"get_annotations",
 	"Fetch Grafana annotations using filters such as dashboard UID, time range and tags.",
 	getAnnotations,
-	mcp.WithTitleAnnotation("Get Annotations"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get Annotations"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // CreateAnnotationInput creates a new annotation, optionally in Graphite format.
@@ -134,11 +133,11 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 	"create_annotation",
 	"Create a new annotation on a dashboard or panel. Set format to 'graphite' and provide 'what' for Graphite-format annotations.",
 	createAnnotation,
-	mcp.WithTitleAnnotation("Create Annotation"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create Annotation"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // UpdateAnnotationInput updates only the provided fields of an annotation (PATCH semantics).
@@ -187,11 +186,11 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"update_annotation",
 	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged.",
 	updateAnnotation,
-	mcp.WithTitleAnnotation("Update Annotation"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Update Annotation"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // DeleteAnnotationInput identifies the annotation to delete.
@@ -224,11 +223,11 @@ var DeleteAnnotationTool = mcpgrafana.MustTool(
 	"delete_annotation",
 	"Permanently delete an annotation by ID. The annotation cannot be recovered afterwards.",
 	deleteAnnotation,
-	mcp.WithTitleAnnotation("Delete Annotation"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Delete Annotation"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // GetAnnotationTagsInput defines filters for retrieving annotation tags.
@@ -264,19 +263,19 @@ var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	"get_annotation_tags",
 	"Returns annotation tags with optional filtering by tag name. Only the provided filters are applied.",
 	getAnnotationTags,
-	mcp.WithTitleAnnotation("Get Annotation Tags"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get Annotation Tags"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddAnnotationTools(mcp *server.MCPServer, enableWriteTools bool) {
-	GetAnnotationsTool.Register(mcp)
+func AddAnnotationTools(s *mcp.Server, enableWriteTools bool) {
+	GetAnnotationsTool.Register(s)
 	if enableWriteTools {
-		CreateAnnotationTool.Register(mcp)
-		UpdateAnnotationTool.Register(mcp)
-		DeleteAnnotationTool.Register(mcp)
+		CreateAnnotationTool.Register(s)
+		UpdateAnnotationTool.Register(s)
+		DeleteAnnotationTool.Register(s)
 	}
-	GetAnnotationTagsTool.Register(mcp)
+	GetAnnotationTagsTool.Register(s)
 }
