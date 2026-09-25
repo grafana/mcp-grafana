@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -159,6 +161,59 @@ var ManageRouting = mcpgrafana.MustTool(
 	mcpgrafana.WithTitleAnnotation("Manage alerting routing"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+)
+
+// ManageRoutingWriteParams is the param struct for alerting_routing_write.
+type ManageRoutingWriteParams struct {
+	Operation             string         `json:"operation" jsonschema:"required,enum=create_contact_point,description=The operation to perform: 'create_contact_point'"`
+	Name                  string         `json:"name" jsonschema:"required,description=Contact point name. Integrations with the same name are grouped together."`
+	Type                  string         `json:"type" jsonschema:"required,description=Integration type (for example email\\, slack or webhook)."`
+	Settings              map[string]any `json:"settings" jsonschema:"required,description=Integration-specific settings as a JSON object (for example {\"addresses\":\"team@example.com\"} for email)."`
+	UID                   string         `json:"uid,omitempty" jsonschema:"description=Optional integration UID. Grafana generates one if omitted."`
+	DisableResolveMessage bool           `json:"disable_resolve_message,omitempty" jsonschema:"description=Disable resolved notifications. Defaults to false."`
+	DisableProvenance     *bool          `json:"disable_provenance,omitempty" jsonschema:"description=Keep the contact point editable in the Grafana UI. Defaults to true."`
+}
+
+var contactPointUIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,40}$`)
+
+func (p ManageRoutingWriteParams) validate() error {
+	if p.Operation != "create_contact_point" {
+		return fmt.Errorf("unknown operation %q, must be create_contact_point", p.Operation)
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("name is required for 'create_contact_point'")
+	}
+	if strings.TrimSpace(p.Type) == "" {
+		return fmt.Errorf("type is required for 'create_contact_point'")
+	}
+	if len(p.Settings) == 0 {
+		return fmt.Errorf("settings must be a non-empty JSON object")
+	}
+	if p.UID != "" && !contactPointUIDPattern.MatchString(p.UID) {
+		return fmt.Errorf("uid must contain 1 to 40 letters, digits, underscores or hyphens")
+	}
+	return nil
+}
+
+func manageRoutingWrite(ctx context.Context, args ManageRoutingWriteParams) (*contactPointSummary, error) {
+	if err := args.validate(); err != nil {
+		return nil, fmt.Errorf("alerting_routing_write: %w", err)
+	}
+	return createContactPoint(ctx, args)
+}
+
+var AlertRoutingWrite = mcpgrafana.MustTool(
+	"alerting_routing_write",
+	`Create Grafana-managed contact points for alert notifications using operation 'create_contact_point'.
+Requires name, type and integration-specific settings. Returns uid, name and type without settings or secrets.
+Contact points remain editable in the Grafana UI by default. External Alertmanager receivers are not supported.
+Use alerting_manage_routing to list or inspect contact points.`,
+	manageRoutingWrite,
+	mcpgrafana.WithTitleAnnotation("Write alerting routing"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
