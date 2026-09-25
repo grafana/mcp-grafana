@@ -13,8 +13,10 @@
     "./styles.css": "./styles.css"
   },
   "scripts": {
-    "build": "npm run build:lib",
+    "build": "npm run build:lib && npm run build:apps",
     "build:lib": "vite build && tsc -p tsconfig.build.json",
+    "build:trace": "vite build --config trace.vite.config.ts",
+    "build:apps": "npm run build:trace",
     "build:preview": "vite build --config preview/vite.config.ts",
     "dev": "vite --config preview/vite.config.ts",
     "typecheck": "tsc --noEmit",

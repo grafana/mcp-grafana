@@ -1,6 +1,6 @@
 # Grafana MCP Apps UI
 
-Reusable React shell for MCP Apps, with public npm dependencies, explicit light/dark themes, accessible feedback and composable sections.
+Reusable React shell and self-contained trace MCP App. The package uses public npm dependencies only. Its standalone theme values are scoped to each app root, so light and dark previews can appear together.
 
 ## Build and check
 
@@ -11,7 +11,9 @@ npm test
 npm run build
 ```
 
-The build creates the reusable library at `dist/index.js` with TypeScript declarations. Run `npm run dev` for the interactive shell preview. `npm pack` packages the built library for consumers; it is not yet published to npm.
+`npm run build` creates the reusable library (`dist/index.js` and declarations) and the single-file MCP resources `dist/trace.html`. The HTML file is committed for the Go server's `go:embed`. Regenerate them after changing app source; do not edit generated HTML. `make build-ui` runs the same install and build sequence. To build one resource, use `npm run build:trace`.
+
+Run `npm run dev` for component and host previews. The preview fixtures are synthetic and do not query a Grafana server.
 
 ## Use the shell
 
@@ -31,3 +33,7 @@ import '@mcp-grafana/mcp-apps/styles.css';
 ```
 
 The consumer owns data, tool calls, permissions, sharing controls, and MCP host connection. `colorMode` is required and should be updated when host context changes. `openInGrafana` renders a link and accepts an optional click handler for `app.openLink`. Action callbacks are real controls; `pending` disables repeat clicks while preserving the label. Errors are announced as alerts. Pass the stylesheet once at the app entry. The library build externalizes public dependencies; an app build must bundle them into its final HTML resource.
+
+## Trace app
+
+`render_trace` displays a Tempo trace with span search, error filtering, a focused ancestor path, and a virtualized waterfall. Selecting a span shows attributes and events, with exception information first. Wide layouts show the inspector beside the waterfall; narrow layouts switch between Trace and Span views. The MCP host supplies result data, color mode, and navigation. The browser does not query Grafana directly.

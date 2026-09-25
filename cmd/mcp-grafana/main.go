@@ -94,6 +94,7 @@ var categoryDescription = map[string]string{
 	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries, with optional built-in shortening.",
 	"tempo":         "Tempo: Search traces with TraceQL, compute trace-derived metrics, fetch and diff traces, and explore trace attributes.",
 	"annotations":   "Annotations: Create and manage dashboard annotations.",
+	"mcp-apps":      "MCP Apps: Display interactive trace waterfalls.",
 	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
 	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
@@ -128,7 +129,7 @@ var categoryDescriptionNoQuery = map[string]string{
 
 // queryOnlyCategories register no tools at all when their query tools are
 // disabled, because every tool they contain executes a query.
-var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo"}
+var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "mcp-apps"}
 
 // mutatingQueryCategories hold query tools that pass raw SQL or InfluxQL to the
 // datasource unfiltered: query_clickhouse can run DROP TABLE, query_influxdb can
@@ -213,7 +214,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
+	pyroscope, navigation, tempo, annotations, rendering, mcpApps, cloudwatch, cloudlogging, write, query, enableQuery,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -289,6 +290,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
 	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently (e.g. find_error_pattern_logs,find_slow_requests, which only create ephemeral Sift investigation records and never touch a Grafana dashboard, alert, or datasource). Has no effect on a tool whose whole category is disabled, e.g. via --disable-sift.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
+	flag.BoolVar(&dt.mcpApps, "disable-mcp-apps", false, "Disable interactive MCP App tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
@@ -454,6 +456,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddTempoTools(mcp, enableQueryTools) }, dt.tempo, "tempo"},
 		{func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, dt.annotations, "annotations"},
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
+		{func(mcp *server.MCPServer) { tools.AddMCPAppTools(mcp, enableQueryTools) }, dt.mcpApps, "mcp-apps"},
 		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{func(mcp *server.MCPServer) { tools.AddCloudWatchTools(mcp, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
 		{func(mcp *server.MCPServer) { tools.AddCloudLoggingTools(mcp, enableQueryTools) }, dt.cloudlogging, "cloudlogging"},
