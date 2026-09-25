@@ -349,6 +349,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `alerting_rules_read`             | Alerting                  | List and inspect alert rules (list, get, versions)                                                           | `alert.rules:read`                                     | `folders:*` or `folders:uid:alerts-folder`          |
 | `alerting_rules_write`            | Alerting                  | Create, update, and delete alert rules                                                                       | `alert.rules:read` + `alert.rules:write`               | `folders:*` or `folders:uid:alerts-folder`          |
 | `alerting_manage_routing`         | Alerting                  | Manage notification policies, contact points, and time intervals                                             | `alert.notifications:read`                             | Global scope                                        |
+| `alerting_routing_write`          | Alerting                  | Create Grafana-managed contact points                                                                       | `alert.notifications.provisioning:write`               | Global scope                                        |
 | `alerting_silences_read`          | Alerting                  | List and inspect alerting silences (list, get)                                                               | `alert.instances:read`                                 | Global scope                                        |
 | `alerting_silences_write`         | Alerting                  | Create, update, and expire alerting silences                                                                 | `alert.instances:read` + `alert.instances:write`       | Global scope                                        |
 | `list_oncall_schedules`           | OnCall                    | List schedules from Grafana OnCall                                                                           | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
@@ -529,6 +530,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Alerting Tools:**
 - `alerting_rules_write` (create, update, delete operations)
 - `alerting_silences_write` (create, update, delete operations)
+- `alerting_routing_write` (create_contact_point operation)
 
 **OnCall Tools:**
 - `update_alert_group`
