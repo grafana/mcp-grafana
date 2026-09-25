@@ -420,6 +420,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 - `--allowed-hosts`: Comma-separated allowlist of `Host` header values. Defaults to loopback variants of `--address` (e.g. `localhost:8000,127.0.0.1:8000,[::1]:8000`). A value that parses to empty (unset, `,`, ` , `, etc.) also falls back to the defaults so a typo cannot silently disable the check. Requests with a `Host` header outside the allowlist are rejected with `403`. Pass `*` to disable `Host` validation — only safe when a trusted reverse proxy validates `Host`. K8s `httpGet` probes and external `/metrics` scrapes will need either an explicit hostname in this list, `*`, a `tcpSocket` probe, or a separate port (`--healthz-address` / `--metrics-address`).
 - `--allowed-origins`: Comma-separated allowlist of `Origin` header values. Empty by default — any request that carries an `Origin` header is rejected (browsers always send one for cross-origin requests, and no browser should be calling this server directly). Set to an explicit list to permit browser-based clients, or `*` to disable the check.
+- `--allow-grafana-url-override`: Enable `X-Grafana-URL` selection. Falls back to `GRAFANA_ALLOW_URL_OVERRIDE`; disabled by default. Without an allowlist, callers can select any HTTP(S) URL the server can reach.
+- `--allowed-grafana-urls`: Optional comma-separated exact Grafana base URL allowlist for URL overrides. Falls back to `GRAFANA_ALLOWED_URLS`. Requires `--allow-grafana-url-override`; an explicit empty flag disables an inherited list.
 
 **Caller Authentication (SSE / streamable-http only):**
 
@@ -428,6 +430,30 @@ Optionally require MCP clients to authenticate *to the server*. This is separate
 - `--server-auth-token`: Bearer token callers must send as `Authorization: Bearer <token>`. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the env var so the secret isn't visible in the process arguments.
 
 Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
+
+**Grafana URL overrides (SSE / streamable-http only):**
+
+> [!WARNING]
+> URL overrides let MCP callers select outbound HTTP(S) destinations. An allowlist limits URLs but does not authenticate callers or bind tokens to targets.
+>
+> Deploy behind an authenticating proxy that authorizes each target, replaces client-supplied URL and token headers, and supplies the matching token. Restrict the server's outbound network access to approved destinations.
+>
+> Without an allowlist, a fake request token can cause requests to any reachable HTTP(S) service, including internal and metadata services.
+
+Set `GRAFANA_ALLOW_URL_OVERRIDE=true` (or `--allow-grafana-url-override`) to enable selection for a large fleet. To restrict destinations, also set `GRAFANA_ALLOWED_URLS=https://one.example.com,https://two.example.com/grafana` (or `--allowed-grafana-urls`).
+
+Send these headers on each MCP request that selects a target:
+
+```http
+X-Grafana-URL: https://one.example.com
+X-Grafana-Service-Account-Token: <token for one.example.com>
+```
+
+If `--server-auth-token` is configured, also send `Authorization: Bearer <MCP caller token>`. This authenticates to the MCP server and is separate from `X-Grafana-Service-Account-Token`, which is for the selected Grafana instance. Your proxy can send a different Grafana token for each instance; the server never shares one configured token across them. The deprecated `X-Grafana-API-Key` header also works. A URL header without a request Grafana token is rejected. Use TLS for incoming requests because they carry tokens.
+
+The allowlist matches exact base URLs, including scheme, port, and path; wildcards are not supported. Grafana authentication is not an SSRF defense.
+
+For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, environment basic authentication, `GRAFANA_EXTRA_HEADERS`, or client certificates. TLS verification remains enabled even if `--tls-skip-verify` is set; a configured CA file still applies. Headers explicitly forwarded from that request still apply. Redirects and other Grafana API requests outside the selected base URL are blocked. Requests without `X-Grafana-URL` retain the usual `GRAFANA_URL` and environment credential behavior. This option applies to SSE and streamable HTTP only. For SSE, include both selection headers on each message POST; headers on the initial SSE GET do not carry over to tool calls.
 
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging

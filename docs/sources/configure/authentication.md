@@ -56,6 +56,8 @@ volumes:
 
 Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
 
+For HTTP deployments that [select a Grafana URL per request](../command-line-flags/#select-a-grafana-url-per-request), each request must supply a token for its selected instance. The server does not reuse `GRAFANA_SERVICE_ACCOUNT_TOKEN` or the token file for that request.
+
 ## Use username and password
 
 You can use basic auth by setting `GRAFANA_USERNAME` and `GRAFANA_PASSWORD` instead of a token. This is less suitable for automation; prefer a service account token when possible.

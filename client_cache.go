@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -23,6 +24,7 @@ const clientCacheMeterName = "mcp-grafana"
 // clientCacheKey uniquely identifies a client by its credentials, target, and forwarded headers.
 type clientCacheKey struct {
 	url              string
+	overrideURL      string
 	apiKey           string
 	username         string
 	password         string
@@ -42,6 +44,9 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 		key.password, _ = basicAuth.Password()
 	}
 	if req != nil {
+		if overrideURL, ok := req.Context().Value(grafanaOverrideKey{}).(string); ok {
+			key.overrideURL = overrideURL
+		}
 		headers := forwardedHeadersFromRequest(req)
 		if len(headers) > 0 {
 			names := make([]string, 0, len(headers))
@@ -51,9 +56,9 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 			sort.Strings(names)
 			var sb strings.Builder
 			for _, k := range names {
-				sb.WriteString(k)
+				sb.WriteString(strconv.Quote(k))
 				sb.WriteByte('=')
-				sb.WriteString(headers[k])
+				sb.WriteString(strconv.Quote(headers[k]))
 				sb.WriteByte(',')
 			}
 			key.forwardedHeaders = sb.String()
@@ -66,7 +71,13 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 func (k clientCacheKey) String() string {
 	hasKey := k.apiKey != ""
 	hasBasic := k.username != ""
-	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d forwardedHeaders=%s", k.url, hasKey, hasBasic, k.orgID, k.forwardedHeaders)
+	return fmt.Sprintf("url=%s override=%t apiKey=%t basicAuth=%t orgID=%d forwardedHeaders=%t", k.url, k.overrideURL != "", hasKey, hasBasic, k.orgID, k.forwardedHeaders != "")
+}
+
+// singleflightKey includes credentials that String intentionally redacts.
+// %#v formats the struct fields instead of calling its String method.
+func (k clientCacheKey) singleflightKey() string {
+	return fmt.Sprintf("%#v", k)
 }
 
 // clientCacheMetrics holds OTel instruments for cache observability.
@@ -188,9 +199,9 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 
 	// Slow path: use singleflight to create outside the lock,
 	// deduplicating concurrent requests for the same key.
-	// Use fmt.Sprintf("%v", key) for the singleflight key to include actual
-	// credential values (the struct fields), not the redacted String() output.
-	sfKey := fmt.Sprintf("%v", key)
+	// Include every credential and override policy in the grouping key. The
+	// display String method is redacted and would merge distinct callers.
+	sfKey := key.singleflightKey()
 	val, _, _ := c.sfGrafana.Do(sfKey, func() (any, error) {
 		// Double-check after winning the singleflight race
 		c.mu.RLock()
@@ -236,7 +247,7 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	c.mu.RUnlock()
 
 	// Slow path: use singleflight to create outside the lock
-	sfKey := fmt.Sprintf("%v", key)
+	sfKey := key.singleflightKey()
 	val, _, _ := c.sfIncident.Do(sfKey, func() (any, error) {
 		c.mu.RLock()
 		if client, ok := c.incidentClients[key]; ok {
@@ -280,7 +291,7 @@ func (c *ClientCache) GetOrCreateK8sClient(key clientCacheKey, createFn func() *
 	c.mu.RUnlock()
 
 	// Slow path: use singleflight to create outside the lock
-	sfKey := fmt.Sprintf("%v", key)
+	sfKey := key.singleflightKey()
 	val, _, _ := c.sfK8s.Do(sfKey, func() (any, error) {
 		c.mu.RLock()
 		if client, ok := c.k8sClients[key]; ok {
@@ -395,9 +406,9 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 			switch {
 			case err == nil:
 				client.HTTPClient.Transport = transport
-			case config.SOCKS5ProxyURL != "":
-				// Fail closed: a default transport would bypass the configured proxy.
-				logger.Error("Failed to create custom transport for incident client, failing closed because a SOCKS5 proxy is configured", "error", err)
+			case config.SOCKS5ProxyURL != "" || config.OverrideURL != "":
+				// Fail closed: a default transport would bypass the proxy or URL guard.
+				logger.Error("Failed to create guarded transport for incident client", "error", err)
 				client.HTTPClient.Transport = failClosedTransport(err)
 			default:
 				logger.Error("Failed to create custom transport for incident client, using default", "error", err)

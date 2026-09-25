@@ -66,6 +66,25 @@ Bearer authentication only protects the token in transit if the connection is en
 
 When caller authentication is enabled, the `Authorization` header is reserved for the caller token and is stripped after validation, so it is never forwarded to Grafana. Setting `--server-auth-token` together with `GRAFANA_FORWARD_HEADERS=Authorization` is contradictory and the server refuses to start; remove `Authorization` from `GRAFANA_FORWARD_HEADERS`, or unset the caller token to run in proxy-forwarding mode.
 
+## Select a Grafana URL per request
+
+{{< admonition type="warning" >}}
+URL overrides let MCP callers select outbound HTTP(S) destinations. An allowlist limits URLs but does not authenticate callers, bind tokens to targets, or enforce network egress policy.
+
+Deploy behind an authenticating proxy that authorizes each caller's target, removes client-supplied `X-Grafana-URL` and Grafana token headers, and supplies the approved URL with its matching token. Restrict outbound access to approved destinations with a network policy, firewall, or egress proxy. These controls matter even with an allowlist.
+
+Without a URL allowlist, a fake request token can cause requests to any reachable HTTP(S) service, including internal and metadata services.
+{{< /admonition >}}
+
+On SSE and streamable-http transports, callers can select a Grafana instance for each request. This is disabled by default.
+
+- `--allow-grafana-url-override`: Enable selection through `X-Grafana-URL`. Falls back to `GRAFANA_ALLOW_URL_OVERRIDE` when the flag is not set.
+- `--allowed-grafana-urls`: Optional comma-separated list of exact Grafana base URLs that callers may select. Falls back to `GRAFANA_ALLOWED_URLS` when the flag is not set. It requires the enable switch; an explicitly empty flag clears an inherited list.
+
+For a large fleet selected by a proxy, `GRAFANA_ALLOW_URL_OVERRIDE=true` enables selection without listing every instance in `GRAFANA_ALLOWED_URLS`. The deployment controls in the warning above still apply. The proxy must send both `X-Grafana-URL: <target base URL>` and `X-Grafana-Service-Account-Token: <token for that target>` on each MCP request. The deprecated `X-Grafana-API-Key` header also works. The server uses the token from that request and does not send its environment Grafana credentials to a selected target. If caller authentication is configured, the `Authorization` header carries the separate MCP caller token.
+
+Without `--allowed-grafana-urls`, the server logs a security error at startup. Outbound Grafana requests are pinned to the selected base URL, including across redirects. For SSE, include the selection headers on every message POST; headers on the initial GET do not carry over to tool calls.
+
 ## Configure debug and logging
 
 - `--debug`: Enable debug mode for detailed HTTP request and response logging to and from the Grafana API.

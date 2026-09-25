@@ -249,6 +249,15 @@ type GrafanaConfig struct {
 	// URL is the URL of the Grafana instance.
 	URL string
 
+	// OverrideURL pins outbound requests to a request-selected Grafana base URL.
+	// It is set only after the HTTP override middleware authorizes the target.
+	OverrideURL string
+	// AllowGrafanaURLOverride enables request-selected URLs on HTTP transports.
+	// Without an allowlist, callers may select any valid HTTP(S) URL.
+	AllowGrafanaURLOverride bool
+	// AllowedGrafanaURLs optionally restricts selection to exact targets.
+	AllowedGrafanaURLs []string
+
 	// APIKey is the API key or service account token for the Grafana instance.
 	// It may be empty if we are using on-behalf-of auth.
 	APIKey string
@@ -731,10 +740,12 @@ func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey stri
 // sensitiveHeaders lists HTTP header names whose values must be redacted in
 // debug logs to prevent credential leakage (see #919).
 var sensitiveHeaders = map[string]bool{
-	"Authorization":  true,
-	"X-Access-Token": true,
-	"X-Grafana-Id":   true,
-	"Cookie":         true,
+	"Authorization":                   true,
+	"X-Access-Token":                  true,
+	"X-Grafana-Id":                    true,
+	"X-Grafana-Service-Account-Token": true,
+	"X-Grafana-Api-Key":               true,
+	"Cookie":                          true,
 }
 
 // redactHeaderValue masks the middle portion of a credential value,
@@ -899,6 +910,9 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 	if !options.withoutOtel {
 		transport = otelhttp.NewTransport(transport)
 	}
+	if cfg.OverrideURL != "" {
+		transport = &grafanaTargetTransport{baseURL: cfg.OverrideURL, next: transport}
+	}
 
 	return transport, nil
 }
@@ -914,9 +928,14 @@ func extractKeyGrafanaInfoFromEnv(logger *slog.Logger) (url, apiKey string, auth
 	return
 }
 
-// Gets the Grafana URL from the environment and request-scoped credentials and
-// organization information from HTTP headers, with environment fallbacks.
+// Gets the Grafana URL from the environment unless the HTTP override middleware
+// selected a target. Selected targets use only request-scoped credentials.
 func extractKeyGrafanaInfoFromReq(req *http.Request, logger *slog.Logger) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
+	if overrideURL, ok := req.Context().Value(grafanaOverrideKey{}).(string); ok && overrideURL != "" {
+		// This path is reachable only through GrafanaURLOverrideMiddleware.
+		// Never consult credentials from the environment for a selected target.
+		return overrideURL, apiKeyFromHeaders(req), nil, orgIdFromHeaders(req, logger)
+	}
 	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv(logger)
 	username, password, _ := req.BasicAuth()
 
@@ -976,7 +995,8 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 type httpContextFunc func(ctx context.Context, req *http.Request) context.Context
 
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts request-scoped Grafana configuration from HTTP headers.
-// The Grafana URL is always read from GRAFANA_URL. Authentication and organization headers fall back to environment variables when absent.
+// The Grafana URL comes from GRAFANA_URL unless an authorized request override
+// was authorized. Only the configured URL permits environment credential fallbacks.
 // Headers listed in GRAFANA_FORWARD_HEADERS are copied from the incoming request and merged with GRAFANA_EXTRA_HEADERS.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	// Get existing config or create a new one.
@@ -985,13 +1005,30 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	logger := config.LoggerOrDefault()
 
 	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+	if overrideURL, ok := req.Context().Value(grafanaOverrideKey{}).(string); ok && overrideURL != "" {
+		// Environment-provided headers and client certificates can contain
+		// credentials just as the service account token can.
+		config.OverrideURL = overrideURL
+		config.AccessToken = ""
+		config.IDToken = ""
+		if config.TLSConfig != nil {
+			tlsConfig := *config.TLSConfig
+			tlsConfig.CertFile = ""
+			tlsConfig.KeyFile = ""
+			tlsConfig.SkipVerify = false
+			config.TLSConfig = &tlsConfig
+		}
+		config.BaseTransport = nil
+		config.ExtraHeaders = forwardedHeadersFromRequest(req)
+	} else {
+		config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
+	}
 
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 
-	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -1501,6 +1538,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						OrgID:          config.OrgID,
 						TLSConfig:      config.TLSConfig,
 						ExtraHeaders:   config.ExtraHeaders,
+						OverrideURL:    config.OverrideURL,
 						SOCKS5ProxyURL: config.SOCKS5ProxyURL,
 						Debug:          config.Debug,
 						Logger:         config.Logger,
@@ -1529,13 +1567,13 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			}
 		}
 	}
-	if config.SOCKS5ProxyURL != "" && !transportInstalled {
+	if (config.SOCKS5ProxyURL != "" || config.OverrideURL != "") && !transportInstalled {
 		// Fail closed: the reflection above could not reach the OpenAPI
 		// client's transport field at all, so there is nowhere to install a
 		// fail-closed transport and its default transport would bypass the
 		// configured proxy. This is a defensive guard against a structural
 		// change in the go-openapi runtime and is unreachable in practice.
-		panic(fmt.Errorf("SOCKS5 proxy is configured but the Grafana OpenAPI client's transport could not be replaced"))
+		panic(fmt.Errorf("grafana OpenAPI client's guarded transport could not be replaced"))
 	}
 
 	// Fetch the public URL and version from Grafana's frontend settings. Both
@@ -1549,6 +1587,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		IDToken:        config.IDToken,
 		TLSConfig:      config.TLSConfig,
 		ExtraHeaders:   config.ExtraHeaders,
+		OverrideURL:    config.OverrideURL,
 		SOCKS5ProxyURL: config.SOCKS5ProxyURL,
 		Logger:         config.Logger,
 		UserAgent:      config.UserAgent,
@@ -1579,7 +1618,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 }
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
-// It uses GRAFANA_URL with request-scoped authentication headers and environment fallbacks.
+// It uses the resolved Grafana URL and request-scoped authentication headers.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
@@ -1681,13 +1720,15 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	// build failure it returns ok=false and we keep the client's default.
 	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
 		client.HTTPClient.Transport = transport
+	} else if config.OverrideURL != "" {
+		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
 // ExtractIncidentClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana Incident client into the context.
-// It uses GRAFANA_URL with request-scoped authentication and organization headers and environment fallbacks.
+// It uses the resolved Grafana URL and request-scoped authentication and organization headers.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
@@ -1702,6 +1743,8 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	// build failure it returns ok=false and we keep the client's default.
 	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
 		client.HTTPClient.Transport = transport
+	} else if config.OverrideURL != "" {
+		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)

@@ -144,6 +144,54 @@ func TestGetAlertGroupNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "getting OnCall alert group missing")
 }
 
+func TestGetAlertGroupWithGrafanaURLOverrideUsesRequestToken(t *testing.T) {
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "env-token")
+
+	oncallHeaders := make(chan http.Header, 1)
+	oncall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oncallHeaders <- r.Header.Clone()
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/v1/alert_groups/AG123/", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id": "AG123", "state": "new", "created_at": "2026-04-29T07:00:00Z",
+		}))
+	}))
+	t.Cleanup(oncall.Close)
+
+	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer request-token", r.Header.Get("Authorization"))
+		assert.Equal(t, "/api/plugins/grafana-irm-app/settings", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"jsonData": map[string]string{"onCallApiUrl": oncall.URL},
+		}))
+	}))
+	t.Cleanup(grafana.Close)
+
+	var result *OnCallAlertGroup
+	var callErr error
+	handler := mcpgrafana.GrafanaURLOverrideMiddleware(true, []string{grafana.URL}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := mcpgrafana.WithGrafanaConfig(r.Context(), mcpgrafana.GrafanaConfig{
+			AccessToken: "env-access-token", IDToken: "env-id-token",
+		})
+		ctx = mcpgrafana.ExtractGrafanaInfoFromHeaders(ctx, r)
+		result, callErr = getAlertGroup(ctx, GetAlertGroupParams{AlertGroupID: "AG123"})
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request.Header.Set("X-Grafana-URL", grafana.URL)
+	request.Header.Set("X-Grafana-Service-Account-Token", "request-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, request)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+	require.NoError(t, callErr)
+	require.NotNil(t, result)
+	assert.Equal(t, "AG123", result.ID)
+	headers := <-oncallHeaders
+	assert.Equal(t, "request-token", headers.Get("Authorization"))
+	assert.Equal(t, grafana.URL, headers.Get("X-Grafana-URL"))
+}
+
 func TestGetAlertGroupEscapesID(t *testing.T) {
 	ctx, requests := newOnCallPublicAPIServer(t, nil)
 
