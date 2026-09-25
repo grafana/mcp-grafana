@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-25
+
+### Added
+
+- Opt-in per-request Grafana URL selection, with an optional allowlist of permitted URLs and a request-scoped token ([#1242](https://github.com/grafana/mcp-grafana/pull/1242))
+- Tempo TraceQL metrics tools now describe the query grammar with a worked example and return correction hints for common PromQL-style mistakes, so agents can fix rejected queries ([#1207](https://github.com/grafana/mcp-grafana/pull/1207))
+
+### Fixed
+
+- `list_prometheus_metric_names` now pushes regex filtering and a result limit to the datasource instead of downloading every metric name, avoiding large memory spikes on datasources with many metrics. `page * limit` must now not exceed 10000 ([#1217](https://github.com/grafana/mcp-grafana/pull/1217))
+- `--base-path` now applies to the streamable HTTP endpoint and works for SSE with or without a trailing slash; `/healthz` and `/metrics` stay at the server root, and invalid or conflicting paths are rejected at startup ([#1033](https://github.com/grafana/mcp-grafana/pull/1033))
+- `query_loki_logs`, `query_loki_stats` and `query_loki_patterns` return `logql is required` for an empty query instead of a Loki parse error. VictoriaLogs stats queries now need an explicit selector (`*` still works) ([#1238](https://github.com/grafana/mcp-grafana/pull/1238))
+- `get_panel_image` now returns the deeplink as structured content, so the panel viewer shows "Open in Grafana" in Claude ([#1240](https://github.com/grafana/mcp-grafana/pull/1240))
+
 ## [1.5.1] - 2026-09-17
 
 ### Fixed
@@ -492,6 +506,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.6.0]: https://github.com/grafana/mcp-grafana/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/grafana/mcp-grafana/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/grafana/mcp-grafana/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/grafana/mcp-grafana/compare/v1.4.1...v1.4.2
