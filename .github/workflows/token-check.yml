@@ -36,15 +36,15 @@ jobs:
       - name: Build server
         run: make build
 
-      - name: Download baseline
-        id: download-baseline
-        uses: dawidd6/action-download-artifact@09d0677378d50fef230b7cd4c0dea6dfe8883938
+      - name: Check out PR base
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          branch: main
-          name: token-baseline
-          path: baseline
-          workflow: token-baseline.yml
-          if_no_artifact_found: warn
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: token-base
+          persist-credentials: false
+
+      - name: Build base server
+        run: make -C token-base build
 
       - name: Get secrets
         id: get-secrets
@@ -54,6 +54,18 @@ jobs:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
             ANTHROPIC_API_KEY=anthropic:api-key
+
+      # Measure the actual PR base with the same counter and credentials as
+      # the head. A cached main-branch artifact can include unrelated drift,
+      # and is the wrong comparison for stacked pull requests.
+      - name: Measure base tokens
+        uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
+        with:
+          command: ./token-base/dist/mcp-grafana
+          anthropic-api-key: ${{ steps.get-secrets.outputs.secrets && fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY || '' }}
+          all-providers: true
+          output: token-baseline.json
+          comment: false
 
       - name: Analyze tokens
         id: analyze
@@ -69,7 +81,7 @@ jobs:
           # The action falls back to tiktoken, which is accurate enough to review
           # a tool's cost against the 5% threshold.
           anthropic-api-key: ${{ steps.get-secrets.outputs.secrets && fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY || '' }}
-          baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
+          baseline: token-baseline.json
           threshold-percent: "5"
           # Commenting is deliberately off; see the note on permissions above.
           comment: false
