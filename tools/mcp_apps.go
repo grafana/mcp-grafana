@@ -7,4 +7,5 @@ import "github.com/mark3labs/mcp-go/server"
 // call mcpgrafana.RegisterAppResources to serve the bundled UI.
 func AddMCPAppTools(s *server.MCPServer, enableQueryTools bool) {
 	AddTraceAppTools(s, enableQueryTools)
+	AddServiceHealthAppTools(s, enableQueryTools)
 }

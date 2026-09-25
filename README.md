@@ -344,6 +344,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_incident`                    | Incident                  | Get a single incident by ID, including its custom fields                                                     | Viewer role                                            | N/A                                                 |
 | `list_incident_custom_fields`     | Incident                  | List the custom fields configured for incidents, with their types and select options                         | Viewer role                                            | N/A                                                 |
 | `render_trace` | MCP Apps* | Interactive Tempo trace waterfall and span details | `datasources:read`, `datasources:query` | `datasources:uid:tempo-uid` |
+| `render_service_health` | MCP Apps* | Service RED metrics and outbound dependencies | `datasources:read`, `datasources:query` | `datasources:uid:prometheus-uid` |
 | `query_loki_logs`                 | Loki                      | Query and retrieve logs using LogQL (either log or metric queries)                                           | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_names`           | Loki                      | List all available label names in logs                                                                       | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_values`          | Loki                      | List values for a specific log label                                                                         | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
@@ -415,7 +416,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
-Interactive trace apps use the opt-in `mcp-apps` category. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
+Interactive trace and service health apps use the opt-in `mcp-apps` category. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
 
 ## CLI Flags Reference
 

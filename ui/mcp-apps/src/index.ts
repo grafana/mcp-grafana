@@ -14,3 +14,13 @@ export type {
 export { RenderTraceApp } from './trace/RenderTraceApp';
 export type { RenderTraceAppProps } from './trace/RenderTraceApp';
 export type { RenderTraceResult, TraceSpan, TraceEvent } from './trace/types';
+
+export { RenderServiceHealthApp } from './service-health/RenderServiceHealthApp';
+export type {
+  RenderServiceHealthResult,
+  ServiceHealthDependency,
+  ServiceHealthMetric,
+  ServiceHealthPoint,
+  ServiceHealthStatus,
+  ServiceHealthTimeRange,
+} from './service-health/types';

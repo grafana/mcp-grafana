@@ -23,7 +23,7 @@ func TestMCPAppResources(t *testing.T) {
 	require.NoError(t, err)
 	resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
 	require.NoError(t, err)
-	for _, uri := range []string{TraceViewerResourceURI} {
+	for _, uri := range []string{TraceViewerResourceURI, ServiceHealthResourceURI} {
 		t.Run(uri, func(t *testing.T) {
 			var found bool
 			for _, resource := range resources.Resources {

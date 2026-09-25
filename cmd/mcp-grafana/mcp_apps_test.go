@@ -35,7 +35,7 @@ func TestMCPAppsCategory(t *testing.T) {
 				require.NotContains(t, tc.config.buildInstructions(), "MCP Apps:")
 			}
 			registered := s.ListTools()
-			for _, name := range []string{"render_trace"} {
+			for _, name := range []string{"render_trace", "render_service_health"} {
 				_, ok := registered[name]
 				require.Equal(t, tc.enabled, ok, name)
 			}

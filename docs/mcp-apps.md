@@ -17,6 +17,13 @@ they only read data.
   with a virtualized waterfall, span filtering, attributes and exception details.
   The datasource must be Tempo. Oversized responses fail explicitly instead of
   silently dropping spans.
+- `render_service_health(service_name, datasource_uid, service_namespace?, time_range?)`
+  displays request rate, errors, latency and outbound dependencies from
+  Prometheus-compatible span metrics and service-graph metrics. The datasource
+  must contain those metrics; a Tempo datasource UID is not a metrics datasource.
+  The app supports range refresh through the host. Missing telemetry remains
+  explicit. It does not evaluate health policies, alert states or SLOs.
+
 Tools use the configured Grafana connection and caller identity. Credentials
 stay on the server. Apps are self-contained HTML with no external connection or
 resource domains; trace sharing requests host-controlled clipboard permission.
@@ -37,9 +44,10 @@ mcpgrafana.RegisterAppResources(s)
 tools.AddMCPAppTools(s, enableQueryTools)
 ```
 
-For selective registration, use `tools.AddTraceAppTools` and
-`RegisterTraceAppResource`. Its resource URI is exported as
-`TraceViewerResourceURI`.
+For selective registration, use `tools.AddTraceAppTools` or
+`tools.AddServiceHealthAppTools` and the matching `RegisterTraceAppResource` or
+`RegisterServiceHealthAppResource` function. Resource URIs are exported as
+`TraceViewerResourceURI` and `ServiceHealthResourceURI`.
 
 The module embeds the built HTML, so Go consumers need no Node toolchain to serve
 these apps. Do not copy the bundles into the embedding server: update the Go

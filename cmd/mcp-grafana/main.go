@@ -94,7 +94,7 @@ var categoryDescription = map[string]string{
 	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries, with optional built-in shortening.",
 	"tempo":         "Tempo: Search traces with TraceQL, compute trace-derived metrics, fetch and diff traces, and explore trace attributes.",
 	"annotations":   "Annotations: Create and manage dashboard annotations.",
-	"mcp-apps":      "MCP Apps: Display interactive trace waterfalls.",
+	"mcp-apps":      "MCP Apps: Display interactive trace waterfalls and service health metrics.",
 	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
 	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
