@@ -75,14 +75,14 @@ Deploy behind an authenticating proxy that authorizes each caller's target, remo
 Without a URL allowlist, a fake request token can cause requests to any reachable HTTP(S) service, including internal and metadata services.
 {{< /admonition >}}
 
-On SSE and streamable-http transports, callers can select a Grafana instance for each request. This is disabled by default.
+On the streamable-http transport, callers can select a Grafana instance for each request. This is disabled by default.
 
 - `--allow-grafana-url-override`: Enable selection through `X-Grafana-URL`. Falls back to `GRAFANA_ALLOW_URL_OVERRIDE` when the flag is not set.
 - `--allowed-grafana-urls`: Optional comma-separated list of exact Grafana base URLs that callers may select. Falls back to `GRAFANA_ALLOWED_URLS` when the flag is not set. It requires the enable switch; an explicitly empty flag clears an inherited list.
 
 For a large fleet selected by a proxy, `GRAFANA_ALLOW_URL_OVERRIDE=true` enables selection without listing every instance in `GRAFANA_ALLOWED_URLS`. The deployment controls in the warning above still apply. The proxy must send both `X-Grafana-URL: <target base URL>` and `X-Grafana-Service-Account-Token: <token for that target>` on each MCP request. The deprecated `X-Grafana-API-Key` header also works. The server uses the token from that request and does not send its environment Grafana credentials to a selected target. If caller authentication is configured, the `Authorization` header carries the separate MCP caller token.
 
-Without `--allowed-grafana-urls`, the server logs a security error at startup. Outbound Grafana requests are pinned to the selected base URL, including across redirects. For SSE, include the selection headers on every message POST; headers on the initial GET do not carry over to tool calls.
+Without `--allowed-grafana-urls`, the server logs a security error at startup. Outbound Grafana requests are pinned to the selected base URL, including across redirects. Selection does not work over SSE, which does not pass per-request headers to tool calls; a selected URL there is used without the caller's token, so the calls fail.
 
 ## Configure debug and logging
 

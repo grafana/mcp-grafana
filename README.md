@@ -403,6 +403,9 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it
 
+> [!NOTE]
+> Over SSE, per-request headers do not reach tool calls: `X-Grafana-Service-Account-Token` / `X-Grafana-API-Key`, `X-Grafana-Org-Id`, and headers listed in `GRAFANA_FORWARD_HEADERS` have no effect, tool calls use the server's environment credentials, and `X-Grafana-URL` overrides do not work. Use streamable-http when each caller needs its own Grafana URL, credentials, or organization.
+
 **HTTP Transport Security (SSE / streamable-http only):**
 
 `Host`/`Origin` validation is enforced on *every* route on the MCP listener — `/sse`, `/mcp`, and `/healthz` / `/metrics` when they share that listener — so a DNS-rebinding browser cannot reach any of them. Stdio transport is unaffected. `--healthz-address` and `--metrics-address` start a separate listener that is not wrapped.
@@ -420,7 +423,7 @@ Optionally require MCP clients to authenticate *to the server*. This is separate
 
 Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
 
-**Grafana URL overrides (SSE / streamable-http only):**
+**Grafana URL overrides (streamable-http only):**
 
 > [!WARNING]
 > URL overrides let MCP callers select outbound HTTP(S) destinations. An allowlist limits URLs but does not authenticate callers or bind tokens to targets.
@@ -442,7 +445,7 @@ If `--server-auth-token` is configured, also send `Authorization: Bearer <MCP ca
 
 The allowlist matches exact base URLs, including scheme, port, and path; wildcards are not supported. Grafana authentication is not an SSRF defense.
 
-For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, environment basic authentication, `GRAFANA_EXTRA_HEADERS`, or client certificates. TLS verification remains enabled even if `--tls-skip-verify` is set; a configured CA file still applies. Headers explicitly forwarded from that request still apply. Redirects and other Grafana API requests outside the selected base URL are blocked. Requests without `X-Grafana-URL` retain the usual `GRAFANA_URL` and environment credential behavior. This option applies to SSE and streamable HTTP only. For SSE, include both selection headers on each message POST; headers on the initial SSE GET do not carry over to tool calls.
+For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, environment basic authentication, `GRAFANA_EXTRA_HEADERS`, or client certificates. TLS verification remains enabled even if `--tls-skip-verify` is set; a configured CA file still applies. Headers explicitly forwarded from that request still apply. Redirects and other Grafana API requests outside the selected base URL are blocked. Requests without `X-Grafana-URL` retain the usual `GRAFANA_URL` and environment credential behavior. This option applies to streamable HTTP only. It does not work over SSE, which does not pass per-request headers to tool calls; a selected URL there is used without the caller's token, so the calls fail.
 
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
@@ -461,9 +464,6 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 
 **Anonymous Usage Statistics:**
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
-
-**Session Management:**
-- `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
@@ -659,7 +659,7 @@ Surrounding whitespace (including a trailing newline) is trimmed from the file c
 You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
-- **HTTP header:** Set `X-Grafana-Org-Id` when using SSE or streamable HTTP transports (header takes precedence over environment variable - meaning you can set a default org as well).
+- **HTTP header:** Set `X-Grafana-Org-Id` when using the streamable HTTP transport (header takes precedence over environment variable - meaning you can set a default org as well).
 
 When an organization ID is provided, the MCP server will set the `X-Grafana-Org-Id` header on all requests to Grafana, ensuring that operations are performed within the specified organization context.
 
@@ -738,11 +738,11 @@ The URL must use the `socks5://` or `socks5h://` scheme (Go treats them identica
 
 An invalid proxy URL is a startup error, and if building a proxied connection fails at runtime the server fails closed rather than silently sending Grafana traffic directly.
 
-### Forwarding Headers from the Client (SSE/Streamable-HTTP Only)
+### Forwarding Headers from the Client (Streamable-HTTP Only)
 
 When the MCP server runs behind a gateway or reverse proxy that handles SSO (e.g. an AWS ALB with OIDC), each user's session cookie must reach Grafana so it can associate the request with the authenticated user. The `GRAFANA_FORWARD_HEADERS` environment variable enables this by specifying a comma-separated allowlist of header names to copy from the **incoming** HTTP request to every outbound Grafana API request.
 
-This only applies when using SSE (`-t sse`) or streamable-http (`-t streamable-http`) transports. It has no effect in stdio mode.
+This only applies when using the streamable-http (`-t streamable-http`) transport. It has no effect in stdio or SSE mode.
 
 **Example: forward the session cookie**
 
