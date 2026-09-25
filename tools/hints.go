@@ -93,6 +93,11 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getSnowflakeCauses(ctx)
 		hints.SuggestedActions = getSnowflakeActions(ctx)
 
+	case "cloudlogging":
+		hints.Summary = "The Google Cloud Logging query returned no log entries for the specified time range."
+		hints.PossibleCauses = getCloudLoggingCauses(ctx)
+		hints.SuggestedActions = getCloudLoggingActions(ctx)
+
 	default:
 		hints.Summary = "The query returned no data for the specified parameters."
 		hints.PossibleCauses = getGenericCauses()
@@ -243,6 +248,34 @@ func getInfluxDBActions(ctx HintContext) []string {
 		"Inspect available measurements and tags with a broader query first (Flux: `from(bucket: \"...\") |> range(start: -1h) |> limit(n: 5)`; InfluxQL: `SHOW MEASUREMENTS`)",
 		"Try expanding the time range to see if data exists earlier",
 		"Remove tag filters one at a time to find the restrictive one",
+	}
+}
+
+// getCloudLoggingCauses returns possible causes for empty Google Cloud Logging results
+func getCloudLoggingCauses(ctx HintContext) []string {
+	causes := []string{
+		"The project ID may be wrong, or the datasource's service account may lack the Logs Viewer role on it",
+		"The filter may be too restrictive (resource.type, resource.labels, logName, or severity may not match any entries)",
+		"No logs were written in the time range, or the log bucket's retention period has expired them",
+	}
+	q := strings.ToLower(ctx.Query)
+	if strings.Contains(q, "timestamp") {
+		causes = append(causes, "The filter contains a timestamp clause that conflicts with the automatically applied time range")
+	}
+	if strings.Contains(q, "severity=") && !strings.Contains(q, "severity>=") && !strings.Contains(q, "severity<=") {
+		causes = append(causes, "severity= matches one exact level; severity>=ERROR also matches CRITICAL, ALERT, and EMERGENCY")
+	}
+	return causes
+}
+
+// getCloudLoggingActions returns suggested actions for empty Google Cloud Logging results
+func getCloudLoggingActions(ctx HintContext) []string {
+	return []string{
+		"Verify the project ID with list_cloud_logging_projects",
+		"Remove timestamp clauses from the filter; the time range comes from start/end",
+		"Broaden the filter, e.g. start from resource.type=\"k8s_container\" alone, then add labels one at a time",
+		"Expand the time range to check whether data exists earlier",
+		"If the project uses custom log buckets or sinks, list them with list_cloud_logging_buckets and pass bucketId",
 	}
 }
 

@@ -113,6 +113,14 @@ Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, an
 - **List CloudWatch dimensions:** Get dimensions for filtering metric queries.
 - **Query CloudWatch:** Execute CloudWatch metric queries with time range support.
 
+### Google Cloud Logging Querying
+
+> **Note:** Google Cloud Logging tools are **disabled by default**. To enable them, add `cloudlogging` to your `--enabled-tools` flag. Requires the [Google Cloud Logging datasource plugin](https://grafana.com/grafana/plugins/googlecloud-logging-datasource/) (`googlecloud-logging-datasource`) version 1.8.0 or later, which needs Grafana 11.2+. Older plugin versions return a different response layout and `query_cloud_logging` reports an error asking for an upgrade.
+
+- **List Cloud Logging projects:** Discover the GCP project IDs the datasource can read logs from.
+- **List Cloud Logging buckets and views:** Discover log buckets and log views to scope a query.
+- **Query Cloud Logging:** Run Cloud Logging query language filters (e.g. `resource.type="k8s_container" AND severity>=ERROR`) with time range and limit; returns entries newest-first with severity, body, labels, and trace ID. GCP authentication is handled by the datasource configuration.
+
 ### Graphite Querying
 
 > **Note:** Graphite tools are **disabled by default**. To enable them, add `graphite` to your `--enabled-tools` flag.
@@ -352,6 +360,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_cloudwatch_dimensions`      | CloudWatch*               | List dimensions for a metric                                                                                 | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_cloudwatch_dimension_values`| CloudWatch*               | List values for a dimension key                                                                              | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `query_cloudwatch`                | CloudWatch*               | Execute CloudWatch metric queries                                                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `list_cloud_logging_projects`     | Cloud Logging*            | List GCP projects readable by a Google Cloud Logging datasource                                              | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `list_cloud_logging_buckets`      | Cloud Logging*            | List log buckets in a GCP project                                                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `list_cloud_logging_views`        | Cloud Logging*            | List log views in a log bucket                                                                               | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `query_cloud_logging`             | Cloud Logging*            | Query logs with the Cloud Logging query language                                                             | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `query_elasticsearch`             | Elasticsearch/OpenSearch* | Query Elasticsearch or OpenSearch using Lucene syntax or Query DSL                                           | `datasources:query`                                    | `datasources:uid:datasource-uid`                    |
 | `query_quickwit`                  | Quickwit*                 | Query Quickwit using Lucene syntax or Query DSL                                                              | `datasources:query`                                    | `datasources:uid:quickwit-uid`                      |
 | `alerting_manage_rules`           | Alerting                  | Manage alert rules (list, get, versions, create, update, delete)                                             | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder`          |
@@ -477,7 +489,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudlogging`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
@@ -507,6 +519,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 - `--disable-snapshot`: Disable snapshot tools
 - `--disable-cloudwatch`: Disable CloudWatch tools
+- `--disable-cloudlogging`: Disable Google Cloud Logging tools
 - `--disable-examples`: Disable query examples tools
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools
@@ -619,13 +632,16 @@ When `--disable-query` is enabled, the following tools are not registered:
 **CloudWatch Tools:**
 - `query_cloudwatch`
 
+**Google Cloud Logging Tools:**
+- `query_cloud_logging`
+
 **Pyroscope Tools:**
 - `query_pyroscope`
 
 **Run Panel Query Tools:**
 - `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and so on — remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
 
 Note that `--disable-query` gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but does not police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 

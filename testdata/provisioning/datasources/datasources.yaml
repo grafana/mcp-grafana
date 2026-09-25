@@ -143,6 +143,13 @@ datasources:
       accessKey: test
       secretKey: test
     isDefault: false
+  - name: Google Cloud Logging
+    uid: googlecloud-logging
+    type: googlecloud-logging-datasource
+    access: proxy
+    jsonData:
+      authenticationType: gce
+    isDefault: false
   - name: MySQL
     uid: mysql
     type: mysql

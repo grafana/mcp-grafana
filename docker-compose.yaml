@@ -3,7 +3,7 @@ services:
     image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,elasticsearch 12.6.2
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,googlecloud-logging-datasource,elasticsearch 12.6.2
       GF_PLUGINS_PREINSTALL_SYNC: quickwit-quickwit-datasource@0.6.0@https://github.com/quickwit-oss/quickwit-datasource/releases/download/v0.6.0/quickwit-quickwit-datasource-0.6.0.zip
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"

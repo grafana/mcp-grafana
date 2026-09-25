@@ -110,7 +110,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `cloudlogging`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -135,6 +135,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-rendering`: Disable rendering tools (panel or dashboard image export).
 - `--disable-snapshot`: Disable snapshot tools.
 - `--disable-cloudwatch`: Disable CloudWatch tools.
+- `--disable-cloudlogging`: Disable Google Cloud Logging tools.
 - `--disable-examples`: Disable query examples tools.
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
@@ -170,10 +171,11 @@ The following tools are not registered when the flag is set:
 - SQL datasources: `query_sql`, `query_influxdb`
 - Graphite: `query_graphite`, `query_graphite_density`
 - CloudWatch: `query_cloudwatch`
+- Google Cloud Logging: `query_cloud_logging`
 - Pyroscope: `query_pyroscope`
 - Panels: `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, and `list_cloudwatch_metrics` remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and `list_cloud_logging_projects` remain available.
 
 The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but doesn't police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 

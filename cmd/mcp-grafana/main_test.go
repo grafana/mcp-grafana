@@ -1256,6 +1256,7 @@ var safeQueryToolNames = []string{
 	"query_graphite",
 	"query_graphite_density",
 	"query_cloudwatch",
+	"query_cloud_logging",
 	"query_pyroscope",
 	"run_panel_query",
 }
@@ -1293,6 +1294,9 @@ var metadataToolNames = []string{
 	"list_cloudwatch_metrics",
 	"list_cloudwatch_dimensions",
 	"list_cloudwatch_dimension_values",
+	"list_cloud_logging_projects",
+	"list_cloud_logging_buckets",
+	"list_cloud_logging_views",
 	"list_pyroscope_label_names",
 	"list_pyroscope_label_values",
 	"list_pyroscope_profile_types",
