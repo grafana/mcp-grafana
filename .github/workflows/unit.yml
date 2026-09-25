@@ -107,6 +107,10 @@ jobs:
       - name: Rebuild UI bundles
         run: make build-ui
 
+      - name: Check MCP App UI
+        working-directory: ui/mcp-apps
+        run: npm run typecheck && npm test
+
       - name: Fail if UI bundles drifted from sources
         run: |
           if ! git diff --exit-code -- ui; then

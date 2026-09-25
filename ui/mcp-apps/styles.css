@@ -1,0 +1,22 @@
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@keyframes mcp-spin { to { transform: rotate(360deg); } }
+[data-color-mode='light'] {
+  color-scheme: light;
+  --mcp-background: #fff; --mcp-foreground: #22252b; --mcp-inset: #f4f5f5;
+  --mcp-border: #d9dce0; --mcp-input-border: #a8adb3; --mcp-ring: #3d71d9;
+  --mcp-muted: #f1f2f3; --mcp-muted-foreground: #4d535b; --mcp-accent: #e8ebef;
+  --mcp-primary: #1f5fbf; --mcp-primary-hover: #194f9f; --mcp-primary-text: #fff;
+  --mcp-success: #208549; --mcp-success-text: #176a3a; --mcp-error: #ce354d;
+  --mcp-error-text: #a32238; --mcp-info: #3274c8; --mcp-info-text: #245eaa;
+}
+[data-color-mode='dark'] {
+  color-scheme: dark;
+  --mcp-background: #181b1f; --mcp-foreground: #f1f2f3; --mcp-inset: #22262b;
+  --mcp-border: #454b53; --mcp-input-border: #767e87; --mcp-ring: #79a7fa;
+  --mcp-muted: #2b3036; --mcp-muted-foreground: #b4bac2; --mcp-accent: #39414a;
+  --mcp-primary: #5794ed; --mcp-primary-hover: #77a9f0; --mcp-primary-text: #111820;
+  --mcp-success: #56c785; --mcp-success-text: #79d9a0; --mcp-error: #ff7384;
+  --mcp-error-text: #ff9aa6; --mcp-info: #75adf0; --mcp-info-text: #a2c7f5;
+}
