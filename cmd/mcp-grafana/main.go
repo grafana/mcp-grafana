@@ -712,6 +712,15 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 // corsMiddleware adds CORS headers when the request Origin matches an allowed
 // origin. The official go-sdk sets no CORS headers (unlike mark3labs which had
 // built-in CORS support), so this is needed for browser-based MCP clients.
+//
+// The preflight allowlist covers the MCP protocol headers plus the Grafana
+// request headers the server documents for per-request URL, credential and
+// org selection, so browser clients on an allowed origin can use them too.
+var corsAllowedHeaders = strings.Join([]string{
+	"Content-Type", "Authorization", "Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID",
+	"X-Grafana-URL", "X-Grafana-Service-Account-Token", "X-Grafana-API-Key", "X-Grafana-Org-Id",
+}, ", ")
+
 func corsMiddleware(origins []string, next http.Handler) http.Handler {
 	if len(origins) == 0 {
 		return next
@@ -725,11 +734,13 @@ func corsMiddleware(origins []string, next http.Handler) http.Handler {
 		allowedSet[strings.ToLower(o)] = true
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The response depends on Origin, so shared caches must key on it.
+		w.Header().Add("Vary", "Origin")
 		origin := r.Header.Get("Origin")
 		if origin != "" && (allowAll || allowedSet[strings.ToLower(origin)]) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version")
+			w.Header().Set("Access-Control-Allow-Headers", corsAllowedHeaders)
 			w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
 			if r.Method == "OPTIONS" {
 				w.WriteHeader(http.StatusNoContent)

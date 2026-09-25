@@ -890,11 +890,26 @@ func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
 	}
 }
 
-// TestSSEServerSuppressesWildcardCORS pins the load-bearing assumption behind
-// corsOrigins(): that passing any non-empty AllowedOrigins through
-// The go-sdk sets no CORS headers at all (unlike mark3labs); CORS is handled
-// by corsMiddleware in main.go. The mark3labs-specific SSE CORS suppression
-// test has been removed.
+// A browser client on an allowed origin must be able to send the Grafana
+// selection headers the server documents, and responses vary by Origin.
+func TestCORSMiddlewarePreflight(t *testing.T) {
+	h := corsMiddleware([]string{"https://app.example"}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("preflight must not reach the MCP handler")
+	}))
+	req := httptest.NewRequest(http.MethodOptions, "/mcp", nil)
+	req.Header.Set("Origin", "https://app.example")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, "https://app.example", rec.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "Origin", rec.Header().Get("Vary"))
+	allowed := strings.Split(rec.Header().Get("Access-Control-Allow-Headers"), ", ")
+	for _, name := range []string{"X-Grafana-URL", "X-Grafana-Service-Account-Token", "X-Grafana-API-Key", "X-Grafana-Org-Id", "Mcp-Session-Id", "Last-Event-ID"} {
+		assert.Contains(t, allowed, name)
+	}
+}
 
 func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 	cases := []struct {
