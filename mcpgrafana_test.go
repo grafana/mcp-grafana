@@ -2775,3 +2775,37 @@ func TestDefaultOrgWarningSuppressedWithDynamicMultiOrg(t *testing.T) {
 		assert.NotContains(t, buf.String(), "using default org")
 	})
 }
+
+func TestEnvIgnoresUnsubstitutedMCPBPlaceholders(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	t.Run("blank token field falls back to basic auth", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://localhost:3000")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "${user_config.service_account_token}")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_USERNAME", "admin")
+		t.Setenv("GRAFANA_PASSWORD", "secret")
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Empty(t, apiKey)
+		auth := userAndPassFromEnv()
+		require.NotNil(t, auth)
+		password, _ := auth.Password()
+		assert.Equal(t, "admin", auth.Username())
+		assert.Equal(t, "secret", password)
+	})
+
+	t.Run("blank username and password fields disable basic auth", func(t *testing.T) {
+		t.Setenv("GRAFANA_USERNAME", "${user_config.username}")
+		t.Setenv("GRAFANA_PASSWORD", "${user_config.password}")
+
+		assert.Nil(t, userAndPassFromEnv())
+	})
+
+	t.Run("blank org id field is ignored", func(t *testing.T) {
+		t.Setenv("GRAFANA_ORG_ID", "${user_config.org_id}")
+
+		assert.Equal(t, int64(0), orgIdFromEnv(logger))
+	})
+}
