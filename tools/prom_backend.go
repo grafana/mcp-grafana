@@ -59,6 +59,8 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 		return newVictoriaMetricsBackend(ctx, uid, ds)
 	case "tempo":
 		return nil, fmt.Errorf("datasource %s is of type %q, which is not a supported Prometheus-compatible datasource", uid, ds.Type)
+	case "loki", victoriaLogsDatasourceType:
+		return nil, fmt.Errorf("datasource %s is of type %q, a log datasource, which is not a supported Prometheus-compatible datasource; query it through the Loki tools", uid, ds.Type)
 	default:
 		// For prometheus, thanos, cortex, mimir, and any other Prometheus-compatible datasource,
 		// use the native Prometheus client via the datasource proxy.
