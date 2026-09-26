@@ -106,7 +106,7 @@ func formatRFC3339OrEmpty(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(time.RFC3339)
+	return t.Format(time.RFC3339Nano)
 }
 
 func (b *lokiNativeBackend) ListLabelNames(ctx context.Context, matcher string, start, end time.Time) ([]string, error) {
