@@ -188,7 +188,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   opensearch:
-    image: opensearchproject/opensearch:3.8.0@sha256:bcc1797519726ceb6d651d4a3e60b7c30da91793914a8dfe75fd441d4f641509
+    image: opensearchproject/opensearch:3.8.0@sha256:fafe3fc3587088674669235575aa166228c48bdb940294a8cdbbc1da75236a40
     environment:
       - discovery.type=single-node
       - DISABLE_SECURITY_PLUGIN=true
@@ -247,7 +247,7 @@ services:
       retries: 5
 
   influxdb:
-    image: influxdb:2.9@sha256:f75e48af0598e8aec7986e991a848d19a119101a7d563a2e5db1dfaac9c45daa
+    image: influxdb:2.9@sha256:05d6fb735bc22449c401094d42846123a24e3325d3a6e092242a45bfd68fff21
     ports:
       - "8086:8086"
     environment:
@@ -302,7 +302,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    image: postgres:17@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: test
