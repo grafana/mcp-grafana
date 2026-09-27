@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Opt-in per-request Grafana URL selection, with an optional allowlist of permitted URLs and a request-scoped token ([#1242](https://github.com/grafana/mcp-grafana/pull/1242))
+- Opt-in `cloudlogging` tool category for the Google Cloud Logging datasource: `query_cloud_logging` runs Cloud Logging queries, and `list_cloud_logging_projects`, `list_cloud_logging_buckets` and `list_cloud_logging_views` discover what it can read ([#1228](https://github.com/grafana/mcp-grafana/pull/1228))
 - Tempo TraceQL metrics tools now describe the query grammar with a worked example and return correction hints for common PromQL-style mistakes, so agents can fix rejected queries ([#1207](https://github.com/grafana/mcp-grafana/pull/1207))
 
 ### Fixed
