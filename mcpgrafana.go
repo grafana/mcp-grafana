@@ -1245,7 +1245,7 @@ type frontendSettings struct {
 // namespace resolution avoid guessing when it simply could not reach Grafana.
 func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendSettings, error) {
 	logger := cfg.LoggerOrDefault()
-	settingsURL := cfg.URL + "/api/frontend/settings"
+	settingsURL := strings.TrimRight(cfg.URL, "/") + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
 		logger.Warn("Failed to create request for frontend settings", "error", err)

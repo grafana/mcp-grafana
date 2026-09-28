@@ -2102,6 +2102,28 @@ func TestFrontendSettingsSharedByAllConsumers(t *testing.T) {
 		"public URL, version and namespace must share one frontend-settings fetch")
 }
 
+// TestFrontendSettingsTrimsTrailingSlashFromConfiguredURL guards against a
+// regression where a configured Grafana URL with a trailing slash (e.g.
+// "https://foo.grafana.net/") produced a double-slashed request path
+// ("//api/frontend/settings"). Grafana's httpserver.reject-non-canonical-path
+// enforcement rejects such requests outright rather than redirecting.
+func TestFrontendSettingsTrimsTrailingSlashFromConfiguredURL(t *testing.T) {
+	t.Cleanup(clearFrontendSettingsCaches)
+
+	var gotPath string
+	ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"appUrl": "https://public.grafana.example.com", "buildInfo": {"version": "12.1.0"}}`))
+	})
+
+	cfg := GrafanaConfig{URL: ts.URL + "/"}
+	settings, err := doFetchFrontendSettings(context.Background(), &cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "/api/frontend/settings", gotPath)
+	assert.Equal(t, "https://public.grafana.example.com", settings.AppURL)
+}
+
 // TestNamespaceIsNotSharedAcrossOrgs guards the reason the namespace keeps its
 // own org-keyed cache: Grafana computes it for the requesting org, so serving it
 // from the URL-keyed cache would hand one org another org's namespace.
