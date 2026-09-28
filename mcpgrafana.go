@@ -1446,6 +1446,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
 	}
+	// Trim any trailing slash so every path built from grafanaURL below
+	// (the OpenAPI client's base path, and the frontend-settings fetch) is
+	// well-formed instead of double-slashed.
+	grafanaURL = strings.TrimRight(grafanaURL, "/")
 
 	parsedURL, err = url.Parse(grafanaURL)
 	if err != nil {
