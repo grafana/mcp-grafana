@@ -46,8 +46,8 @@ func TestLokiClient_FetchData_OmitsQueryParamWhenMatcherEmpty(t *testing.T) {
 	assert.False(t, sawQuery, "query param should be omitted when matcher is empty")
 }
 
-// lokiQueryStub serves body as the Loki range-query response through the
-// Grafana datasource proxy, and records the query parameters it received.
+// lokiQueryStub serves body as the Loki query response through the Grafana
+// datasource proxy, and records the query parameters it received.
 func lokiQueryStub(body string) (*httptest.Server, *url.Values) {
 	query := &url.Values{}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +55,8 @@ func lokiQueryStub(body string) (*httptest.Server, *url.Values) {
 		switch r.URL.Path {
 		case "/api/datasources/uid/loki":
 			_, _ = io.WriteString(w, `{"uid":"loki","type":"loki"}`)
-		case "/api/datasources/proxy/uid/loki/loki/api/v1/query_range":
+		case "/api/datasources/proxy/uid/loki/loki/api/v1/query_range",
+			"/api/datasources/proxy/uid/loki/loki/api/v1/query":
 			*query = r.URL.Query()
 			_, _ = io.WriteString(w, body)
 		default:
@@ -113,9 +114,16 @@ func TestQueryLokiLogsPreservesNanosecondBounds(t *testing.T) {
 
 	_, err := queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
 		DatasourceUID: "loki", LogQL: `{app="a"}`,
-		StartRFC3339: "1970-01-01T00:00:01.000000001Z", EndRFC3339: "1970-01-01T00:00:01.000000004Z",
+		StartRFC3339: "2024-01-15T10:00:00.000000001Z", EndRFC3339: "2024-01-15T10:00:00.000000004Z",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "1000000001", query.Get("start"))
-	assert.Equal(t, "1000000004", query.Get("end"))
+	assert.Equal(t, "1705312800000000001", query.Get("start"))
+	assert.Equal(t, "1705312800000000004", query.Get("end"))
+
+	_, err = queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `count_over_time({app="a"}[5m])`, QueryType: "instant",
+		EndRFC3339: "2024-01-15T10:00:00.000000004Z",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "1705312800000000004", query.Get("time"))
 }
