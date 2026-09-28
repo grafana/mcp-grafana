@@ -100,9 +100,9 @@ jobs:
       - name: Build wheels
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          # TODO: switch to `uvx go-to-wheel` once --package-path is released
-          # (see https://github.com/simonw/go-to-wheel/pull/5)
-          uvx --from "go-to-wheel @ git+https://github.com/nikaro/go-to-wheel@f7939c6868e195204eae1370f899933e555513e3" \
+          # TODO: switch to `uvx go-to-wheel` once --package-path and binary compression are released
+          # (see https://github.com/simonw/go-to-wheel/pull/5 and https://github.com/simonw/go-to-wheel/pull/7)
+          uvx --from "go-to-wheel @ git+https://github.com/sd2k/go-to-wheel@e7a9fe44440039a9709c3deee2f9fa6cad0411fd" \
             go-to-wheel . \
             --package-path ./cmd/mcp-grafana \
             --name mcp-grafana \
