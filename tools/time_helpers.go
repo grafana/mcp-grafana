@@ -21,6 +21,9 @@ func parseStartTime(timeStr string) (time.Time, error) {
 	if timeStr == "" {
 		return time.Time{}, nil
 	}
+	if t, err := time.Parse(time.RFC3339Nano, timeStr); err == nil {
+		return t, nil
+	}
 
 	tr := gtime.TimeRange{
 		From: timeStr,
@@ -38,6 +41,9 @@ func parseStartTime(timeStr string) (time.Time, error) {
 func parseEndTime(timeStr string) (time.Time, error) {
 	if timeStr == "" {
 		return time.Time{}, nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, timeStr); err == nil {
+		return t, nil
 	}
 
 	tr := gtime.TimeRange{
