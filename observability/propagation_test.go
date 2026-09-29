@@ -71,7 +71,7 @@ func TestSetupHonoursOTELPropagatorsEnv(t *testing.T) {
 		require.NoError(t, err)
 
 		fields := otel.GetTextMapPropagator().Fields()
-		assert.Contains(t, fields, "x-b3-traceid")
+		assert.Contains(t, fields, "b3")
 		assert.NotContains(t, fields, "traceparent", "OTEL_PROPAGATORS should replace the default, not add to it")
 	})
 

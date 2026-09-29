@@ -2087,6 +2087,28 @@ func TestFrontendSettingsSharedByAllConsumers(t *testing.T) {
 		"public URL, version and namespace must share one frontend-settings fetch")
 }
 
+// TestNewGrafanaClientTrimsTrailingSlashFromConfiguredURL guards against a
+// regression where a configured Grafana URL with a trailing slash (e.g.
+// "https://foo.grafana.net/") produced a double-slashed request path
+// ("//api/frontend/settings"). NewGrafanaClient trims it up front so every
+// path built from the URL -- the OpenAPI client's base path and the
+// frontend-settings fetch alike -- stays well-formed.
+func TestNewGrafanaClientTrimsTrailingSlashFromConfiguredURL(t *testing.T) {
+	t.Cleanup(clearFrontendSettingsCaches)
+
+	var gotPath string
+	ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"appUrl": "https://public.grafana.example.com", "buildInfo": {"version": "12.1.0"}}`))
+	})
+
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+	gc := NewGrafanaClient(ctx, ts.URL+"/", "test-key", nil)
+	assert.Equal(t, "/api/frontend/settings", gotPath)
+	assert.Equal(t, "https://public.grafana.example.com", gc.PublicURL)
+}
+
 // TestNamespaceIsNotSharedAcrossOrgs guards the reason the namespace keeps its
 // own org-keyed cache: Grafana computes it for the requesting org, so serving it
 // from the URL-keyed cache would hand one org another org's namespace.

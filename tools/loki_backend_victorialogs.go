@@ -94,14 +94,13 @@ type vlStatsResponse struct {
 
 // addVLTimeRange adds RFC3339 start/end to the given values when set. The
 // VictoriaLogs API accepts RFC3339, RFC3339Nano, Unix seconds, and a few
-// other shapes — we normalize on RFC3339 because every caller already
-// supplies (or defaults to) RFC3339.
+// other shapes — we normalize on RFC3339Nano so sub-second bounds are kept.
 func addVLTimeRange(params url.Values, start, end time.Time) {
 	if !start.IsZero() {
-		params.Set("start", start.Format(time.RFC3339))
+		params.Set("start", start.Format(time.RFC3339Nano))
 	}
 	if !end.IsZero() {
-		params.Set("end", end.Format(time.RFC3339))
+		params.Set("end", end.Format(time.RFC3339Nano))
 	}
 }
 

@@ -427,8 +427,8 @@ func (c *Client) fetchQuery(ctx context.Context, p fetchQueryParams) (*lokiQuery
 			if err != nil {
 				return nil, fmt.Errorf("parsing query time: %w", err)
 			}
-			// Loki instant query accepts time as Unix timestamp in seconds (float)
-			params.Add("time", fmt.Sprintf("%d", t.Unix()))
+			// Loki reads a timestamp with more than 10 digits as nanoseconds.
+			params.Add("time", strconv.FormatInt(t.UnixNano(), 10))
 		}
 	} else {
 		// Range queries use /query_range endpoint with start/end
