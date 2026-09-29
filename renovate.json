@@ -13,6 +13,15 @@
         "group:allNonMajor",
         "github>grafana/grafana-renovate-config//presets/plugin-ci-workflows"
     ],
+    "ignorePaths": [
+        "**/node_modules/**",
+        "**/bower_components/**",
+        "**/vendor/**",
+        "**/examples/**",
+        "**/__tests__/**",
+        "**/test/**",
+        "**/__fixtures__/**"
+    ],
     "minimumReleaseAge": "14 days",
     "rebaseWhen": "conflicted",
     "separateMajorMinor": true,
