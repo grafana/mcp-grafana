@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-09-29
+
+This is the last 1.x release; the next release will be 2.0.
+
+### Fixed
+
+- Loki log queries now return lines in time order across streams and no longer drop a line at the limit boundary when results span multiple streams ([#1259](https://github.com/grafana/mcp-grafana/pull/1259))
+- Loki and VictoriaLogs query time bounds keep sub-second (up to nanosecond) precision, so narrow windows return results and callers can page by exact log timestamps ([#1260](https://github.com/grafana/mcp-grafana/pull/1260))
+- A configured Grafana URL with a trailing slash no longer produces double-slashed request paths when fetching frontend settings ([#1258](https://github.com/grafana/mcp-grafana/pull/1258))
+- PyPI wheels now compress the bundled binary, shrinking each wheel from about 55MB to about 17MB ([#1257](https://github.com/grafana/mcp-grafana/pull/1257))
+
 ## [1.6.1] - 2026-09-27
 
 ### Fixed
@@ -514,6 +525,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.6.2]: https://github.com/grafana/mcp-grafana/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/grafana/mcp-grafana/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/grafana/mcp-grafana/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/grafana/mcp-grafana/compare/v1.5.0...v1.5.1
