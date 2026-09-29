@@ -5,9 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-09-29
 
-This is the 2.0 release. It moves the server to the official MCP Go SDK and contains breaking changes; read the Changed and Removed sections before upgrading.
+2.0 moves the server from `mark3labs/mcp-go` to the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk), which is maintained alongside the MCP specification and lets the server follow new protocol versions as they land. The major version bump is for the Go library: the SDK's types are part of this module's exported API.
+
+For most people running the server there is nothing to change. You are only affected if you:
+
+- import `mcp-grafana` as a Go library (new module path and SDK types)
+- use the Sift tools, which have been removed
+- call `alerting_manage_rules` or `alerting_manage_silences` directly, rather than letting your client discover tools
+- use the SSE transport with per-request headers (Grafana URL, credentials, org ID or forwarded headers); switch to streamable HTTP
 
 ### Changed
 
