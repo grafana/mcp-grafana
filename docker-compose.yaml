@@ -287,7 +287,7 @@ services:
       retries: 5
 
   mysql:
-    image: mysql:8.4@sha256:85b9bf2e29cf836ecb8c2a15a935d4ba0c606631dff1dd79531a11983c638f2a
+    image: mysql:26.7@sha256:ade067ae2fb15eeb6143e81185afe22573e3b3addc58aaf90c41999fa6883991
     environment:
       MYSQL_ROOT_PASSWORD: rootroot
       MYSQL_DATABASE: test
