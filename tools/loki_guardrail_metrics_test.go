@@ -58,7 +58,7 @@ func guardrailCounts(t *testing.T, reader *sdkmetric.ManualReader) map[string]ma
 			for _, dp := range sum.DataPoints {
 				parts := make([]string, 0, dp.Attributes.Len())
 				for _, kv := range dp.Attributes.ToSlice() {
-					parts = append(parts, string(kv.Key)+"="+kv.Value.Emit())
+					parts = append(parts, string(kv.Key)+"="+kv.Value.String())
 				}
 				key := ""
 				for i, p := range parts {
