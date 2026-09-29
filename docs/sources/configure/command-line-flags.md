@@ -230,6 +230,7 @@ When enabled, the following writes are disabled:
 
 - `alerting_rules_write` (create, update, delete)
 - `alerting_silences_write` (create, update, delete)
+- `alerting_routing_write` (create_contact_point)
 
 **OnCall tools**
 

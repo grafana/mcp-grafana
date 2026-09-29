@@ -48,6 +48,7 @@ async def test_disable_write_flag_disables_write_tools(grafana_env):
                 "update_alert_group",
                 "alerting_rules_write",
                 "alerting_silences_write",
+                "alerting_routing_write",
             ]
 
             for tool in write_tools:
@@ -110,6 +111,7 @@ async def test_without_disable_write_flag_enables_write_tools(grafana_env):
                 "update_alert_group",
                 "alerting_rules_write",
                 "alerting_silences_write",
+                "alerting_routing_write",
             ]
 
             for tool in write_tools:
