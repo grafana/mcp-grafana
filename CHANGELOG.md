@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0] - 2026-09-29
 
-2.0 moves the server from `mark3labs/mcp-go` to the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk), which is maintained alongside the MCP specification and lets the server follow new protocol versions as they land. The major version bump is for the Go library: the SDK's types are part of this module's exported API.
+2.0 moves the server from `mark3labs/mcp-go` to the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk). The major version bump is for the Go library: the SDK's types are part of this module's exported API.
 
 For most people running the server there is nothing to change. You are only affected if you:
 
