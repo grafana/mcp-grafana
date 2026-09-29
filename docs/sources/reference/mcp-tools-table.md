@@ -105,8 +105,8 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 | `get_sift_investigation`          | Sift           | Retrieve an existing Sift investigation by its UUID                                                          | Viewer role                                            | N/A                                                 |
 | `get_sift_analysis`               | Sift           | Retrieve a specific analysis from a Sift investigation                                                       | Viewer role                                            | N/A                                                 |
 | `list_sift_investigations`        | Sift           | Retrieve a list of Sift investigations with an optional limit                                                | Viewer role                                            | N/A                                                 |
-| `find_error_pattern_logs`         | Sift           | Finds elevated error patterns in Loki logs.                                                                  | Editor role                                            | N/A                                                 |
-| `find_slow_requests`              | Sift           | Finds slow requests from the relevant tempo datasources.                                                     | Editor role                                            | N/A                                                 |
+| `find_error_pattern_logs`         | Sift           | Finds elevated error patterns in Loki logs with the `ErrorPatternLogs` analysis.                                                                  | Editor role                                            | N/A                                                 |
+| `find_slow_requests`              | Sift           | Finds slow requests in Tempo with the experimental `SlowRequests` analysis. Requires the Sift experimental feature flag.                                                     | Editor role                                            | N/A                                                 |
 | `list_pyroscope_label_names`      | Pyroscope      | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_label_values`     | Pyroscope      | List label values matching a selector for a label name                                                       | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_profile_types`    | Pyroscope      | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
@@ -145,6 +145,12 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 | `get_doc`                         | Docs           | Fetch a documentation page; set outline_only for headings, or section for bounded retrieval                  | None (public grafana.com/docs)                         | N/A                                                 |
 
 _* Categories marked with `*` are off until you add them to `--enabled-tools`._
+
+## Check Sift analysis availability
+
+Before you use `find_slow_requests`, make sure the Sift experimental feature flag is enabled for your Grafana Cloud stack. The tool runs the experimental `SlowRequests` analysis and doesn't work without this flag.
+
+`find_error_pattern_logs` runs the `ErrorPatternLogs` analysis, not `SlowRequests`. For guidance on both tools, refer to [Use Grafana Incident and Sift](../../guides/use-grafana-incident-and-sift/).
 
 ## Dashboard tools and context window
 

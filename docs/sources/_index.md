@@ -26,9 +26,9 @@ Grafana offers two MCP server options:
 | Option                                                                          | Best for                                                                               | Authentication                                                        |
 | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | Open source Grafana MCP server                                                  | Running and managing the MCP server yourself for Grafana Cloud or self-managed Grafana | Service account token                                                 |
-| [Grafana Cloud MCP server](/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/) | Connecting external AI agents to Grafana Cloud without installing a local server       | OAuth 2.1 browser authorization, scoped to the signed-in Grafana user |
+| [Grafana Cloud MCP server](https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/) | Connecting external AI agents to Grafana Cloud without installing a local server       | OAuth 2.1 browser authorization, scoped to the signed-in Grafana user |
 
-Use this documentation for the open source server. For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/).
+Use this documentation for the open source server. For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/).
 
 ## Overview
 

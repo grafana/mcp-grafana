@@ -22,8 +22,11 @@ You ask your assistant to list or create incidents, add a note to an incident, l
 
 ## Before you begin
 
+Make sure you meet these requirements:
+
 - The server [set up](../../set-up/) and [configured](../../configure/authentication/) with access to Grafana.
 - Grafana Incident (and Sift, if used) available on your instance. The service account must have at least the **Viewer** role for read-only operations; **Editor** role for creating incidents or running Sift analyses that create investigations.
+- To use `find_slow_requests`, you need the Sift experimental feature flag enabled for your Grafana Cloud stack.
 
 ## Work with incidents
 
@@ -32,6 +35,8 @@ Ask the assistant to list incidents (optionally filtered by status), get one inc
 ## Work with Sift investigations
 
 Ask the assistant to list Sift investigations, get one by UUID, or get a specific analysis from an investigation. For proactive analysis, ask to **find error patterns in logs** (Loki) or **find slow requests** (Tempo); the server starts a Sift investigation and returns the results. These “find” operations create investigations and require Editor role.
+
+`find_error_pattern_logs` runs the `ErrorPatternLogs` analysis. `find_slow_requests` runs the experimental `SlowRequests` analysis and doesn't work unless the Sift experimental feature flag is enabled. For tool requirements, refer to [MCP tools reference](../../reference/mcp-tools-table/).
 
 ## Next steps
 
