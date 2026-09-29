@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+This is the 2.0 release. It moves the server to the official MCP Go SDK and contains breaking changes; read the Changed and Removed sections before upgrading.
+
+### Changed
+
+- **Breaking:** The server now uses the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) instead of `mark3labs/mcp-go` ([#1180](https://github.com/grafana/mcp-grafana/pull/1180)). Over SSE, per-request headers no longer reach tool calls, so per-call Grafana URL overrides, credentials, org ID and forwarded headers only work over streamable HTTP. `--session-idle-timeout-minutes` is still accepted but ignored
+- **Breaking:** The Go module path is now `github.com/grafana/mcp-grafana/v2`; importers must update their import paths ([#1232](https://github.com/grafana/mcp-grafana/pull/1232))
+- **Breaking:** The alerting tools are split into read and write tools, so read-only credentials and `--disable-write` keep read access: `alerting_manage_rules` becomes `alerting_rules_read` and `alerting_rules_write`, and `alerting_manage_silences` becomes `alerting_silences_read` and `alerting_silences_write` ([#1233](https://github.com/grafana/mcp-grafana/pull/1233))
+- Anonymous usage statistics reporting is now enabled by default. Opt out with `--usage-stats=disabled`, `GRAFANA_USAGE_STATS=disabled` or `DO_NOT_TRACK=1` ([#1197](https://github.com/grafana/mcp-grafana/pull/1197))
+
+### Added
+
+- `alerting_routing_write` creates Grafana-managed contact points ([#1245](https://github.com/grafana/mcp-grafana/pull/1245))
+
+### Removed
+
+- **Breaking:** The deprecated Sift tools and the `sift` tool category ([#1191](https://github.com/grafana/mcp-grafana/pull/1191))
+
+### Fixed
+
+- Browser clients on an allowed CORS origin can send the `X-Grafana-URL`, `X-Grafana-Service-Account-Token`, `X-Grafana-API-Key` and `X-Grafana-Org-Id` headers, and CORS responses now set `Vary: Origin`
+- Tool parameters that accept any value now declare an explicit type list in their JSON schema, so MCP clients no longer warn that the schema has no validation keywords ([#1231](https://github.com/grafana/mcp-grafana/pull/1231))
+- Observability providers shut down in parallel, so one slow exporter no longer makes the others time out on shutdown ([#1230](https://github.com/grafana/mcp-grafana/pull/1230))
+
 ## [1.6.2] - 2026-09-29
 
 This is the last 1.x release; the next release will be 2.0.
