@@ -31,6 +31,30 @@ type contactPointSummary struct {
 	Type *string `json:"type,omitempty"`
 }
 
+func createContactPoint(ctx context.Context, args ManageRoutingWriteParams) (*contactPointSummary, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	params := provisioning.NewPostContactpointsParams().WithContext(ctx).WithBody(&models.EmbeddedContactPoint{
+		Name:                  args.Name,
+		Type:                  &args.Type,
+		Settings:              args.Settings,
+		UID:                   args.UID,
+		DisableResolveMessage: args.DisableResolveMessage,
+	})
+	if args.DisableProvenance == nil || *args.DisableProvenance {
+		header := "true"
+		params.WithXDisableProvenance(&header)
+	}
+	response, err := c.Provisioning.PostContactpoints(params)
+	if err != nil {
+		return nil, fmt.Errorf("create contact point: %w", err)
+	}
+	return &contactPointSummary{
+		UID:  response.Payload.UID,
+		Name: response.Payload.Name,
+		Type: response.Payload.Type,
+	}, nil
+}
+
 func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("list contact points: %w", err)
