@@ -272,6 +272,9 @@ type GrafanaConfig struct {
 	AllowGrafanaURLOverride bool
 	// AllowedGrafanaURLs optionally restricts selection to exact targets.
 	AllowedGrafanaURLs []string
+	// AllowCrossOriginRedirects permits HTTP redirects to a different origin.
+	// It disables the default redirect guard for clients built with BuildTransport.
+	AllowCrossOriginRedirects bool
 
 	// APIKey is the API key or service account token for the Grafana instance.
 	// It may be empty if we are using on-behalf-of auth.
@@ -839,7 +842,7 @@ func WithoutUserAgent() TransportOption {
 // BuildTransport constructs an http.RoundTripper with the standard middleware
 // chain derived from cfg. The default chain (innermost to outermost) is:
 //
-//	base → TLS → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
 //
 // Auth is innermost among the header-setting layers so that credentials take
 // precedence over any forwarded/extra headers with the same keys.
@@ -888,6 +891,9 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
 		}
+	}
+	if !cfg.AllowCrossOriginRedirects {
+		transport = &redirectGuardTransport{next: transport}
 	}
 
 	// Debug logging with redacted credentials (innermost among the
