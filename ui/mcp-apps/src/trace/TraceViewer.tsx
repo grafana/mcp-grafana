@@ -212,8 +212,9 @@ function prepareTrace(result: RenderTraceResult): PreparedTrace {
   const requestedFocus = result.focusSpanId ? byId.get(result.focusSpanId) : undefined;
   const selected =
     requestedFocus ??
+    orderedSpans.find((span) => span.hasException && isErrorSpan(span)) ??
+    orderedSpans.find(isErrorSpan) ??
     orderedSpans.find((span) => span.hasException) ??
-    orderedSpans.find((span) => span.status.toLowerCase().includes('error')) ??
     root;
 
   let startTimeMs = 0;
@@ -623,7 +624,8 @@ export function getTraceSummary(result: RenderTraceResult) {
     parts.push(
       `${prepared.exceptionCount.toLocaleString()} exception ${prepared.exceptionCount === 1 ? 'span' : 'spans'}`
     );
-  } else if (errorCount > 0) {
+  }
+  if (errorCount > 0) {
     parts.push(`${errorCount.toLocaleString()} error ${errorCount === 1 ? 'span' : 'spans'}`);
   }
   return {

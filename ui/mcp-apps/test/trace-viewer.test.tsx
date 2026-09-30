@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RenderTraceApp } from '../src/trace/RenderTraceApp';
-import { TraceViewer } from '../src/trace/TraceViewer';
+import { getTraceSummary, TraceViewer } from '../src/trace/TraceViewer';
 import type { RenderTraceResult, TraceSpan } from '../src/trace/types';
 
 afterEach(cleanup);
@@ -98,6 +98,20 @@ describe('TraceViewer', () => {
 
     await user.click(screen.getByRole('button', { name: 'Errors only' }));
     expect(screen.getByRole('status').textContent).toContain('0 of 3 spans');
+  });
+
+  it('selects a real error before a handled exception and reports both', () => {
+    const trace = result({
+      spans: [
+        { ...spans[0], status: 'ok', events: [exceptionEvent] },
+        { ...spans[1], status: 'error', events: [] },
+      ],
+    });
+    render(<TraceViewer result={trace} />);
+
+    expect(screen.getByRole('heading', { name: 'authorize payment' })).toBeTruthy();
+    expect(getTraceSummary(trace).description).toContain('1 error');
+    expect(getTraceSummary(trace).description).toContain('1 exception span');
   });
 
   it('defaults healthy traces to all spans', () => {
