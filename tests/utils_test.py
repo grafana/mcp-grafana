@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, ImageContent, TextContent
 from deepeval.test_case import LLMTestCaseParams, MCPServer, MCPToolCall
 
 import utils
@@ -35,6 +35,15 @@ async def test_output_judge_receives_tool_results(monkeypatch):
         'query_elasticsearch result: {"message":"real log"}'
     ]
     assert LLMTestCaseParams.RETRIEVAL_CONTEXT in captured["metrics"][1].evaluation_params
+
+
+@pytest.mark.anyio
+async def test_tool_result_text_matches_the_first_content_seen_by_the_agent():
+    image = ImageContent(type="image", data="aGVsbG8=", mimeType="image/png")
+    text = TextContent(type="text", text="Image permalink")
+    assert utils.tool_result_text(CallToolResult(content=[image, text])) == "[Image content]"
+    assert utils.tool_result_text(CallToolResult(content=[text, image])) == "Image permalink"
+    assert utils.tool_result_text(CallToolResult(content=[])) == ""
 
 
 @pytest.mark.anyio

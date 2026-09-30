@@ -52,6 +52,16 @@ async def make_mcp_server(client: ClientSession, transport: str = "sse") -> MCPS
     )
 
 
+def tool_result_text(result: CallToolResult) -> str:
+    """Return the same result text to the test agent and the output judge."""
+    for item in result.content:
+        if isinstance(item, TextContent):
+            return item.text
+        if isinstance(item, ImageContent):
+            return "[Image content]"
+    return ""
+
+
 async def call_tool_and_record(
     client: ClientSession, tool_name: str, args: dict
 ) -> tuple[str, MCPToolCall]:
@@ -59,15 +69,7 @@ async def call_tool_and_record(
     Call an MCP tool and return (result text for message history, MCPToolCall for test case).
     """
     result: CallToolResult = await client.call_tool(tool_name, args)
-    result_text = ""
-    if result.content:
-        for content_item in result.content:
-            if isinstance(content_item, TextContent):
-                result_text = content_item.text
-                break
-            if isinstance(content_item, ImageContent):
-                result_text = "[Image content]"
-                break
+    result_text = tool_result_text(result)
     tool_call = MCPToolCall(name=tool_name, args=args, result=result)
     return result_text, tool_call
 
@@ -150,10 +152,8 @@ def assert_mcp_eval(
     # Give the output judge the actual tool evidence, not just the user's prompt.
     # Otherwise a correct answer with real logs looks fabricated to GEval.
     tool_results = [
-        f"{tool.name} result: {item.text}"
+        f"{tool.name} {'error' if tool.result.isError else 'result'}: {tool_result_text(tool.result)}"
         for tool in tools_called
-        for item in tool.result.content
-        if isinstance(item, TextContent)
     ]
     test_case = LLMTestCase(
         input=prompt,
@@ -168,9 +168,7 @@ def assert_mcp_eval(
         output_metric = GEval(
             name="OutputQuality",
             criteria=(
-                "Judge against the MCP tool results. Treat a truthful report of no data "
-                "as valid when the tools return no data, and an honest error report "
-                "when a tool fails. Reject invented details. "
+                "Judge against the MCP tool results and reject invented details. "
                 + output_criteria
             ),
             evaluation_params=[
