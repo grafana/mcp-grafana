@@ -55,7 +55,7 @@ func TestBuildTransportRejectsCrossOriginRedirect(t *testing.T) {
 			}
 			resp, err := (&http.Client{Transport: transport}).Do(req)
 			if resp != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				t.Fatalf("unexpected response: %s", resp.Status)
 			}
 			if !errors.Is(err, errCrossOriginRedirect) {
@@ -91,7 +91,7 @@ func TestBuildTransportAllowsSameOriginRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent || requests.Load() != 2 {
 		t.Fatalf("status = %d, requests = %d", resp.StatusCode, requests.Load())
 	}
@@ -120,7 +120,7 @@ func TestBuildTransportAllowsCrossOriginRedirectWhenConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if got := receivedAuth.Load(); resp.StatusCode != http.StatusNoContent || got != "Bearer grafana-token" {
 		t.Fatalf("status = %d, destination Authorization = %q", resp.StatusCode, got)
 	}
