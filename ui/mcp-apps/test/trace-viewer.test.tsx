@@ -80,6 +80,30 @@ describe('TraceViewer', () => {
     expect(exception.compareDocumentPosition(serviceMetadata) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('keeps the focused path anchored while changing selection until explicitly refocused', async () => {
+    const user = userEvent.setup();
+    render(<TraceViewer result={result()} />);
+
+    await user.click(screen.getByRole('option', { name: 'frontend, POST /checkout' }));
+    expect(screen.getByRole('status').textContent).toContain('Focused path · 2 of 3 spans');
+    expect(screen.getByRole('option', { name: 'paymentservice, authorize payment, exception' })).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Focus selected path' }));
+    expect(screen.getByRole('status').textContent).toContain('Focused path · 1 of 3 spans');
+  });
+
+  it('defaults healthy traces to all spans', () => {
+    render(
+      <TraceViewer
+        result={result({
+          spans: spans.map((span) => ({ ...span, status: 'ok', events: [] })),
+        })}
+      />
+    );
+
+    expect(screen.getByRole('status').textContent).toContain('3 of 3 spans');
+  });
+
   it('honors a requested focus span and filters the full trace without losing selection', async () => {
     const user = userEvent.setup();
     render(<TraceViewer result={result({ focusSpanId: 'inventory' })} />);
@@ -92,6 +116,30 @@ describe('TraceViewer', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('1 of 3 spans'));
     expect(screen.getByRole('option', { name: 'paymentservice, authorize payment, exception' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'reserve inventory' })).toBeTruthy();
+  });
+
+  it('retains duplicate span IDs in the waterfall', () => {
+    render(
+      <TraceViewer
+        result={result({
+          spans: [
+            { ...spans[0], id: 'duplicate', name: 'first duplicate' },
+            {
+              ...spans[1],
+              id: 'duplicate',
+              name: 'second duplicate',
+              parentId: undefined,
+              status: 'ok',
+              events: [],
+            },
+          ],
+        })}
+      />
+    );
+
+    expect(screen.getByRole('status').textContent).toContain('2 of 2 spans');
+    expect(screen.getByRole('option', { name: 'frontend, first duplicate' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'paymentservice, second duplicate' })).toBeTruthy();
   });
 
   it('virtualizes a 12,000-span trace and keeps hierarchy cycles bounded', async () => {
@@ -133,6 +181,12 @@ describe('RenderTraceApp', () => {
     expect(within(shell).getByText('Tempo / tempo-production')).toBeTruthy();
     await user.click(screen.getByRole('link', { name: /Open in Grafana/ }));
     expect(onOpenInGrafana).toHaveBeenCalledWith({ url: 'https://grafana.example.test/explore?trace=4bf92f' });
+  });
+
+  it('does not render unsafe Grafana navigation URLs', () => {
+    render(<RenderTraceApp colorMode="light" result={result({ grafanaUrl: 'javascript:alert(1)' })} />);
+
+    expect(screen.queryByRole('link', { name: 'Open in Grafana' })).toBeNull();
   });
 
   it('announces a missing requested focus span and falls back to the exception', () => {

@@ -17,11 +17,15 @@ export function TraceApplication({ app }: { app: App }) {
   useEffect(() => {
     app.ontoolresult = (response) => {
       if (response.isError) {
+        setResult(undefined);
+        setCopied(false);
         setError('Could not load the trace. Check the trace ID and datasource access, then run render_trace again.');
         return;
       }
       const value = parseTraceResult(response.structuredContent);
       if (!value) {
+        setResult(undefined);
+        setCopied(false);
         setError('The server returned an unsupported trace response.');
         return;
       }
@@ -29,7 +33,11 @@ export function TraceApplication({ app }: { app: App }) {
       setCopied(false);
       setError(undefined);
     };
-    app.ontoolcancelled = () => setError('Trace loading was cancelled.');
+    app.ontoolcancelled = () => {
+      setResult(undefined);
+      setCopied(false);
+      setError('Trace loading was cancelled.');
+    };
     app.onhostcontextchanged = (context) => {
       if (context.theme) {
         setColorMode(context.theme);
@@ -42,6 +50,7 @@ export function TraceApplication({ app }: { app: App }) {
     };
     app.onteardown = async () => {
       setResult(undefined);
+      setCopied(false);
       setError('Trace app closed.');
       return {};
     };
@@ -53,7 +62,11 @@ export function TraceApplication({ app }: { app: App }) {
           app.onhostcontextchanged?.(context);
         }
       })
-      .catch(() => setError('Could not connect to the MCP host. Reopen the trace app to try again.'));
+      .catch(() => {
+        setResult(undefined);
+        setCopied(false);
+        setError('Could not connect to the MCP host. Reopen the trace app to try again.');
+      });
     return () => {
       void app.close();
     };

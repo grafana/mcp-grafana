@@ -45,6 +45,41 @@ describe('trace host bridge', () => {
     unmount();
     expect(app.close).toHaveBeenCalledOnce();
   });
+  it.each([
+    ['tool error', (app: App) => app.ontoolresult?.({ content: [], isError: true })],
+    ['cancellation', (app: App) => app.ontoolcancelled?.({})],
+  ])('replaces a rendered waterfall with an unavailable state after %s', async (_kind, trigger) => {
+    const app = host();
+    vi.mocked(app.connect).mockImplementation(async () => {
+      await app.ontoolresult?.({ content: [], structuredContent: result });
+    });
+    render(<TraceApplication app={app} />);
+    await screen.findByRole('heading', { level: 1, name: 'GET /' });
+
+    await act(async () => {
+      await trigger(app);
+    });
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Trace unavailable' })).toBeTruthy();
+    expect(screen.queryByRole('listbox', { name: 'Trace spans' })).toBeNull();
+  });
+
+  it('clears a rendered waterfall when a replacement host cannot connect', async () => {
+    const connected = host();
+    vi.mocked(connected.connect).mockImplementation(async () => {
+      await connected.ontoolresult?.({ content: [], structuredContent: result });
+    });
+    const { rerender } = render(<TraceApplication app={connected} />);
+    await screen.findByRole('heading', { level: 1, name: 'GET /' });
+
+    const disconnected = host();
+    vi.mocked(disconnected.connect).mockRejectedValue(new Error('connection refused'));
+    rerender(<TraceApplication app={disconnected} />);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not connect');
+    expect(screen.queryByRole('listbox', { name: 'Trace spans' })).toBeNull();
+  });
+
   it('shows a useful host failure instead of an endless loading state', async () => {
     const app = host();
     vi.mocked(app.connect).mockRejectedValue(new Error('connection refused'));
@@ -67,6 +102,9 @@ describe('trace host bridge', () => {
     expect(parseTraceResult({ ...result, grafanaUrl: 'javascript:alert(1)' })).toBeUndefined();
     expect(parseTraceResult({ ...result, grafanaUrl: 'https://user:secret@grafana.example/explore' })).toBeUndefined();
     expect(parseTraceResult({ ...result, spans: [{ ...result.spans[0], durationMs: NaN }] })).toBeUndefined();
-    expect(parseTraceResult({ ...result, spans: [result.spans[0], result.spans[0]] })).toBeUndefined();
+    expect(parseTraceResult({ ...result, spans: [result.spans[0], result.spans[0]] })).toEqual({
+      ...result,
+      spans: [result.spans[0], result.spans[0]],
+    });
   });
 });

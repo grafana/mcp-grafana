@@ -128,6 +128,12 @@ func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
 	require.Len(t, panes[explorePaneID].Queries, 1)
 	assert.Equal(t, testTraceID, panes[explorePaneID].Queries[0]["query"])
 	assert.Equal(t, testSpanID, panes[explorePaneID].Queries[0]["spanId"])
+	var paneRanges map[string]struct {
+		Range map[string]string `json:"range"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(link.Query().Get("panes")), &paneRanges))
+	assert.Equal(t, "1749999940000", paneRanges[explorePaneID].Range["from"])
+	assert.Equal(t, "1750000060125", paneRanges[explorePaneID].Range["to"])
 
 	root := structured.Spans[0]
 	assert.Equal(t, "checkout", root.ServiceName)
@@ -178,7 +184,7 @@ func TestRenderTraceRejectsMissingGrafanaURL(t *testing.T) {
 func TestTraceExploreURLStripsCredentialsAndUsesLegacyState(t *testing.T) {
 	link, err := traceExploreURL("https://user:secret@grafana.example.com/grafana/?old=1#fragment", "9.5.0", RenderTraceParams{
 		TraceID: testTraceID, DatasourceUID: "tempo-main",
-	})
+	}, []TraceSpan{{StartTimeMS: 1750000000000, DurationMS: 125}})
 	require.NoError(t, err)
 	parsed, err := url.Parse(link)
 	require.NoError(t, err)
@@ -192,6 +198,29 @@ func TestTraceExploreURLStripsCredentialsAndUsesLegacyState(t *testing.T) {
 	var left map[string]any
 	require.NoError(t, json.Unmarshal([]byte(parsed.Query().Get("left")), &left))
 	assert.Equal(t, "tempo-main", left["datasource"])
+	assert.Equal(t, map[string]any{"from": "1749999940000", "to": "1750000060125"}, left["range"])
+}
+
+func TestRenderTraceOmitsLinkWhenPublicURLInvalid(t *testing.T) {
+	traceJSON, err := protojson.Marshal(testTraceData("stack"))
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/datasources/uid/tempo-main" {
+			writeTempoDatasource(t, w)
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]json.RawMessage{"trace": traceJSON}))
+	}))
+	t.Cleanup(server.Close)
+	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "not a Grafana URL"
+
+	result, err := renderTrace(ctx, RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	require.NoError(t, err)
+	structured, ok := result.StructuredContent.(RenderTraceResult)
+	require.True(t, ok)
+	assert.Empty(t, structured.GrafanaURL)
+	assert.Len(t, structured.Spans, 2)
 }
 
 func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
@@ -275,6 +304,19 @@ func TestRenderTraceMissingFocusPreservesTrace(t *testing.T) {
 	require.NotNil(t, structured.FocusSpanID)
 	assert.Equal(t, missing, *structured.FocusSpanID)
 	assert.Len(t, structured.Spans, 2)
+}
+
+func TestDecodeTraceResponseRejectsPartialTrace(t *testing.T) {
+	traceJSON, err := protojson.Marshal(testTraceData("stack"))
+	require.NoError(t, err)
+	response, err := json.Marshal(map[string]any{"trace": json.RawMessage(traceJSON), "status": "PARTIAL", "message": "trace exceeded max bytes"})
+	require.NoError(t, err)
+	_, err = decodeTraceResponse(strings.NewReader(string(response)), maxTraceResponseBytes)
+	require.ErrorContains(t, err, "partial")
+}
+
+func TestTraceStatusRespectsExplicitOKWithException(t *testing.T) {
+	assert.Equal(t, "ok", traceStatus(&tracepb.Status{Code: tracepb.Status_STATUS_CODE_OK}, []TraceEvent{{Name: "exception"}}))
 }
 
 func TestDecodeTraceResponseRejectsOversizeWithoutTruncating(t *testing.T) {

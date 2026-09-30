@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react';
+import { useMemo } from 'react';
 
 import { McpAppShell, type McpAppColorMode, type McpAppFeedback } from '../McpAppShell';
 import { getTraceSummary, TraceViewer } from './TraceViewer';
@@ -12,18 +13,28 @@ export interface RenderTraceAppProps {
   feedback?: McpAppFeedback;
 }
 
+function isSafeGrafanaUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 export function RenderTraceApp({ result, colorMode, onOpenInGrafana, share, feedback }: RenderTraceAppProps) {
-  const summary = getTraceSummary(result);
+  const summary = useMemo(() => getTraceSummary(result), [result]);
   const requestedFocusMissing = Boolean(
     result.focusSpanId && !result.spans.some((span) => span.id === result.focusSpanId)
   );
-  const openInGrafana = result.grafanaUrl
+  const safeGrafanaUrl = isSafeGrafanaUrl(result.grafanaUrl) ? result.grafanaUrl : undefined;
+  const openInGrafana = safeGrafanaUrl
     ? {
         href: result.grafanaUrl,
         onClick: onOpenInGrafana
           ? (event: MouseEvent<HTMLAnchorElement>) => {
               event.preventDefault();
-              onOpenInGrafana({ url: result.grafanaUrl });
+              onOpenInGrafana({ url: safeGrafanaUrl });
             }
           : undefined,
       }

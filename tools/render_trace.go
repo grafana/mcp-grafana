@@ -12,6 +12,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -121,13 +122,9 @@ func renderTrace(ctx context.Context, args RenderTraceParams) (*mcp.CallToolResu
 	}
 	grafanaURL := ""
 	if deeplinkResolvesInRenderOrg(ctx, config.OrgID) {
-		publicURL, err := grafanaBaseURLFromContext(ctx)
-		if err != nil {
-			return nil, err
-		}
-		grafanaURL, err = traceExploreURL(publicURL, mcpgrafana.GrafanaVersion(ctx), args)
-		if err != nil {
-			return nil, err
+		if publicURL, urlErr := grafanaBaseURLFromContext(ctx); urlErr == nil {
+			// A link is optional; an invalid public URL must not hide the fetched trace.
+			grafanaURL, _ = traceExploreURL(publicURL, mcpgrafana.GrafanaVersion(ctx), args, spans)
 		}
 	}
 	result := RenderTraceResult{
@@ -259,10 +256,15 @@ func decodeTraceResponse(reader io.Reader, maxBytes int64) (*tracepb.TracesData,
 	}
 
 	var envelope struct {
-		Trace json.RawMessage `json:"trace"`
+		Trace   json.RawMessage `json:"trace"`
+		Status  string          `json:"status"`
+		Message string          `json:"message"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("decode Tempo response: %w", err)
+	}
+	if strings.EqualFold(envelope.Status, "partial") {
+		return nil, fmt.Errorf("Tempo returned a partial trace: %s", envelope.Message)
 	}
 	if len(envelope.Trace) == 0 || string(envelope.Trace) == "null" {
 		return nil, fmt.Errorf("tempo response did not contain a trace")
@@ -381,20 +383,20 @@ func normalizeEvents(events []*tracepb.Span_Event) []TraceEvent {
 }
 
 func traceStatus(status *tracepb.Status, events []TraceEvent) string {
-	for _, event := range events {
-		if event.Name == "exception" {
-			return "error"
-		}
-		if _, ok := event.Attributes["exception.type"]; ok {
-			return "error"
-		}
-	}
 	if status != nil {
 		switch status.Code {
 		case tracepb.Status_STATUS_CODE_ERROR:
 			return "error"
 		case tracepb.Status_STATUS_CODE_OK:
 			return "ok"
+		}
+	}
+	for _, event := range events {
+		if event.Name == "exception" {
+			return "error"
+		}
+		if _, ok := event.Attributes["exception.type"]; ok {
+			return "error"
 		}
 	}
 	return "unset"
@@ -475,7 +477,7 @@ func validateTraceResultSize(result RenderTraceResult) error {
 	return nil
 }
 
-func traceExploreURL(grafanaURL, grafanaVersion string, args RenderTraceParams) (string, error) {
+func traceExploreURL(grafanaURL, grafanaVersion string, args RenderTraceParams, spans []TraceSpan) (string, error) {
 	u, err := url.Parse(grafanaURL)
 	if err != nil {
 		return "", fmt.Errorf("parse Grafana URL for trace link: %w", err)
@@ -493,10 +495,23 @@ func traceExploreURL(grafanaURL, grafanaVersion string, args RenderTraceParams) 
 	if args.FocusSpanID != nil {
 		query["spanId"] = *args.FocusSpanID
 	}
+	var timeRange *TimeRange
+	if len(spans) > 0 {
+		start, end := spans[0].StartTimeMS, spans[0].StartTimeMS+spans[0].DurationMS
+		for _, span := range spans[1:] {
+			start = math.Min(start, span.StartTimeMS)
+			end = math.Max(end, span.StartTimeMS+span.DurationMS)
+		}
+		// Leave room on both sides for clock skew and Grafana's time-range filtering.
+		timeRange = &TimeRange{
+			From: strconv.FormatInt(time.UnixMilli(int64(start)).Add(-time.Minute).UnixMilli(), 10),
+			To:   strconv.FormatInt(time.UnixMilli(int64(math.Ceil(end))).Add(time.Minute).UnixMilli(), 10),
+		}
+	}
 	deeplinkArgs := GenerateDeeplinkParams{
 		DatasourceUID: &args.DatasourceUID,
 		Queries:       []map[string]any{query},
-		TimeRange:     &TimeRange{From: "now-1h", To: "now"},
+		TimeRange:     timeRange,
 	}
 	buildParams := buildExploreLeftParams
 	if supportsExplorePanes(grafanaVersion) {

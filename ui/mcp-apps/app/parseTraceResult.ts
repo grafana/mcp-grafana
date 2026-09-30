@@ -30,13 +30,11 @@ export function parseTraceResult(value: unknown): RenderTraceResult | undefined 
       return undefined;
     }
   }
-  const ids = new Set<string>();
   for (const span of value.spans) {
     if (
       !object(span) ||
       typeof span.id !== 'string' ||
       !span.id ||
-      ids.has(span.id) ||
       (span.parentId !== undefined && typeof span.parentId !== 'string') ||
       typeof span.name !== 'string' ||
       typeof span.serviceName !== 'string' ||
@@ -50,7 +48,6 @@ export function parseTraceResult(value: unknown): RenderTraceResult | undefined 
     ) {
       return undefined;
     }
-    ids.add(span.id);
     for (const event of span.events) {
       if (!object(event) || typeof event.name !== 'string' || !finite(event.timeMs) || !object(event.attributes)) {
         return undefined;

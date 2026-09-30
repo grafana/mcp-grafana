@@ -27,12 +27,14 @@ type PreparedSpan = TraceSpan & {
   depth: number;
   hasException: boolean;
   sourceIndex: number;
+  parentSourceIndex?: number;
 };
 
 interface PreparedTrace {
   orderedSpans: PreparedSpan[];
   byId: Map<string, PreparedSpan>;
-  selectedId?: string;
+  bySourceIndex: Map<number, PreparedSpan>;
+  selectedSourceIndex?: number;
   startTimeMs: number;
   durationMs: number;
   root?: PreparedSpan;
@@ -89,14 +91,14 @@ function formatDuration(durationMs: number) {
   return `${durationMs.toLocaleString(undefined, { maximumFractionDigits: 2 })} ms`;
 }
 
-function getAncestorPath(selected: PreparedSpan | undefined, byId: Map<string, PreparedSpan>) {
+function getAncestorPath(selected: PreparedSpan | undefined, bySourceIndex: Map<number, PreparedSpan>) {
   const path: PreparedSpan[] = [];
-  const pathIds = new Set<string>();
+  const pathIndexes = new Set<number>();
   let cursor = selected;
-  while (cursor && !pathIds.has(cursor.id)) {
-    pathIds.add(cursor.id);
+  while (cursor && !pathIndexes.has(cursor.sourceIndex)) {
+    pathIndexes.add(cursor.sourceIndex);
     path.push(cursor);
-    cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
+    cursor = cursor.parentSourceIndex !== undefined ? bySourceIndex.get(cursor.parentSourceIndex) : undefined;
   }
   path.reverse();
   return path;
@@ -112,6 +114,13 @@ function prepareTrace(result: RenderTraceResult): PreparedTrace {
       byRawId.set(span.id, span);
     }
   }
+
+  const firstSourceIndexById = new Map<string, number>();
+  source.forEach((span, sourceIndex) => {
+    if (!firstSourceIndexById.has(span.id)) {
+      firstSourceIndexById.set(span.id, sourceIndex);
+    }
+  });
 
   const depthById = new Map<string, number>();
   const calculateDepth = (initial: TraceSpan) => {
@@ -149,10 +158,18 @@ function prepareTrace(result: RenderTraceResult): PreparedTrace {
   const prepared = source.map<PreparedSpan>((span, sourceIndex) => ({
     ...span,
     sourceIndex,
+    parentSourceIndex:
+      span.parentId && span.parentId !== span.id ? firstSourceIndexById.get(span.parentId) : undefined,
     depth: calculateDepth(span),
     hasException: findExceptionEvent(span) !== undefined,
   }));
-  const byId = new Map(prepared.map((span) => [span.id, span]));
+  const byId = new Map<string, PreparedSpan>();
+  for (const span of prepared) {
+    if (!byId.has(span.id)) {
+      byId.set(span.id, span);
+    }
+  }
+  const bySourceIndex = new Map(prepared.map((span) => [span.sourceIndex, span]));
   const sorted = [...prepared].sort(
     (left, right) =>
       left.startTimeMs - right.startTimeMs || right.durationMs - left.durationMs || left.sourceIndex - right.sourceIndex
@@ -160,29 +177,29 @@ function prepareTrace(result: RenderTraceResult): PreparedTrace {
 
   // Put children beside their parent when the input contains a usable hierarchy.
   // Orphans and cyclic groups are appended in timeline order without recursing.
-  const childrenByParent = new Map<string, PreparedSpan[]>();
+  const childrenByParent = new Map<number, PreparedSpan[]>();
   const roots: PreparedSpan[] = [];
   for (const span of sorted) {
-    if (span.parentId && span.parentId !== span.id && byId.has(span.parentId)) {
-      const children = childrenByParent.get(span.parentId) ?? [];
+    if (span.parentSourceIndex !== undefined) {
+      const children = childrenByParent.get(span.parentSourceIndex) ?? [];
       children.push(span);
-      childrenByParent.set(span.parentId, children);
+      childrenByParent.set(span.parentSourceIndex, children);
     } else {
       roots.push(span);
     }
   }
   const orderedSpans: PreparedSpan[] = [];
-  const orderedIds = new Set<string>();
+  const orderedSourceIndexes = new Set<number>();
   const appendTree = (initial: PreparedSpan) => {
     const stack = [initial];
     while (stack.length > 0) {
       const span = stack.pop();
-      if (!span || orderedIds.has(span.id)) {
+      if (!span || orderedSourceIndexes.has(span.sourceIndex)) {
         continue;
       }
-      orderedIds.add(span.id);
+      orderedSourceIndexes.add(span.sourceIndex);
       orderedSpans.push(span);
-      const children = childrenByParent.get(span.id) ?? [];
+      const children = childrenByParent.get(span.sourceIndex) ?? [];
       for (let index = children.length - 1; index >= 0; index -= 1) {
         stack.push(children[index]);
       }
@@ -213,7 +230,8 @@ function prepareTrace(result: RenderTraceResult): PreparedTrace {
   return {
     orderedSpans,
     byId,
-    selectedId: selected?.id,
+    bySourceIndex,
+    selectedSourceIndex: selected?.sourceIndex,
     startTimeMs,
     durationMs: Math.max(0, endTimeMs - startTimeMs),
     root,
@@ -222,8 +240,10 @@ function prepareTrace(result: RenderTraceResult): PreparedTrace {
   };
 }
 
+const traceViewerStyles = getTraceViewerStyles();
+
 function ExceptionDetails({ event, traceStartTimeMs }: { event: TraceEvent; traceStartTimeMs: number }) {
-  const styles = getTraceViewerStyles();
+  const styles = traceViewerStyles;
   const headingId = `trace-exception-${useId()}`;
   const type = valueToString(event.attributes['exception.type']);
   const message = valueToString(event.attributes['exception.message']);
@@ -252,11 +272,16 @@ function ExceptionDetails({ event, traceStartTimeMs }: { event: TraceEvent; trac
 }
 
 export function TraceViewer({ result }: TraceViewerProps) {
-  const styles = getTraceViewerStyles();
+  const styles = traceViewerStyles;
   const rowIdPrefix = `trace-row-${useId()}`;
   const prepared = useMemo(() => prepareTrace(result), [result]);
-  const [selectedId, setSelectedId] = useState(prepared.selectedId);
-  const [filterMode, setFilterMode] = useState<FilterMode>('path');
+  const [selectedSourceIndex, setSelectedSourceIndex] = useState(prepared.selectedSourceIndex);
+  const [pathAnchorSourceIndex, setPathAnchorSourceIndex] = useState(prepared.selectedSourceIndex);
+  const initialSelection = prepared.selectedSourceIndex !== undefined
+    ? prepared.bySourceIndex.get(prepared.selectedSourceIndex)
+    : undefined;
+  const initialFilterMode: FilterMode = result.focusSpanId || (initialSelection && isErrorSpan(initialSelection)) ? 'path' : 'all';
+  const [filterMode, setFilterMode] = useState<FilterMode>(initialFilterMode);
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const [mobileView, setMobileView] = useState<MobileView>('span');
@@ -265,12 +290,13 @@ export function TraceViewer({ result }: TraceViewerProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setSelectedId(prepared.selectedId);
-    setFilterMode('path');
+    setSelectedSourceIndex(prepared.selectedSourceIndex);
+    setPathAnchorSourceIndex(prepared.selectedSourceIndex);
+    setFilterMode(initialFilterMode);
     setQuery('');
     setMobileView('span');
     setScrollTop(0);
-  }, [prepared]);
+  }, [prepared, initialFilterMode]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -284,8 +310,14 @@ export function TraceViewer({ result }: TraceViewerProps) {
     return () => observer.disconnect();
   }, []);
 
-  const selected = (selectedId && prepared.byId.get(selectedId)) || prepared.root;
-  const selectedPath = useMemo(() => getAncestorPath(selected, prepared.byId), [prepared.byId, selected]);
+  const selected =
+    (selectedSourceIndex !== undefined && prepared.bySourceIndex.get(selectedSourceIndex)) || prepared.root;
+  const pathAnchor =
+    (pathAnchorSourceIndex !== undefined && prepared.bySourceIndex.get(pathAnchorSourceIndex)) || selected;
+  const selectedPath = useMemo(
+    () => getAncestorPath(pathAnchor, prepared.bySourceIndex),
+    [pathAnchor, prepared.bySourceIndex]
+  );
   const selectedException = selected ? findExceptionEvent(selected) : undefined;
   const filtered = useMemo(() => {
     const base =
@@ -316,6 +348,7 @@ export function TraceViewer({ result }: TraceViewerProps) {
     }
   };
   const showFocusPath = () => {
+    setPathAnchorSourceIndex(selected?.sourceIndex);
     setFilterMode('path');
     setQuery('');
     resetScroll();
@@ -335,7 +368,7 @@ export function TraceViewer({ result }: TraceViewerProps) {
     if (!next) {
       return;
     }
-    setSelectedId(next.id);
+    setSelectedSourceIndex(next.sourceIndex);
     const viewport = viewportRef.current;
     if (viewport) {
       const rowTop = AXIS_HEIGHT + index * ROW_HEIGHT;
@@ -354,7 +387,7 @@ export function TraceViewer({ result }: TraceViewerProps) {
       return;
     }
     event.preventDefault();
-    const currentIndex = selected ? filtered.findIndex((span) => span.id === selected.id) : -1;
+    const currentIndex = selected ? filtered.findIndex((span) => span.sourceIndex === selected.sourceIndex) : -1;
     if (event.key === 'Home') {
       selectAtIndex(0);
     } else if (event.key === 'End') {
@@ -416,7 +449,12 @@ export function TraceViewer({ result }: TraceViewerProps) {
         >
           <div className={styles.paneHeading}>
             <h2 className={styles.heading}>Span waterfall</h2>
-            <Button variant="ghost" size="xs" onClick={showFocusPath}>
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-pressed={filterMode === 'path'}
+              onClick={showFocusPath}
+            >
               Focus selected path
             </Button>
           </div>
@@ -433,10 +471,10 @@ export function TraceViewer({ result }: TraceViewerProps) {
                 resetScroll();
               }}
             />
-            <Button variant="secondary" size="sm" onClick={showAll}>
+            <Button variant="secondary" size="sm" aria-pressed={filterMode === 'all'} onClick={showAll}>
               Show all spans
             </Button>
-            <Button variant="secondary" size="sm" onClick={showErrors}>
+            <Button variant="secondary" size="sm" aria-pressed={filterMode === 'errors'} onClick={showErrors}>
               Errors only
             </Button>
           </div>
@@ -454,7 +492,7 @@ export function TraceViewer({ result }: TraceViewerProps) {
             role="listbox"
             aria-label="Trace spans"
             aria-activedescendant={
-              selected && visibleSpans.some((span) => span.id === selected.id)
+              selected && visibleSpans.some((span) => span.sourceIndex === selected.sourceIndex)
                 ? `${rowIdPrefix}-${selected.sourceIndex}`
                 : undefined
             }
@@ -497,10 +535,12 @@ export function TraceViewer({ result }: TraceViewerProps) {
                         className={cx(styles.row, styles.responsiveRow)}
                         style={rowStyle}
                         data-exception={span.hasException || undefined}
-                        aria-selected={span.id === selected?.id}
+                        aria-selected={span.sourceIndex === selected?.sourceIndex}
+                        aria-posinset={rowIndex + 1}
+                        aria-setsize={filtered.length}
                         aria-label={`${span.serviceName}, ${span.name}${span.hasException ? ', exception' : ''}`}
                         onClick={() => {
-                          setSelectedId(span.id);
+                          setSelectedSourceIndex(span.sourceIndex);
                           setMobileView('span');
                         }}
                       >
