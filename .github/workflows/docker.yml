@@ -73,6 +73,8 @@ jobs:
           gar-environment: prod
           gar-repository: dockerhub-mcp-grafana-prod-mirror
           platforms: ${{ needs.prepare.outputs.platforms }}
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
           tags: |
             ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'latest' || '' }}
             ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.version || '' }}
@@ -95,6 +97,8 @@ jobs:
           gar-environment: prod
           gar-repository: dockerhub-mcp-grafana-prod-mirror
           platforms: ${{ needs.prepare.outputs.platforms }}
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
           tags: |
             ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'alpine' || '' }}
             ${{ needs.prepare.outputs.is_tag == 'true' && format('{0}-alpine', needs.prepare.outputs.version) || '' }}
