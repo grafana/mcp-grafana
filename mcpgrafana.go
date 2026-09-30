@@ -55,11 +55,26 @@ const (
 	grafanaAPIKeyHeader              = "X-Grafana-API-Key" // Deprecated: use X-Grafana-Service-Account-Token instead
 )
 
+// lookupEnv is os.LookupEnv, except that an MCPB host's unsubstituted
+// "${user_config.*}" placeholder (left for blank optional fields) counts as unset.
+func lookupEnv(key string) (string, bool) {
+	v, ok := os.LookupEnv(key)
+	if strings.HasPrefix(v, "${user_config.") && strings.HasSuffix(v, "}") {
+		return "", false
+	}
+	return v, ok
+}
+
+func getEnv(key string) string {
+	v, _ := lookupEnv(key)
+	return v
+}
+
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
-	u := normalizeGrafanaURL(os.Getenv(grafanaURLEnvVar))
+	u := normalizeGrafanaURL(getEnv(grafanaURLEnvVar))
 
 	// Check for the new service account token environment variable first.
-	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
+	apiKey := getEnv(grafanaServiceAccountTokenEnvVar)
 	if apiKey != "" {
 		return u, apiKey
 	}
@@ -67,7 +82,7 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	// Next, check for a file-based service account token. This is read fresh on
 	// every call so that rotated tokens (e.g. a Kubernetes Secret mounted as a
 	// volume) are picked up without restarting the server. See issue #800.
-	if tokenFile := os.Getenv(grafanaServiceAccountTokenFileEnvVar); tokenFile != "" {
+	if tokenFile := getEnv(grafanaServiceAccountTokenFileEnvVar); tokenFile != "" {
 		token, err := os.ReadFile(tokenFile)
 		if err != nil {
 			logger.Warn("Failed to read GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, ignoring", "path", tokenFile, "error", err)
@@ -77,7 +92,7 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	}
 
 	// Fall back to the deprecated API key environment variable
-	apiKey = os.Getenv(grafanaAPIEnvVar)
+	apiKey = getEnv(grafanaAPIEnvVar)
 	if apiKey != "" {
 		logger.Warn("GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.")
 	}
@@ -86,8 +101,8 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 }
 
 func userAndPassFromEnv() *url.Userinfo {
-	username := os.Getenv(grafanaUsernameEnvVar)
-	password, exists := os.LookupEnv(grafanaPasswordEnvVar)
+	username := getEnv(grafanaUsernameEnvVar)
+	password, exists := lookupEnv(grafanaPasswordEnvVar)
 	if username == "" && password == "" {
 		return nil
 	}
@@ -98,7 +113,7 @@ func userAndPassFromEnv() *url.Userinfo {
 }
 
 func orgIdFromEnv(logger *slog.Logger) int64 {
-	orgIDStr := os.Getenv(grafanaOrgIDEnvVar)
+	orgIDStr := getEnv(grafanaOrgIDEnvVar)
 	if orgIDStr == "" {
 		return 0
 	}
@@ -257,6 +272,9 @@ type GrafanaConfig struct {
 	AllowGrafanaURLOverride bool
 	// AllowedGrafanaURLs optionally restricts selection to exact targets.
 	AllowedGrafanaURLs []string
+	// AllowCrossOriginRedirects permits HTTP redirects to a different origin.
+	// It disables the default redirect guard for clients built with BuildTransport.
+	AllowCrossOriginRedirects bool
 
 	// APIKey is the API key or service account token for the Grafana instance.
 	// It may be empty if we are using on-behalf-of auth.
@@ -824,7 +842,7 @@ func WithoutUserAgent() TransportOption {
 // BuildTransport constructs an http.RoundTripper with the standard middleware
 // chain derived from cfg. The default chain (innermost to outermost) is:
 //
-//	base → TLS → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
 //
 // Auth is innermost among the header-setting layers so that credentials take
 // precedence over any forwarded/extra headers with the same keys.
@@ -873,6 +891,9 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
 		}
+	}
+	if !cfg.AllowCrossOriginRedirects {
+		transport = &redirectGuardTransport{next: transport}
 	}
 
 	// Debug logging with redacted credentials (innermost among the
@@ -1431,6 +1452,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
 	}
+	// Trim any trailing slash so every path built from grafanaURL below
+	// (the OpenAPI client's base path, and the frontend-settings fetch) is
+	// well-formed instead of double-slashed.
+	grafanaURL = strings.TrimRight(grafanaURL, "/")
 
 	parsedURL, err = url.Parse(grafanaURL)
 	if err != nil {
@@ -1533,16 +1558,17 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					// transport-level injection since the OpenAPI client
 					// doesn't support them natively.
 					oboConfig := GrafanaConfig{
-						AccessToken:    config.AccessToken,
-						IDToken:        config.IDToken,
-						OrgID:          config.OrgID,
-						TLSConfig:      config.TLSConfig,
-						ExtraHeaders:   config.ExtraHeaders,
-						OverrideURL:    config.OverrideURL,
-						SOCKS5ProxyURL: config.SOCKS5ProxyURL,
-						Debug:          config.Debug,
-						Logger:         config.Logger,
-						UserAgent:      config.UserAgent,
+						AccessToken:               config.AccessToken,
+						IDToken:                   config.IDToken,
+						OrgID:                     config.OrgID,
+						TLSConfig:                 config.TLSConfig,
+						ExtraHeaders:              config.ExtraHeaders,
+						OverrideURL:               config.OverrideURL,
+						AllowCrossOriginRedirects: config.AllowCrossOriginRedirects,
+						SOCKS5ProxyURL:            config.SOCKS5ProxyURL,
+						Debug:                     config.Debug,
+						Logger:                    config.Logger,
+						UserAgent:                 config.UserAgent,
 					}
 					wrapped, err := BuildTransport(&oboConfig, base)
 					if err != nil {
@@ -1580,17 +1606,18 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	// come from the same request, so carrying the version on the client here
 	// spares every tool that needs it a round trip of its own.
 	fetchCfg := &GrafanaConfig{
-		URL:            grafanaURL,
-		APIKey:         apiKey,
-		BasicAuth:      auth,
-		AccessToken:    config.AccessToken,
-		IDToken:        config.IDToken,
-		TLSConfig:      config.TLSConfig,
-		ExtraHeaders:   config.ExtraHeaders,
-		OverrideURL:    config.OverrideURL,
-		SOCKS5ProxyURL: config.SOCKS5ProxyURL,
-		Logger:         config.Logger,
-		UserAgent:      config.UserAgent,
+		URL:                       grafanaURL,
+		APIKey:                    apiKey,
+		BasicAuth:                 auth,
+		AccessToken:               config.AccessToken,
+		IDToken:                   config.IDToken,
+		TLSConfig:                 config.TLSConfig,
+		ExtraHeaders:              config.ExtraHeaders,
+		OverrideURL:               config.OverrideURL,
+		AllowCrossOriginRedirects: config.AllowCrossOriginRedirects,
+		SOCKS5ProxyURL:            config.SOCKS5ProxyURL,
+		Logger:                    config.Logger,
+		UserAgent:                 config.UserAgent,
 	}
 	// A failed fetch yields zero values, leaving both fields empty as before.
 	settings, _ := cachedSharedSettings(fetchCfg)

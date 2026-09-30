@@ -5,11 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.3] - 2026-09-30
+
+### Fixed
+
+- Prometheus errors other than 400/422 (for example 500s or proxy errors) now include the response body, so failures explain what went wrong instead of only showing the status code ([#1270](https://github.com/grafana/mcp-grafana/pull/1270))
+- Docker images now report the correct release version instead of a build-info fallback ([#1269](https://github.com/grafana/mcp-grafana/pull/1269))
+
+### Security
+
+- Outbound Grafana clients now refuse redirects to a different scheme, host, or port, so Grafana credentials are never forwarded to a redirect target. Use `--allow-cross-origin-redirects` (or `GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS=true`) to restore the previous behaviour ([#1268](https://github.com/grafana/mcp-grafana/pull/1268))
+
+## [1.6.2] - 2026-09-29
+
+This is the last 1.x release; the next release will be 2.0.
+
+### Fixed
+
+- Loki log queries now return lines in time order across streams and no longer drop a line at the limit boundary when results span multiple streams ([#1259](https://github.com/grafana/mcp-grafana/pull/1259))
+- Loki and VictoriaLogs query time bounds keep sub-second (up to nanosecond) precision, so narrow windows return results and callers can page by exact log timestamps ([#1260](https://github.com/grafana/mcp-grafana/pull/1260))
+- A configured Grafana URL with a trailing slash no longer produces double-slashed request paths when fetching frontend settings ([#1258](https://github.com/grafana/mcp-grafana/pull/1258))
+- PyPI wheels now compress the bundled binary, shrinking each wheel from about 55MB to about 17MB ([#1257](https://github.com/grafana/mcp-grafana/pull/1257))
+
+## [1.6.1] - 2026-09-27
+
+### Fixed
+
+- The stdio server no longer stops answering requests once a client opens a `subscriptions/listen` stream on protocol `2026-07-28`, which made `tools/list` time out in clients such as Claude Code and GitHub Copilot CLI ([#1236](https://github.com/grafana/mcp-grafana/pull/1236))
+- Blank optional fields in the Claude Desktop extension (MCPB) no longer pass literal `${user_config.*}` placeholders as credentials, so username/password auth works when the service account token field is left empty ([#1249](https://github.com/grafana/mcp-grafana/pull/1249))
+
 ## [1.6.0] - 2026-09-25
 
 ### Added
 
 - Opt-in per-request Grafana URL selection, with an optional allowlist of permitted URLs and a request-scoped token ([#1242](https://github.com/grafana/mcp-grafana/pull/1242))
+- Opt-in `cloudlogging` tool category for the Google Cloud Logging datasource: `query_cloud_logging` runs Cloud Logging queries, and `list_cloud_logging_projects`, `list_cloud_logging_buckets` and `list_cloud_logging_views` discover what it can read ([#1228](https://github.com/grafana/mcp-grafana/pull/1228))
 - Tempo TraceQL metrics tools now describe the query grammar with a worked example and return correction hints for common PromQL-style mistakes, so agents can fix rejected queries ([#1207](https://github.com/grafana/mcp-grafana/pull/1207))
 
 ### Fixed
@@ -506,6 +536,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.6.3]: https://github.com/grafana/mcp-grafana/compare/v1.6.2...v1.6.3
+[1.6.2]: https://github.com/grafana/mcp-grafana/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/grafana/mcp-grafana/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/grafana/mcp-grafana/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/grafana/mcp-grafana/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/grafana/mcp-grafana/compare/v1.4.2...v1.5.0
