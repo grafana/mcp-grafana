@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -100,4 +101,41 @@ func TestBackendForDatasource_AcceptsPrometheusDatasource(t *testing.T) {
 	backend, err := backendForDatasource(ctx, "prom-uid")
 	require.NoError(t, err)
 	assert.NotNil(t, backend)
+}
+
+func TestPrometheusBackendQuery_IncludesErrorBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType, body, want string
+		status                        int
+	}{
+		{
+			name:        "prometheus json",
+			status:      http.StatusServiceUnavailable,
+			contentType: "application/json",
+			body:        `{"status":"error","errorType":"timeout","error":"query timed out in expression evaluation"}`,
+			want:        "server error: 503: timeout: query timed out in expression evaluation",
+		},
+		{
+			name:        "html",
+			status:      http.StatusBadGateway,
+			contentType: "text/html",
+			body:        "<html><body>502 Bad Gateway</body></html>\n",
+			want:        "server error: 502: <html><body>502 Bad Gateway</body></html>",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			_, _, err := newTestPrometheusBackend(t, server).Query(context.Background(), "up", "instant", time.Now(), time.Now(), 0)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			var apiErr *promv1.Error
+			assert.True(t, errors.As(err, &apiErr), "original *promv1.Error should still be unwrappable")
+		})
+	}
 }
