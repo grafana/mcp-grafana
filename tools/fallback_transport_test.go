@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -137,6 +138,66 @@ func TestDatasourceFallbackTransport_FallbackOn500(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Len(t, mock.requests, 2, "should retry with fallback on 500")
+}
+
+func TestPrometheusPostFallbackTriesDatasourcePathBeforeGET(t *testing.T) {
+	resetFallbackCache()
+	t.Cleanup(resetFallbackCache)
+
+	const (
+		primaryPath  = "/api/datasources/uid/test-uid/resources/api/v1/query"
+		fallbackPath = "/api/datasources/proxy/uid/test-uid/api/v1/query"
+	)
+
+	var methods []string
+	var paths []string
+	var bodies []string
+	mock := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		methods = append(methods, req.Method)
+		paths = append(paths, req.URL.Path)
+		if req.Body != nil {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			bodies = append(bodies, string(body))
+		} else {
+			bodies = append(bodies, "")
+		}
+
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == primaryPath:
+			return newMockResponse(http.StatusInternalServerError), nil
+		case req.Method == http.MethodGet && req.URL.Path == primaryPath:
+			// If POST→GET runs before datasource path fallback, this response
+			// prevents the alternate path from being tried.
+			return newMockResponse(http.StatusNotFound), nil
+		case req.Method == http.MethodPost && req.URL.Path == fallbackPath:
+			return newMockResponse(http.StatusOK), nil
+		default:
+			return newMockResponse(http.StatusNotFound), nil
+		}
+	})
+
+	rt := wrapPrometheusTransport(mock, &models.DataSource{},
+		"/api/datasources/uid/test-uid/resources",
+		"/api/datasources/proxy/uid/test-uid",
+		false,
+	)
+
+	body := "query=" + strings.Repeat("up", 5000)
+	req, err := http.NewRequest(http.MethodPost, "http://grafana.example.com"+primaryPath, strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := rt.RoundTrip(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, []string{http.MethodPost, http.MethodPost}, methods)
+	assert.Equal(t, []string{primaryPath, fallbackPath}, paths)
+	assert.Equal(t, []string{body, body}, bodies)
 }
 
 func TestDatasourceFallbackTransport_CachesFallbackPerRequestPath(t *testing.T) {

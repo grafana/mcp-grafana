@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -445,6 +446,99 @@ func TestPostToGetRoundTripper(t *testing.T) {
 		assert.Equal(t, http.MethodGet, receivedReq.Method)
 		receivedBody, _ := io.ReadAll(receivedReq.Body)
 		assert.Empty(t, receivedBody)
+	})
+}
+
+func TestPostToGetFallbackRoundTripper(t *testing.T) {
+	t.Run("keeps POST when it succeeds", func(t *testing.T) {
+		var methods []string
+		var bodies []string
+		var queries []url.Values
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			methods = append(methods, r.Method)
+			bodies = append(bodies, string(body))
+			queries = append(queries, r.URL.Query())
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		rt := &postToGetFallbackRoundTripper{underlying: http.DefaultTransport}
+		body := "query=" + strings.Repeat("up", 5000)
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query", strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		assert.Equal(t, []string{http.MethodPost}, methods)
+		assert.Equal(t, []string{body}, bodies)
+		assert.Empty(t, queries[0].Get("query"))
+	})
+
+	for _, tt := range []struct {
+		name   string
+		status int
+	}{
+		{name: "422", status: http.StatusUnprocessableEntity},
+		{name: "500", status: http.StatusInternalServerError},
+	} {
+		t.Run("retries with GET on "+tt.name, func(t *testing.T) {
+			var methods []string
+			var bodies []string
+			var queries []url.Values
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				methods = append(methods, r.Method)
+				bodies = append(bodies, string(body))
+				queries = append(queries, r.URL.Query())
+				if r.Method == http.MethodPost {
+					w.WriteHeader(tt.status)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			rt := &postToGetFallbackRoundTripper{underlying: http.DefaultTransport}
+			body := "query=" + url.QueryEscape(strings.Repeat("up", 5000)) + "&time=1234"
+			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query?existing=param", strings.NewReader(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			resp, err := rt.RoundTrip(req)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+
+			assert.Equal(t, []string{http.MethodPost, http.MethodGet}, methods)
+			assert.Equal(t, []string{body, ""}, bodies)
+			assert.Equal(t, "param", queries[1].Get("existing"))
+			assert.Equal(t, "1234", queries[1].Get("time"))
+			assert.Equal(t, strings.Repeat("up", 5000), queries[1].Get("query"))
+		})
+	}
+
+	t.Run("does not retry on other statuses", func(t *testing.T) {
+		var methods []string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			methods = append(methods, r.Method)
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		defer server.Close()
+
+		rt := &postToGetFallbackRoundTripper{underlying: http.DefaultTransport}
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query", strings.NewReader("query=up"))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		assert.Equal(t, []string{http.MethodPost}, methods)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 }
 

@@ -101,3 +101,45 @@ func TestBackendForDatasource_AcceptsPrometheusDatasource(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, backend)
 }
+
+func TestPrometheusDatasourceUsesGET(t *testing.T) {
+	tests := []struct {
+		name string
+		ds   *models.DataSource
+		want bool
+	}{
+		{
+			name: "explicit GET",
+			ds: &models.DataSource{JSONData: map[string]interface{}{
+				"httpMethod": "GET",
+			}},
+			want: true,
+		},
+		{
+			name: "case insensitive GET",
+			ds: &models.DataSource{JSONData: map[string]interface{}{
+				"httpMethod": "get",
+			}},
+			want: true,
+		},
+		{
+			name: "explicit POST",
+			ds: &models.DataSource{JSONData: map[string]interface{}{
+				"httpMethod": "POST",
+			}},
+		},
+		{
+			name: "default method",
+			ds:   &models.DataSource{},
+		},
+		{
+			name: "nil datasource",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, prometheusDatasourceUsesGET(tt.ds))
+		})
+	}
+}
