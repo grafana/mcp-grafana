@@ -69,15 +69,14 @@ type ActionButtonProps = {
 
 function ActionButton({ action, variant, size = 'sm' }: ActionButtonProps) {
   const styles = getMcpAppShellStyles();
-  const isDisabled = Boolean(action.disabled || action.pending);
-
   return (
     <Button
       type="button"
       variant={variant}
       size={size}
-      onClick={action.onClick}
-      disabled={isDisabled}
+      onClick={action.pending ? undefined : action.onClick}
+      disabled={action.disabled}
+      aria-disabled={action.pending || undefined}
       aria-busy={action.pending || undefined}
     >
       {action.pending && (
@@ -119,114 +118,116 @@ export function McpAppShell({
   return (
     <>
       <GlobalCSSVariables variables={mcpAppShellCSSVariables} defaultColorMode="light" />
-      <article
-        className={cx(styles.shell, layout === 'wide' && styles.wide, density === 'compact' && styles.compact)}
-        data-color-mode={colorMode}
-        aria-labelledby={titleId}
-      >
-        <header className={styles.header}>
-          <div className={styles.identity}>
-            <img className={styles.logo} src={grafanaLogo} width={16} height={16} alt="" aria-hidden="true" />
-            <div className={styles.identityText}>
-              <span className={styles.product}>{product}</span>
-              {scope && (
-                <>
-                  <span className={styles.separator} aria-hidden="true">
-                    ·
-                  </span>
-                  <span className={styles.scope}>{scope}</span>
-                </>
-              )}
+      <div className={cx(styles.shellContainer, layout === 'wide' && styles.wideContainer)}>
+        <article
+          className={cx(styles.shell, layout === 'wide' && styles.wide, density === 'compact' && styles.compact)}
+          data-color-mode={colorMode}
+          aria-labelledby={titleId}
+        >
+          <header className={styles.header}>
+            <div className={styles.identity}>
+              <img className={styles.logo} src={grafanaLogo} width={16} height={16} alt="" aria-hidden="true" />
+              <div className={styles.identityText}>
+                <span className={styles.product}>{product}</span>
+                {scope && (
+                  <>
+                    <span className={styles.separator} aria-hidden="true">
+                      ·
+                    </span>
+                    <span className={styles.scope}>{scope}</span>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
 
-          {hasHeaderActions && (
-            <div className={cx(styles.headerActions, styles.narrowHeaderActions)}>
-              {openInGrafana && (
-                <Button
-                  render={<a href={openInGrafana.href} onClick={openInGrafana.onClick} />}
-                  nativeButton={false}
-                  role="link"
-                  variant="ghost"
-                  size="xs"
-                >
-                  Open in Grafana
-                  <ExternalLink size={12} aria-hidden="true" />
-                </Button>
-              )}
-              {share}
-            </div>
-          )}
-        </header>
-
-        <div className={cx(styles.summary, density === 'compact' && styles.compactSummary)}>
-          <div className={styles.summaryHeader}>
-            <span className={styles.summaryLabel}>{summary.label}</span>
-            {summary.status}
-          </div>
-          <h1 id={titleId} className={styles.summaryTitle}>
-            {summary.title}
-          </h1>
-          {summary.description !== undefined && summary.description !== null && (
-            <div className={styles.summaryDescription}>{summary.description}</div>
-          )}
-        </div>
-
-        {children !== undefined && children !== null && <div className={styles.content}>{children}</div>}
-
-        {hasFooter && (
-          <footer className={styles.footer}>
-            {(primaryAction || secondaryAction) && (
-              <div className={cx(styles.actions, styles.narrowActions)}>
-                {primaryAction && <ActionButton action={primaryAction} variant="default" />}
-                {secondaryAction && <ActionButton action={secondaryAction} variant="secondary" />}
+            {hasHeaderActions && (
+              <div className={cx(styles.headerActions, styles.narrowHeaderActions)}>
+                {openInGrafana && (
+                  <Button
+                    render={<a href={openInGrafana.href} onClick={openInGrafana.onClick} />}
+                    nativeButton={false}
+                    role="link"
+                    variant="ghost"
+                    size="xs"
+                  >
+                    Open in Grafana
+                    <ExternalLink size={12} aria-hidden="true" />
+                  </Button>
+                )}
+                {share}
               </div>
             )}
+          </header>
 
-            {feedback && (
-              <div
-                className={cx(
-                  styles.feedback,
-                  styles.narrowFeedback,
-                  feedback.tone === 'success' && styles.feedbackSuccess,
-                  feedback.tone === 'error' && styles.feedbackError,
-                  feedback.tone === 'info' && styles.feedbackInfo
-                )}
-              >
-                <span className={styles.feedbackIcon} aria-hidden="true">
-                  {(() => { const FeedbackIcon = feedbackIcon[feedback.tone]; return <FeedbackIcon size={16} aria-hidden="true" />; })()}
-                </span>
-                <div
-                  className={styles.feedbackMessage}
-                  role={feedback.tone === 'error' ? 'alert' : 'status'}
-                  aria-atomic="true"
-                >
-                  {feedback.message}
+          <div className={cx(styles.summary, density === 'compact' && styles.compactSummary)}>
+            <div className={styles.summaryHeader}>
+              <span className={styles.summaryLabel}>{summary.label}</span>
+              {summary.status}
+            </div>
+            <h1 id={titleId} className={styles.summaryTitle}>
+              {summary.title}
+            </h1>
+            {summary.description !== undefined && summary.description !== null && (
+              <div className={styles.summaryDescription}>{summary.description}</div>
+            )}
+          </div>
+
+          {children !== undefined && children !== null && <div className={styles.content}>{children}</div>}
+
+          {hasFooter && (
+            <footer className={styles.footer}>
+              {(primaryAction || secondaryAction) && (
+                <div className={cx(styles.actions, styles.narrowActions)}>
+                  {primaryAction && <ActionButton action={primaryAction} variant="default" />}
+                  {secondaryAction && <ActionButton action={secondaryAction} variant="secondary" />}
                 </div>
-                {feedback.action && (
-                  <div className={cx(styles.feedbackAction, styles.narrowFeedbackAction)}>
-                    <ActionButton action={feedback.action} variant="ghost" size="xs" />
-                  </div>
-                )}
-              </div>
-            )}
+              )}
 
-            {tip && (
-              <aside className={cx(styles.tip, styles.narrowFeedback)}>
-                <span className={styles.feedbackIcon} aria-hidden="true">
-                  <Info size={16} aria-hidden="true" />
-                </span>
-                <div className={styles.feedbackMessage}>{tip.message}</div>
-                {tip.action && (
-                  <div className={cx(styles.feedbackAction, styles.narrowFeedbackAction)}>
-                    <ActionButton action={tip.action} variant="ghost" size="xs" />
+              {feedback && (
+                <div
+                  className={cx(
+                    styles.feedback,
+                    styles.narrowFeedback,
+                    feedback.tone === 'success' && styles.feedbackSuccess,
+                    feedback.tone === 'error' && styles.feedbackError,
+                    feedback.tone === 'info' && styles.feedbackInfo
+                  )}
+                >
+                  <span className={styles.feedbackIcon} aria-hidden="true">
+                    {(() => { const FeedbackIcon = feedbackIcon[feedback.tone]; return <FeedbackIcon size={16} aria-hidden="true" />; })()}
+                  </span>
+                  <div
+                    className={styles.feedbackMessage}
+                    role={feedback.tone === 'error' ? 'alert' : 'status'}
+                    aria-atomic="true"
+                  >
+                    {feedback.message}
                   </div>
-                )}
-              </aside>
-            )}
-          </footer>
-        )}
-      </article>
+                  {feedback.action && (
+                    <div className={cx(styles.feedbackAction, styles.narrowFeedbackAction)}>
+                      <ActionButton action={feedback.action} variant="ghost" size="xs" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {tip && (
+                <aside className={cx(styles.tip, styles.narrowFeedback)}>
+                  <span className={styles.feedbackIcon} aria-hidden="true">
+                    <Info size={16} aria-hidden="true" />
+                  </span>
+                  <div className={styles.feedbackMessage}>{tip.message}</div>
+                  {tip.action && (
+                    <div className={cx(styles.feedbackAction, styles.narrowFeedbackAction)}>
+                      <ActionButton action={tip.action} variant="ghost" size="xs" />
+                    </div>
+                  )}
+                </aside>
+              )}
+            </footer>
+          )}
+        </article>
+      </div>
     </>
   );
 }

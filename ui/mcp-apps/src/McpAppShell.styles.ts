@@ -27,6 +27,13 @@ export const getMcpAppShellStyles = () => {
   } = getDesignTokens();
 
   return {
+    shellContainer: css({
+      width: '100%',
+      maxWidth: '720px',
+      minWidth: 0,
+      containerType: 'inline-size',
+    }),
+    wideContainer: css({ maxWidth: '1280px' }),
     shell: css({
       boxSizing: 'border-box',
       display: 'flex',

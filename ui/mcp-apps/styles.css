@@ -2,7 +2,7 @@
 @import '@fontsource/inter/latin-500.css';
 @import '@fontsource/inter/latin-600.css';
 @keyframes mcp-spin { to { transform: rotate(360deg); } }
-[data-color-mode='light'] {
+:root, [data-color-mode='light'] {
   color-scheme: light;
   --mcp-background: #fff; --mcp-foreground: #22252b; --mcp-inset: #f4f5f5;
   --mcp-border: #d9dce0; --mcp-input-border: #a8adb3; --mcp-ring: #3d71d9;

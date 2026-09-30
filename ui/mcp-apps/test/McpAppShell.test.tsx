@@ -1,13 +1,20 @@
+import { cache } from '@emotion/css';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { McpAppSection, McpAppShell } from '../src';
+import { GlobalCSSVariables } from '../src/design';
 
 afterEach(cleanup);
 
 const summary = { label: 'Summary of proposal', title: 'Review checkout latency', description: 'Keep useful context.' };
 
 describe('McpAppShell', () => {
+  it('emits default mode tokens for standalone sections without a mode ancestor', () => {
+    const { container } = render(<GlobalCSSVariables defaultColorMode="light" variables={{ light: { 'mcp-test': 'red' }, dark: { 'mcp-test': 'blue' } }} />);
+    expect(container.querySelector('style')?.textContent).toContain(':root { --mcp-test: red; }');
+  });
+
   it.each(['success', 'info'] as const)('announces only the %s message, excluding its action', (tone) => {
     render(
       <McpAppShell
@@ -38,6 +45,16 @@ describe('McpAppShell', () => {
     document.documentElement.removeAttribute('data-color-mode');
   });
 
+  it('uses an ancestor container for compact padding queries', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} density="compact" />);
+    const article = screen.getByRole('article');
+    const ancestor = article.parentElement;
+    expect(ancestor).not.toBeNull();
+    const rules = cache.sheet.tags.flatMap((tag) => Array.from(tag.sheet?.cssRules ?? [], (rule) => rule.cssText));
+    expect(rules.some((rule) => rule.includes(`.${ancestor?.className} {`) && rule.includes('container-type: inline-size;'))).toBe(true);
+    expect(rules.some((rule) => rule.includes('@container (max-width: 480px)') && rule.includes('padding: 12px;'))).toBe(true);
+  });
+
   it('supports keyboard actions and prevents submission while pending', async () => {
     const onClick = vi.fn();
     const user = userEvent.setup();
@@ -56,9 +73,27 @@ describe('McpAppShell', () => {
       />
     );
     const button = screen.getByRole('button', { name: /Apply/ });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(button);
     fireEvent.click(button);
+    await user.keyboard('{Enter}');
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps explicitly disabled actions natively disabled', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} primaryAction={{ label: 'Apply', onClick: vi.fn(), disabled: true }} />);
+    expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', '  JaVaScRiPt:alert(1)'])('rejects unsafe navigation %s', (href) => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} openInGrafana={{ href }} />);
+    expect(screen.queryByRole('link', { name: /Open in Grafana/ })).toBeNull();
+  });
+
+  it('accepts a relative Grafana navigation link', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} openInGrafana={{ href: '/d/checkout' }} />);
+    expect(screen.getByRole('link', { name: /Open in Grafana/ }).getAttribute('href')).toBe('/d/checkout');
   });
 
   it('lets the host intercept navigation while preserving a real link', () => {

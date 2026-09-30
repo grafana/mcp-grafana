@@ -34,9 +34,9 @@ export const getDesignTokens = () => ({
 
 export type CSSVariablesByColorMode = { light: Record<string, string>; dark: Record<string, string> };
 
-export function GlobalCSSVariables({ variables }: { variables: CSSVariablesByColorMode; defaultColorMode?: 'light' | 'dark' }) {
-  const rules = (mode: 'light' | 'dark') => `[data-color-mode="${mode}"] { ${Object.entries(variables[mode]).map(([key, value]) => `--${key}: ${value};`).join(' ')} }`;
-  return <style>{`${rules('light')} ${rules('dark')}`}</style>;
+export function GlobalCSSVariables({ variables, defaultColorMode = 'light' }: { variables: CSSVariablesByColorMode; defaultColorMode?: 'light' | 'dark' }) {
+  const declarations = (mode: 'light' | 'dark') => Object.entries(variables[mode]).map(([key, value]) => `--${key}: ${value};`).join(' ');
+  return <style>{`:root { ${declarations(defaultColorMode)} } [data-color-mode="light"] { ${declarations('light')} } [data-color-mode="dark"] { ${declarations('dark')} }`}</style>;
 }
 
 const buttonClass = css({
@@ -47,9 +47,9 @@ const buttonClass = css({
   '&:disabled, &[aria-disabled="true"]': { cursor: 'not-allowed', opacity: 0.55 },
 });
 const buttonVariants = {
-  default: css({ background: 'var(--mcp-primary)', color: 'var(--mcp-primary-text)', '&:hover:not(:disabled)': { background: 'var(--mcp-primary-hover)' } }),
-  secondary: css({ background: 'var(--mcp-muted)', color: 'var(--mcp-foreground)', borderColor: 'var(--mcp-border)', '&:hover:not(:disabled)': { background: 'var(--mcp-accent)' } }),
-  ghost: css({ background: 'transparent', color: 'var(--mcp-foreground)', '&:hover:not(:disabled)': { background: 'var(--mcp-muted)' } }),
+  default: css({ background: 'var(--mcp-primary)', color: 'var(--mcp-primary-text)', '&:hover:not(:disabled):not([aria-disabled="true"])': { background: 'var(--mcp-primary-hover)' } }),
+  secondary: css({ background: 'var(--mcp-muted)', color: 'var(--mcp-foreground)', borderColor: 'var(--mcp-border)', '&:hover:not(:disabled):not([aria-disabled="true"])': { background: 'var(--mcp-accent)' } }),
+  ghost: css({ background: 'transparent', color: 'var(--mcp-foreground)', '&:hover:not(:disabled):not([aria-disabled="true"])': { background: 'var(--mcp-muted)' } }),
 };
 const buttonSizes = { xs: css({ minHeight: 24, padding: '3px 8px', fontSize: 11 }), sm: css({ minHeight: 30, padding: '5px 10px', fontSize: 12 }), default: css({ minHeight: 36, padding: '8px 12px', fontSize: 14 }) };
 
@@ -64,6 +64,14 @@ export function Button({ variant = 'default', size = 'default', render, nativeBu
   const classNames = cx(buttonClass, buttonVariants[variant], buttonSizes[size], className);
   if (render) {
     const { href, onClick } = render.props;
+    // Keep links usable for relative Grafana paths, but reject executable URL schemes.
+    try {
+      if (!href?.trim() || !['http:', 'https:'].includes(new URL(href, 'https://grafana.invalid').protocol)) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
     return <a href={href} onClick={onClick} className={classNames} role={props.role}>{children}</a>;
   }
   return <button {...props} className={classNames}>{children}</button>;
