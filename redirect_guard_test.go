@@ -1,10 +1,12 @@
 package mcpgrafana
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -121,5 +123,69 @@ func TestBuildTransportAllowsCrossOriginRedirectWhenConfigured(t *testing.T) {
 	defer resp.Body.Close()
 	if got := receivedAuth.Load(); resp.StatusCode != http.StatusNoContent || got != "Bearer grafana-token" {
 		t.Fatalf("status = %d, destination Authorization = %q", resp.StatusCode, got)
+	}
+}
+
+func TestNewGrafanaClientHonorsCrossOriginRedirectOptOut(t *testing.T) {
+	t.Cleanup(clearFrontendSettingsCaches)
+
+	var settingsRequests, searchRequests atomic.Int32
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/frontend/settings":
+			settingsRequests.Add(1)
+			_, _ = w.Write([]byte(`{"appUrl":"https://public.grafana.example.com/"}`))
+		case "/api/search":
+			searchRequests.Add(1)
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer destination.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL+r.URL.RequestURI(), http.StatusFound)
+	}))
+	defer source.Close()
+
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{AllowCrossOriginRedirects: true})
+	client := NewGrafanaClient(ctx, source.URL, "grafana-token", nil)
+	if client.PublicURL != "https://public.grafana.example.com" {
+		t.Fatalf("public URL = %q", client.PublicURL)
+	}
+	if _, err := client.Search.Search(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if settingsRequests.Load() != 1 || searchRequests.Load() != 1 {
+		t.Fatalf("destination received %d settings and %d search requests", settingsRequests.Load(), searchRequests.Load())
+	}
+}
+
+func TestSameHTTPOriginPreservesIPv6ZoneCase(t *testing.T) {
+	a, err := url.Parse("http://[fe80::1%25eth0]:3000/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := url.Parse("http://[fe80::1%25ETH0]:3000/next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameHTTPOrigin(a, b) {
+		t.Fatal("different IPv6 interfaces were treated as the same origin")
+	}
+}
+
+func TestSameHTTPOriginIgnoresUserinfo(t *testing.T) {
+	a, err := url.Parse("https://user:password@grafana.example.com/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := url.Parse("https://grafana.example.com/next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameHTTPOrigin(a, b) {
+		t.Fatal("userinfo changed the origin comparison")
 	}
 }

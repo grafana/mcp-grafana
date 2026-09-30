@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"errors"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -37,14 +38,20 @@ func sameHTTPOrigin(a, b *url.URL) bool {
 }
 
 func httpOriginParts(u *url.URL) (scheme, host, port string, ok bool) {
-	if u == nil || u.User != nil {
+	if u == nil {
 		return "", "", "", false
 	}
 	scheme = strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" || u.Hostname() == "" {
 		return "", "", "", false
 	}
-	host = strings.ToLower(u.Hostname())
+	rawHost := u.Hostname()
+	if addr, err := netip.ParseAddr(rawHost); err == nil {
+		// IPv6 zone names identify interfaces and are case-sensitive.
+		host = addr.String()
+	} else {
+		host = strings.ToLower(rawHost)
+	}
 	port = u.Port()
 	if port == "" {
 		if scheme == "https" {

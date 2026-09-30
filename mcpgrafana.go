@@ -1558,16 +1558,17 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					// transport-level injection since the OpenAPI client
 					// doesn't support them natively.
 					oboConfig := GrafanaConfig{
-						AccessToken:    config.AccessToken,
-						IDToken:        config.IDToken,
-						OrgID:          config.OrgID,
-						TLSConfig:      config.TLSConfig,
-						ExtraHeaders:   config.ExtraHeaders,
-						OverrideURL:    config.OverrideURL,
-						SOCKS5ProxyURL: config.SOCKS5ProxyURL,
-						Debug:          config.Debug,
-						Logger:         config.Logger,
-						UserAgent:      config.UserAgent,
+						AccessToken:               config.AccessToken,
+						IDToken:                   config.IDToken,
+						OrgID:                     config.OrgID,
+						TLSConfig:                 config.TLSConfig,
+						ExtraHeaders:              config.ExtraHeaders,
+						OverrideURL:               config.OverrideURL,
+						AllowCrossOriginRedirects: config.AllowCrossOriginRedirects,
+						SOCKS5ProxyURL:            config.SOCKS5ProxyURL,
+						Debug:                     config.Debug,
+						Logger:                    config.Logger,
+						UserAgent:                 config.UserAgent,
 					}
 					wrapped, err := BuildTransport(&oboConfig, base)
 					if err != nil {
@@ -1605,17 +1606,18 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	// come from the same request, so carrying the version on the client here
 	// spares every tool that needs it a round trip of its own.
 	fetchCfg := &GrafanaConfig{
-		URL:            grafanaURL,
-		APIKey:         apiKey,
-		BasicAuth:      auth,
-		AccessToken:    config.AccessToken,
-		IDToken:        config.IDToken,
-		TLSConfig:      config.TLSConfig,
-		ExtraHeaders:   config.ExtraHeaders,
-		OverrideURL:    config.OverrideURL,
-		SOCKS5ProxyURL: config.SOCKS5ProxyURL,
-		Logger:         config.Logger,
-		UserAgent:      config.UserAgent,
+		URL:                       grafanaURL,
+		APIKey:                    apiKey,
+		BasicAuth:                 auth,
+		AccessToken:               config.AccessToken,
+		IDToken:                   config.IDToken,
+		TLSConfig:                 config.TLSConfig,
+		ExtraHeaders:              config.ExtraHeaders,
+		OverrideURL:               config.OverrideURL,
+		AllowCrossOriginRedirects: config.AllowCrossOriginRedirects,
+		SOCKS5ProxyURL:            config.SOCKS5ProxyURL,
+		Logger:                    config.Logger,
+		UserAgent:                 config.UserAgent,
 	}
 	// A failed fetch yields zero values, leaving both fields empty as before.
 	settings, _ := cachedSharedSettings(fetchCfg)
