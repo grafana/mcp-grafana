@@ -297,6 +297,9 @@ export function TraceViewer({ result }: TraceViewerProps) {
     setQuery('');
     setMobileView('span');
     setScrollTop(0);
+    if (viewportRef.current) {
+      viewportRef.current.scrollTop = 0;
+    }
   }, [prepared, initialFilterMode]);
 
   useEffect(() => {

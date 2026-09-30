@@ -164,6 +164,25 @@ describe('TraceViewer', () => {
     expect(screen.getByRole('option', { name: 'paymentservice, second duplicate' })).toBeTruthy();
   });
 
+  it('resets the viewport when a new trace replaces a scrolled trace', async () => {
+    const manySpans = Array.from({ length: 200 }, (_, index) => ({
+      ...spans[0],
+      id: `span-${index}`,
+      name: `operation ${index}`,
+      startTimeMs: index,
+      events: [],
+    }));
+    const { rerender } = render(<TraceViewer result={result({ spans: manySpans })} />);
+    const viewport = screen.getByRole('listbox', { name: 'Trace spans' });
+    viewport.scrollTop = 4000;
+    fireEvent.scroll(viewport);
+    expect(viewport.scrollTop).toBe(4000);
+
+    rerender(<TraceViewer result={result({ traceId: 'next-trace', spans: [spans[0]] })} />);
+    await waitFor(() => expect(viewport.scrollTop).toBe(0));
+    expect(screen.getByRole('option', { name: 'frontend, POST /checkout' })).toBeTruthy();
+  });
+
   it('virtualizes a 12,000-span trace and keeps hierarchy cycles bounded', async () => {
     const user = userEvent.setup();
     const manySpans: TraceSpan[] = Array.from({ length: 12_000 }, (_, index) => ({
