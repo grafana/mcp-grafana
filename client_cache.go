@@ -403,15 +403,11 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 
 			config.OrgID = orgID
 			transport, err := BuildTransport(&config, nil, WithoutAuth())
-			switch {
-			case err == nil:
+			if err == nil {
 				client.HTTPClient.Transport = transport
-			case config.SOCKS5ProxyURL != "" || config.OverrideURL != "":
-				// Fail closed: a default transport would bypass the proxy or URL guard.
+			} else {
 				logger.Error("Failed to create guarded transport for incident client", "error", err)
 				client.HTTPClient.Transport = failClosedTransport(err)
-			default:
-				logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 			}
 
 			return client

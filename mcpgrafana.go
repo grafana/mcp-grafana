@@ -1743,13 +1743,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
 
-	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
-	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
-		client.HTTPClient.Transport = transport
-	} else if config.OverrideURL != "" {
-		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
-	}
+	client.HTTPClient.Transport = config.clientTransport(nil, WithoutAuth())
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
@@ -1766,13 +1760,7 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
-	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
-	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
-		client.HTTPClient.Transport = transport
-	} else if config.OverrideURL != "" {
-		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
-	}
+	client.HTTPClient.Transport = config.clientTransport(nil, WithoutAuth())
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
