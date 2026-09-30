@@ -2,6 +2,7 @@ package mcpgrafana
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -60,6 +61,9 @@ func TestBuildTransportRejectsCrossOriginRedirect(t *testing.T) {
 			}
 			if !errors.Is(err, errCrossOriginRedirect) {
 				t.Fatalf("redirect error = %v, want %v", err, errCrossOriginRedirect)
+			}
+			if !strings.Contains(err.Error(), source.URL) || !strings.Contains(err.Error(), destination.URL) || !strings.Contains(err.Error(), "GRAFANA_URL") {
+				t.Fatalf("redirect error is not actionable: %v", err)
 			}
 			if got := destinationRequests.Load(); got != 0 {
 				t.Fatalf("destination received %d requests", got)
@@ -162,6 +166,71 @@ func TestNewGrafanaClientHonorsCrossOriginRedirectOptOut(t *testing.T) {
 	}
 }
 
+func TestNewGrafanaClientRejectsCrossOriginRedirectByDefault(t *testing.T) {
+	t.Cleanup(clearFrontendSettingsCaches)
+
+	for _, tc := range []struct {
+		name       string
+		apiKey     string
+		basicAuth  *url.Userinfo
+		config     GrafanaConfig
+		headerName string
+		headerWant string
+	}{
+		{name: "API key", apiKey: "grafana-token", headerName: "Authorization", headerWant: "Bearer grafana-token"},
+		{name: "basic auth", basicAuth: url.UserPassword("user", "password"), headerName: "Authorization", headerWant: "Basic " + base64.StdEncoding.EncodeToString([]byte("user:password"))},
+		{name: "OBO", config: GrafanaConfig{AccessToken: "grafana-token", IDToken: "grafana-id"}, headerName: "X-Access-Token", headerWant: "grafana-token"},
+		{name: "extra header", config: GrafanaConfig{ExtraHeaders: map[string]string{"X-Tenant-Token": "tenant-secret"}}, headerName: "X-Tenant-Token", headerWant: "tenant-secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sourceSearchRequests, destinationRequests atomic.Int32
+			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				destinationRequests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			defer destination.Close()
+
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/frontend/settings":
+					_, _ = w.Write([]byte(`{"appUrl":"http://grafana.example.com/"}`))
+				case "/api/search":
+					sourceSearchRequests.Add(1)
+					if got := r.Header.Get(tc.headerName); got != tc.headerWant {
+						t.Errorf("source %s = %q, want %q", tc.headerName, got, tc.headerWant)
+					}
+					http.Redirect(w, r, destination.URL+"/api/search", http.StatusFound)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer source.Close()
+
+			ctx := WithGrafanaConfig(context.Background(), tc.config)
+			client := NewGrafanaClient(ctx, source.URL, tc.apiKey, tc.basicAuth)
+			_, err := client.Search.Search(nil, nil)
+			if !errors.Is(err, errCrossOriginRedirect) {
+				t.Fatalf("search error = %v, want %v", err, errCrossOriginRedirect)
+			}
+			if sourceSearchRequests.Load() != 1 || destinationRequests.Load() != 0 {
+				t.Fatalf("source searches = %d, destination requests = %d", sourceSearchRequests.Load(), destinationRequests.Load())
+			}
+		})
+	}
+}
+
+func TestRedirectOriginForErrorOmitsSensitiveURLParts(t *testing.T) {
+	u, err := url.Parse("https://user:password@grafana.example.com:3000/secret/path?token=hidden#fragment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := redirectOriginForError(u), "https://grafana.example.com:3000"; got != want {
+		t.Fatalf("redirect origin = %q, want %q", got, want)
+	}
+}
+
 func TestSameHTTPOriginPreservesIPv6ZoneCase(t *testing.T) {
 	a, err := url.Parse("http://[fe80::1%25eth0]:3000/start")
 	if err != nil {
@@ -173,6 +242,20 @@ func TestSameHTTPOriginPreservesIPv6ZoneCase(t *testing.T) {
 	}
 	if sameHTTPOrigin(a, b) {
 		t.Fatal("different IPv6 interfaces were treated as the same origin")
+	}
+}
+
+func TestSameHTTPOriginRejectsSchemeUpgrade(t *testing.T) {
+	from, err := url.Parse("http://grafana.example.com/api/search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, err := url.Parse("https://grafana.example.com/api/search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameHTTPOrigin(from, to) {
+		t.Fatal("HTTP to HTTPS redirect was treated as the same origin")
 	}
 }
 

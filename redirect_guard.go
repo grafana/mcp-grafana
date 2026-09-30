@@ -2,6 +2,7 @@ package mcpgrafana
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -25,10 +26,24 @@ func (t *redirectGuardTransport) RoundTrip(req *http.Request) (*http.Response, e
 			if req.Body != nil {
 				_ = req.Body.Close()
 			}
-			return nil, errCrossOriginRedirect
+			var previousURL *url.URL
+			if previous != nil {
+				previousURL = previous.URL
+			}
+			return nil, fmt.Errorf("%w (%s -> %s): set GRAFANA_URL to Grafana's final URL (see root_url), or enable GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS in a trusted environment",
+				errCrossOriginRedirect, redirectOriginForError(previousURL), redirectOriginForError(req.URL))
 		}
 	}
 	return t.next.RoundTrip(req)
+}
+
+// redirectOriginForError excludes URL userinfo, path, query, and fragment,
+// which may contain credentials or other sensitive request data.
+func redirectOriginForError(u *url.URL) string {
+	if u == nil {
+		return "<unknown>"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
 }
 
 func sameHTTPOrigin(a, b *url.URL) bool {
