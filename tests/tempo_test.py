@@ -200,9 +200,9 @@ class TestTempoToolsWithLLM:
     ):
         """Test that an LLM can list available trace attributes from Tempo."""
         prompt = (
-            "Use the tempo tools to get a list of all available trace attribute names "
-            "from the datasource with UID 'tempo'. I want to know what attributes "
-            "I can use in my TraceQL queries."
+            "Use the tempo tools to get the available span attribute names "
+            "from the datasource with UID 'tempo'. Tell me which span attributes "
+            "I can use in TraceQL, or say if none are available."
         )
         final_content, tools_called, mcp_server = await run_llm_tool_loop(
             model, mcp_client, mcp_transport, prompt
@@ -220,6 +220,6 @@ class TestTempoToolsWithLLM:
             final_content,
             tools_called,
             mcp_server,
-            "Does the response list or describe trace attributes that are available for querying?",
+            "Does the response list available span attributes, or accurately report that none were returned?",
             expected_tools="list_tempo_attribute_names",
         )

@@ -82,7 +82,14 @@ async def run_llm_tool_loop(
     mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     tools = await get_converted_tools(mcp_client)
     messages = [
-        Message(role="system", content="You are a helpful assistant."),
+        Message(
+            role="system",
+            content=(
+                "You are a Grafana assistant. Use the available MCP tools to answer "
+                "questions about datasource data. Never invent results; report empty "
+                "results or tool errors accurately."
+            ),
+        ),
         Message(role="user", content=prompt),
     ]
     tools_called: List[MCPToolCall] = []
@@ -140,9 +147,18 @@ def assert_mcp_eval(
 ) -> None:
     if expected_tools is not None:
         assert_expected_tools_called(tools_called, expected_tools)
+    # Give the output judge the actual tool evidence, not just the user's prompt.
+    # Otherwise a correct answer with real logs looks fabricated to GEval.
+    tool_results = [
+        f"{tool.name} result: {item.text}"
+        for tool in tools_called
+        for item in tool.result.content
+        if isinstance(item, TextContent)
+    ]
     test_case = LLMTestCase(
         input=prompt,
         actual_output=final_content,
+        retrieval_context=tool_results,
         mcp_servers=[mcp_server],
         mcp_tools_called=tools_called,
     )
@@ -151,10 +167,16 @@ def assert_mcp_eval(
     if output_criteria is not None:
         output_metric = GEval(
             name="OutputQuality",
-            criteria=output_criteria,
+            criteria=(
+                "Judge against the MCP tool results. Treat a truthful report of no data "
+                "as valid when the tools return no data, and an honest error report "
+                "when a tool fails. Reject invented details. "
+                + output_criteria
+            ),
             evaluation_params=[
                 LLMTestCaseParams.INPUT,
                 LLMTestCaseParams.ACTUAL_OUTPUT,
+                LLMTestCaseParams.RETRIEVAL_CONTEXT,
             ],
             threshold=MCP_EVAL_THRESHOLD,
         )
