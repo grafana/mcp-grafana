@@ -47,7 +47,7 @@ export interface TraceViewerProps {
 }
 
 function isErrorSpan(span: TraceSpan) {
-  return span.status.toLowerCase().includes('error') || findExceptionEvent(span) !== undefined;
+  return span.status === 'error' || (span.status === 'unset' && findExceptionEvent(span) !== undefined);
 }
 
 function findExceptionEvent(span: TraceSpan): TraceEvent | undefined {

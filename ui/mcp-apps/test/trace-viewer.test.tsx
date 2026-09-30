@@ -92,6 +92,14 @@ describe('TraceViewer', () => {
     expect(screen.getByRole('status').textContent).toContain('Focused path · 1 of 3 spans');
   });
 
+  it('does not classify an OK span with a handled exception as an error', async () => {
+    const user = userEvent.setup();
+    render(<TraceViewer result={result({ spans: spans.map((span) => ({ ...span, status: 'ok' })) })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Errors only' }));
+    expect(screen.getByRole('status').textContent).toContain('0 of 3 spans');
+  });
+
   it('defaults healthy traces to all spans', () => {
     render(
       <TraceViewer
