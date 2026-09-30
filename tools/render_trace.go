@@ -264,7 +264,7 @@ func decodeTraceResponse(reader io.Reader, maxBytes int64) (*tracepb.TracesData,
 		return nil, fmt.Errorf("decode Tempo response: %w", err)
 	}
 	if strings.EqualFold(envelope.Status, "partial") {
-		return nil, fmt.Errorf("Tempo returned a partial trace: %s", envelope.Message)
+		return nil, fmt.Errorf("tempo returned a partial trace: %s", envelope.Message)
 	}
 	if len(envelope.Trace) == 0 || string(envelope.Trace) == "null" {
 		return nil, fmt.Errorf("tempo response did not contain a trace")
