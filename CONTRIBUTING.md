@@ -73,14 +73,14 @@ A PR that is easy to generate can still be expensive to review. The proposal ste
 
 ## Measuring the token cost
 
-CI runs a **Token Analysis** check on every pull request, including from forks. It compares your branch against the current baseline and fails above a 5% increase.
+CI runs a **Token Analysis** check on every pull request, including from forks. It compares your branch against the branch you're merging into and fails above a 5% increase.
 
 To see the numbers, open that check's run and read its summary — you'll get the baseline, the new total, the change, and a per-tool breakdown of what was added or modified. It isn't posted as a comment, so it's worth knowing where to look.
 
 If you want the number before you push, or you're weighing two designs against each other:
 
 ```bash
-make token-baseline   # once, on main
+make token-baseline   # once, on your base branch
 make token-check      # on your branch
 ```
 
