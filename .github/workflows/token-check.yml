@@ -36,10 +36,8 @@ jobs:
       - name: Build server
         run: make build
 
-      # The baseline is the PR's own base commit, built and counted here rather
-      # than downloaded from a main-branch run. That keeps PRs against v2 or a
-      # stacked branch honest, and avoids GitHub's run-search API, which has
-      # returned weeks-old runs as the latest.
+      # The baseline is the PR's own base commit, built and counted in this job,
+      # so every PR is compared against exactly the branch it merges into.
       - name: Check out base
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
