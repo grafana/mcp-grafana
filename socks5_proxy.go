@@ -54,7 +54,9 @@ func (t *failClosedRoundTripper) RoundTrip(*http.Request) (*http.Response, error
 }
 
 // failClosedTransport returns an http.RoundTripper that fails every request
-// with err, so a transport build failure never falls back to an unguarded client.
+// with err. Call sites that fall back to a default transport when
+// BuildTransport fails must use it instead when a SOCKS5 proxy is configured,
+// so that a misconfigured transport never silently bypasses the proxy.
 func failClosedTransport(err error) http.RoundTripper {
 	return &failClosedRoundTripper{err: err}
 }
@@ -69,15 +71,32 @@ func ValidateSOCKS5ProxyURL(raw string) error {
 }
 
 // clientTransport builds the standard middleware transport for cfg (see
-// BuildTransport). A build error installs a rejecting transport instead of
-// allowing the HTTP client to fall back to its unguarded default.
-func (cfg *GrafanaConfig) clientTransport(base http.RoundTripper, opts ...TransportOption) http.RoundTripper {
+// BuildTransport) and applies the SOCKS5 fail-closed policy in one place, so
+// every caller that assigns a transport to an http.Client treats a
+// misconfiguration identically instead of re-implementing the decision.
+//
+// The returned RoundTripper is always safe to assign to an http.Client:
+//
+//   - build succeeded                        → the built transport, ok=true
+//   - build failed, SOCKS5 proxy configured   → a fail-closed transport that
+//     rejects every request (so traffic can never silently bypass the proxy),
+//     ok=true
+//   - build failed, no proxy configured        → nil, ok=false (the caller
+//     should keep its existing/default transport)
+//
+// Build failures are logged via cfg's logger.
+func (cfg *GrafanaConfig) clientTransport(base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, bool) {
 	transport, err := BuildTransport(cfg, base, opts...)
 	if err == nil {
-		return transport
+		return transport, true
 	}
-	cfg.LoggerOrDefault().Error("Failed to build HTTP transport, failing closed", "error", err)
-	return failClosedTransport(err)
+	logger := cfg.LoggerOrDefault()
+	if cfg.SOCKS5ProxyURL != "" {
+		logger.Error("Failed to build HTTP transport, failing closed because a SOCKS5 proxy is configured", "error", err)
+		return failClosedTransport(err), true
+	}
+	logger.Error("Failed to build HTTP transport, falling back to the default transport", "error", err)
+	return nil, false
 }
 
 // ProxyOnlyTransport returns an http.RoundTripper that routes requests through

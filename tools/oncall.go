@@ -96,10 +96,15 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 				if httpClient, ok := httpClientField.Interface().(*http.Client); ok {
 					transport, err := mcpgrafana.BuildTransport(&cfg, nil, mcpgrafana.WithoutAuth())
 					if err != nil {
-						return nil, fmt.Errorf("building transport for OnCall client: %w", err)
+						if cfg.SOCKS5ProxyURL != "" {
+							// Fail closed: a default transport would bypass the configured proxy.
+							return nil, fmt.Errorf("building transport for OnCall client: %w", err)
+						}
+						mcpgrafana.LoggerFromContext(ctx).Error("Failed to build transport for OnCall client", "error", err)
+					} else {
+						httpClient.Transport = transport
+						transportInstalled = true
 					}
-					httpClient.Transport = transport
-					transportInstalled = true
 				}
 			}
 		}

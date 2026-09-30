@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -188,27 +187,5 @@ func TestSameHTTPOriginIgnoresUserinfo(t *testing.T) {
 	}
 	if !sameHTTPOrigin(a, b) {
 		t.Fatal("userinfo changed the origin comparison")
-	}
-}
-
-func TestClientTransportFailsClosedOnBuildError(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-
-	cfg := GrafanaConfig{TLSConfig: &TLSConfig{CAFile: filepath.Join(t.TempDir(), "missing.pem")}}
-	resp, err := (&http.Client{Transport: cfg.clientTransport(nil)}).Get(server.URL)
-	if resp != nil {
-		_ = resp.Body.Close()
-		t.Fatalf("unexpected response: %s", resp.Status)
-	}
-	if err == nil {
-		t.Fatal("request succeeded despite transport build failure")
-	}
-	if requests.Load() != 0 {
-		t.Fatal("default transport sent a request after the guarded transport failed to build")
 	}
 }
