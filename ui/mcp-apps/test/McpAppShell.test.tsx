@@ -2,12 +2,18 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { McpAppSection, McpAppShell } from '../src';
+import { GlobalCSSVariables } from '../src/design';
 
 afterEach(cleanup);
 
 const summary = { label: 'Summary of proposal', title: 'Review checkout latency', description: 'Keep useful context.' };
 
 describe('McpAppShell', () => {
+  it('emits default mode tokens for standalone sections without a mode ancestor', () => {
+    const { container } = render(<GlobalCSSVariables defaultColorMode="light" variables={{ light: { 'mcp-test': 'red' }, dark: { 'mcp-test': 'blue' } }} />);
+    expect(container.querySelector('style')?.textContent).toContain(':root { --mcp-test: red; }');
+  });
+
   it.each(['success', 'info'] as const)('announces only the %s message, excluding its action', (tone) => {
     render(
       <McpAppShell
@@ -59,6 +65,16 @@ describe('McpAppShell', () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(button);
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', '  JaVaScRiPt:alert(1)'])('rejects unsafe navigation %s', (href) => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} openInGrafana={{ href }} />);
+    expect(screen.queryByRole('link', { name: /Open in Grafana/ })).toBeNull();
+  });
+
+  it('accepts a relative Grafana navigation link', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} openInGrafana={{ href: '/d/checkout' }} />);
+    expect(screen.getByRole('link', { name: /Open in Grafana/ }).getAttribute('href')).toBe('/d/checkout');
   });
 
   it('lets the host intercept navigation while preserving a real link', () => {
