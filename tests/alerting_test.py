@@ -420,7 +420,7 @@ async def test_delete_alert_rule(
         "alerting_rules_read",
         {"operation": "list"},
     )
-    rules = json.loads(list_result.content[0].text)
+    rules = json.loads(list_result.content[0].text)["rules"]
     rule_uids = [r["uid"] for r in rules]
     assert (
         rule_uid not in rule_uids
@@ -453,7 +453,7 @@ async def test_create_alert_rule(
         "alerting_rules_read",
         {"operation": "list"},
     )
-    rules = json.loads(list_result.content[0].text)
+    rules = json.loads(list_result.content[0].text)["rules"]
     created = [r for r in rules if r["title"] == rule_title]
     assert created, f"Rule '{rule_title}' was not found after creation"
 
@@ -493,7 +493,7 @@ async def test_update_alert_rule(
         "alerting_rules_read",
         {"operation": "get", "rule_uid": rule_uid},
     )
-    rule = json.loads(get_result.content[0].text)
+    rule = json.loads(get_result.content[0].text)["rule"]
     assert (
         rule["title"] == new_title
     ), f"Expected title '{new_title}', got '{rule['title']}'"
