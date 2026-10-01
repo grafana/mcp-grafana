@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"math"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -275,8 +278,8 @@ func TestQueryPrometheusHistogramParams(t *testing.T) {
 func TestPrometheusHistogramResult(t *testing.T) {
 	t.Run("result with hints", func(t *testing.T) {
 		result := &PrometheusHistogramResult{
-			Result: model.Matrix{},
-			Query:  "histogram_quantile(0.95, sum(rate(http_bucket[5m])) by (le))",
+			Data:  PrometheusValue{model.Matrix{}},
+			Query: "histogram_quantile(0.95, sum(rate(http_bucket[5m])) by (le))",
 			Hints: []string{
 				"No data found or result is NaN. Possible reasons:",
 				"- Histogram metric may not exist",
@@ -291,20 +294,20 @@ func TestPrometheusHistogramResult(t *testing.T) {
 
 	t.Run("result without hints", func(t *testing.T) {
 		result := &PrometheusHistogramResult{
-			Result: model.Matrix{
+			Data: PrometheusValue{model.Matrix{
 				&model.SampleStream{
 					Metric: model.Metric{},
 					Values: []model.SamplePair{
 						{Timestamp: 1000, Value: 0.5},
 					},
 				},
-			},
+			}},
 			Query: "histogram_quantile(0.95, sum(rate(http_bucket[5m])) by (le))",
 			Hints: nil,
 		}
 
 		assert.Nil(t, result.Hints)
-		assert.NotNil(t, result.Result)
+		assert.NotNil(t, result.Data.Value)
 	})
 }
 
@@ -474,4 +477,47 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errMsg)
 		})
 	}
+}
+
+// TestPrometheusValueMatchesOutputSchema runs real query results of every
+// value type through the advertised schemas, since the startup self-check
+// cannot populate the model.Value interface.
+func TestPrometheusValueMatchesOutputSchema(t *testing.T) {
+	values := map[string]model.Value{
+		"matrix": model.Matrix{
+			{Metric: model.Metric{"job": "a"}, Values: []model.SamplePair{{Timestamp: 1000, Value: 1.5}}},
+			{Metric: model.Metric{}, Histograms: []model.SampleHistogramPair{{Timestamp: 1000, Histogram: &model.SampleHistogram{Count: 1, Sum: 2}}}},
+			{Metric: model.Metric{}},
+		},
+		"vector": model.Vector{
+			{Metric: model.Metric{"job": "a"}, Value: 3, Timestamp: 1000},
+			{Metric: model.Metric{}, Histogram: &model.SampleHistogram{Count: 1}, Timestamp: 1000},
+		},
+		"scalar": &model.Scalar{Value: 1, Timestamp: 1000},
+		"string": &model.String{Value: "x", Timestamp: 1000},
+		"empty":  model.Vector{},
+	}
+	for name, v := range values {
+		t.Run(name, func(t *testing.T) {
+			assertMatchesOutputSchema(t, QueryPrometheus.Tool, &QueryPrometheusResult{Data: PrometheusValue{v}})
+			assertMatchesOutputSchema(t, QueryPrometheusHistogram.Tool, &PrometheusHistogramResult{Data: PrometheusValue{v}})
+		})
+	}
+
+	b, err := json.Marshal(PrometheusValue{model.Vector{}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"resultType":"vector","result":[]}`, string(b))
+}
+
+func assertMatchesOutputSchema(t *testing.T, tool *mcp.Tool, v any) {
+	t.Helper()
+	var schema jsonschema.Schema
+	require.NoError(t, json.Unmarshal(tool.OutputSchema.(json.RawMessage), &schema))
+	resolved, err := schema.Resolve(nil)
+	require.NoError(t, err)
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	var instance any
+	require.NoError(t, json.Unmarshal(b, &instance))
+	assert.NoError(t, resolved.Validate(instance), "%s", b)
 }
