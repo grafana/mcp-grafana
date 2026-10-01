@@ -281,6 +281,9 @@ func TestCreateOrUpdateDashboardV2_RejectsV2BodyOverV1Stored(t *testing.T) {
 // map is not mutated (its uid survives) when saving a v2 dashboard.
 func TestCreateOrUpdateDashboardV2_DoesNotMutateInput(t *testing.T) {
 	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if serveDashboardDiscovery(w, r, "v1beta1", "v2beta1") {
+			return
+		}
 		if r.Method == http.MethodPost {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -300,4 +303,143 @@ func TestCreateOrUpdateDashboardV2_DoesNotMutateInput(t *testing.T) {
 	_, err := createOrUpdateDashboardV2(ctx, UpdateDashboardParams{Dashboard: input, Overwrite: true})
 	require.NoError(t, err)
 	assert.Equal(t, "newdash", input["uid"], "caller's dashboard map must not be mutated")
+}
+
+// serveDashboardDiscovery answers the dashboard.grafana.app group discovery
+// request with the given served versions, reporting whether it handled r.
+func serveDashboardDiscovery(w http.ResponseWriter, r *http.Request, versions ...string) bool {
+	if r.URL.Path != "/apis/"+dashboardAPIGroup {
+		return false
+	}
+	vs := make([]map[string]interface{}, 0, len(versions))
+	for _, v := range versions {
+		vs = append(vs, map[string]interface{}{"version": v})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"versions": vs})
+	return true
+}
+
+func TestPreferredV2Version(t *testing.T) {
+	for _, tc := range []struct {
+		served []string
+		want   string
+	}{
+		{[]string{"v0alpha1", "v1beta1", "v2alpha1", "v2beta1"}, "v2beta1"},
+		{[]string{"v2beta1", "v2", "v2alpha1"}, "v2"},
+		{[]string{"v2beta1", "v2beta2"}, "v2beta2"},
+		{[]string{"v2alpha1"}, "v2alpha1"},
+		{[]string{"v0alpha1", "v1beta1"}, ""},
+		{nil, ""},
+	} {
+		assert.Equal(t, tc.want, preferredV2Version(tc.served), "served %v", tc.served)
+	}
+}
+
+// TestCreateOrUpdateDashboardV2_CreatesAtServedVersion verifies a new v2
+// dashboard is created at the v2 version Grafana actually serves, not a
+// hardcoded one.
+func TestCreateOrUpdateDashboardV2_CreatesAtServedVersion(t *testing.T) {
+	var postPath, postAPIVersion string
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if serveDashboardDiscovery(w, r, "v1beta1", "v2alpha1") {
+			return
+		}
+		if r.Method == http.MethodPost {
+			postPath = r.URL.Path
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			postAPIVersion, _ = body["apiVersion"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"metadata": map[string]interface{}{"name": "generated", "generation": 1},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	res, err := createOrUpdateDashboardV2(ctx, UpdateDashboardParams{
+		Dashboard: map[string]interface{}{"title": "t", "elements": map[string]interface{}{}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "generated", *res.UID)
+	assert.Contains(t, postPath, "/v2alpha1/")
+	assert.Equal(t, "dashboard.grafana.app/v2alpha1", postAPIVersion)
+}
+
+// TestUpdateDashboard_RejectsV1BodyOverV2Stored verifies a classic v1 full-JSON
+// body naming a v2-stored dashboard is rejected before any write, since the
+// legacy save would down-convert it and drop v2-only content such as tabs.
+func TestUpdateDashboard_RejectsV1BodyOverV2Stored(t *testing.T) {
+	var wrote bool
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if serveDashboardDiscovery(w, r, "v1beta1", "v2beta1") {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method != http.MethodGet:
+			wrote = true
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.Contains(r.URL.Path, "/v1beta1/"):
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v1beta1",
+				"metadata":   map[string]interface{}{"name": "v2-test-uid"},
+				"spec":       map[string]interface{}{"title": "Down-converted", "panels": []interface{}{}},
+				"status":     map[string]interface{}{"conversion": map[string]interface{}{"storedVersion": "v2beta1"}},
+			})
+		case strings.Contains(r.URL.Path, "/v2beta1/"):
+			http.ServeFile(w, r, "testdata/v2beta1_dashboard.json")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	_, err := updateDashboard(ctx, UpdateDashboardParams{
+		Dashboard: map[string]interface{}{"uid": "v2-test-uid", "title": "flat", "panels": []interface{}{}},
+		Overwrite: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stored as v2beta1")
+	assert.False(t, wrote, "must not write a v1 body over a v2-stored dashboard")
+}
+
+// TestRejectV1BodyOverV2Stored_AllowsNewAndV1 verifies the guard lets through
+// v1 bodies for dashboards that don't exist yet or are already stored as v1.
+func TestRejectV1BodyOverV2Stored_AllowsNewAndV1(t *testing.T) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if serveDashboardDiscovery(w, r, "v1beta1", "v2beta1") {
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/dashboards/classic") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v1beta1",
+				"metadata":   map[string]interface{}{"name": "classic"},
+				"spec":       map[string]interface{}{"title": "c", "panels": []interface{}{}},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	assert.NoError(t, rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"uid": "classic", "panels": []interface{}{}}))
+	assert.NoError(t, rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"uid": "missing", "panels": []interface{}{}}))
+	assert.NoError(t, rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"title": "no uid"}))
 }
