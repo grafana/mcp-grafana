@@ -13,8 +13,10 @@
     "./styles.css": "./styles.css"
   },
   "scripts": {
-    "build": "npm run build:lib",
+    "build": "npm run build:lib && npm run build:apps",
     "build:lib": "vite build && tsc -p tsconfig.build.json",
+    "build:trace": "vite build --config trace.vite.config.ts",
+    "build:apps": "npm run build:trace",
     "build:preview": "vite build --config preview/vite.config.ts",
     "dev": "vite --config preview/vite.config.ts",
     "typecheck": "tsc --noEmit",
@@ -23,7 +25,11 @@
   "dependencies": {
     "@emotion/css": "11.10.6",
     "@fontsource/inter": "^5.3.0",
-    "lucide-react": "^0.468.0"
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
+    "@modelcontextprotocol/ext-apps": "2.0.0",
+    "lucide-react": "^0.468.0",
+    "zod": "^4.2.0"
   },
   "peerDependencies": {
     "react": "^18.3.1 || ^19.0.0",

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trace MCP App host harness</title>
+    <style>
+      :root { color-scheme: light dark; font-family: Inter, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #f4f5f5; color: #202226; }
+      header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #d5d7da; background: #fff; }
+      header strong { margin-right: auto; }
+      button { min-height: 32px; padding: 4px 12px; border: 1px solid #b9bdc4; border-radius: 6px; background: #fff; color: inherit; cursor: pointer; }
+      button[aria-pressed="true"] { border-color: #3871dc; background: #e8f0ff; }
+      #frame-wrap { width: 100%; margin: 0 auto; transition: max-width 120ms ease; }
+      iframe { display: block; width: 100%; height: calc(100vh - 58px); min-height: 510px; border: 0; background: #fff; }
+      #status { flex-basis: 100%; margin: 0; color: #5b6069; font-size: 12px; }
+      @media (max-width: 560px) { header { padding: 8px; } iframe { height: calc(100vh - 94px); } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Actual bundled trace app</strong>
+      <button type="button" data-theme="light" aria-pressed="true">Light</button>
+      <button type="button" data-theme="dark" aria-pressed="false">Dark</button>
+      <button type="button" data-width="320">320 px</button>
+      <button type="button" data-width="640">640 px</button>
+      <button type="button" data-width="full" aria-pressed="true">Full width</button>
+      <p id="status" role="status">Starting MCP Apps handshake…</p>
+    </header>
+    <div id="frame-wrap"><iframe id="trace-app" title="Trace MCP App" sandbox="allow-scripts" allow="clipboard-write"></iframe></div>
+    <script type="module" src="./host.ts"></script>
+  </body>
+</html>
