@@ -14,6 +14,10 @@ jobs:
   analyze:
     name: Analyze token usage
     runs-on: ubuntu-latest
+    # Keep both the base and PR servers from sending usage reports. An env var
+    # rather than --usage-stats, because a v1 base binary rejects that flag.
+    env:
+      GRAFANA_USAGE_STATS: disabled
     # No pull-requests: write, and no PR comment. GitHub gives fork pull requests
     # a read-only token regardless of what a workflow asks for, so the action's
     # commenting could never work for external contributors — which is precisely
@@ -75,7 +79,7 @@ jobs:
         continue-on-error: true
         uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
         with:
-          command: ./dist/mcp-grafana --usage-stats=disabled
+          command: ./dist/mcp-grafana
           # On fork PRs the get-secrets step is skipped (its output is empty), so
           # short-circuit to an empty key — matching the prior unset-env behavior.
           # The action falls back to tiktoken, which is accurate enough to review
