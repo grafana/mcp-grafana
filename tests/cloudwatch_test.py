@@ -15,7 +15,11 @@ async def test_cloudwatch_list_namespaces(
     mcp_transport: str,
 ):
     """Test that the LLM can list CloudWatch namespaces."""
-    prompt = "List all CloudWatch namespaces available on the CloudWatch datasource in Grafana. Use the us-east-1 region."
+    prompt = (
+        "Use the us-east-1 CloudWatch datasource in Grafana to list five namespace names. "
+        "Copy only names returned by the tool verbatim; do not add examples or guess names. "
+        "If fewer than five are returned, list only those available."
+    )
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt
     )
@@ -25,9 +29,8 @@ async def test_cloudwatch_list_namespaces(
         final_content,
         tools_called,
         mcp_server,
-        "Does the response contain CloudWatch namespace names? "
-        "It should mention specific namespaces like 'AWS/EC2', 'AWS/Lambda', 'Test/Application', "
-        "or similar CloudWatch namespace patterns. ",
+        "Does the response list five exact namespace names from the tool results "
+        "(or all names if fewer than five were returned), without adding unsupported names?",
         expected_tools="list_cloudwatch_namespaces",
     )
 
