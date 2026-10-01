@@ -52,6 +52,16 @@ async def make_mcp_server(client: ClientSession, transport: str = "sse") -> MCPS
     )
 
 
+def tool_result_text(result: CallToolResult) -> str:
+    """Return the same result text to the test agent and the output judge."""
+    for item in result.content:
+        if isinstance(item, TextContent):
+            return item.text
+        if isinstance(item, ImageContent):
+            return "[Image content]"
+    return ""
+
+
 async def call_tool_and_record(
     client: ClientSession, tool_name: str, args: dict
 ) -> tuple[str, MCPToolCall]:
@@ -59,15 +69,7 @@ async def call_tool_and_record(
     Call an MCP tool and return (result text for message history, MCPToolCall for test case).
     """
     result: CallToolResult = await client.call_tool(tool_name, args)
-    result_text = ""
-    if result.content:
-        for content_item in result.content:
-            if isinstance(content_item, TextContent):
-                result_text = content_item.text
-                break
-            if isinstance(content_item, ImageContent):
-                result_text = "[Image content]"
-                break
+    result_text = tool_result_text(result)
     tool_call = MCPToolCall(name=tool_name, args=args, result=result)
     return result_text, tool_call
 
@@ -82,7 +84,14 @@ async def run_llm_tool_loop(
     mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     tools = await get_converted_tools(mcp_client)
     messages = [
-        Message(role="system", content="You are a helpful assistant."),
+        Message(
+            role="system",
+            content=(
+                "You are a Grafana assistant. Use the available MCP tools to answer "
+                "questions about datasource data. Never invent results; report empty "
+                "results or tool errors accurately."
+            ),
+        ),
         Message(role="user", content=prompt),
     ]
     tools_called: List[MCPToolCall] = []
@@ -140,9 +149,16 @@ def assert_mcp_eval(
 ) -> None:
     if expected_tools is not None:
         assert_expected_tools_called(tools_called, expected_tools)
+    # Give the output judge the actual tool evidence, not just the user's prompt.
+    # Otherwise a correct answer with real logs looks fabricated to GEval.
+    tool_results = [
+        f"{tool.name} {'error' if tool.result.isError else 'result'}: {tool_result_text(tool.result)}"
+        for tool in tools_called
+    ]
     test_case = LLMTestCase(
         input=prompt,
         actual_output=final_content,
+        retrieval_context=tool_results,
         mcp_servers=[mcp_server],
         mcp_tools_called=tools_called,
     )
@@ -151,10 +167,14 @@ def assert_mcp_eval(
     if output_criteria is not None:
         output_metric = GEval(
             name="OutputQuality",
-            criteria=output_criteria,
+            criteria=(
+                "Judge against the MCP tool results and reject invented details. "
+                + output_criteria
+            ),
             evaluation_params=[
                 LLMTestCaseParams.INPUT,
                 LLMTestCaseParams.ACTUAL_OUTPUT,
+                LLMTestCaseParams.RETRIEVAL_CONTEXT,
             ],
             threshold=MCP_EVAL_THRESHOLD,
         )
