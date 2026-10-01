@@ -18,7 +18,7 @@ builds:
       - linux
       - windows
       - darwin
-    ldflags: "-s -w -X github.com/grafana/mcp-grafana.version={{.Version}}"
+    ldflags: "-s -w -X github.com/grafana/mcp-grafana/v2.version={{.Version}}"
   - id: gemini-cli-extension
     env:
       - CGO_ENABLED=0
@@ -30,7 +30,7 @@ builds:
     goarch:
       - amd64
       - arm64
-    ldflags: "-s -w -X github.com/grafana/mcp-grafana.version={{.Version}}"
+    ldflags: "-s -w -X github.com/grafana/mcp-grafana/v2.version={{.Version}}"
   # Binaries for the MCP Bundle (.mcpb) consumed by Claude Desktop. The darwin
   # slices are merged into a single universal binary below, because MCPB manifests
   # can only vary the server command per OS, not per CPU architecture.
@@ -50,7 +50,7 @@ builds:
       # Windows on ARM runs the amd64 build under emulation.
       - goos: windows
         goarch: arm64
-    ldflags: "-s -w -X github.com/grafana/mcp-grafana.version={{.Version}}"
+    ldflags: "-s -w -X github.com/grafana/mcp-grafana/v2.version={{.Version}}"
 
 universal_binaries:
   - id: mcpb-darwin-universal

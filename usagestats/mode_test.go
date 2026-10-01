@@ -8,15 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestDoNotTrack pins which DO_NOT_TRACK values opt out, directly rather than
-// through ResolveMode.
-//
-// It has to be direct: DefaultMode is ModeDisabled in this release, so a
-// ResolveMode case asserting "DO_NOT_TRACK disabled it" and one asserting "it
-// was ignored and we fell back to the default" expect the same value and both
-// pass however DoNotTrack behaves. Those cases only start telling the two
-// apart when the default flips to enabled. This test does not depend on the
-// default at all.
 func TestDoNotTrack(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
@@ -62,7 +53,7 @@ func TestResolveMode(t *testing.T) {
 		{name: "flag value ignored when the flag was not set", flagValue: "enabled", env: "log", want: ModeLog},
 
 		// Failing toward privacy: an unrecognised value must never fall
-		// through to the default, which will be "enabled" in a later release.
+		// through to the enabled default.
 		{name: "unrecognised env value disables", env: "yes", want: ModeDisabled},
 		{name: "unrecognised flag value disables", flagValue: "on", flagSet: true, want: ModeDisabled},
 		{name: "explicitly empty flag value disables", flagValue: "", flagSet: true, env: "enabled", want: ModeDisabled},
@@ -70,12 +61,6 @@ func TestResolveMode(t *testing.T) {
 
 		// DO_NOT_TRACK can only ever disable, and sits below both explicit
 		// settings so a host-wide preference can be overridden per server.
-		//
-		// While DefaultMode is ModeDisabled these ModeDisabled/DefaultMode
-		// expectations are the same value, so the rows that distinguish
-		// "opted out" from "ignored" are carried by TestDoNotTrack above
-		// until the default flips. The rows expecting ModeEnabled are
-		// meaningful now: they prove the precedence.
 		{name: "DO_NOT_TRACK=1 disables", doNotTrack: "1", want: ModeDisabled},
 		{name: "DO_NOT_TRACK=1 is trimmed", doNotTrack: " 1 ", want: ModeDisabled},
 		{name: "DO_NOT_TRACK=0 does not disable", doNotTrack: "0", want: DefaultMode},
@@ -94,12 +79,9 @@ func TestResolveMode(t *testing.T) {
 	}
 }
 
-// TestDefaultModeIsDisabled guards the rollout: the receiving endpoint is not
-// live yet, so this release must not report by default. Flipping it is a
-// deliberate, separate change.
-func TestDefaultModeIsDisabled(t *testing.T) {
-	assert.Equal(t, ModeDisabled, DefaultMode)
-	assert.Equal(t, ModeDisabled, ResolveMode("", false, "", ""))
+func TestDefaultModeIsEnabled(t *testing.T) {
+	assert.Equal(t, ModeEnabled, DefaultMode)
+	assert.Equal(t, ModeEnabled, ResolveMode("", false, "", ""))
 }
 
 // TestZeroConfigIsInert: Mode is a string, so a Config built without one has

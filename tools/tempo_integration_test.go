@@ -164,6 +164,6 @@ func TestTempoIntegration_ToolResultHasMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Meta, "result should have meta")
-	assert.Equal(t, "attribute-names", result.Meta.AdditionalFields["type"])
-	assert.Equal(t, "json", result.Meta.AdditionalFields["encoding"])
+	assert.Equal(t, "attribute-names", result.Meta["type"])
+	assert.Equal(t, "json", result.Meta["encoding"])
 }

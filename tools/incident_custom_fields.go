@@ -7,8 +7,7 @@ import (
 	"strings"
 
 	"github.com/grafana/incident-go"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // Grafana IRM exposes both incident custom fields and incident labels through
@@ -94,11 +93,11 @@ var ListIncidentCustomFields = mcpgrafana.MustTool(
 	"list_incident_custom_fields",
 	"List the custom fields configured for Grafana incidents, including their type and, for select fields, the options that may be chosen. Use this to discover which fields exist and which values are valid before setting them with create_incident or update_incident.",
 	listIncidentCustomFields,
-	mcp.WithTitleAnnotation("List incident custom fields"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List incident custom fields"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 func describeIncidentCustomField(f incident.CustomMetadataField) IncidentCustomFieldDefinition {

@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,7 @@ import (
 	"github.com/go-openapi/runtime/client"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -28,6 +29,20 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// newCallToolRequest builds a *mcp.CallToolRequest for tests, marshaling args to json.RawMessage.
+func newCallToolRequest(name string, args map[string]any) *mcp.CallToolRequest {
+	argBytes, err := json.Marshal(args)
+	if err != nil {
+		panic(err)
+	}
+	return &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      name,
+			Arguments: argBytes,
+		},
+	}
+}
 
 func TestExtractIncidentClientFromEnv(t *testing.T) {
 	t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/")
@@ -428,14 +443,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "test_tool",
-				Arguments: map[string]interface{}{
-					"message": "world",
-				},
-			},
-		}
+		request := newCallToolRequest("test_tool", map[string]any{
+			"message": "world",
+		})
 
 		// Execute the tool
 		result, err := tool.Handler(ctx, request)
@@ -481,14 +491,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request that will cause failure
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "failing_tool",
-				Arguments: map[string]interface{}{
-					"shouldFail": true,
-				},
-			},
-		}
+		request := newCallToolRequest("failing_tool", map[string]any{
+			"shouldFail": true,
+		})
 
 		// Execute the tool (should fail)
 		result, err := tool.Handler(ctx, request)
@@ -538,14 +543,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "context_prop_tool",
-				Arguments: map[string]interface{}{
-					"message": "test",
-				},
-			},
-		}
+		request := newCallToolRequest("context_prop_tool", map[string]any{
+			"message": "test",
+		})
 
 		// Execute the tool (should always create spans for context propagation)
 		result, err := tool.Handler(ctx, request)
@@ -584,14 +584,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request with potentially sensitive data
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "sensitive_tool",
-				Arguments: map[string]interface{}{
-					"sensitiveData": "user@example.com",
-				},
-			},
-		}
+		request := newCallToolRequest("sensitive_tool", map[string]any{
+			"sensitiveData": "user@example.com",
+		})
 
 		// Execute the tool (arguments should NOT be logged by default)
 		result, err := tool.Handler(ctx, request)
@@ -640,14 +635,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "debug_tool",
-				Arguments: map[string]interface{}{
-					"safeData": "debug-value",
-				},
-			},
-		}
+		request := newCallToolRequest("debug_tool", map[string]any{
+			"safeData": "debug-value",
+		})
 
 		// Execute the tool (arguments SHOULD be logged when flag enabled)
 		result, err := tool.Handler(ctx, request)
@@ -763,29 +753,26 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 func TestExtractTraceContext(t *testing.T) {
 	t.Run("no meta returns original context", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
 		result := extractTraceContext(ctx, request)
 		assert.Equal(t, ctx, result)
 	})
 
 	t.Run("empty meta returns original context", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
-		request.Params.Meta = &mcp.Meta{}
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
+		request.Params.Meta = mcp.Meta{}
 		result := extractTraceContext(ctx, request)
 		assert.Equal(t, ctx, result)
 	})
 
 	t.Run("valid traceparent extracts span context", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
-		request.Params.Meta = &mcp.Meta{
-			AdditionalFields: map[string]any{
-				"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-			},
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
+		request.Params.Meta = mcp.Meta{
+			"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 		}
 		result := extractTraceContext(ctx, request)
-		// Should have extracted a span context
 		sc := trace.SpanContextFromContext(result)
 		assert.True(t, sc.IsValid())
 		assert.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", sc.TraceID().String())
@@ -794,11 +781,9 @@ func TestExtractTraceContext(t *testing.T) {
 
 	t.Run("invalid traceparent returns context unchanged", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
-		request.Params.Meta = &mcp.Meta{
-			AdditionalFields: map[string]any{
-				"traceparent": "not-a-valid-traceparent",
-			},
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
+		request.Params.Meta = mcp.Meta{
+			"traceparent": "not-a-valid-traceparent",
 		}
 		result := extractTraceContext(ctx, request)
 		sc := trace.SpanContextFromContext(result)

@@ -5,7 +5,6 @@ package tools
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 func intPtr(i int) *int {
@@ -628,15 +627,14 @@ func TestGetPanelImage(t *testing.T) {
 		require.Len(t, result.Content, 2)
 
 		// Check image content
-		imageContent, ok := result.Content[0].(mcp.ImageContent)
+		imageContent, ok := result.Content[0].(*mcp.ImageContent)
 		require.True(t, ok, "first content item should be ImageContent")
 		assert.Equal(t, "image/png", imageContent.MIMEType)
-		decoded, err := base64.StdEncoding.DecodeString(imageContent.Data)
-		require.NoError(t, err)
+		decoded := imageContent.Data
 		assert.Equal(t, testPNGData, decoded)
 
 		// Check deeplink content
-		textContent, ok := result.Content[1].(mcp.TextContent)
+		textContent, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok, "second content item should be TextContent")
 		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
 		assertDeeplinkMeta(t, textContent)
@@ -670,7 +668,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.Content, 2)
 
-		textContent, ok := result.Content[1].(mcp.TextContent)
+		textContent, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, server.URL+"/d/test-dash?viewPanel=5", textContent.Text)
 		assertDeeplinkMeta(t, textContent)
@@ -697,7 +695,7 @@ func TestGetPanelImage(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Content, 2)
 
-			text, ok := result.Content[1].(mcp.TextContent)
+			text, ok := result.Content[1].(*mcp.TextContent)
 			require.True(t, ok)
 			assert.Equal(t,
 				server.URL+"/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
@@ -719,7 +717,7 @@ func TestGetPanelImage(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Content, 2)
 
-			text, ok := result.Content[1].(mcp.TextContent)
+			text, ok := result.Content[1].(*mcp.TextContent)
 			require.True(t, ok)
 			parsed, err := url.Parse(text.Text)
 			require.NoError(t, err)
@@ -753,7 +751,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, publicURL+"/d/test-dash", text.Text)
 		assertDeeplinkMeta(t, text)
@@ -780,7 +778,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -817,7 +815,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -846,7 +844,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -1136,30 +1134,28 @@ func TestGetPanelImageOrgIDOmitDeeplink(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
-	image, ok := result.Content[0].(mcp.ImageContent)
+	image, ok := result.Content[0].(*mcp.ImageContent)
 	require.True(t, ok, "only content item should be ImageContent")
-	decoded, err := base64.StdEncoding.DecodeString(image.Data)
-	require.NoError(t, err)
+	decoded := image.Data
 	assert.Equal(t, testPNGData, decoded)
 }
 
 func TestGetPanelImageToolMeta(t *testing.T) {
 	tool := GetPanelImage.Tool
 	require.NotNil(t, tool.Meta, "get_panel_image should have _meta for MCP Apps")
-	require.NotNil(t, tool.Meta.AdditionalFields)
+	require.NotNil(t, tool.Meta)
 
-	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	ui, ok := tool.Meta["ui"].(map[string]any)
 	require.True(t, ok, "expected _meta.ui to be a map")
 	assert.Equal(t, mcpgrafana.PanelViewerResourceURI, ui["resourceUri"])
 }
 
 // assertDeeplinkMeta checks the `_meta.ui.kind = "deeplink"` marker the
 // panel viewer uses to detect the deeplink content item.
-func assertDeeplinkMeta(t *testing.T, c mcp.TextContent) {
+func assertDeeplinkMeta(t *testing.T, c *mcp.TextContent) {
 	t.Helper()
 	require.NotNil(t, c.Meta)
-	require.NotNil(t, c.Meta.AdditionalFields)
-	ui, ok := c.Meta.AdditionalFields["ui"].(map[string]any)
-	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta.AdditionalFields["ui"])
+	ui, ok := c.Meta["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta["ui"])
 	assert.Equal(t, mcpgrafana.UIContentKindDeeplink, ui["kind"])
 }

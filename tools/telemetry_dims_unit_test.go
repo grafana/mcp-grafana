@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/grafana/mcp-grafana/observability"
+	"github.com/grafana/mcp-grafana/v2/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +24,8 @@ func TestToolMetricDimsMatchToolEnums(t *testing.T) {
 		toolName string
 		params   any
 	}{
-		{"alerting_manage_rules", ManageRulesReadWriteParams{}},
+		{"alerting_rules_read", ManageRulesReadParams{}},
+		{"alerting_rules_write", ManageRulesReadWriteParams{}},
 		{"alerting_manage_routing", ManageRoutingParams{}},
 		{"agento11y_manage_conversations", ManageAgento11yConversationsParams{}},
 		{"agento11y_manage_generations", ManageAgento11yGenerationsParams{}},

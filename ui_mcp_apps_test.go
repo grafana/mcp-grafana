@@ -1,27 +1,23 @@
 package mcpgrafana
 
 import (
-	"context"
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMCPAppResources(t *testing.T) {
-	s := server.NewMCPServer("apps-test", "1", server.WithResourceCapabilities(false, false))
+	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
 	RegisterAppResources(s)
-	c, err := client.NewInProcessClient(s)
+	ctx := t.Context()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() { _ = s.Run(ctx, serverTransport) }()
+	c, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil).Connect(ctx, clientTransport, nil)
 	require.NoError(t, err)
-	ctx := context.Background()
-	require.NoError(t, c.Start(ctx))
 	t.Cleanup(func() { _ = c.Close() })
-	_, err = c.Initialize(ctx, mcp.InitializeRequest{})
-	require.NoError(t, err)
-	resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
+	resources, err := c.ListResources(ctx, nil)
 	require.NoError(t, err)
 	for _, uri := range []string{TraceViewerResourceURI} {
 		t.Run(uri, func(t *testing.T) {
@@ -30,18 +26,14 @@ func TestMCPAppResources(t *testing.T) {
 				if resource.URI == uri {
 					found = true
 					require.Equal(t, appMIMEType, resource.MIMEType)
-					require.NotNil(t, resource.Meta)
-					require.Contains(t, resource.Meta.AdditionalFields, "ui")
+					require.Contains(t, resource.Meta, "ui")
 				}
 			}
 			require.True(t, found)
-			request := mcp.ReadResourceRequest{}
-			request.Params.URI = uri
-			result, err := c.ReadResource(ctx, request)
+			result, err := c.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 			require.NoError(t, err)
 			require.Len(t, result.Contents, 1)
-			content, ok := result.Contents[0].(mcp.TextResourceContents)
-			require.True(t, ok)
+			content := result.Contents[0]
 			require.Equal(t, uri, content.URI)
 			require.Equal(t, appMIMEType, content.MIMEType)
 			require.Contains(t, strings.ToLower(content.Text), "<!doctype html>")

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // createCloudTestContext creates a context with a Grafana URL, Grafana service account token and
 // Grafana client for cloud integration tests.
 // The test will be skipped if required environment variables are not set.
-// testName is used to customize the skip message (e.g. "OnCall", "Sift", "Incident")
+// testName is used to customize the skip message (e.g. "OnCall", "Incident")
 // urlEnv and apiKeyEnv specify the environment variable names for the Grafana URL and API key (deprecated).
 // The function will automatically try the new SERVICE_ACCOUNT_TOKEN pattern first, then fall back to API_KEY.
 func createCloudTestContext(t *testing.T, testName, urlEnv, apiKeyEnv string) context.Context {

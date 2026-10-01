@@ -11,23 +11,23 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/prometheus/model/labels"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, error) {
 	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		return nil, fmt.Errorf("alerting_rules_read: %w", err)
 	}
 
 	switch args.Operation {
 	case "list":
 		opts, err := args.toGetRulesOpts()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_read: %w", err)
 		}
 		selectors, err := args.parseLabelSelectors()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_read: %w", err)
 		}
 		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
 			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
@@ -38,24 +38,24 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 	case "versions":
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	default:
-		return nil, fmt.Errorf("alerting_manage_rules: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("alerting_rules_read: unknown operation %q", args.Operation)
 	}
 }
 
 func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) (any, error) {
 	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		return nil, fmt.Errorf("alerting_rules_write: %w", err)
 	}
 
 	switch args.Operation {
 	case "list":
 		opts, err := args.toGetRulesOpts()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
 		selectors, err := args.parseLabelSelectors()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
 		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
 			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
@@ -68,13 +68,13 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 	case "create":
 		cp, err := args.toCreateParams()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
 		return createAlertRule(ctx, cp)
 	case "update":
 		up, err := args.toUpdateParams()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
 		return updateAlertRule(ctx, up)
 	case "delete":
@@ -82,7 +82,7 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 			UID: args.RuleUID,
 		})
 	default:
-		return nil, fmt.Errorf("alerting_manage_rules: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("alerting_rules_write: unknown operation %q", args.Operation)
 	}
 }
 

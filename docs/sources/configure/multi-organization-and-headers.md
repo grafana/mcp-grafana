@@ -29,7 +29,7 @@ All Grafana API calls use the chosen organization context, and any extra headers
 
 Set **GRAFANA_ORG_ID** to the numeric organization ID. The server sends `X-Grafana-Org-Id` on all requests to Grafana.
 
-When using SSE or streamable-http, you can also send **X-Grafana-Org-Id** from the client; the header takes precedence over the environment variable so you can override the default org per request.
+When using streamable-http, you can also send **X-Grafana-Org-Id** from the client; the header takes precedence over the environment variable so you can override the default org per request.
 
 ## Select an organization per tool call
 

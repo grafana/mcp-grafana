@@ -3,7 +3,6 @@
 package tools
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,9 +12,8 @@ import (
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -62,12 +60,7 @@ func tempoTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 	return ts, ts.Close
 }
 
-func tempoTestContext(t *testing.T, serverURL string) func(mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	t.Helper()
-	return tempoTestContextWithCapabilities(t, serverURL, nil)
-}
-
-func tempoTestContextWithCapabilities(t *testing.T, serverURL string, capabilities *mcp.ClientCapabilities) func(mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func tempoTestContext(t *testing.T, serverURL string) func(*mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	t.Helper()
 
 	u, _ := url.Parse(serverURL)
@@ -82,10 +75,6 @@ func tempoTestContextWithCapabilities(t *testing.T, serverURL string, capabiliti
 		&mcpgrafana.GrafanaClient{GrafanaHTTPAPI: c},
 	)
 
-	if capabilities != nil {
-		ctx = tempoCapabilityContext(t, ctx, *capabilities)
-	}
-
 	tools := map[string]mcpgrafana.Tool{
 		"search_tempo_traces":         SearchTempoTracesTool,
 		"query_tempo_metrics":         QueryTempoMetricsTool,
@@ -96,7 +85,7 @@ func tempoTestContextWithCapabilities(t *testing.T, serverURL string, capabiliti
 		"get_tempo_traceql_docs":      GetTempoTraceQLDocsTool,
 	}
 
-	return func(req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		tool, ok := tools[req.Params.Name]
 		if !ok {
 			return nil, fmt.Errorf("unknown tool: %s", req.Params.Name)
@@ -105,11 +94,12 @@ func tempoTestContextWithCapabilities(t *testing.T, serverURL string, capabiliti
 	}
 }
 
-func makeTempoRequest(toolName string, args map[string]any) mcp.CallToolRequest {
-	return mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
+func makeTempoRequest(toolName string, args map[string]any) *mcp.CallToolRequest {
+	argsJSON, _ := json.Marshal(args)
+	return &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
 			Name:      toolName,
-			Arguments: args,
+			Arguments: argsJSON,
 		},
 	}
 }
@@ -139,7 +129,7 @@ func TestTempoSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "abc123")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "abc123")
 
 	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/search", capturedPath)
 	assert.Equal(t, `{ span.http.status_code >= 500 }`, capturedQuery.Get("q"))
@@ -308,7 +298,7 @@ func TestTempoMetricsInvalidType(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "invalid type")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "invalid type")
 }
 
 func TestTempoGetTrace(t *testing.T) {
@@ -467,11 +457,11 @@ func TestTempoGetAttributeNames_SummarizesLargeUnscopedResponse(t *testing.T) {
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
 
-	text := result.Content[0].(mcp.TextContent).Text
+	text := result.Content[0].(*mcp.TextContent).Text
 	assert.Contains(t, text, "resource: 2000 attributes")
 	assert.Contains(t, text, "span: 1 attributes")
 	assert.Contains(t, text, "scope parameter")
-	assert.Equal(t, "attribute-names-summary", result.Meta.AdditionalFields["type"])
+	assert.Equal(t, "attribute-names-summary", result.Meta["type"])
 }
 
 func TestTempoGetAttributeNames_NoSummaryWhenScoped(t *testing.T) {
@@ -498,7 +488,7 @@ func TestTempoGetAttributeNames_NoSummaryWhenScoped(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
-	assert.Equal(t, "attribute-names", result.Meta.AdditionalFields["type"])
+	assert.Equal(t, "attribute-names", result.Meta["type"])
 }
 
 func TestTempoGetAttributeValues(t *testing.T) {
@@ -545,7 +535,7 @@ func TestTempoGetAttributeValues_RejectsORFilter(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "OR conditions")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "OR conditions")
 	assert.False(t, called, "an OR filter must be rejected before any request to Tempo")
 }
 
@@ -565,7 +555,7 @@ func TestTempoSearch_Non200Response(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "400")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "400")
 }
 
 func TestTempoSearch_MissingDatasourceUid(t *testing.T) {
@@ -587,8 +577,30 @@ func TestTempoSearch_MissingDatasourceUid(t *testing.T) {
 func TestTempoToolResult_HasMeta(t *testing.T) {
 	result := tempoToolResult("test body", "search-results", "json")
 	require.NotNil(t, result.Meta)
-	assert.Equal(t, "search-results", result.Meta.AdditionalFields["type"])
-	assert.Equal(t, "json", result.Meta.AdditionalFields["encoding"])
+	assert.Equal(t, "search-results", result.Meta["type"])
+	assert.Equal(t, "json", result.Meta["encoding"])
+}
+
+func listTempoTools(t *testing.T, enableQuery bool) map[string]bool {
+	t.Helper()
+	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1.0"}, nil)
+	AddTempoTools(s, enableQuery)
+
+	ctx := t.Context()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() { _ = s.Run(ctx, serverTransport) }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	result, err := session.ListTools(ctx, nil)
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, tool := range result.Tools {
+		names[tool.Name] = true
+	}
+	return names
 }
 
 func TestTempoFilterHasOR(t *testing.T) {
@@ -630,9 +642,6 @@ func TestTempoGetAttributeValues_AllowsORInsideQuotes(t *testing.T) {
 }
 
 func TestAddTempoTools_RegistersAllTools(t *testing.T) {
-	s := server.NewMCPServer("test", "0.1.0")
-	AddTempoTools(s, true)
-
 	expectedTools := []string{
 		"search_tempo_traces",
 		"query_tempo_metrics",
@@ -643,19 +652,15 @@ func TestAddTempoTools_RegistersAllTools(t *testing.T) {
 		"get_tempo_traceql_docs",
 	}
 
-	tools := s.ListTools()
+	tools := listTempoTools(t, true)
 	for _, name := range expectedTools {
-		_, ok := tools[name]
-		assert.True(t, ok, "expected tool %q to be registered", name)
+		assert.True(t, tools[name], "expected tool %q to be registered", name)
 	}
 	assert.Len(t, tools, len(expectedTools))
 }
 
 func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
-	s := server.NewMCPServer("test", "0.1.0")
-	AddTempoTools(s, false)
-
-	tools := s.ListTools()
+	tools := listTempoTools(t, false)
 	for name := range tools {
 		assert.False(t, strings.HasPrefix(name, "search_tempo") || strings.HasPrefix(name, "query_tempo") ||
 			strings.HasPrefix(name, "get_tempo") || strings.HasPrefix(name, "diff_tempo") ||
@@ -727,7 +732,7 @@ func TestTempoSearch_499Timeout(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "timed out")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "timed out")
 }
 
 func TestTempoTraceQLDocs(t *testing.T) {
@@ -737,10 +742,10 @@ func TestTempoTraceQLDocs(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			assert.False(t, result.IsError)
-			text := result.Content[0].(mcp.TextContent).Text
+			text := result.Content[0].(*mcp.TextContent).Text
 			assert.Contains(t, text, "TraceQL")
-			assert.Equal(t, "traceql-docs", result.Meta.AdditionalFields["type"])
-			assert.Equal(t, "markdown", result.Meta.AdditionalFields["encoding"])
+			assert.Equal(t, "traceql-docs", result.Meta["type"])
+			assert.Equal(t, "markdown", result.Meta["encoding"])
 		})
 	}
 }
@@ -749,7 +754,7 @@ func TestTempoTraceQLDocsInvalidTopic(t *testing.T) {
 	result, err := getTempoTraceQLDocs(t.Context(), GetTempoTraceQLDocsParams{Topic: "nonsense"})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "invalid topic")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "invalid topic")
 }
 
 func TestAnnotateTraceQLParseError(t *testing.T) {
@@ -791,7 +796,7 @@ func TestQueryTempoMetricsAnnotatesParseErrors(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, result.IsError)
-	text := result.Content[0].(mcp.TextContent).Text
+	text := result.Content[0].(*mcp.TextContent).Text
 	assert.Contains(t, text, "unexpected rate")
 	assert.Contains(t, text, "quantile_over_time(span:duration, .99)")
 }
@@ -811,15 +816,15 @@ func TestTempoGetTraceInteractiveOTLP(t *testing.T) {
 	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
-	assert.Equal(t, "trace", result.Meta.AdditionalFields["type"])
-	assert.Equal(t, "json", result.Meta.AdditionalFields["encoding"])
+	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
+	assert.Equal(t, "trace", result.Meta["type"])
+	assert.Equal(t, "json", result.Meta["encoding"])
 	assert.Equal(t, 1, requests)
 	require.NotNil(t, result.StructuredContent, "get_tempo_trace should enrich its existing fetched body")
 	structured := result.StructuredContent.(TraceViewResult)
 	assert.Len(t, structured.Spans, 2)
 	require.NotNil(t, GetTempoTraceTool.Tool.Meta)
-	ui := GetTempoTraceTool.Tool.Meta.AdditionalFields["ui"].(map[string]any)
+	ui := GetTempoTraceTool.Tool.Meta["ui"].(map[string]any)
 	assert.Equal(t, mcpgrafana.TraceViewerResourceURI, ui["resourceUri"])
 }
 
@@ -830,7 +835,7 @@ func TestTempoGetTraceInteractiveLLM(t *testing.T) {
 	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc123", "focus_span_id": "AAAAAAAAAAAAAAAA"}))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 	require.NotNil(t, result.StructuredContent)
 	structured := result.StructuredContent.(TraceViewResult)
 	assert.Equal(t, "abc123", structured.TraceID)
@@ -862,9 +867,9 @@ func TestTempoGetTraceFallbackPreservesRawOutput(t *testing.T) {
 			result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "existing-nonstandard-id"}))
 			require.NoError(t, err)
 			require.False(t, result.IsError)
-			assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+			assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 			assert.Nil(t, result.StructuredContent)
-			assert.Equal(t, "trace", result.Meta.AdditionalFields["type"])
+			assert.Equal(t, "trace", result.Meta["type"])
 		})
 	}
 }
@@ -875,7 +880,7 @@ func TestTempoGetTraceFocusValidation(t *testing.T) {
 	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc", "focus_span_id": "bad"}))
 	require.NoError(t, err)
 	require.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "focus_span_id must be 16 hexadecimal characters")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "focus_span_id must be 16 hexadecimal characters")
 }
 
 func TestTempoGetTraceEnrichmentLimitsPreserveRawOutput(t *testing.T) {
@@ -897,7 +902,7 @@ func TestTempoGetTraceEnrichmentLimitsPreserveRawOutput(t *testing.T) {
 			result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "nonstandard"}))
 			require.NoError(t, err)
 			require.False(t, result.IsError)
-			assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+			assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 			assert.Nil(t, result.StructuredContent)
 			assert.Equal(t, 1, requests)
 		})
@@ -912,7 +917,7 @@ func TestTempoGetTraceRetainsResponseCap(t *testing.T) {
 	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"}))
 	require.NoError(t, err)
 	require.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "exceeds")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "exceeds")
 }
 
 func TestTempoGetTraceLLMUnsupportedFieldsPreserveRawOutput(t *testing.T) {
@@ -930,7 +935,7 @@ func TestTempoGetTraceLLMUnsupportedFieldsPreserveRawOutput(t *testing.T) {
 		cleanup()
 		require.NoError(t, err)
 		require.False(t, result.IsError)
-		assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+		assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 		assert.Nil(t, result.StructuredContent)
 	}
 }
@@ -946,7 +951,7 @@ func TestTempoGetTracePartialSupportedTracePreservesRawOutput(t *testing.T) {
 		cleanup()
 		require.NoError(t, err)
 		require.False(t, result.IsError)
-		assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+		assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 		assert.Nil(t, result.StructuredContent)
 	}
 }
@@ -955,55 +960,21 @@ func TestTempoGetTraceEnrichmentIsAdditiveWithoutApps(t *testing.T) {
 	traceJSON, err := protojson.Marshal(testTraceData("stack"))
 	require.NoError(t, err)
 	body := `{"trace":` + string(traceJSON) + `}`
-	for _, tc := range []struct {
-		name         string
-		capabilities *mcp.ClientCapabilities
-	}{
-		{"missing session", nil},
-		{"missing capability", &mcp.ClientCapabilities{}},
-		{"wrong MIME", &mcp.ClientCapabilities{Extensions: map[string]any{"io.modelcontextprotocol/ui": map[string]any{"mimeTypes": []any{"text/html"}}}}},
-		{"missing MIME", &mcp.ClientCapabilities{Extensions: map[string]any{"io.modelcontextprotocol/ui": map[string]any{}}}},
-		{"unrelated experimental", &mcp.ClientCapabilities{Experimental: map[string]any{"apps": true}}},
-		{"experimental UI", &mcp.ClientCapabilities{Experimental: map[string]any{"io.modelcontextprotocol/ui": map[string]any{"mimeTypes": []any{"text/html;profile=mcp-app"}}}}},
-		{"malformed MIME", &mcp.ClientCapabilities{Extensions: map[string]any{"io.modelcontextprotocol/ui": map[string]any{"mimeTypes": "text/html;profile=mcp-app"}}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requests := 0
-			ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-				requests++
-				assert.Equal(t, tempoAcceptLLM, r.Header.Get("Accept"))
-				_, _ = w.Write([]byte(body))
-			})
-			defer cleanup()
-			result, err := tempoTestContextWithCapabilities(t, ts.URL, tc.capabilities)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"}))
-			require.NoError(t, err)
-			raw := tempoToolResult(body, "trace", "json")
-			assert.Equal(t, raw.Content, result.Content)
-			assert.Equal(t, raw.Meta, result.Meta)
-			require.NotNil(t, result.StructuredContent)
-			assert.Len(t, result.StructuredContent.(TraceViewResult).Spans, 2)
-			assert.Equal(t, 1, requests)
-		})
-	}
-}
-
-func tempoTestUICapabilities() *mcp.ClientCapabilities {
-	return &mcp.ClientCapabilities{Extensions: map[string]any{"io.modelcontextprotocol/ui": map[string]any{"mimeTypes": []any{"text/html;profile=mcp-app"}}}}
-}
-
-func tempoCapabilityContext(t *testing.T, ctx context.Context, capabilities mcp.ClientCapabilities) context.Context {
-	t.Helper()
-	session := server.NewInProcessSession("tempo-test", nil)
-	s := server.NewMCPServer("tempo-test", "1")
-	ctx = s.WithContext(ctx, session)
-	message, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0", "id": 1, "method": "initialize",
-		"params": map[string]any{"protocolVersion": mcp.LATEST_PROTOCOL_VERSION, "capabilities": capabilities, "clientInfo": map[string]string{"name": "tempo-test", "version": "1"}},
+	requests := 0
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assert.Equal(t, tempoAcceptLLM, r.Header.Get("Accept"))
+		_, _ = w.Write([]byte(body))
 	})
+	defer cleanup()
+	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"}))
 	require.NoError(t, err)
-	s.HandleMessage(ctx, message)
-	require.True(t, session.Initialized())
-	return ctx
+	raw := tempoToolResult(body, "trace", "json")
+	assert.Equal(t, raw.Content, result.Content)
+	assert.Equal(t, raw.Meta, result.Meta)
+	require.NotNil(t, result.StructuredContent)
+	assert.Len(t, result.StructuredContent.(TraceViewResult).Spans, 2)
+	assert.Equal(t, 1, requests)
 }
 
 func TestTempoGetTraceStructuredContentWireBoundary(t *testing.T) {
@@ -1032,7 +1003,7 @@ func TestTempoGetTraceStructuredContentWireBoundary(t *testing.T) {
 			result, err := call(request)
 			require.NoError(t, err)
 			require.False(t, result.IsError)
-			assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+			assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 			assert.Equal(t, tempoToolResult(body, "trace", "json").Meta, result.Meta)
 			if tc.available {
 				require.NotNil(t, result.StructuredContent)
@@ -1068,7 +1039,7 @@ func TestTempoGetTraceIgnoresAdditiveOTLPFields(t *testing.T) {
 	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 	assert.Equal(t, tempoToolResult(body, "trace", "json").Meta, result.Meta)
 	assert.Equal(t, 1, requests)
 	require.NotNil(t, result.StructuredContent, "unknown additive fields must not hide the supported OTLP spans")
@@ -1087,6 +1058,6 @@ func TestTempoGetTraceInvalidKnownOTLPFieldPreservesRawOutput(t *testing.T) {
 	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
+	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
 	assert.Nil(t, result.StructuredContent)
 }

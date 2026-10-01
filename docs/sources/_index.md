@@ -17,7 +17,7 @@ aliases:
 
 This documentation helps you install and run the open source [Grafana MCP server](https://github.com/grafana/mcp-grafana), connect MCP-compatible clients, and configure authentication, transports, and tools.
 
-The Grafana MCP server is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro) server that gives AI assistants and LLM clients access to your Grafana instance. You can query metrics and logs, search and manage dashboards, manage alert rules, work with Grafana Incident and Sift, and generate deeplinks to Grafana resources.
+The Grafana MCP server is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/docs/getting-started/intro) server that gives AI assistants and LLM clients access to your Grafana instance. You can query metrics and logs, search and manage dashboards, manage alert rules, work with Grafana Incident, and generate deeplinks to Grafana resources.
 
 ## Choose the right Grafana MCP option
 
