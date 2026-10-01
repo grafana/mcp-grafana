@@ -1,0 +1,145 @@
+import { cache } from '@emotion/css';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { McpAppSection, McpAppShell } from '../src';
+import { GlobalCSSVariables } from '../src/design';
+
+afterEach(cleanup);
+
+const summary = { label: 'Summary of proposal', title: 'Review checkout latency', description: 'Keep useful context.' };
+
+describe('McpAppShell', () => {
+  it('emits default mode tokens for standalone sections without a mode ancestor', () => {
+    const { container } = render(<GlobalCSSVariables defaultColorMode="light" variables={{ light: { 'mcp-test': 'red' }, dark: { 'mcp-test': 'blue' } }} />);
+    expect(container.querySelector('style')?.textContent).toContain(':root { --mcp-test: red; }');
+  });
+
+  it.each(['success', 'info'] as const)('announces only the %s message, excluding its action', (tone) => {
+    render(
+      <McpAppShell
+        colorMode="light"
+        product="Grafana"
+        summary={summary}
+        feedback={{ tone, message: 'Proposal saved.', action: { label: 'View proposal', onClick: vi.fn() } }}
+      />
+    );
+    expect(screen.getByRole('status').textContent).toBe('Proposal saved.');
+    expect(screen.getByRole('status').contains(screen.getByRole('button', { name: 'View proposal' }))).toBe(false);
+  });
+
+  it('does not invent controls when the app has not supplied actions', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} />);
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('Keep useful context.')).toBeTruthy();
+  });
+
+  it('supports independent app roots and live mode changes without mutating the host document', () => {
+    document.documentElement.setAttribute('data-color-mode', 'light');
+    const { rerender } = render(<McpAppShell colorMode="dark" product="Grafana" summary={summary} />);
+    expect(screen.getByRole('article').getAttribute('data-color-mode')).toBe('dark');
+    expect(document.documentElement.getAttribute('data-color-mode')).toBe('light');
+    rerender(<McpAppShell colorMode="light" product="Grafana" summary={summary} />);
+    expect(screen.getByRole('article').getAttribute('data-color-mode')).toBe('light');
+    document.documentElement.removeAttribute('data-color-mode');
+  });
+
+  it('uses an ancestor container for compact padding queries', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} density="compact" />);
+    const article = screen.getByRole('article');
+    const ancestor = article.parentElement;
+    expect(ancestor).not.toBeNull();
+    const rules = cache.sheet.tags.flatMap((tag) => Array.from(tag.sheet?.cssRules ?? [], (rule) => rule.cssText));
+    expect(rules.some((rule) => rule.includes(`.${ancestor?.className} {`) && rule.includes('container-type: inline-size;'))).toBe(true);
+    expect(rules.some((rule) => rule.includes('@container (max-width: 480px)') && rule.includes('padding: 12px;'))).toBe(true);
+  });
+
+  it('supports keyboard actions and prevents submission while pending', async () => {
+    const onClick = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <McpAppShell colorMode="light" product="Grafana" summary={summary} primaryAction={{ label: 'Apply', onClick }} />
+    );
+    await user.tab();
+    await user.keyboard('{Enter}');
+    expect(onClick).toHaveBeenCalledTimes(1);
+    rerender(
+      <McpAppShell
+        colorMode="light"
+        product="Grafana"
+        summary={summary}
+        primaryAction={{ label: 'Apply', onClick, pending: true }}
+      />
+    );
+    const button = screen.getByRole('button', { name: /Apply/ });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(button);
+    fireEvent.click(button);
+    await user.keyboard('{Enter}');
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps explicitly disabled actions natively disabled', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} primaryAction={{ label: 'Apply', onClick: vi.fn(), disabled: true }} />);
+    expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', '  JaVaScRiPt:alert(1)'])('rejects unsafe navigation %s', (href) => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} openInGrafana={{ href }} />);
+    expect(screen.queryByRole('link', { name: /Open in Grafana/ })).toBeNull();
+  });
+
+  it('accepts a relative Grafana navigation link', () => {
+    render(<McpAppShell colorMode="light" product="Grafana" summary={summary} openInGrafana={{ href: '/d/checkout' }} />);
+    expect(screen.getByRole('link', { name: /Open in Grafana/ }).getAttribute('href')).toBe('/d/checkout');
+  });
+
+  it('lets the host intercept navigation while preserving a real link', () => {
+    const onClick = vi.fn((event) => event.preventDefault());
+    render(
+      <McpAppShell
+        colorMode="light"
+        product="Grafana"
+        summary={summary}
+        openInGrafana={{ href: 'https://example.grafana.net/d/checkout', onClick }}
+      />
+    );
+    const link = screen.getByRole('link', { name: /Open in Grafana/ });
+    expect(link.getAttribute('href')).toBe('https://example.grafana.net/d/checkout');
+    fireEvent.click(link);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves interactive content and offers recovery alongside an announced error', async () => {
+    const retry = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <McpAppShell
+        colorMode="light"
+        product="Grafana"
+        summary={summary}
+        feedback={{
+          tone: 'error',
+          message: 'Could not save the proposal.',
+          action: { label: 'Try again', onClick: retry },
+        }}
+      >
+        <McpAppSection title="Threshold" result="Current threshold: 500 ms">
+          <label>
+            Threshold <input defaultValue="500" />
+          </label>
+        </McpAppSection>
+      </McpAppShell>
+    );
+    expect(screen.getByRole('alert').textContent).toBe('Could not save the proposal.');
+    expect(screen.getByRole('alert').contains(screen.getByRole('button', { name: 'Try again' }))).toBe(false);
+    expect((screen.getByRole('textbox', { name: 'Threshold' }) as HTMLInputElement).value).toBe('500');
+    await user.tab();
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Try again' }));
+    await user.keyboard('{Enter}');
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+});

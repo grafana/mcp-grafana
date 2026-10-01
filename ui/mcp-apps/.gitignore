@@ -1,0 +1,5 @@
+/node_modules/
+/dist/*
+!/dist/trace.html
+!/dist/service-health.html
+/dist-preview/

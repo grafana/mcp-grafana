@@ -39,6 +39,7 @@ func NewUIContentMeta(kind string) mcp.Meta {
 
 // RegisterAppResources registers MCP App UI resources with the server.
 func RegisterAppResources(s *mcp.Server) {
+	RegisterTraceAppResource(s)
 	s.AddResource(
 		&mcp.Resource{
 			URI:         PanelViewerResourceURI,

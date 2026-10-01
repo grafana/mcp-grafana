@@ -404,6 +404,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
+The `get_tempo_trace` tool displays an interactive trace viewer in compatible MCP hosts whenever Tempo query tools are enabled. Its existing text output remains available. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
+
 ## CLI Flags Reference
 
 The `mcp-grafana` binary supports various command-line flags for configuration:
