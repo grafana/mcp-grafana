@@ -19,14 +19,14 @@ export function TraceApplication({ app }: { app: App }) {
       if (response.isError) {
         setResult(undefined);
         setCopied(false);
-        setError('Could not load the trace. Check the trace ID and datasource access, then run render_trace again.');
+        setError('Could not load the trace. Check the trace ID and datasource access, then run get_tempo_trace again.');
         return;
       }
       const value = parseTraceResult(response.structuredContent);
       if (!value) {
         setResult(undefined);
         setCopied(false);
-        setError('The server returned an unsupported trace response.');
+        setError('Interactive view unavailable; trace data remains available in the tool output.');
         return;
       }
       setResult(value);

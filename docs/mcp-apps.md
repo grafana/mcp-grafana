@@ -1,22 +1,19 @@
 # MCP Apps
 
-MCP Apps render interactive views inside compatible MCP hosts. The `mcp-apps`
-category is opt-in:
+MCP Apps render interactive views inside compatible MCP hosts. The trace viewer is attached to `get_tempo_trace` and is available whenever Tempo query tools are enabled:
 
 ```sh
-mcp-grafana --enabled-tools=mcp-apps
+mcp-grafana --enabled-tools=tempo
 ```
 
-Add other categories to the comma-separated list as needed. `--disable-query`
-or `--disable-mcp-apps` removes these tools; `--disable-write` keeps them because
-they only read data.
+Add other categories to the comma-separated list as needed. `--disable-query` or `--disable-tempo` removes the trace tool; `--disable-write` keeps it because it only reads data.
 
 ## Tools
 
-- `render_trace(trace_id, datasource_uid, focus_span_id?)` displays a Tempo trace
-  with a virtualized waterfall, span filtering, attributes and exception details.
-  The datasource must be Tempo. Oversized responses fail explicitly instead of
-  silently dropping spans.
+- `get_tempo_trace(trace_id, datasourceUid, focus_span_id?)` retrieves a Tempo trace and displays a virtualized waterfall, span filtering, attributes and exception details. The optional focus span selects an initial span without filtering the trace. The datasource must be Tempo.
+
+The tool preserves its existing text output and adds viewer data when the response can be converted. Tempo’s LLM response format can change, so viewer conversion is best effort. Unsupported or partial responses retain their text output without an interactive view. Existing response-size limits still apply; viewer limits omit the interactive view instead of truncating spans. Hosts without MCP Apps support receive the normal tool output.
+
 Tools use the configured Grafana connection and caller identity. Credentials
 stay on the server. Apps are self-contained HTML with no external connection or
 resource domains; trace sharing requests host-controlled clipboard permission.
@@ -34,12 +31,10 @@ import (
 // s is an existing *server.MCPServer. Its request context must provide the
 // normal mcp-grafana configuration and Grafana client.
 mcpgrafana.RegisterAppResources(s)
-tools.AddMCPAppTools(s, enableQueryTools)
+tools.AddTempoTools(s, enableQueryTools)
 ```
 
-For selective registration, use `tools.AddTraceAppTools` and
-`RegisterTraceAppResource`. Its resource URI is exported as
-`TraceViewerResourceURI`.
+For selective UI resource registration, use `RegisterTraceAppResource`. The existing `GetTempoTraceTool` links to the exported `TraceViewerResourceURI`.
 
 The module embeds the built HTML, so Go consumers need no Node toolchain to serve
 these apps. Do not copy the bundles into the embedding server: update the Go

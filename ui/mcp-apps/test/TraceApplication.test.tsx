@@ -32,6 +32,22 @@ function host() {
   return app;
 }
 describe('trace host bridge', () => {
+  it('explains that raw trace data remains available without structured content', async () => {
+    const app = host();
+    vi.mocked(app.connect).mockImplementation(async () => {
+      await app.ontoolresult?.({ content: [{ type: 'text', text: '{"unknown":"schema"}' }] });
+    });
+    render(<TraceApplication app={app} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('Interactive view unavailable; trace data remains available in the tool output.');
+  });
+  it('names get_tempo_trace in its retry instruction', async () => {
+    const app = host();
+    vi.mocked(app.connect).mockImplementation(async () => {
+      await app.ontoolresult?.({ content: [], isError: true });
+    });
+    render(<TraceApplication app={app} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('run get_tempo_trace again');
+  });
   it('registers result handlers before connecting and reacts to host themes', async () => {
     const app = host();
     vi.mocked(app.connect).mockImplementation(async () => {

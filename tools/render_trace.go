@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -21,24 +19,12 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 const (
-	maxTraceIDLength      = 32
-	maxDatasourceUIDSize  = 256
-	maxTraceSpans         = 100_000
-	maxTraceResponseBytes = 64 << 20
-	maxTraceResultBytes   = 32 << 20
+	maxTraceSpans       = 100_000
+	maxTraceResultBytes = 32 << 20
 )
-
-// RenderTraceParams identifies the Tempo trace to fetch and the span the app
-// should select initially. The trace remains complete when focus_span_id is set.
-type RenderTraceParams struct {
-	TraceID       string  `json:"trace_id" jsonschema:"required,description=Tempo trace ID as 16 or 32 hexadecimal characters."`
-	DatasourceUID string  `json:"datasource_uid" jsonschema:"required,description=UID of the Tempo datasource that contains the trace."`
-	FocusSpanID   *string `json:"focus_span_id,omitempty" jsonschema:"description=Optional 16-character hexadecimal span ID to select initially. The full trace is still returned."`
-}
 
 // RenderTraceResult is the structured content consumed by the trace MCP App.
 type RenderTraceResult struct {
@@ -70,96 +56,23 @@ type TraceEvent struct {
 	Attributes map[string]any `json:"attributes"`
 }
 
-// RenderTraceTool loads a complete Tempo trace for the interactive trace viewer.
-var RenderTraceTool = mcpgrafana.MustTool(
-	"render_trace",
-	"Fetch a Tempo trace by ID and display it as an interactive span waterfall. Use focus_span_id to open a specific span while preserving the complete trace.",
-	renderTrace,
-	mcp.WithTitleAnnotation("Display trace"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcpgrafana.WithUIResource(mcpgrafana.TraceViewerResourceURI),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
-)
-
-// AddTraceAppTools registers the trace viewer tool when datasource queries are enabled.
-func AddTraceAppTools(s *server.MCPServer, enableQueryTools bool) {
-	if enableQueryTools {
-		RenderTraceTool.Register(s)
+// enrichTempoTrace adds an interactive view without changing the raw tool result.
+func enrichTempoTrace(ctx context.Context, args GetTempoTraceParams, body string, raw *mcp.CallToolResult) {
+	spans, err := decodeDisplayTrace(body)
+	if err != nil {
+		return
 	}
-}
-
-func renderTrace(ctx context.Context, args RenderTraceParams) (*mcp.CallToolResult, error) {
-	if err := validateRenderTraceParams(args); err != nil {
-		return nil, err
-	}
-	args.TraceID = strings.ToLower(args.TraceID)
-	if args.FocusSpanID != nil {
-		focusSpanID := strings.ToLower(*args.FocusSpanID)
-		args.FocusSpanID = &focusSpanID
-	}
-
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
-	if strings.TrimSpace(config.URL) == "" {
-		return nil, fmt.Errorf("grafana URL is not available in the authenticated request context")
-	}
-	if _, err := tempoProxyURL(config.URL, args.DatasourceUID); err != nil {
-		return nil, err
-	}
-	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
-	if err != nil {
-		return nil, err
-	}
-	trace, err := fetchTrace(ctx, backend, args.TraceID)
-	if err != nil {
-		return nil, fmt.Errorf("fetch trace %q from Tempo datasource %q: %w", args.TraceID, args.DatasourceUID, err)
-	}
-
-	spans, err := normalizeTrace(trace)
-	if err != nil {
-		return nil, err
-	}
 	grafanaURL := ""
 	if deeplinkResolvesInRenderOrg(ctx, config.OrgID) {
 		if publicURL, urlErr := grafanaBaseURLFromContext(ctx); urlErr == nil {
-			// A link is optional; an invalid public URL must not hide the fetched trace.
 			grafanaURL, _ = traceExploreURL(publicURL, mcpgrafana.GrafanaVersion(ctx), args, spans)
 		}
 	}
-	result := RenderTraceResult{
-		TraceID:       args.TraceID,
-		DatasourceUID: args.DatasourceUID,
-		FocusSpanID:   args.FocusSpanID,
-		GrafanaURL:    grafanaURL,
-		Spans:         spans,
+	result := RenderTraceResult{TraceID: args.TraceID, DatasourceUID: args.DatasourceUID, FocusSpanID: args.FocusSpanID, GrafanaURL: grafanaURL, Spans: spans}
+	if validateTraceResultSize(result) == nil {
+		raw.StructuredContent = result
 	}
-	if err := validateTraceResultSize(result); err != nil {
-		return nil, err
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf(
-			"Loaded trace %s from datasource %s with %d spans.",
-			args.TraceID,
-			args.DatasourceUID,
-			len(spans),
-		))},
-		StructuredContent: result,
-	}, nil
-}
-
-func validateRenderTraceParams(args RenderTraceParams) error {
-	if !isHexID(args.TraceID, 16, maxTraceIDLength) {
-		return fmt.Errorf("trace_id must be 16 or 32 hexadecimal characters")
-	}
-	if err := validateDatasourceUID(args.DatasourceUID); err != nil {
-		return err
-	}
-	if args.FocusSpanID != nil && !isHexID(*args.FocusSpanID, 16, 16) {
-		return fmt.Errorf("focus_span_id must be 16 hexadecimal characters")
-	}
-	return nil
 }
 
 func isHexID(value string, lengths ...int) bool {
@@ -179,71 +92,6 @@ func isHexID(value string, lengths ...int) bool {
 		}
 	}
 	return true
-}
-
-func validateDatasourceUID(uid string) error {
-	if uid == "" {
-		return fmt.Errorf("datasource_uid is required")
-	}
-	if len(uid) > maxDatasourceUIDSize {
-		return fmt.Errorf("datasource_uid must be at most %d bytes", maxDatasourceUIDSize)
-	}
-	if uid == "." || uid == ".." || strings.ContainsAny(uid, "/\\?#") {
-		return fmt.Errorf("datasource_uid contains invalid path characters")
-	}
-	for _, r := range uid {
-		if unicode.IsControl(r) || unicode.IsSpace(r) {
-			return fmt.Errorf("datasource_uid must not contain whitespace or control characters")
-		}
-	}
-	return nil
-}
-
-func tempoProxyURL(grafanaURL, datasourceUID string) (string, error) {
-	u, err := url.Parse(grafanaURL)
-	if err != nil {
-		return "", fmt.Errorf("parse Grafana URL: %w", err)
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("grafana URL must be an absolute HTTP or HTTPS URL")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("grafana URL must use HTTP or HTTPS")
-	}
-	u.Path = path.Join(u.Path, "api", "datasources", "proxy", "uid", datasourceUID)
-	u.RawPath = ""
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String(), nil
-}
-
-func fetchTrace(ctx context.Context, backend *tempoBackend, traceID string) (*tracepb.TracesData, error) {
-	u, err := url.Parse(backend.baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse Tempo proxy URL: %w", err)
-	}
-	u.Path = path.Join(u.Path, "api", "v2", "traces", traceID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create Tempo request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := backend.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("execute Tempo request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("trace not found")
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, fmt.Errorf("tempo request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return decodeTraceResponse(resp.Body, maxTraceResponseBytes)
 }
 
 func decodeTraceResponse(reader io.Reader, maxBytes int64) (*tracepb.TracesData, error) {
@@ -301,6 +149,7 @@ func normalizeTrace(trace *tracepb.TracesData) ([]TraceSpan, error) {
 	}
 
 	spans := make([]TraceSpan, 0, spanCount)
+	size := 0
 	for _, resourceSpans := range trace.ResourceSpans {
 		if resourceSpans == nil {
 			continue
@@ -318,6 +167,9 @@ func normalizeTrace(trace *tracepb.TracesData) ([]TraceSpan, error) {
 			for _, span := range scopeSpans.Spans {
 				if span == nil {
 					continue
+				}
+				if len(span.SpanId) != 8 || (len(span.ParentSpanId) != 0 && len(span.ParentSpanId) != 8) {
+					return nil, fmt.Errorf("invalid OTLP span ID")
 				}
 				attributes := make(map[string]any, len(resourceAttributes)+len(span.Attributes)+2)
 				for key, value := range resourceAttributes {
@@ -347,7 +199,7 @@ func normalizeTrace(trace *tracepb.TracesData) ([]TraceSpan, error) {
 					durationNanos = 0
 				}
 
-				spans = append(spans, TraceSpan{
+				normalized := TraceSpan{
 					ID:          fmt.Sprintf("%x", span.SpanId),
 					ParentID:    parentID,
 					Name:        span.Name,
@@ -357,7 +209,11 @@ func normalizeTrace(trace *tracepb.TracesData) ([]TraceSpan, error) {
 					Status:      status,
 					Attributes:  attributes,
 					Events:      events,
-				})
+				}
+				if err := addTraceSpanSize(&size, normalized); err != nil {
+					return nil, err
+				}
+				spans = append(spans, normalized)
 			}
 		}
 	}
@@ -462,22 +318,45 @@ func attributeString(attributes map[string]any, key string) string {
 	return result
 }
 
-func validateTraceResultSize(result RenderTraceResult) error {
-	encoded, err := json.Marshal(result)
+func addTraceSpanSize(size *int, span TraceSpan) error {
+	encoded, err := json.Marshal(span)
 	if err != nil {
-		return fmt.Errorf("encode trace result: %w", err)
+		return fmt.Errorf("encode trace span: %w", err)
 	}
-	if len(encoded) > maxTraceResultBytes {
-		return fmt.Errorf(
-			"trace result is %d bytes, exceeding the supported limit of %d bytes; no span or exception data was truncated",
-			len(encoded),
-			maxTraceResultBytes,
-		)
+	*size += len(encoded) + 1
+	if *size > maxTraceResultBytes {
+		return fmt.Errorf("trace exceeds structured-content limit")
 	}
 	return nil
 }
 
-func traceExploreURL(grafanaURL, grafanaVersion string, args RenderTraceParams, spans []TraceSpan) (string, error) {
+func validateTraceResultSize(result RenderTraceResult) error {
+	// Measure each span separately so repeated resource attributes cannot create
+	// an unbounded allocation while checking the structured-content limit.
+	spans := result.Spans
+	result.Spans = []TraceSpan{}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("encode trace result: %w", err)
+	}
+	size := len(encoded)
+	for i, span := range spans {
+		encoded, err = json.Marshal(span)
+		if err != nil {
+			return fmt.Errorf("encode trace span: %w", err)
+		}
+		size += len(encoded)
+		if i > 0 {
+			size++
+		}
+		if size > maxTraceResultBytes {
+			return fmt.Errorf("trace result exceeds the supported limit of %d bytes; no span or exception data was truncated", maxTraceResultBytes)
+		}
+	}
+	return nil
+}
+
+func traceExploreURL(grafanaURL, grafanaVersion string, args GetTempoTraceParams, spans []TraceSpan) (string, error) {
 	u, err := url.Parse(grafanaURL)
 	if err != nil {
 		return "", fmt.Errorf("parse Grafana URL for trace link: %w", err)

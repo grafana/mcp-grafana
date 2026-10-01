@@ -40,7 +40,7 @@ bridge.oninitialized = async () => {
   await bridge.sendToolInput({
     arguments: {
       trace_id: trace.traceId,
-      datasource_uid: trace.datasourceUid,
+      datasourceUid: trace.datasourceUid,
       focus_span_id: trace.focusSpanId,
     },
   });

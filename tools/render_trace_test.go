@@ -20,7 +20,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,8 +31,8 @@ const (
 )
 
 func TestRenderTraceToolDefinition(t *testing.T) {
-	tool := RenderTraceTool.Tool
-	assert.Equal(t, "render_trace", tool.Name)
+	tool := GetTempoTraceTool.Tool
+	assert.Equal(t, "get_tempo_trace", tool.Name)
 	require.NotNil(t, tool.Annotations.ReadOnlyHint)
 	assert.True(t, *tool.Annotations.ReadOnlyHint)
 	require.NotNil(t, tool.Annotations.IdempotentHint)
@@ -48,21 +48,8 @@ func TestRenderTraceToolDefinition(t *testing.T) {
 		Required   []string                   `json:"required"`
 	}
 	require.NoError(t, json.Unmarshal(tool.RawInputSchema, &schema))
-	assert.ElementsMatch(t, []string{"trace_id", "datasource_uid"}, schema.Required)
+	assert.ElementsMatch(t, []string{"trace_id", "datasourceUid"}, schema.Required)
 	assert.Contains(t, schema.Properties, "focus_span_id")
-}
-
-func TestAddTraceAppTools(t *testing.T) {
-	s := server.NewMCPServer("test", "0.0.0")
-	AddTraceAppTools(s, true)
-
-	_, ok := s.ListTools()["render_trace"]
-	assert.True(t, ok)
-
-	disabled := server.NewMCPServer("test", "0.0.0")
-	AddTraceAppTools(disabled, false)
-	_, ok = disabled.ListTools()["render_trace"]
-	assert.False(t, ok)
 }
 
 func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
@@ -101,8 +88,8 @@ func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
 	gc.Version = "11.0.0"
 	focusSpanID := testSpanID
 
-	result, err := renderTrace(ctx, RenderTraceParams{
-		TraceID:       strings.ToUpper(testTraceID),
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{
+		TraceID:       testTraceID,
 		DatasourceUID: "tempo-main",
 		FocusSpanID:   &focusSpanID,
 	})
@@ -168,21 +155,14 @@ func TestRenderTraceFetchesWithUserScopedAuthentication(t *testing.T) {
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{
 		URL: server.URL, AccessToken: "user-access-token", IDToken: "user-id-token",
 	})
-	_, err = renderTrace(ctx, RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	_, err = callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
 	require.NoError(t, err)
 	assert.Equal(t, "user-access-token", accessToken)
 	assert.Equal(t, "user-id-token", idToken)
 }
 
-func TestRenderTraceRejectsMissingGrafanaURL(t *testing.T) {
-	valid := RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"}
-
-	_, err := renderTrace(t.Context(), valid)
-	require.EqualError(t, err, "grafana URL is not available in the authenticated request context")
-}
-
 func TestTraceExploreURLStripsCredentialsAndUsesLegacyState(t *testing.T) {
-	link, err := traceExploreURL("https://user:secret@grafana.example.com/grafana/?old=1#fragment", "9.5.0", RenderTraceParams{
+	link, err := traceExploreURL("https://user:secret@grafana.example.com/grafana/?old=1#fragment", "9.5.0", GetTempoTraceParams{
 		TraceID: testTraceID, DatasourceUID: "tempo-main",
 	}, []TraceSpan{{StartTimeMS: 1750000000000, DurationMS: 125}})
 	require.NoError(t, err)
@@ -215,7 +195,7 @@ func TestRenderTraceOmitsLinkWhenPublicURLInvalid(t *testing.T) {
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
 	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "not a Grafana URL"
 
-	result, err := renderTrace(ctx, RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
 	require.NoError(t, err)
 	structured, ok := result.StructuredContent.(RenderTraceResult)
 	require.True(t, ok)
@@ -243,39 +223,12 @@ func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, OrgID: 7, APIKey: "test-token"})
-	result, err := renderTrace(ctx, RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
 	require.NoError(t, err)
 	structured, ok := result.StructuredContent.(RenderTraceResult)
 	require.True(t, ok)
 	assert.Empty(t, structured.GrafanaURL)
 	assert.Len(t, structured.Spans, 2)
-}
-
-func TestValidateRenderTraceParams(t *testing.T) {
-	tests := []struct {
-		name string
-		args RenderTraceParams
-		want string
-	}{
-		{name: "valid", args: RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"}},
-		{name: "short trace", args: RenderTraceParams{TraceID: "abcd", DatasourceUID: "tempo-main"}, want: "trace_id must be 16 or 32 hexadecimal characters"},
-		{name: "in-between trace length", args: RenderTraceParams{TraceID: "0123456789abcdef01", DatasourceUID: "tempo-main"}, want: "trace_id must be 16 or 32 hexadecimal characters"},
-		{name: "non hex trace", args: RenderTraceParams{TraceID: "zzzzzzzzzzzzzzzz", DatasourceUID: "tempo-main"}, want: "trace_id must be 16 or 32 hexadecimal characters"},
-		{name: "path datasource", args: RenderTraceParams{TraceID: testTraceID, DatasourceUID: "../tempo"}, want: "datasource_uid contains invalid path characters"},
-		{name: "whitespace datasource", args: RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo main"}, want: "datasource_uid must not contain whitespace or control characters"},
-		{name: "bad focus", args: RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main", FocusSpanID: stringPointer("abcd")}, want: "focus_span_id must be 16 hexadecimal characters"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateRenderTraceParams(tt.args)
-			if tt.want == "" {
-				require.NoError(t, err)
-				return
-			}
-			require.EqualError(t, err, tt.want)
-		})
-	}
 }
 
 func TestRenderTraceMissingFocusPreservesTrace(t *testing.T) {
@@ -293,7 +246,7 @@ func TestRenderTraceMissingFocusPreservesTrace(t *testing.T) {
 
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
 	missing := "aaaaaaaaaaaaaaaa"
-	result, err := renderTrace(ctx, RenderTraceParams{
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{
 		TraceID:       testTraceID,
 		DatasourceUID: "tempo-main",
 		FocusSpanID:   &missing,
@@ -311,7 +264,7 @@ func TestDecodeTraceResponseRejectsPartialTrace(t *testing.T) {
 	require.NoError(t, err)
 	response, err := json.Marshal(map[string]any{"trace": json.RawMessage(traceJSON), "status": "PARTIAL", "message": "trace exceeded max bytes"})
 	require.NoError(t, err)
-	_, err = decodeTraceResponse(strings.NewReader(string(response)), maxTraceResponseBytes)
+	_, err = decodeTraceResponse(strings.NewReader(string(response)), defaultResponseLimitBytes)
 	require.ErrorContains(t, err, "partial")
 }
 
@@ -352,8 +305,10 @@ func TestRenderTraceRejectsNonTempoDatasource(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
-	_, err := renderTrace(ctx, RenderTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
-	require.EqualError(t, err, "datasource tempo-main is of type prometheus, not tempo")
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "datasource tempo-main is of type prometheus, not tempo")
 }
 
 func testTraceData(stacktrace string) *tracepb.TracesData {
@@ -418,10 +373,11 @@ func traceTestContext(t *testing.T, config mcpgrafana.GrafanaConfig) context.Con
 	transportConfig.Schemes = []string{u.Scheme}
 	transportConfig.APIKey = "test"
 	apiClient := client.NewHTTPClientWithConfig(nil, transportConfig)
-	return mcpgrafana.WithGrafanaClient(
+	ctx := mcpgrafana.WithGrafanaClient(
 		mcpgrafana.WithGrafanaConfig(t.Context(), config),
 		&mcpgrafana.GrafanaClient{GrafanaHTTPAPI: apiClient},
 	)
+	return tempoTestUIContext(t, ctx)
 }
 
 func writeTempoDatasource(t *testing.T, w http.ResponseWriter) {
@@ -439,3 +395,11 @@ func (failingReader) Read([]byte) (int, error) {
 }
 
 var _ io.Reader = failingReader{}
+
+func callInteractiveTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
+	values := map[string]any{"trace_id": args.TraceID, "datasourceUid": args.DatasourceUID}
+	if args.FocusSpanID != nil {
+		values["focus_span_id"] = *args.FocusSpanID
+	}
+	return GetTempoTraceTool.Handler(ctx, makeTempoRequest("get_tempo_trace", values))
+}

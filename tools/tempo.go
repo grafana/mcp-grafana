@@ -240,8 +240,9 @@ type QueryTempoMetricsParams struct {
 }
 
 type GetTempoTraceParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
-	TraceID       string `json:"trace_id" jsonschema:"required,description=Trace ID to retrieve"`
+	FocusSpanID   *string `json:"focus_span_id,omitempty" jsonschema:"description=Optional 16-character hexadecimal span ID to select initially. The full trace remains available."`
+	DatasourceUID string  `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	TraceID       string  `json:"trace_id" jsonschema:"required,description=Trace ID to retrieve"`
 }
 
 type DiffTempoTracesParams struct {
@@ -352,6 +353,13 @@ func annotateTraceQLParseError(msg string) string {
 }
 
 func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
+	if args.FocusSpanID != nil {
+		if !isHexID(*args.FocusSpanID, 16) {
+			return mcp.NewToolResultError("focus_span_id must be 16 hexadecimal characters"), nil
+		}
+		focus := strings.ToLower(*args.FocusSpanID)
+		args.FocusSpanID = &focus
+	}
 	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -362,7 +370,39 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return tempoToolResult(body, "trace", "json"), nil
+	result := tempoToolResult(body, "trace", "json")
+	if tempoTraceUIEnabled(ctx) {
+		enrichTempoTrace(ctx, args, body, result)
+	}
+	return result, nil
+}
+
+// Enrichment is only useful when the initialized client supports the bundled UI.
+func tempoTraceUIEnabled(ctx context.Context) bool {
+	session, ok := server.ClientSessionFromContext(ctx).(server.SessionWithClientInfo)
+	if !ok {
+		return false
+	}
+	ui, ok := session.GetClientCapabilities().Extensions["io.modelcontextprotocol/ui"].(map[string]any)
+	if !ok {
+		return false
+	}
+	const traceUIMIME = "text/html;profile=mcp-app"
+	switch mimeTypes := ui["mimeTypes"].(type) {
+	case []any:
+		for _, mimeType := range mimeTypes {
+			if mimeType == traceUIMIME {
+				return true
+			}
+		}
+	case []string:
+		for _, mimeType := range mimeTypes {
+			if mimeType == traceUIMIME {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type traceDiffAPIRequest struct {
@@ -691,6 +731,7 @@ var GetTempoTraceTool = mcpgrafana.MustTool(
 	"get_tempo_trace",
 	"Retrieve a specific trace by ID",
 	getTempoTrace,
+	mcpgrafana.WithUIResource(mcpgrafana.TraceViewerResourceURI),
 	mcp.WithTitleAnnotation("Get Tempo trace"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
