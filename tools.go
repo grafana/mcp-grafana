@@ -337,6 +337,11 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		properties[pair.Key] = pair.Value
 	}
 
+	outSpec, err := newOutputSpec(name, handlerType.Out(0))
+	if err != nil {
+		return nil, nil, err
+	}
+
 	handler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		config := GrafanaConfigFromContext(ctx)
 
@@ -443,6 +448,10 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		span.SetStatus(codes.Ok, "tool execution completed")
 
+		if outSpec != nil {
+			return outSpec.result(ctx, name, output[0])
+		}
+
 		isNilable := output[0].Kind() == reflect.Pointer ||
 			output[0].Kind() == reflect.Interface ||
 			output[0].Kind() == reflect.Map ||
@@ -494,6 +503,9 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		Name:        name,
 		Description: description,
 		InputSchema: json.RawMessage(schemaBytes),
+	}
+	if outSpec != nil {
+		t.OutputSchema = outSpec.schema
 	}
 	for _, option := range options {
 		option(t)
