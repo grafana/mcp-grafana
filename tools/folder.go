@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/folders"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 type CreateFolderParams struct {
@@ -45,15 +44,15 @@ var CreateFolder = mcpgrafana.MustTool(
 	"create_folder",
 	"Create a Grafana folder. Provide a title and optional UID. Returns the created folder.",
 	createFolder,
-	mcp.WithTitleAnnotation("Create folder"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create folder"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddFolderTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddFolderTools(s *mcp.Server, enableWriteTools bool) {
 	if enableWriteTools {
-		CreateFolder.Register(mcp)
+		CreateFolder.Register(s)
 	}
 }

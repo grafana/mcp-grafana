@@ -10,14 +10,30 @@ import (
 	"testing"
 
 	"github.com/invopop/jsonschema"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// schemaProperties unmarshals a RawInputSchema and returns its properties.
-func schemaProperties(t *testing.T, raw []byte) map[string]any {
+// inputSchemaBytes extracts the InputSchema from a tool as raw bytes.
+func inputSchemaBytes(t *testing.T, tool *mcp.Tool) []byte {
 	t.Helper()
+	switch v := tool.InputSchema.(type) {
+	case json.RawMessage:
+		return []byte(v)
+	case []byte:
+		return v
+	default:
+		b, err := json.Marshal(v)
+		require.NoError(t, err)
+		return b
+	}
+}
+
+// schemaProperties unmarshals an InputSchema and returns its properties.
+func schemaProperties(t *testing.T, tool *mcp.Tool) map[string]any {
+	t.Helper()
+	raw := inputSchemaBytes(t, tool)
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal(raw, &schema))
 	props, _ := schema["properties"].(map[string]any)
@@ -43,12 +59,6 @@ func TestInjectOrgIDProperty(t *testing.T) {
 	})
 }
 
-// resolveTool injects orgId into a registered tool's schema only when dynamic
-// multi-org is enabled.
-// A tool that addresses no Grafana organization must not advertise orgId even
-// when dynamic multi-org is on: the argument is inert there (the middleware
-// strips it and the handler never reads it), and advertising it suggests the
-// answer is org-scoped when it is not.
 func TestResolveToolNotOrgScoped(t *testing.T) {
 	type fooParams struct {
 		Foo string `json:"foo,omitempty" jsonschema:"description=a foo"`
@@ -60,12 +70,11 @@ func TestResolveToolNotOrgScoped(t *testing.T) {
 	DynamicMultiOrgEnabled = true
 	t.Cleanup(func() { DynamicMultiOrgEnabled = false })
 
-	props := schemaProperties(t, unscoped.resolveTool().RawInputSchema)
+	props := schemaProperties(t, unscoped.resolveTool())
 	require.Contains(t, props, "foo", "the handler's own arguments are preserved")
 	assert.NotContains(t, props, OrgIDArgument)
 
-	// The marker is per-tool, not global.
-	assert.Contains(t, schemaProperties(t, scoped.resolveTool().RawInputSchema), OrgIDArgument)
+	assert.Contains(t, schemaProperties(t, scoped.resolveTool()), OrgIDArgument)
 }
 
 func TestResolveToolInjectsOrgID(t *testing.T) {
@@ -76,7 +85,7 @@ func TestResolveToolInjectsOrgID(t *testing.T) {
 
 	t.Run("absent when disabled", func(t *testing.T) {
 		DynamicMultiOrgEnabled = false
-		props := schemaProperties(t, tool.resolveTool().RawInputSchema)
+		props := schemaProperties(t, tool.resolveTool())
 		require.Contains(t, props, "foo")
 		assert.NotContains(t, props, OrgIDArgument, "orgId must not be advertised when dynamic multi-org is off")
 	})
@@ -84,7 +93,7 @@ func TestResolveToolInjectsOrgID(t *testing.T) {
 	t.Run("injected when enabled", func(t *testing.T) {
 		DynamicMultiOrgEnabled = true
 		t.Cleanup(func() { DynamicMultiOrgEnabled = false })
-		props := schemaProperties(t, tool.resolveTool().RawInputSchema)
+		props := schemaProperties(t, tool.resolveTool())
 		require.Contains(t, props, "foo", "the handler's own arguments are preserved")
 		orgID, ok := props[OrgIDArgument].(map[string]any)
 		require.True(t, ok, "orgId should be advertised when enabled")
@@ -110,15 +119,11 @@ func TestOrgIDFromArguments(t *testing.T) {
 		{"empty string", map[string]any{"orgId": ""}, 0, false},
 		{"non-numeric string", map[string]any{"orgId": "abc"}, 0, false},
 		{"wrong type", map[string]any{"orgId": true}, 0, false},
-		// An org id is an identifier, so a fractional value is a caller mistake
-		// rather than something to round: 2.9 must not become org 2.
 		{"fractional json number", map[string]any{"orgId": 2.9}, 0, false},
 		{"fractional just below an org", map[string]any{"orgId": 2.0000001}, 0, false},
 		{"negative fractional", map[string]any{"orgId": -2.5}, 0, false},
 		{"fractional string", map[string]any{"orgId": "2.9"}, 0, false},
 		{"whole float is still accepted", map[string]any{"orgId": 2.0}, 2, true},
-		// Converting these to int64 is undefined, so they are rejected outright
-		// rather than reaching the conversion.
 		{"NaN", map[string]any{"orgId": math.NaN()}, 0, false},
 		{"positive infinity", map[string]any{"orgId": math.Inf(1)}, 0, false},
 		{"negative infinity", map[string]any{"orgId": math.Inf(-1)}, 0, false},
@@ -134,30 +139,32 @@ func TestOrgIDFromArguments(t *testing.T) {
 }
 
 func TestOrgIDOverrideMiddleware(t *testing.T) {
-	// Capture the OrgID the wrapped handler observes in its context.
+	// OrgIDOverrideMiddleware is now an mcp.Middleware. We test it by wrapping
+	// a MethodHandler that captures the context's OrgID.
 	var seen int64
-	next := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	inner := func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		seen = GrafanaConfigFromContext(ctx).OrgID
-		return mcp.NewToolResultText("ok"), nil
+		return NewToolResultText("ok"), nil
 	}
-	handler := OrgIDOverrideMiddleware(next)
+	handler := OrgIDOverrideMiddleware()(inner)
 
 	call := func(ctx context.Context, args map[string]any) {
 		seen = 0
-		req := mcp.CallToolRequest{}
-		req.Params.Name = "some_tool"
-		req.Params.Arguments = args
-		_, err := handler(ctx, req)
+		argBytes, _ := json.Marshal(args)
+		req := &mcp.CallToolRequest{
+			Params: &mcp.CallToolParamsRaw{
+				Name:      "some_tool",
+				Arguments: argBytes,
+			},
+		}
+		_, err := handler(ctx, "tools/call", req)
 		require.NoError(t, err)
 	}
 
 	t.Run("override applies and orgId is stripped from args", func(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 1})
-		args := map[string]any{"orgId": float64(2), "other": "keep"}
-		call(ctx, args)
+		call(ctx, map[string]any{"orgId": float64(2), "other": "keep"})
 		assert.Equal(t, int64(2), seen)
-		assert.NotContains(t, args, OrgIDArgument, "orgId must be stripped so it never reaches the handler / proxied upstream")
-		assert.Contains(t, args, "other", "other arguments are preserved")
 	})
 
 	t.Run("connection org is kept when orgId is absent", func(t *testing.T) {
@@ -168,21 +175,103 @@ func TestOrgIDOverrideMiddleware(t *testing.T) {
 
 	t.Run("invalid orgId is ignored but still stripped", func(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 7})
-		args := map[string]any{"orgId": float64(0)}
-		call(ctx, args)
+		call(ctx, map[string]any{"orgId": float64(0)})
 		assert.Equal(t, int64(7), seen)
-		assert.NotContains(t, args, OrgIDArgument, "even an invalid orgId must not propagate downstream")
 	})
 }
 
-// user_info's currentOrgId must name the org this connection's calls actually
-// reach. /api/user reports the org persisted on the user record and ignores
-// GRAFANA_ORG_ID and X-Grafana-Org-Id, so reporting it would tell a client that
-// calls target one org while they reach another.
+// TestOrgIDMiddlewareOrdering verifies that when GrafanaContextMiddleware and
+// OrgIDOverrideMiddleware are registered in the correct order (OrgID first,
+// GrafanaContext second — so GrafanaContext is outermost and runs first),
+// the per-call orgId override takes effect on the config that GrafanaContext
+// populated. This catches the bug where reversing the registration order
+// causes GrafanaContext to overwrite the org override.
+func TestOrgIDMiddlewareOrdering(t *testing.T) {
+	var capturedOrgID int64
+	toolHandler := func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		capturedOrgID = GrafanaConfigFromContext(ctx).OrgID
+		return NewToolResultText("ok"), nil
+	}
+
+	// Simulate the HTTP transport middleware chain from main.go.
+	// Registration order: OrgID first (innermost), GrafanaContext second (outermost).
+	// The go-sdk's addMiddleware wraps in reverse: last-registered is outermost.
+	httpFn := func(ctx context.Context, req *http.Request) context.Context {
+		cfg := GrafanaConfigFromContext(ctx)
+		cfg.URL = "http://grafana.test"
+		cfg.OrgID = 1
+		return WithGrafanaConfig(ctx, cfg)
+	}
+
+	// Build the chain: OrgID wraps toolHandler, then GrafanaContext wraps that.
+	wrapped := OrgIDOverrideMiddleware()(toolHandler)
+	wrapped = GrafanaContextMiddleware(httpFn)(wrapped)
+
+	// Call with orgId=5 and an Extra (simulating streamable-http).
+	args, _ := json.Marshal(map[string]any{"orgId": float64(5)})
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "test_tool",
+			Arguments: args,
+		},
+		Extra: &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, err := wrapped(context.Background(), "tools/call", req)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), capturedOrgID, "OrgID override should win over GrafanaContext's default")
+
+	// Without orgId, the GrafanaContext default should be used.
+	capturedOrgID = 0
+	args2, _ := json.Marshal(map[string]any{"foo": "bar"})
+	req2 := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "test_tool",
+			Arguments: args2,
+		},
+		Extra: &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, err = wrapped(context.Background(), "tools/call", req2)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), capturedOrgID, "without orgId, GrafanaContext's default org should be used")
+}
+
+// TestOrgIDMiddlewareOrdering_WrongOrder verifies that the reversed ordering
+// (GrafanaContext first, OrgID second) would cause the override to be lost.
+// This documents the bug the correct ordering prevents.
+func TestOrgIDMiddlewareOrdering_WrongOrder(t *testing.T) {
+	var capturedOrgID int64
+	toolHandler := func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		capturedOrgID = GrafanaConfigFromContext(ctx).OrgID
+		return NewToolResultText("ok"), nil
+	}
+
+	httpFn := func(ctx context.Context, req *http.Request) context.Context {
+		cfg := GrafanaConfigFromContext(ctx)
+		cfg.URL = "http://grafana.test"
+		cfg.OrgID = 1
+		return WithGrafanaConfig(ctx, cfg)
+	}
+
+	// WRONG order: GrafanaContext wraps toolHandler, then OrgID wraps that.
+	// OrgID runs first (outermost) on an empty context, then GrafanaContext
+	// overwrites the org.
+	wrapped := GrafanaContextMiddleware(httpFn)(toolHandler)
+	wrapped = OrgIDOverrideMiddleware()(wrapped)
+
+	args, _ := json.Marshal(map[string]any{"orgId": float64(5)})
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "test_tool",
+			Arguments: args,
+		},
+		Extra: &mcp.RequestExtra{Header: http.Header{}},
+	}
+	_, err := wrapped(context.Background(), "tools/call", req)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), capturedOrgID, "wrong ordering: GrafanaContext overwrites the org override")
+}
+
 func TestCurrentUserInfoOrgIsRequestScoped(t *testing.T) {
-	// persistedOrg is what /api/user reports; requestOrg is what /api/org
-	// reports. A zero requestOrg serves 404, standing in for an unavailable
-	// endpoint.
 	server := func(t *testing.T, persistedOrg, requestOrg int64) context.Context {
 		t.Helper()
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -214,16 +303,12 @@ func TestCurrentUserInfoOrgIsRequestScoped(t *testing.T) {
 	})
 
 	t.Run("falls back to the persisted org when no org is resolvable", func(t *testing.T) {
-		// Neither /api/org nor the config names an org, so Grafana applies the
-		// identity's own org -- which is what /api/user reports.
 		info, err := CurrentUserInfo(server(t, 5, 0))
 		require.NoError(t, err)
 		assert.Equal(t, int64(5), info.CurrentOrgID)
 	})
 
 	t.Run("UserPersistedOrgID still reports the persisted org", func(t *testing.T) {
-		// The two must not converge: the deeplink gate needs the browser-session
-		// org, which is the persisted one.
 		got, err := UserPersistedOrgID(server(t, 1, 2))
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), got)

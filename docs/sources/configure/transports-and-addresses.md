@@ -54,6 +54,10 @@ mcp-grafana -t sse --address :8000 --base-path /my-base --metrics
 
 serves `/my-base/sse`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers, so they always stay at the server root — never under `--base-path` — regardless of this flag.
 
+{{< admonition type="note" >}}
+Over SSE, per-request headers do not reach tool calls: `X-Grafana-Service-Account-Token` / `X-Grafana-API-Key`, `X-Grafana-Org-Id`, and headers listed in `GRAFANA_FORWARD_HEADERS` have no effect, tool calls use the server's environment credentials, and `X-Grafana-URL` overrides do not work. Use streamable-http when each caller needs its own Grafana URL, credentials, or organization.
+{{< /admonition >}}
+
 ## Next steps
 
 - [Server TLS (streamable-http)](../server-tls-streamable-http/) if you need HTTPS for the MCP server.

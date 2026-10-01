@@ -9,10 +9,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // ListProvisioningRepositoriesParams takes no arguments: the namespace is
@@ -163,11 +162,11 @@ var ListProvisioningRepositories = mcpgrafana.MustTool(
 		"Returns each repository's slug along with its source URL, branch, path, sync state, and health. "+
 		"Use the returned `name` as the `repo` argument when rendering a not-yet-applied dashboard preview via get_panel_image's provisioningPreview parameter.",
 	listProvisioningRepositories,
-	mcp.WithTitleAnnotation("List provisioning repositories"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List provisioning repositories"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ValidateProvisioningFileParams identifies a single file to validate inside
@@ -387,14 +386,14 @@ var ValidateProvisioningFile = mcpgrafana.MustTool(
 		"Returns whether the file would be accepted (valid)\\, what resource action would result (create/update)\\, the target resource type\\, and any structured validation errors. "+
 		"Use to confirm a draft dashboard or other resource will be accepted before merging or applying a PR — this is the same validation surface that Grafana's PR commenter reports.",
 	validateProvisioningFile,
-	mcp.WithTitleAnnotation("Validate provisioning file"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Validate provisioning file"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddProvisioningTools(s *server.MCPServer) {
+func AddProvisioningTools(s *mcp.Server) {
 	ListProvisioningRepositories.Register(s)
 	ValidateProvisioningFile.Register(s)
 }

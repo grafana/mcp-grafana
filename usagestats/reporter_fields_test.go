@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/grafana/mcp-grafana/observability"
+	"github.com/grafana/mcp-grafana/v2/observability"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

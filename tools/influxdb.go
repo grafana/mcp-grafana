@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -215,14 +214,14 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 InfluxQL example: SELECT mean("value") FROM "cpu" WHERE time > now() - 1h GROUP BY time(1m)
 Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) => r._measurement == "cpu")`,
 	queryInfluxDB,
-	mcp.WithTitleAnnotation("Query InfluxDB"),
-	mcp.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query InfluxDB"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
 	// The query is passed through unfiltered: InfluxQL supports DELETE/DROP
 	// and Flux can write via to(), so this executes writes if the datasource
 	// credentials permit it — not read-only, potentially destructive.
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddInfluxDBTools registers all InfluxDB tools with the MCP server.
@@ -231,8 +230,8 @@ Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) 
 // via enableQueryTool, which is false under --disable-query, and under
 // --disable-write unless --enable-query overrides it. It is the only tool in
 // this category, so nothing is registered when it is gated off.
-func AddInfluxDBTools(mcp *server.MCPServer, enableQueryTool bool) {
+func AddInfluxDBTools(s *mcp.Server, enableQueryTool bool) {
 	if enableQueryTool {
-		QueryInfluxDB.Register(mcp)
+		QueryInfluxDB.Register(s)
 	}
 }

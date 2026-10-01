@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/mcp-grafana/tools/sql"
+	"github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // warnUnknownGuardrailModeOnce gates the once-per-process warning for

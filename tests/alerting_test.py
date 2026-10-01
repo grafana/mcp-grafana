@@ -18,13 +18,13 @@ async def test_list_alert_rules(
     mcp_client: ClientSession,
     mcp_transport: str,
 ):
-    """Test that the LLM can list all alert rules using the alerting_manage_rules tool."""
+    """Test that the LLM can list all alert rules using the alerting_rules_read tool."""
     prompt = "List all alert rules in Grafana."
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_tool_operation(tools_called, "alerting_manage_rules", "list")
+    assert_tool_operation(tools_called, "alerting_rules_read", "list")
 
     assert_mcp_eval(
         prompt,
@@ -33,7 +33,7 @@ async def test_list_alert_rules(
         mcp_server,
         "Does the response list alert rules with their titles, states, and labels? "
         "There should be at least two rules including 'Test Alert Rule 1' and 'Test Alert Rule 2'.",
-        expected_tools="alerting_manage_rules",
+        expected_tools="alerting_rules_read",
     )
 
 
@@ -77,7 +77,7 @@ async def test_get_alert_rule_by_uid(
 
     assert_tool_operation(
         tools_called,
-        "alerting_manage_rules",
+        "alerting_rules_read",
         "get",
         extra_args={"rule_uid": "test_alert_rule_1"},
     )
@@ -89,7 +89,7 @@ async def test_get_alert_rule_by_uid(
         mcp_server,
         "Does the response contain detailed configuration of the alert rule, "
         "including its title ('Test Alert Rule 1'), queries, condition, and state?",
-        expected_tools="alerting_manage_rules",
+        expected_tools="alerting_rules_read",
     )
 
 
@@ -106,7 +106,7 @@ async def test_list_alert_rules_with_label_filter(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_tool_operation(tools_called, "alerting_manage_rules", "list")
+    assert_tool_operation(tools_called, "alerting_rules_read", "list")
 
     assert_mcp_eval(
         prompt,
@@ -116,7 +116,7 @@ async def test_list_alert_rules_with_label_filter(
         "Does the response show filtered alert rules? It should include "
         "'Test Alert Rule 1' (which has label rule=first) and should NOT include "
         "'Test Alert Rule 2' (which has label rule=second).",
-        expected_tools="alerting_manage_rules",
+        expected_tools="alerting_rules_read",
     )
 
 
@@ -133,7 +133,7 @@ async def test_find_firing_alert_rules(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_tool_operation(tools_called, "alerting_manage_rules", "list")
+    assert_tool_operation(tools_called, "alerting_rules_read", "list")
 
     assert_mcp_eval(
         prompt,
@@ -143,7 +143,7 @@ async def test_find_firing_alert_rules(
         "Does the response list only the firing alert rules? "
         "It should include 'Test Alert Rule 1' which is firing, "
         "and should not list rules that are not firing.",
-        expected_tools="alerting_manage_rules",
+        expected_tools="alerting_rules_read",
     )
 
 
@@ -164,7 +164,7 @@ async def test_get_alert_rule_versions(
 
     assert_tool_operation(
         tools_called,
-        "alerting_manage_rules",
+        "alerting_rules_read",
         "versions",
         extra_args={"rule_uid": "test_alert_rule_1"},
     )
@@ -175,7 +175,7 @@ async def test_get_alert_rule_versions(
         tools_called,
         mcp_server,
         "Does the response contain version history information for the alert rule?",
-        expected_tools="alerting_manage_rules",
+        expected_tools="alerting_rules_read",
     )
 
 
@@ -192,7 +192,7 @@ async def test_list_alert_rules_in_folder(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_tool_operation(tools_called, "alerting_manage_rules", "list")
+    assert_tool_operation(tools_called, "alerting_rules_read", "list")
 
     assert_mcp_eval(
         prompt,
@@ -201,7 +201,7 @@ async def test_list_alert_rules_in_folder(
         mcp_server,
         "Does the response list alert rules from the 'Test Alerts' folder? "
         "It should include 'Test Alert Rule 1' and 'Test Alert Rule 2'.",
-        expected_tools="alerting_manage_rules",
+        expected_tools="alerting_rules_read",
     )
 
 
@@ -349,12 +349,12 @@ async def alert_rule_for_tests(mcp_client: ClientSession):
 
     # If the rule exists, delete it first
     await mcp_client.call_tool(
-        "alerting_manage_rules",
+        "alerting_rules_write",
         {"operation": "delete", "rule_uid": rule_uid},
     )
 
     result = await mcp_client.call_tool(
-        "alerting_manage_rules",
+        "alerting_rules_write",
         {
             "operation": "create",
             "rule_uid": rule_uid,
@@ -387,7 +387,7 @@ async def alert_rule_for_tests(mcp_client: ClientSession):
 
     # Cleanup: delete if still exists
     await mcp_client.call_tool(
-        "alerting_manage_rules",
+        "alerting_rules_write",
         {"operation": "delete", "rule_uid": rule_uid},
     )
 
@@ -410,14 +410,14 @@ async def test_delete_alert_rule(
 
     assert_tool_operation(
         tools_called,
-        "alerting_manage_rules",
+        "alerting_rules_write",
         "delete",
         extra_args={"rule_uid": rule_uid},
     )
 
     # Verify the rule was actually deleted by listing all rules
     list_result = await mcp_client.call_tool(
-        "alerting_manage_rules",
+        "alerting_rules_read",
         {"operation": "list"},
     )
     rules = json.loads(list_result.content[0].text)
@@ -446,11 +446,11 @@ async def test_create_alert_rule(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_tool_operation(tools_called, "alerting_manage_rules", "create")
+    assert_tool_operation(tools_called, "alerting_rules_write", "create")
 
     # Verify the rule was actually created
     list_result = await mcp_client.call_tool(
-        "alerting_manage_rules",
+        "alerting_rules_read",
         {"operation": "list"},
     )
     rules = json.loads(list_result.content[0].text)
@@ -459,7 +459,7 @@ async def test_create_alert_rule(
 
     # Cleanup
     await mcp_client.call_tool(
-        "alerting_manage_rules",
+        "alerting_rules_write",
         {"operation": "delete", "rule_uid": created[0]["uid"]},
     )
 
@@ -483,14 +483,14 @@ async def test_update_alert_rule(
 
     assert_tool_operation(
         tools_called,
-        "alerting_manage_rules",
+        "alerting_rules_write",
         "update",
         extra_args={"rule_uid": rule_uid},
     )
 
     # Verify the title was actually updated
     get_result = await mcp_client.call_tool(
-        "alerting_manage_rules",
+        "alerting_rules_read",
         {"operation": "get", "rule_uid": rule_uid},
     )
     rule = json.loads(get_result.content[0].text)

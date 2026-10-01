@@ -391,7 +391,6 @@ The TLS configuration is applied to all HTTP clients used by the MCP server, inc
 - Prometheus datasource clients
 - Loki datasource clients
 - Incident management clients
-- Sift investigation clients
 - Alerting clients
 - Asserts clients
 

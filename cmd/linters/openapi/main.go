@@ -3,7 +3,7 @@ package main
 import (
 	"golang.org/x/tools/go/analysis/singlechecker"
 
-	openapi "github.com/grafana/mcp-grafana/internal/linter/openapi"
+	openapi "github.com/grafana/mcp-grafana/v2/internal/linter/openapi"
 )
 
 func main() {

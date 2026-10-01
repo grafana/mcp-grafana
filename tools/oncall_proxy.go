@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"strings"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // IRM plugin proxy paths. The proxy prepends "api/internal/v1/" before forwarding.

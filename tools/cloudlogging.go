@@ -13,9 +13,8 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -382,11 +381,11 @@ Filter examples:
 
 If the project is unknown, call list_cloud_logging_projects first. Pass bucketId (from list_cloud_logging_buckets) to read a specific log bucket, optionally with viewId.`,
 	queryCloudLogging,
-	mcp.WithTitleAnnotation("Query Google Cloud Logging"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Google Cloud Logging"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListCloudLoggingProjectsParams defines the parameters for listing GCP projects.
@@ -412,11 +411,11 @@ var ListCloudLoggingProjects = mcpgrafana.MustTool(
 	"list_cloud_logging_projects",
 	"START HERE for Google Cloud Logging: List the GCP project IDs the datasource's credentials can read logs from (at most 100; use 'query' to narrow). NEXT: pass a projectId to query_cloud_logging, or to list_cloud_logging_buckets to scope by log bucket.",
 	listCloudLoggingProjects,
-	mcp.WithTitleAnnotation("List Cloud Logging projects"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Cloud Logging projects"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListCloudLoggingBucketsParams defines the parameters for listing log buckets.
@@ -443,11 +442,11 @@ var ListCloudLoggingBuckets = mcpgrafana.MustTool(
 	"list_cloud_logging_buckets",
 	"List the log buckets in a GCP project, as '<location>/buckets/<name>' (e.g. global/buckets/_Default). Pass a value verbatim as bucketId to query_cloud_logging or list_cloud_logging_views.",
 	listCloudLoggingBuckets,
-	mcp.WithTitleAnnotation("List Cloud Logging buckets"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Cloud Logging buckets"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListCloudLoggingViewsParams defines the parameters for listing log views.
@@ -479,19 +478,19 @@ var ListCloudLoggingViews = mcpgrafana.MustTool(
 	"list_cloud_logging_views",
 	"List the log views in a log bucket (e.g. _AllLogs, _Default). Pass one as viewId, together with the same bucketId, to query_cloud_logging.",
 	listCloudLoggingViews,
-	mcp.WithTitleAnnotation("List Cloud Logging views"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Cloud Logging views"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddCloudLoggingTools registers the Google Cloud Logging tools with the MCP server.
-func AddCloudLoggingTools(mcp *server.MCPServer, enableQueryTools bool) {
+func AddCloudLoggingTools(s *mcp.Server, enableQueryTools bool) {
 	if enableQueryTools {
-		QueryCloudLogging.Register(mcp)
+		QueryCloudLogging.Register(s)
 	}
-	ListCloudLoggingProjects.Register(mcp)
-	ListCloudLoggingBuckets.Register(mcp)
-	ListCloudLoggingViews.Register(mcp)
+	ListCloudLoggingProjects.Register(s)
+	ListCloudLoggingBuckets.Register(s)
+	ListCloudLoggingViews.Register(s)
 }

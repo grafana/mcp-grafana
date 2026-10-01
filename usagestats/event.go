@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/grafana/mcp-grafana/observability"
+	"github.com/grafana/mcp-grafana/v2/observability"
 )
 
 // Report reasons. Every event carries exactly one.

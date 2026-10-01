@@ -24,11 +24,11 @@ The Go module exports the same tools and UI used by the standalone server:
 
 ```go
 import (
-    mcpgrafana "github.com/grafana/mcp-grafana"
-    "github.com/grafana/mcp-grafana/tools"
+    mcpgrafana "github.com/grafana/mcp-grafana/v2"
+    "github.com/grafana/mcp-grafana/v2/tools"
 )
 
-// s is an existing *server.MCPServer. Its request context must provide the
+// s is an existing *mcp.Server. Its request context must provide the
 // normal mcp-grafana configuration and Grafana client.
 mcpgrafana.RegisterAppResources(s)
 tools.AddTempoTools(s, enableQueryTools)

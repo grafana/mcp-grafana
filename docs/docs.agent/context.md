@@ -121,7 +121,7 @@ Order articles from foundational to advanced configuration.
 Create one `introduction.md` article covering these key unique concepts:
 
 - **Model Context Protocol (MCP):** What MCP is and how the Grafana MCP server lets AI assistants and LLM clients talk to Grafana (dashboards, datasources, metrics, logs, traces, alerts, incidents).
-- **Tools and capabilities:** High-level categories (dashboards, datasources, Prometheus/Loki/others, alerting, incidents, OnCall, Sift, navigation, annotations, snapshots, rendering). Configurable tool set and context-window considerations.
+- **Tools and capabilities:** High-level categories (dashboards, datasources, Prometheus/Loki/others, alerting, incidents, OnCall, navigation, annotations, snapshots, rendering). Configurable tool set and context-window considerations.
 - **Authentication and RBAC:** Service account (or user) and Grafana RBAC; least-privilege vs Editor role; link to Grafana RBAC docs.
 
 - **Context:** README.md (Features, Requirements, RBAC sections)
@@ -181,10 +181,10 @@ Order articles from foundational to advanced use cases.
 - **Include:** Enabling runpanelquery, executing a panel query with time range and variable overrides.
 - **Exclude:** Writing new queries in Prometheus/Loki tools.
 
-### Use Grafana Incident and Sift
+### Use Grafana Incident
 
-- **Context:** README.md (Incidents, Sift Investigations)
-- **Include:** List/create/update incidents; list investigations, find error patterns, find slow requests. Viewer vs Editor role.
+- **Context:** README.md (Incidents)
+- **Include:** List/create/update incidents; add activities. Viewer vs Editor role.
 - **Exclude:** OnCall schedules (separate).
 
 ## Developer

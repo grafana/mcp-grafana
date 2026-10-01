@@ -89,7 +89,9 @@ async def run_llm_tool_loop(
             content=(
                 "You are a Grafana assistant. Use the available MCP tools to answer "
                 "questions about datasource data. Never invent results; report empty "
-                "results or tool errors accurately."
+                "results or tool errors accurately. Discover missing datasource UIDs "
+                "and other identifiers using the tools rather than asking the user "
+                "follow-up questions."
             ),
         ),
         Message(role="user", content=prompt),

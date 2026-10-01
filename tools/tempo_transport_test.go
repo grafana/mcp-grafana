@@ -8,10 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -29,32 +27,31 @@ func TestTempoGetTraceStatelessStreamableHTTP(t *testing.T) {
 	})
 	defer cleanup()
 	base := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: grafana.URL})
-	s := server.NewMCPServer("trace-transport-test", "1")
+	s := mcp.NewServer(&mcp.Implementation{Name: "trace-transport-test", Version: "1"}, nil)
 	AddTempoTools(s, true)
-	httpServer := server.NewStreamableHTTPServer(s,
-		server.WithStateLess(true),
-		server.WithHTTPContextFunc(func(ctx context.Context, _ *http.Request) context.Context {
-			return mcpgrafana.WithGrafanaClient(mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfigFromContext(base)), mcpgrafana.GrafanaClientFromContext(base))
-		}),
-	)
-	ts := httptest.NewServer(httpServer)
+	s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			ctx = mcpgrafana.WithGrafanaClient(mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfigFromContext(base)), mcpgrafana.GrafanaClientFromContext(base))
+			return next(ctx, method, req)
+		}
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true})
+	ts := httptest.NewServer(handler)
 	defer ts.Close()
-	c, err := client.NewStreamableHttpClient(ts.URL)
+
+	c := mcp.NewClient(&mcp.Implementation{Name: "trace-app-host", Version: "1"}, &mcp.ClientOptions{
+		Capabilities: &mcp.ClientCapabilities{Extensions: map[string]any{"io.modelcontextprotocol/ui": map[string]any{"mimeTypes": []any{"text/html;profile=mcp-app"}}}},
+	})
+	session, err := c.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: ts.URL}, nil)
 	require.NoError(t, err)
-	require.NoError(t, c.Start(t.Context()))
-	defer func() { _ = c.Close() }()
-	initialize := mcp.InitializeRequest{}
-	initialize.Params.ProtocolVersion = "2025-06-18"
-	initialize.Params.ClientInfo = mcp.Implementation{Name: "trace-app-host", Version: "1"}
-	initialize.Params.Capabilities = *tempoTestUICapabilities()
-	_, err = c.Initialize(t.Context(), initialize)
-	require.NoError(t, err)
-	result, err := c.CallTool(t.Context(), makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}))
+	defer func() { _ = session.Close() }()
+
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "get_tempo_trace", Arguments: map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(mcp.TextContent).Text)
-	assert.Equal(t, "trace", result.Meta.AdditionalFields["type"])
-	assert.Equal(t, "json", result.Meta.AdditionalFields["encoding"])
+	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
+	assert.Equal(t, "trace", result.Meta["type"])
+	assert.Equal(t, "json", result.Meta["encoding"])
 	assert.Equal(t, 1, requests)
 	require.NotNil(t, result.StructuredContent, "stateless calls must retain interactive enrichment after initialize")
 	spans := result.StructuredContent.(map[string]any)["spans"].([]any)

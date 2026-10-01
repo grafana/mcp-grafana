@@ -11,30 +11,27 @@ import (
 	"time"
 
 	"github.com/go-openapi/strfmt"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/prometheus/alertmanager/api/v2/models"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
-const manageSilencesDescription = `Manage Grafana alerting silences. A silence temporarily suppresses notifications for alerts whose labels match a set of matchers, without changing the alert rules themselves.
+const alertSilencesWriteDescription = `Create, update, and delete Grafana alerting silences. A silence temporarily suppresses notifications for alerts whose labels match a set of matchers, without changing the alert rules themselves.
 
 Operations:
-- 'list': list existing silences. Optionally filter by rule_uid (matches the __alert_rule_uid__ label) or by matchers.
-- 'get': retrieve a single silence by silence_id.
 - 'create': create a new silence. Requires matchers, starts_at, ends_at (RFC3339) and comment.
-- 'update': modify an existing silence by silence_id. Requires matchers, starts_at, ends_at and comment. The id is only kept when the posted matchers and starts_at match the stored ones, so pass back the starts_at returned by 'get'; otherwise Alertmanager expires the old silence and returns a new id.
+- 'update': modify an existing silence by silence_id. Requires matchers, starts_at, ends_at and comment. The id is only kept when the posted matchers and starts_at match the stored ones, so pass back the starts_at returned by alerting_silences_read 'get'; otherwise Alertmanager expires the old silence and returns a new id.
 - 'delete': expire/remove a silence by silence_id.
 
 When to use:
 - Muting noisy or expected alerts during maintenance windows
-- Inspecting or cleaning up existing silences
 
 When NOT to use:
-- Changing alert rule configuration or state (use alerting_manage_rules)
-- Changing how alerts are routed to receivers (use alerting_manage_routing)`
+- Listing or inspecting silences (use alerting_silences_read)
+- Changing alert rule configuration or state (use alerting_rules_write)
+- Checking how alerts are routed to receivers (use alerting_manage_routing)`
 
-const manageSilencesReadDescription = `List and inspect Grafana alerting silences. A silence temporarily suppresses notifications for alerts whose labels match a set of matchers.
+const alertSilencesReadDescription = `List and inspect Grafana alerting silences. A silence temporarily suppresses notifications for alerts whose labels match a set of matchers.
 
 Operations:
 - 'list': list existing silences. Optionally filter by rule_uid (matches the __alert_rule_uid__ label) or by matchers.
@@ -44,9 +41,9 @@ When to use:
 - Inspecting which alerts are currently silenced and why
 
 When NOT to use:
-- Creating, updating or deleting silences (read-only tool)
-- Changing alert rule configuration or state (use alerting_manage_rules)
-- Changing how alerts are routed to receivers (use alerting_manage_routing)`
+- Creating, updating or deleting silences (use alerting_silences_write)
+- Changing alert rule configuration or state (use alerting_rules_read or alerting_rules_write)
+- Checking how alerts are routed to receivers (use alerting_manage_routing)`
 
 const (
 	// silencesBasePath is the Grafana-managed Alertmanager v2 base path.
@@ -65,7 +62,7 @@ type SilenceMatcherParam struct {
 	IsEqual *bool  `json:"isEqual,omitempty" jsonschema:"description=Whether the matcher asserts equality (true) or inequality (false). Defaults to true."`
 }
 
-// ManageSilencesParams is the param struct for the alerting_manage_silences tool.
+// ManageSilencesParams is the param struct for the alerting_silences_write tool.
 type ManageSilencesParams struct {
 	Operation string                `json:"operation" jsonschema:"required,enum=list,enum=get,enum=create,enum=update,enum=delete,description=The operation to perform: 'list' to list silences\\, 'get' to retrieve a silence by id\\, 'create' to create a new silence\\, 'update' to modify an existing silence by id\\, 'delete' to expire a silence by id"`
 	SilenceID *string               `json:"silence_id,omitempty" jsonschema:"description=The silence id (required for 'get'\\, 'update' and 'delete')"`
@@ -103,8 +100,7 @@ func (p ManageSilencesParams) validate() error {
 	}
 }
 
-// ManageSilencesReadParams is the param struct for the read-only variant of
-// alerting_manage_silences (list/get only).
+// ManageSilencesReadParams is the param struct for alerting_silences_read (list/get only).
 type ManageSilencesReadParams struct {
 	Operation string                `json:"operation" jsonschema:"required,enum=list,enum=get,description=The operation to perform: 'list' to list silences\\, 'get' to retrieve a silence by id"`
 	SilenceID *string               `json:"silence_id,omitempty" jsonschema:"description=The silence id (required for 'get')"`
@@ -276,12 +272,12 @@ func derefSilenceStr(v *string) string {
 // manageSilencesRead backs the read-only tool variant (list/get only).
 func manageSilencesRead(ctx context.Context, args ManageSilencesReadParams) (any, error) {
 	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_silences: %w", err)
+		return nil, fmt.Errorf("alerting_silences_read: %w", err)
 	}
 
 	c, err := newAlertingClientFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("alerting_manage_silences: %w", err)
+		return nil, fmt.Errorf("alerting_silences_read: %w", err)
 	}
 
 	switch args.Operation {
@@ -290,17 +286,17 @@ func manageSilencesRead(ctx context.Context, args ManageSilencesReadParams) (any
 	case "get":
 		return c.getSilence(ctx, *args.SilenceID)
 	}
-	return nil, fmt.Errorf("alerting_manage_silences: unknown operation %q", args.Operation)
+	return nil, fmt.Errorf("alerting_silences_read: unknown operation %q", args.Operation)
 }
 
 func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (any, error) {
 	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_silences: %w", err)
+		return nil, fmt.Errorf("alerting_silences_write: %w", err)
 	}
 
 	c, err := newAlertingClientFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("alerting_manage_silences: %w", err)
+		return nil, fmt.Errorf("alerting_silences_write: %w", err)
 	}
 
 	switch args.Operation {
@@ -311,13 +307,13 @@ func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (an
 	case "create", "update":
 		s, err := args.toPostableSilence()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_silences: %w", err)
+			return nil, fmt.Errorf("alerting_silences_write: %w", err)
 		}
 		return c.createOrUpdateSilence(ctx, s)
 	case "delete":
 		return c.deleteSilence(ctx, *args.SilenceID)
 	}
-	return nil, fmt.Errorf("alerting_manage_silences: unknown operation %q", args.Operation)
+	return nil, fmt.Errorf("alerting_silences_write: unknown operation %q", args.Operation)
 }
 
 // silenceRequest performs a JSON HTTP request against the Alertmanager silences
@@ -423,29 +419,23 @@ func (c *alertingClient) deleteSilence(ctx context.Context, id string) (any, err
 	return map[string]string{"status": "deleted", "silence_id": id}, nil
 }
 
-// ManageSilencesRead is the read-only variant (list/get). It shares the tool
-// name with ManageSilencesReadWrite so the agent-side allow-list does not fork;
-// exactly one of the two is registered depending on whether write tools are
-// enabled.
-var ManageSilencesRead = mcpgrafana.MustTool(
-	"alerting_manage_silences",
-	manageSilencesReadDescription,
+var AlertSilencesRead = mcpgrafana.MustTool(
+	"alerting_silences_read",
+	alertSilencesReadDescription,
 	manageSilencesRead,
-	mcp.WithTitleAnnotation("Manage alerting silences"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Read alerting silences"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-// ManageSilencesReadWrite is the write-capable variant (create/update/delete
-// silences), so it is not marked read-only.
-var ManageSilencesReadWrite = mcpgrafana.MustTool(
-	"alerting_manage_silences",
-	manageSilencesDescription,
+var AlertSilencesWrite = mcpgrafana.MustTool(
+	"alerting_silences_write",
+	alertSilencesWriteDescription,
 	manageSilencesReadWrite,
-	mcp.WithTitleAnnotation("Manage alerting silences"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Write alerting silences"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )

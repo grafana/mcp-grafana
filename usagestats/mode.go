@@ -26,12 +26,7 @@ const (
 
 // DefaultMode is the mode used when neither the flag nor the environment
 // variable selects one.
-//
-// It is ModeDisabled in this release because the receiving endpoint is not
-// live yet: the default flips to ModeEnabled in a separate release once
-// grafana/usage-stats is accepting mcp-grafana reports, so that no build ever
-// ships pointing at an endpoint that does not exist.
-const DefaultMode = ModeDisabled
+const DefaultMode = ModeEnabled
 
 const (
 	// ModeEnvVar selects the reporting mode. The --usage-stats flag wins over it.

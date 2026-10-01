@@ -16,23 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/grafana/mcp-grafana/observability"
+	"github.com/grafana/mcp-grafana/v2/observability"
 )
-
-// fakeSession is the minimum server.ClientSession a context needs.
-type fakeSession struct{ id string }
-
-func (f *fakeSession) Initialize()       {}
-func (f *fakeSession) Initialized() bool { return true }
-func (f *fakeSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	return make(chan mcp.JSONRPCNotification, 1)
-}
-func (f *fakeSession) SessionID() string { return f.id }
 
 // collector is a test endpoint that records the events posted to it.
 type collector struct {
@@ -83,27 +72,50 @@ func (c *collector) rawBodies() []string {
 	return out
 }
 
-// sessionContext returns a context carrying a client session, as the MCP
-// server's hooks receive one on the legacy path.
-func sessionContext(t *testing.T, id string) (context.Context, server.ClientSession) {
-	t.Helper()
-	srv := server.NewMCPServer("test", "v0")
-	sess := &fakeSession{id: id}
-	return srv.WithContext(context.Background(), sess), sess
-}
-
 func callRequest(name string) *mcp.CallToolRequest {
-	req := &mcp.CallToolRequest{}
-	req.Params.Name = name
-	return req
+	return &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: name},
+	}
 }
 
 func initRequest(clientName, clientVersion string) *mcp.InitializeRequest {
 	return &mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ClientInfo: mcp.Implementation{Name: clientName, Version: clientVersion},
+		Params: &mcp.InitializeParams{
+			ClientInfo: &mcp.Implementation{Name: clientName, Version: clientVersion},
 		},
 	}
+}
+
+// okHandler returns a next handler that succeeds with the given result.
+func okHandler(result mcp.Result) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		return result, nil
+	}
+}
+
+// errHandler returns a next handler that fails with the given error.
+func errHandler(err error) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		return nil, err
+	}
+}
+
+// invokeToolCall calls the middleware for a tools/call with the given request and result.
+func invokeToolCall(ctx context.Context, mw mcp.Middleware, req *mcp.CallToolRequest, result *mcp.CallToolResult) {
+	handler := mw(okHandler(result))
+	_, _ = handler(ctx, "tools/call", req)
+}
+
+// invokeToolCallError calls the middleware for a tools/call that returns an error.
+func invokeToolCallError(ctx context.Context, mw mcp.Middleware, req *mcp.CallToolRequest, err error) {
+	handler := mw(errHandler(err))
+	_, _ = handler(ctx, "tools/call", req)
+}
+
+// invokeInitialize calls the middleware for an initialize request.
+func invokeInitialize(ctx context.Context, mw mcp.Middleware, req *mcp.InitializeRequest) {
+	handler := mw(okHandler(&mcp.InitializeResult{}))
+	_, _ = handler(ctx, "initialize", req)
 }
 
 // TestToolCountsAreExactAndResetOnFlush pins two properties at once: counts
@@ -116,14 +128,14 @@ func TestToolCountsAreExactAndResetOnFlush(t *testing.T) {
 		Endpoint:    c.URL,
 		NativeTools: observability.ValueSet("search_dashboards", "query_prometheus"),
 	})
-	hooks := r.Hooks()
-	ctx, _ := sessionContext(t, "mcp-session-1")
+	mw := r.MCPMiddleware()
+	ctx := context.Background()
 
 	for range 7 {
-		hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+		invokeToolCall(ctx, mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
 	}
 	for range 2 {
-		hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{IsError: true})
+		invokeToolCall(ctx, mw, callRequest("search_dashboards"), &mcp.CallToolResult{IsError: true})
 	}
 
 	r.flush(context.Background(), ReasonInterval)
@@ -134,7 +146,7 @@ func TestToolCountsAreExactAndResetOnFlush(t *testing.T) {
 	assert.Equal(t, ToolCount{Calls: 9, Errors: 2}, first.ToolCalls["search_dashboards"])
 	assert.Equal(t, "search_dashboards", first.ToolsCalled)
 
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("query_prometheus"), &mcp.CallToolResult{})
+	invokeToolCall(ctx, mw, callRequest("query_prometheus"), &mcp.CallToolResult{})
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 2)
 	second := c.received()[1]
@@ -159,16 +171,15 @@ func TestCountsAggregateAcrossSessionsAndSessionlessRequests(t *testing.T) {
 		Endpoint:    c.URL,
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 
-	ctxA, _ := sessionContext(t, "session-a")
-	ctxB, _ := sessionContext(t, "session-b")
-	// No session in context at all, as on the sessionless modern path.
+	ctxA := context.Background()
+	ctxB := context.Background()
 	ctxNone := context.Background()
 
-	hooks.OnAfterCallTool[0](ctxA, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
-	hooks.OnAfterCallTool[0](ctxB, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
-	hooks.OnAfterCallTool[0](ctxNone, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	invokeToolCall(ctxA, mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	invokeToolCall(ctxB, mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	invokeToolCall(ctxNone, mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
 
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
@@ -183,11 +194,11 @@ func TestCountsAggregateAcrossSessionsAndSessionlessRequests(t *testing.T) {
 func TestNoClientPropertyReachesTheWire(t *testing.T) {
 	c := newCollector(t)
 	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 	ctx := context.Background()
 
-	hooks.OnAfterInitialize[0](ctx, 1, initRequest("cursor", "1.2.3"), &mcp.InitializeResult{})
-	hooks.OnAfterInitialize[0](ctx, 1, initRequest("my-internal-agent", "9.9"), &mcp.InitializeResult{})
+	invokeInitialize(ctx, mw, initRequest("cursor", "1.2.3"))
+	invokeInitialize(ctx, mw, initRequest("my-internal-agent", "9.9"))
 
 	r.flush(ctx, ReasonInterval)
 	require.Len(t, c.rawBodies(), 1)
@@ -213,11 +224,11 @@ func TestConflictingPerRequestValuesAreOmitted(t *testing.T) {
 		Endpoint: c.URL,
 		Target:   func(context.Context) GrafanaTarget { return target },
 	})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 	ctx := context.Background()
 
 	target = GrafanaTarget{URL: "https://one.grafana.net", Version: "12.1.0", AuthMethod: AuthMethodServiceAccountToken}
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("x"), &mcp.CallToolResult{})
+	invokeToolCall(ctx, mw, callRequest("x"), &mcp.CallToolResult{})
 
 	// One distinct value each, so both travel.
 	r.flush(context.Background(), ReasonInterval)
@@ -227,7 +238,7 @@ func TestConflictingPerRequestValuesAreOmitted(t *testing.T) {
 
 	// A second tenant resolves differently.
 	target = GrafanaTarget{URL: "https://one.grafana.net", Version: "12.2.0", AuthMethod: AuthMethodBasicAuth}
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("x"), &mcp.CallToolResult{})
+	invokeToolCall(ctx, mw, callRequest("x"), &mcp.CallToolResult{})
 
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.rawBodies(), 2)
@@ -252,9 +263,9 @@ func TestFailedFlushLosesItsDelta(t *testing.T) {
 		Endpoint:    "http://127.0.0.1:1/unreachable",
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 	ctx := context.Background()
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	invokeToolCall(ctx, mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
 
 	r.flush(context.Background(), ReasonInterval)
 
@@ -276,13 +287,13 @@ func TestProxiedToolsCollapseToOneKey(t *testing.T) {
 		Endpoint:    c.URL,
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 	ctx := context.Background()
 
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("tempo_traceql-search"), &mcp.CallToolResult{})
-	hooks.OnAfterCallTool[0](ctx, 1, callRequest("tempo_get-trace"), &mcp.CallToolResult{IsError: true})
-	hooks.OnError[0](ctx, 1, "tools/call", callRequest("loki_some-remote-tool"), assert.AnError)
+	invokeToolCall(ctx, mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	invokeToolCall(ctx, mw, callRequest("tempo_traceql-search"), &mcp.CallToolResult{})
+	invokeToolCall(ctx, mw, callRequest("tempo_get-trace"), &mcp.CallToolResult{IsError: true})
+	invokeToolCallError(ctx, mw, callRequest("loki_some-remote-tool"), assert.AnError)
 
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
@@ -310,18 +321,21 @@ func TestNativeToolsSetBeforeRegistrationFailsSafe(t *testing.T) {
 	assert.Equal(t, ProxiedToolName, r.toolKey("search_dashboardz"))
 }
 
-// TestOnErrorWithoutAToolNameRecordsNothing: mcp-go hands onError a
-// zero-valued request when the tools capability is unsupported or the payload
-// fails to unmarshal. toolKey("") returns the proxied sentinel, so counting it
-// would invent a proxied call that never happened.
+// TestOnErrorWithoutAToolNameRecordsNothing: a tools/call that fails with a
+// zero-valued request (no tool name) must not be counted. toolKey("") returns
+// the proxied sentinel, so counting it would invent a proxied call that never
+// happened.
 func TestOnErrorWithoutAToolNameRecordsNothing(t *testing.T) {
 	c := newCollector(t)
 	r := New(Config{Mode: ModeEnabled, Endpoint: c.URL})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 	ctx := context.Background()
 
-	hooks.OnError[0](ctx, 1, "tools/call", &mcp.CallToolRequest{}, assert.AnError)
-	hooks.OnError[0](ctx, 1, "tools/list", callRequest("search_dashboards"), assert.AnError)
+	// Empty tool name on error path — should not be counted.
+	invokeToolCallError(ctx, mw, &mcp.CallToolRequest{}, assert.AnError)
+	// Non-tools/call method errors should not be counted either.
+	handler := mw(errHandler(assert.AnError))
+	_, _ = handler(ctx, "tools/list", callRequest("search_dashboards"))
 
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
@@ -338,8 +352,8 @@ func TestLogModeWritesToStderrAndSendsNothing(t *testing.T) {
 		LogOutput:   &out,
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
-	hooks := r.Hooks()
-	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	mw := r.MCPMiddleware()
+	invokeToolCall(context.Background(), mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
 
 	r.flush(context.Background(), ReasonShutdown)
 
@@ -366,10 +380,16 @@ func TestDisabledReporterCollectsNothing(t *testing.T) {
 	r := New(Config{Mode: ModeDisabled, Endpoint: c.URL})
 
 	assert.False(t, r.Enabled())
-	hooks := r.Hooks()
-	assert.Empty(t, hooks.OnAfterInitialize)
-	assert.Empty(t, hooks.OnAfterCallTool)
-	assert.Empty(t, hooks.OnError)
+
+	// Disabled middleware is a pass-through; driving it must not record.
+	mw := r.MCPMiddleware()
+	var called bool
+	handler := mw(func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		called = true
+		return &mcp.CallToolResult{}, nil
+	})
+	_, _ = handler(context.Background(), "tools/call", callRequest("x"))
+	assert.True(t, called, "disabled middleware must still call next")
 
 	r.Start(context.Background())
 	r.Shutdown()
@@ -407,12 +427,12 @@ func TestZeroConfigLifecycleSendsNothing(t *testing.T) {
 	r := New(Config{HTTPClient: &http.Client{Transport: ct}})
 	require.False(t, r.Enabled())
 
-	hooks := r.Hooks()
-	assert.Empty(t, hooks.OnAfterInitialize)
-	assert.Empty(t, hooks.OnAfterCallTool)
-	assert.Empty(t, hooks.OnError)
+	// Disabled middleware is a pass-through.
+	mw := r.MCPMiddleware()
+	handler := mw(okHandler(&mcp.CallToolResult{}))
+	_, _ = handler(context.Background(), "tools/call", callRequest("search_dashboards"))
 
-	// Even driven directly, past the empty hooks, nothing must leave.
+	// Even driven directly, past the middleware, nothing must leave.
 	r.recordToolCall(context.Background(), "search_dashboards", false)
 	r.flush(context.Background(), ReasonInterval)
 	r.Start(context.Background())
@@ -428,8 +448,8 @@ func TestShutdownReportsWithTheShutdownReason(t *testing.T) {
 		Endpoint:    c.URL,
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
-	hooks := r.Hooks()
-	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
+	mw := r.MCPMiddleware()
+	invokeToolCall(context.Background(), mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
 
 	r.Shutdown()
 	r.Shutdown() // idempotent: must not send twice
@@ -454,8 +474,8 @@ func TestGrafanaURLNeverReachesTheWire(t *testing.T) {
 			}
 		},
 	})
-	hooks := r.Hooks()
-	hooks.OnAfterInitialize[0](context.Background(), 1, initRequest("cursor", "1"), &mcp.InitializeResult{})
+	mw := r.MCPMiddleware()
+	invokeInitialize(context.Background(), mw, initRequest("cursor", "1"))
 
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
@@ -480,8 +500,8 @@ func TestAuthMethodOutsideTheVocabularyIsClamped(t *testing.T) {
 			return GrafanaTarget{URL: "http://localhost:3000", AuthMethod: "some-new-scheme"}
 		},
 	})
-	hooks := r.Hooks()
-	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("x"), &mcp.CallToolResult{})
+	mw := r.MCPMiddleware()
+	invokeToolCall(context.Background(), mw, callRequest("x"), &mcp.CallToolResult{})
 
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
@@ -502,8 +522,8 @@ func TestGrafanaVersionIsLengthCapped(t *testing.T) {
 			}
 		},
 	})
-	hooks := r.Hooks()
-	hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("x"), &mcp.CallToolResult{})
+	mw := r.MCPMiddleware()
+	invokeToolCall(context.Background(), mw, callRequest("x"), &mcp.CallToolResult{})
 
 	r.flush(context.Background(), ReasonInterval)
 	require.Len(t, c.received(), 1)
@@ -627,9 +647,9 @@ func TestTargetFuncIsNotCalledUnderTheCounterLock(t *testing.T) {
 			return GrafanaTarget{URL: "http://localhost:3000"}
 		},
 	})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 
-	go hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("x"), &mcp.CallToolResult{})
+	go invokeToolCall(context.Background(), mw, callRequest("x"), &mcp.CallToolResult{})
 	<-entered
 
 	done := make(chan struct{})
@@ -656,7 +676,7 @@ func TestJitterStaysWithinTenPercent(t *testing.T) {
 	}
 }
 
-// TestConcurrentRecordingIsRaceFree drives the hooks from many goroutines
+// TestConcurrentRecordingIsRaceFree drives the middleware from many goroutines
 // while flushing, which is what the process actually does: one shared counter
 // set behind requests served in parallel.
 func TestConcurrentRecordingIsRaceFree(t *testing.T) {
@@ -666,7 +686,7 @@ func TestConcurrentRecordingIsRaceFree(t *testing.T) {
 		Endpoint:    c.URL,
 		NativeTools: observability.ValueSet("search_dashboards"),
 	})
-	hooks := r.Hooks()
+	mw := r.MCPMiddleware()
 
 	var wg sync.WaitGroup
 	for range 8 {
@@ -674,8 +694,8 @@ func TestConcurrentRecordingIsRaceFree(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 50 {
-				hooks.OnAfterCallTool[0](context.Background(), 1, callRequest("search_dashboards"), &mcp.CallToolResult{})
-				hooks.OnAfterInitialize[0](context.Background(), 1, initRequest("cursor", "1"), &mcp.InitializeResult{})
+				invokeToolCall(context.Background(), mw, callRequest("search_dashboards"), &mcp.CallToolResult{})
+				invokeInitialize(context.Background(), mw, initRequest("cursor", "1"))
 			}
 		}()
 	}

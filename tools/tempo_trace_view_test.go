@@ -19,8 +19,8 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,13 +33,12 @@ const (
 func TestRenderTraceToolDefinition(t *testing.T) {
 	tool := GetTempoTraceTool.Tool
 	assert.Equal(t, "get_tempo_trace", tool.Name)
-	require.NotNil(t, tool.Annotations.ReadOnlyHint)
-	assert.True(t, *tool.Annotations.ReadOnlyHint)
-	require.NotNil(t, tool.Annotations.IdempotentHint)
-	assert.True(t, *tool.Annotations.IdempotentHint)
+	require.NotNil(t, tool.Annotations)
+	assert.True(t, tool.Annotations.ReadOnlyHint)
+	assert.True(t, tool.Annotations.IdempotentHint)
 	require.NotNil(t, tool.Meta)
 
-	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	ui, ok := tool.Meta["ui"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, mcpgrafana.TraceViewerResourceURI, ui["resourceUri"])
 
@@ -47,7 +46,7 @@ func TestRenderTraceToolDefinition(t *testing.T) {
 		Properties map[string]json.RawMessage `json:"properties"`
 		Required   []string                   `json:"required"`
 	}
-	require.NoError(t, json.Unmarshal(tool.RawInputSchema, &schema))
+	require.NoError(t, json.Unmarshal(tool.InputSchema.(json.RawMessage), &schema))
 	assert.ElementsMatch(t, []string{"trace_id", "datasourceUid"}, schema.Required)
 	assert.Contains(t, schema.Properties, "focus_span_id")
 }
@@ -308,7 +307,7 @@ func TestRenderTraceRejectsNonTempoDatasource(t *testing.T) {
 	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "datasource tempo-main is of type prometheus, not tempo")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "datasource tempo-main is of type prometheus, not tempo")
 }
 
 func testTraceData(stacktrace string) *tracepb.TracesData {

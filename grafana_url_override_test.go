@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -271,3 +272,53 @@ func TestCachedClientSeparatesDefaultAndOverrideAtSameURL(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type headerRoundTripper struct {
+	header http.Header
+	next   http.RoundTripper
+}
+
+func (h headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	for k, vs := range h.header {
+		req.Header[k] = vs
+	}
+	return h.next.RoundTrip(req)
+}
+
+// The override is authorized at the HTTP layer and handed on through the
+// request context, while the Grafana config is built later, per call, by
+// GrafanaContextMiddleware. The selected URL has to survive that hop.
+func TestGrafanaURLOverrideReachesToolCallsOverStreamableHTTP(t *testing.T) {
+	t.Setenv("GRAFANA_URL", "https://default.example.com")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "env-token")
+
+	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	mcp.AddTool(s, &mcp.Tool{Name: "whoami"}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		cfg := GrafanaConfigFromContext(ctx)
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: cfg.URL + " " + cfg.APIKey}}}, nil, nil
+	})
+	s.AddReceivingMiddleware(GrafanaContextMiddleware(ExtractGrafanaInfoFromHeaders))
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	ts := httptest.NewServer(GrafanaURLOverrideMiddleware(true, nil, handler))
+	t.Cleanup(ts.Close)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint: ts.URL,
+		HTTPClient: &http.Client{Transport: headerRoundTripper{
+			header: http.Header{
+				grafanaURLHeader:                  {"https://selected.example.com"},
+				"X-Grafana-Service-Account-Token": {"caller-token"},
+			},
+			next: http.DefaultTransport,
+		}},
+	}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "whoami"})
+	require.NoError(t, err)
+	require.Len(t, res.Content, 1)
+	assert.Equal(t, "https://selected.example.com caller-token", res.Content[0].(*mcp.TextContent).Text)
+}

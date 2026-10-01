@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 const (
