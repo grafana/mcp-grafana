@@ -17,7 +17,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"gopkg.in/yaml.v3"
 
-	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -362,7 +361,9 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 
 // GetRuleVersions fetches the version history for a Grafana-managed alert rule.
 // The endpoint may not exist on older Grafana versions; callers should handle errors.
-func (c *alertingClient) GetRuleVersions(ctx context.Context, ruleUID string) ([]grafanaModels.GettableExtendedRuleNode, error) {
+// Versions are returned verbatim: the generated client no longer ships the
+// ruler models, and callers only pass them through.
+func (c *alertingClient) GetRuleVersions(ctx context.Context, ruleUID string) ([]json.RawMessage, error) {
 	path := fmt.Sprintf("/api/ruler/grafana/api/v1/rule/%s/versions", ruleUID)
 	resp, err := c.makeRequest(ctx, path, nil)
 	if err != nil {
@@ -372,7 +373,7 @@ func (c *alertingClient) GetRuleVersions(ctx context.Context, ruleUID string) ([
 		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
-	var versions []grafanaModels.GettableExtendedRuleNode
+	var versions []json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
 		return nil, fmt.Errorf("failed to decode rule versions response: %w", err)
 	}

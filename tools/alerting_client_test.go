@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"testing"
 
-	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
 
@@ -435,21 +434,9 @@ func TestAlertingClient_GetRuleVersions(t *testing.T) {
 			require.Equal(t, "/api/ruler/grafana/api/v1/rule/test-uid/versions", r.URL.Path)
 			require.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 
-			resp := []grafanaModels.GettableExtendedRuleNode{
-				{
-					GrafanaAlert: &grafanaModels.GettableGrafanaRule{
-						UID:     "test-uid",
-						Title:   "Test Rule",
-						Version: 2,
-					},
-				},
-				{
-					GrafanaAlert: &grafanaModels.GettableGrafanaRule{
-						UID:     "test-uid",
-						Title:   "Test Rule Old",
-						Version: 1,
-					},
-				},
+			resp := []map[string]any{
+				{"grafana_alert": map[string]any{"uid": "test-uid", "title": "Test Rule", "version": 2}},
+				{"grafana_alert": map[string]any{"uid": "test-uid", "title": "Test Rule Old", "version": 1}},
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -461,8 +448,7 @@ func TestAlertingClient_GetRuleVersions(t *testing.T) {
 		versions, err := client.GetRuleVersions(context.Background(), "test-uid")
 		require.NoError(t, err)
 		require.Len(t, versions, 2)
-		require.Equal(t, "test-uid", versions[0].GrafanaAlert.UID)
-		require.Equal(t, int64(2), versions[0].GrafanaAlert.Version)
+		require.JSONEq(t, `{"grafana_alert":{"uid":"test-uid","title":"Test Rule","version":2}}`, string(versions[0]))
 	})
 
 	t.Run("not found", func(t *testing.T) {

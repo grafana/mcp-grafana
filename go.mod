@@ -10,7 +10,7 @@ require (
 	github.com/go-openapi/strfmt v0.27.2
 	github.com/google/uuid v1.6.0
 	github.com/grafana/amixr-api-go-client v0.0.30
-	github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e
+	github.com/grafana/grafana-openapi-client-go v0.0.0-20260828183528-15d99ca95e47
 	github.com/grafana/grafana-plugin-sdk-go v0.296.5
 	github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42
 	github.com/grafana/pyroscope/api v1.6.0
@@ -201,6 +201,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260911204522-f61a6ca850bd // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260911204522-f61a6ca850bd // indirect
 	google.golang.org/grpc v1.83.2 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
+	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
