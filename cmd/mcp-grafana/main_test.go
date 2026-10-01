@@ -1279,6 +1279,9 @@ var metadataToolNames = []string{
 	"list_prometheus_label_names",
 	"list_prometheus_label_values",
 	"list_prometheus_metric_metadata",
+	"search_prometheus_metric_names",
+	"search_prometheus_label_names",
+	"search_prometheus_label_values",
 	"list_loki_label_names",
 	"list_loki_label_values",
 	// Both send a selector to the datasource but read the index rather than

@@ -29,6 +29,7 @@ backfill() {
 
 # Start Prometheus with the regular configuration, this is needed for backfilling
 /bin/prometheus \
+    --enable-feature=search-api \
     --config.file=/etc/prometheus/prometheus.yml \
     --web.enable-remote-write-receiver &
 
@@ -40,6 +41,7 @@ kill %1
 echo "Starting Prometheus server..."
 # Start Prometheus with the regular configuration
 /bin/prometheus \
+    --enable-feature=search-api \
     --config.file=/etc/prometheus/prometheus.yml \
     --web.enable-remote-write-receiver
 

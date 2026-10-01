@@ -72,6 +72,11 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 // datasource via Grafana's datasource proxy (/api/datasources/uid/{uid}/resources).
 type prometheusBackend struct {
 	api promv1.API
+
+	// httpClient and baseURL serve endpoints that promv1.API does not cover.
+	// They share the transport chain of api.
+	httpClient *http.Client
+	baseURL    string
 }
 
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
@@ -127,7 +132,11 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("creating Prometheus client: %w", err)
 	}
 
-	return &prometheusBackend{api: promv1.NewAPI(c)}, nil
+	return &prometheusBackend{
+		api:        promv1.NewAPI(c),
+		httpClient: &http.Client{Transport: rt},
+		baseURL:    url,
+	}, nil
 }
 
 func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
