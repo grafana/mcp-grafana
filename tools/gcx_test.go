@@ -59,6 +59,25 @@ func TestExecGcxAuth(t *testing.T) {
 	}
 }
 
+func TestExecGcxReadOnlyRefusesWrites(t *testing.T) {
+	var methods []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL, APIKey: "k"})
+
+	_, err := execGcx(embed.AccessRead)(ctx, ExecGcxParams{Command: "api /api/folders -X POST -d '{\"title\":\"x\"}'"})
+	require.Error(t, err)
+	assert.NotContains(t, methods, http.MethodPost, "a read-only exec_gcx must never send a write")
+
+	methods = nil
+	_, err = execGcx(embed.AccessDelete)(ctx, ExecGcxParams{Command: "api /api/folders -X POST -d '{\"title\":\"x\"}'"})
+	require.NoError(t, err)
+	assert.Contains(t, methods, http.MethodPost)
+}
+
 func TestExecGcxErrors(t *testing.T) {
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://127.0.0.1:1", APIKey: "k"})
 
