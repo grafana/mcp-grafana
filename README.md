@@ -80,6 +80,7 @@ The dashboard tools now include several strategies to manage context window usag
 - **Query Prometheus:** Execute PromQL queries (supports both instant and range metric queries) against Prometheus datasources.
 - **Query Prometheus metadata:** Retrieve metric metadata, metric names, label names, and label values from Prometheus datasources.
 - **Query histogram percentiles:** Calculate histogram percentile values (p50, p90, p95, p99) using histogram_quantile.
+- **Search metrics/labels/values:** Fuzzy search of metric names, label names, and label values with the experimental Prometheus/Mimir search API. The datasource must run Prometheus 3.13 or later with `--enable-feature=search-api`, or Mimir 3.2 or later with `-querier.experimental-search-api-enabled`.
 
 ### Loki Querying
 
@@ -337,6 +338,9 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_prometheus_label_names`     | Prometheus                | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_values`    | Prometheus                | List values for a specific label                                                                             | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `query_prometheus_histogram`      | Prometheus                | Calculate histogram percentile values                                                                        | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
+| `search_prometheus_metric_names`  | Prometheus                | Fuzzy search of metric names                                                                                 | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
+| `search_prometheus_label_names`   | Prometheus                | Fuzzy search of label names                                                                                  | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
+| `search_prometheus_label_values`  | Prometheus                | Fuzzy search of the values of one label                                                                      | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `list_incidents`                  | Incident                  | List incidents in Grafana Incident, optionally with their custom field values                                | Viewer role                                            | N/A                                                 |
 | `create_incident`                 | Incident                  | Create an incident in Grafana Incident, optionally setting custom fields                                     | Editor role                                            | N/A                                                 |
 | `add_activity_to_incident`        | Incident                  | Add an activity item to an incident in Grafana Incident                                                      | Editor role                                            | N/A                                                 |

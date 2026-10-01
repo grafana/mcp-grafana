@@ -595,4 +595,7 @@ func AddPrometheusTools(mcp *server.MCPServer, enableQueryTools bool) {
 	ListPrometheusMetricNames.Register(mcp)
 	ListPrometheusLabelNames.Register(mcp)
 	ListPrometheusLabelValues.Register(mcp)
+	SearchPrometheusMetricNames.Register(mcp)
+	SearchPrometheusLabelNames.Register(mcp)
+	SearchPrometheusLabelValues.Register(mcp)
 }
