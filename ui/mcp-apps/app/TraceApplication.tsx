@@ -4,12 +4,12 @@ import { LoadingIndicator } from '../src/design';
 import { useEffect, useState } from 'react';
 import { McpAppShell, type McpAppColorMode } from '../src/McpAppShell';
 import { RenderTraceApp } from '../src/trace/RenderTraceApp';
-import type { RenderTraceResult } from '../src/trace/types';
+import type { TraceViewResult } from '../src/trace/types';
 import '../styles.css';
 import { parseTraceResult } from './parseTraceResult';
 
 export function TraceApplication({ app }: { app: App }) {
-  const [result, setResult] = useState<RenderTraceResult>();
+  const [result, setResult] = useState<TraceViewResult>();
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string>();
   const [colorMode, setColorMode] = useState<McpAppColorMode>('light');

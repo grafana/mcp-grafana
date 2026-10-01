@@ -1,6 +1,6 @@
-import type { RenderTraceResult, TraceSpan } from '../src/trace/types';
+import type { TraceViewResult, TraceSpan } from '../src/trace/types';
 
-export const trace: RenderTraceResult = {
+export const trace: TraceViewResult = {
   traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
   datasourceUid: 'tempo-demo',
   focusSpanId: '0000000000000003',

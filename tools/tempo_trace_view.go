@@ -23,11 +23,11 @@ import (
 
 const (
 	maxTraceSpans       = 100_000
-	maxTraceResultBytes = 32 << 20
+	maxTraceResultBytes = 1 << 20
 )
 
-// RenderTraceResult is the structured content consumed by the trace MCP App.
-type RenderTraceResult struct {
+// TraceViewResult is the structured content consumed by the trace MCP App.
+type TraceViewResult struct {
 	TraceID       string      `json:"traceId"`
 	DatasourceUID string      `json:"datasourceUid"`
 	FocusSpanID   *string     `json:"focusSpanId,omitempty"`
@@ -69,7 +69,7 @@ func enrichTempoTrace(ctx context.Context, args GetTempoTraceParams, body string
 			grafanaURL, _ = traceExploreURL(publicURL, mcpgrafana.GrafanaVersion(ctx), args, spans)
 		}
 	}
-	result := RenderTraceResult{TraceID: args.TraceID, DatasourceUID: args.DatasourceUID, FocusSpanID: args.FocusSpanID, GrafanaURL: grafanaURL, Spans: spans}
+	result := TraceViewResult{TraceID: args.TraceID, DatasourceUID: args.DatasourceUID, FocusSpanID: args.FocusSpanID, GrafanaURL: grafanaURL, Spans: spans}
 	if validateTraceResultSize(result) == nil {
 		raw.StructuredContent = result
 	}
@@ -118,7 +118,7 @@ func decodeTraceResponse(reader io.Reader, maxBytes int64) (*tracepb.TracesData,
 		return nil, fmt.Errorf("tempo response did not contain a trace")
 	}
 	traceData := &tracepb.TracesData{}
-	if err := protojson.Unmarshal(envelope.Trace, traceData); err != nil {
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(envelope.Trace, traceData); err != nil {
 		return nil, fmt.Errorf("decode Tempo OTLP trace: %w", err)
 	}
 	return traceData, nil
@@ -330,7 +330,7 @@ func addTraceSpanSize(size *int, span TraceSpan) error {
 	return nil
 }
 
-func validateTraceResultSize(result RenderTraceResult) error {
+func validateTraceResultSize(result TraceViewResult) error {
 	// Measure each span separately so repeated resource attributes cannot create
 	// an unbounded allocation while checking the structured-content limit.
 	spans := result.Spans

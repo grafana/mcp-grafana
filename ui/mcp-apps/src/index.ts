@@ -13,4 +13,4 @@ export type {
 
 export { RenderTraceApp } from './trace/RenderTraceApp';
 export type { RenderTraceAppProps } from './trace/RenderTraceApp';
-export type { RenderTraceResult, TraceSpan, TraceEvent } from './trace/types';
+export type { TraceViewResult, TraceSpan, TraceEvent } from './trace/types';

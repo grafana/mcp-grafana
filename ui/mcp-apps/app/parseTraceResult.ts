@@ -1,11 +1,11 @@
-import type { RenderTraceResult } from '../src/trace/types';
+import type { TraceViewResult } from '../src/trace/types';
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
 /** Validate the server/iframe boundary before rendering any trace fields. */
-export function parseTraceResult(value: unknown): RenderTraceResult | undefined {
+export function parseTraceResult(value: unknown): TraceViewResult | undefined {
   if (
     !object(value) ||
     typeof value.traceId !== 'string' ||
@@ -54,5 +54,5 @@ export function parseTraceResult(value: unknown): RenderTraceResult | undefined 
       }
     }
   }
-  return value as unknown as RenderTraceResult;
+  return value as unknown as TraceViewResult;
 }

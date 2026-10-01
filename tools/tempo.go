@@ -371,38 +371,8 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 	}
 
 	result := tempoToolResult(body, "trace", "json")
-	if tempoTraceUIEnabled(ctx) {
-		enrichTempoTrace(ctx, args, body, result)
-	}
+	enrichTempoTrace(ctx, args, body, result)
 	return result, nil
-}
-
-// Enrichment is only useful when the initialized client supports the bundled UI.
-func tempoTraceUIEnabled(ctx context.Context) bool {
-	session, ok := server.ClientSessionFromContext(ctx).(server.SessionWithClientInfo)
-	if !ok {
-		return false
-	}
-	ui, ok := session.GetClientCapabilities().Extensions["io.modelcontextprotocol/ui"].(map[string]any)
-	if !ok {
-		return false
-	}
-	const traceUIMIME = "text/html;profile=mcp-app"
-	switch mimeTypes := ui["mimeTypes"].(type) {
-	case []any:
-		for _, mimeType := range mimeTypes {
-			if mimeType == traceUIMIME {
-				return true
-			}
-		}
-	case []string:
-		for _, mimeType := range mimeTypes {
-			if mimeType == traceUIMIME {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 type traceDiffAPIRequest struct {

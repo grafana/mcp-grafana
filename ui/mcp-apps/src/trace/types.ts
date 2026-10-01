@@ -28,7 +28,7 @@ export interface TraceSpan {
   events: TraceEvent[];
 }
 
-export interface RenderTraceResult {
+export interface TraceViewResult {
   traceId: string;
   datasourceUid: string;
   focusSpanId?: string;

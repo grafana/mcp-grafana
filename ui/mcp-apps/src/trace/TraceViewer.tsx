@@ -13,7 +13,7 @@ import {
 } from 'react';
 
 import { getTraceViewerStyles } from './TraceViewer.styles';
-import type { RenderTraceResult, TraceAttributeValue, TraceEvent, TraceSpan } from './types';
+import type { TraceViewResult, TraceAttributeValue, TraceEvent, TraceSpan } from './types';
 
 const ROW_HEIGHT = 48;
 const AXIS_HEIGHT = 38;
@@ -43,7 +43,7 @@ interface PreparedTrace {
 }
 
 export interface TraceViewerProps {
-  result: RenderTraceResult;
+  result: TraceViewResult;
 }
 
 function isErrorSpan(span: TraceSpan) {
@@ -104,7 +104,7 @@ function getAncestorPath(selected: PreparedSpan | undefined, bySourceIndex: Map<
   return path;
 }
 
-function prepareTrace(result: RenderTraceResult): PreparedTrace {
+function prepareTrace(result: TraceViewResult): PreparedTrace {
   const source = result.spans.filter(
     (span) => Number.isFinite(span.startTimeMs) && Number.isFinite(span.durationMs) && span.durationMs >= 0
   );
@@ -615,7 +615,7 @@ export function TraceViewer({ result }: TraceViewerProps) {
   );
 }
 
-export function getTraceSummary(result: RenderTraceResult) {
+export function getTraceSummary(result: TraceViewResult) {
   const prepared = prepareTrace(result);
   const errorCount = prepared.orderedSpans.filter(isErrorSpan).length;
   const parts = [

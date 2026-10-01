@@ -97,7 +97,7 @@ func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
 	assert.Equal(t, "/api/datasources/proxy/uid/tempo-main/api/v2/traces/"+testTraceID, requestedPath)
 	assert.Equal(t, "Bearer test-token", authorization)
 
-	structured, ok := result.StructuredContent.(RenderTraceResult)
+	structured, ok := result.StructuredContent.(TraceViewResult)
 	require.True(t, ok)
 	assert.Equal(t, testTraceID, structured.TraceID)
 	assert.Equal(t, "tempo-main", structured.DatasourceUID)
@@ -197,7 +197,7 @@ func TestRenderTraceOmitsLinkWhenPublicURLInvalid(t *testing.T) {
 
 	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
 	require.NoError(t, err)
-	structured, ok := result.StructuredContent.(RenderTraceResult)
+	structured, ok := result.StructuredContent.(TraceViewResult)
 	require.True(t, ok)
 	assert.Empty(t, structured.GrafanaURL)
 	assert.Len(t, structured.Spans, 2)
@@ -225,7 +225,7 @@ func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, OrgID: 7, APIKey: "test-token"})
 	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
 	require.NoError(t, err)
-	structured, ok := result.StructuredContent.(RenderTraceResult)
+	structured, ok := result.StructuredContent.(TraceViewResult)
 	require.True(t, ok)
 	assert.Empty(t, structured.GrafanaURL)
 	assert.Len(t, structured.Spans, 2)
@@ -252,7 +252,7 @@ func TestRenderTraceMissingFocusPreservesTrace(t *testing.T) {
 		FocusSpanID:   &missing,
 	})
 	require.NoError(t, err)
-	structured, ok := result.StructuredContent.(RenderTraceResult)
+	structured, ok := result.StructuredContent.(TraceViewResult)
 	require.True(t, ok)
 	require.NotNil(t, structured.FocusSpanID)
 	assert.Equal(t, missing, *structured.FocusSpanID)
@@ -377,7 +377,7 @@ func traceTestContext(t *testing.T, config mcpgrafana.GrafanaConfig) context.Con
 		mcpgrafana.WithGrafanaConfig(t.Context(), config),
 		&mcpgrafana.GrafanaClient{GrafanaHTTPAPI: apiClient},
 	)
-	return tempoTestUIContext(t, ctx)
+	return ctx
 }
 
 func writeTempoDatasource(t *testing.T, w http.ResponseWriter) {

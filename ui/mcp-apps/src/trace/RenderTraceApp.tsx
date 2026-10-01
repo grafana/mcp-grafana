@@ -3,10 +3,10 @@ import { useMemo } from 'react';
 
 import { McpAppShell, type McpAppColorMode, type McpAppFeedback } from '../McpAppShell';
 import { getTraceSummary, TraceViewer } from './TraceViewer';
-import type { RenderTraceResult, TraceNavigationTarget } from './types';
+import type { TraceViewResult, TraceNavigationTarget } from './types';
 
 export interface RenderTraceAppProps {
-  result: RenderTraceResult;
+  result: TraceViewResult;
   colorMode: McpAppColorMode;
   onOpenInGrafana?: (target: TraceNavigationTarget) => void;
   share?: ReactNode;

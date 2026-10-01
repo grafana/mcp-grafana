@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RenderTraceApp } from '../src/trace/RenderTraceApp';
 import { getTraceSummary, TraceViewer } from '../src/trace/TraceViewer';
-import type { RenderTraceResult, TraceSpan } from '../src/trace/types';
+import type { TraceViewResult, TraceSpan } from '../src/trace/types';
 
 afterEach(cleanup);
 
@@ -53,7 +53,7 @@ const spans: TraceSpan[] = [
   },
 ];
 
-function result(overrides: Partial<RenderTraceResult> = {}): RenderTraceResult {
+function result(overrides: Partial<TraceViewResult> = {}): TraceViewResult {
   return {
     traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
     datasourceUid: 'tempo-production',
