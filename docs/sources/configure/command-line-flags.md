@@ -257,6 +257,10 @@ When enabled, the following writes are disabled:
 
 Read operations (queries, lists, searches) stay available.
 
+## Configure Grafana HTTP redirects
+
+Outbound Grafana clients block redirects to a different scheme, host, or port by default. Use `--allow-cross-origin-redirects` or set `GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS=true` to allow them. The flag takes precedence over the environment variable. Allowing these redirects can send Grafana credentials to the redirect target. Request-selected Grafana URLs remain pinned to their selected target.
+
 ## Configure client TLS for Grafana
 
 - `--tls-cert-file`: Client certificate for mTLS to Grafana.

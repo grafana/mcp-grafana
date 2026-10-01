@@ -37,6 +37,17 @@ For most people running the server there is nothing to change. You are only affe
 - Tool parameters that accept any value now declare an explicit type list in their JSON schema, so MCP clients no longer warn that the schema has no validation keywords ([#1231](https://github.com/grafana/mcp-grafana/pull/1231))
 - Observability providers shut down in parallel, so one slow exporter no longer makes the others time out on shutdown ([#1230](https://github.com/grafana/mcp-grafana/pull/1230))
 
+## [1.6.3] - 2026-09-30
+
+### Fixed
+
+- Prometheus errors other than 400/422 (for example 500s or proxy errors) now include the response body, so failures explain what went wrong instead of only showing the status code ([#1270](https://github.com/grafana/mcp-grafana/pull/1270))
+- Docker images now report the correct release version instead of a build-info fallback ([#1269](https://github.com/grafana/mcp-grafana/pull/1269))
+
+### Security
+
+- Outbound Grafana clients now refuse redirects to a different scheme, host, or port, so Grafana credentials are never forwarded to a redirect target. Use `--allow-cross-origin-redirects` (or `GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS=true`) to restore the previous behaviour ([#1268](https://github.com/grafana/mcp-grafana/pull/1268))
+
 ## [1.6.2] - 2026-09-29
 
 This is the last 1.x release; the next release will be 2.0.
@@ -557,6 +568,7 @@ This is the last 1.x release; the next release will be 2.0.
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.6.3]: https://github.com/grafana/mcp-grafana/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/grafana/mcp-grafana/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/grafana/mcp-grafana/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/grafana/mcp-grafana/compare/v1.5.1...v1.6.0

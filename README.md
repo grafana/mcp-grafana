@@ -466,6 +466,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 
 **Grafana Client Options:**
 - `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
+- `--allow-cross-origin-redirects`: Allow outbound Grafana clients to follow redirects to a different scheme, host, or port. Defaults to false; `GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS` is the environment fallback. Enabling this can send Grafana credentials to the redirect target. Request-selected Grafana URLs remain pinned to their selected target.
 - `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
 
 **Observability:**

@@ -180,8 +180,9 @@ type grafanaConfig struct {
 	debug bool
 
 	// Request-selected Grafana targets for HTTP transports.
-	allowURLOverride bool
-	allowedURLs      string
+	allowURLOverride          bool
+	allowedURLs               string
+	allowCrossOriginRedirects bool
 
 	// TLS configuration
 	tlsCertFile   string
@@ -255,6 +256,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
 	flag.BoolVar(&gc.allowURLOverride, "allow-grafana-url-override", false, "Enable X-Grafana-URL selection for HTTP/SSE requests. Falls back to GRAFANA_ALLOW_URL_OVERRIDE. Without --allowed-grafana-urls, callers may target any HTTP(S) URL reachable by this server.")
 	flag.StringVar(&gc.allowedURLs, "allowed-grafana-urls", "", "Optional comma-separated exact Grafana base URLs allowed when --allow-grafana-url-override is enabled. Falls back to GRAFANA_ALLOWED_URLS.")
+	flag.BoolVar(&gc.allowCrossOriginRedirects, "allow-cross-origin-redirects", false, "Allow Grafana HTTP clients to follow redirects to a different scheme, host, or port. Falls back to GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS. This can expose Grafana credentials to the redirect target.")
 
 	flag.StringVar(&gc.tlsCertFile, "tls-cert-file", "", "Path to TLS certificate file for client authentication")
 	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
@@ -291,6 +293,20 @@ func (gc *grafanaConfig) applyGrafanaURLOverrideEnv(setFlags map[string]bool) er
 	}
 	if !setFlags["allowed-grafana-urls"] {
 		gc.allowedURLs = os.Getenv("GRAFANA_ALLOWED_URLS")
+	}
+	return nil
+}
+
+func (gc *grafanaConfig) applyRedirectEnv(setFlags map[string]bool) error {
+	if setFlags["allow-cross-origin-redirects"] {
+		return nil
+	}
+	if raw, ok := os.LookupEnv("GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS"); ok {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS: %w", err)
+		}
+		gc.allowCrossOriginRedirects = value
 	}
 	return nil
 }
@@ -1362,6 +1378,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	if err := gc.applyRedirectEnv(setFlags); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if err := gc.validateLokiGuardrail(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -1384,15 +1404,16 @@ func main() {
 	mcpgrafana.DynamicMultiOrgEnabled = gc.dynamicMultiOrg
 
 	grafanaConfig := mcpgrafana.GrafanaConfig{
-		Debug:                   gc.debug,
-		AllowGrafanaURLOverride: gc.allowURLOverride,
-		MaxLokiLogLimit:         gc.maxLokiLogLimit,
-		LokiGuardrailMode:       gc.lokiGuardrailMode,
-		LokiGuardrailMaxBytes:   gc.lokiGuardrailMaxBytes,
-		LokiGuardrailMaxRange:   gc.lokiGuardrailMaxRange,
-		IncludeArgumentsInSpans: gc.includeArgsInSpans,
-		Timeout:                 gc.timeout,
-		SOCKS5ProxyURL:          socks5Proxy,
+		Debug:                     gc.debug,
+		AllowGrafanaURLOverride:   gc.allowURLOverride,
+		AllowCrossOriginRedirects: gc.allowCrossOriginRedirects,
+		MaxLokiLogLimit:           gc.maxLokiLogLimit,
+		LokiGuardrailMode:         gc.lokiGuardrailMode,
+		LokiGuardrailMaxBytes:     gc.lokiGuardrailMaxBytes,
+		LokiGuardrailMaxRange:     gc.lokiGuardrailMaxRange,
+		IncludeArgumentsInSpans:   gc.includeArgsInSpans,
+		Timeout:                   gc.timeout,
+		SOCKS5ProxyURL:            socks5Proxy,
 	}
 	grafanaConfig.AllowedGrafanaURLs, err = mcpgrafana.ParseGrafanaURLOverrides(gc.allowedURLs)
 	if err != nil {
