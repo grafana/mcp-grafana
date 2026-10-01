@@ -107,6 +107,7 @@ var categoryDescription = map[string]string{
 	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
 	"docs":          "Docs: Search and retrieve Grafana product documentation (powered by grafana.com/llms-full.txt).",
 	"user":          "User: Identify the current user/credential, its capabilities, and the organizations it can access.",
+	"gcx":           "gcx: Run Grafana CLI (gcx) commands for anything without a dedicated tool, across Grafana resources, datasources and Grafana Cloud products.",
 }
 
 var categoryDescriptionNoQuery = map[string]string{
@@ -173,7 +174,7 @@ type disabledTools struct {
 	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
-	agento11y, assistant, docs, user bool
+	agento11y, assistant, docs, user, gcx bool
 }
 
 type grafanaConfig struct {
@@ -250,6 +251,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
 	flag.BoolVar(&dt.docs, "disable-docs", false, "Disable documentation tools")
 	flag.BoolVar(&dt.user, "disable-user", false, "Disable user info tools")
+	flag.BoolVar(&dt.gcx, "disable-gcx", false, "Disable the gcx command tool")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -406,6 +408,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddAssistantTools(s, enableWriteTools) }, dt.assistant, "assistant"},
 		{tools.AddDocsTools, dt.docs, "docs"},
 		{tools.AddUserTools, dt.user, "user"},
+		{func(s *mcp.Server) { tools.AddGcxTools(s, enableWriteTools, enableQueryTools) }, dt.gcx, "gcx"},
 	}
 }
 

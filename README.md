@@ -199,6 +199,12 @@ Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, an
 
 - **User info:** Get the current Grafana identity — login, email, name, whether it is a Grafana (server) admin, the current organization, and the organizations the credential can access (with roles). Use it to discover valid `orgId` values for [multi-organization](#multi-organization-support) requests.
 
+### gcx
+
+> **Note:** The gcx tool is **disabled by default**. To enable it, add `gcx` to your `--enabled-tools` flag.
+
+- **Run gcx commands:** `exec_gcx` runs [gcx](https://github.com/grafana/gcx), Grafana's CLI, in-process with the server's Grafana credentials. It covers anything without a dedicated tool: resources, datasource queries, alerting, SLOs, IRM, Synthetic Monitoring, Fleet and other Grafana Cloud products. Commands have no local filesystem or shell; file content goes through the `stdin` argument with `-f -`. With `--disable-write`, requests that would change anything are refused.
+
 ### Navigation
 
 - **Generate deeplinks:** Create accurate deeplink URLs for Grafana resources instead of relying on LLM URL guessing.
@@ -312,6 +318,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_resource_permissions`        | Admin                     | List permissions for a resource                                                                              | `permissions:read`                                     | `dashboards:uid:abcd1234`                           |
 | `get_resource_description`        | Admin                     | Describe a Grafana resource type                                                                             | `permissions:read`                                     | `dashboards:*`                                      |
 | `user_info`                       | User                      | Current identity, capabilities, and accessible organizations                                                 | None (signed-in user)                                  | —                                                   |
+| `exec_gcx` | gcx* | Run a gcx (Grafana CLI) command in-process | Depends on the command | Depends on the command |
 | `search_dashboards`               | Search                    | Search for dashboards by query, folder UID, tag, or starred                                                 | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_dashboard_by_uid`            | Dashboard                 | Get a dashboard by uid, optionally a saved version                                                        | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `list_dashboard_versions`         | Dashboard                 | List saved versions of a dashboard (version, author, time, message)                                     | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
