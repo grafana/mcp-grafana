@@ -138,6 +138,20 @@ func TestDashboardV2(t *testing.T) {
 		require.Equal(t, 1, summary.PanelCount)
 		assert.Equal(t, "Up (patched)", summary.Panels[0].Title)
 	})
+
+	t.Run("full v1 body over v2 is rejected and dashboard stays v2", func(t *testing.T) {
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: map[string]interface{}{"uid": uid, "title": "Flattened", "panels": []interface{}{}},
+			Overwrite: true,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be replaced with a classic v1")
+
+		res, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		assert.True(t, res.IsV2, "dashboard must remain v2")
+		assert.Equal(t, "MCP V2 Integration", safeString(res.Dashboard.(map[string]interface{}), "title"))
+	})
 }
 
 // TestDashboardV1ToV2Replace verifies that replacing a dashboard currently
