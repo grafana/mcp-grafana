@@ -46,7 +46,7 @@ type promBackend interface {
 func backendForDatasource(ctx context.Context, uid string, projectOverride ...string) (promBackend, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, err
+		return nil, withMissingDatasourceHint(ctx, err, "prometheus", "Prometheus")
 	}
 
 	proj := ""

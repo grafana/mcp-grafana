@@ -64,8 +64,9 @@ type dataSourceSummary struct {
 
 type ListDatasourcesResult struct {
 	Datasources []dataSourceSummary `json:"datasources"`
-	Total       int                 `json:"total"`   // Total count before pagination
-	HasMore     bool                `json:"hasMore"` // Whether more results exist
+	Total       int                 `json:"total"`          // Total count before pagination
+	HasMore     bool                `json:"hasMore"`        // Whether more results exist
+	Hint        string              `json:"hint,omitempty"` // Optional next step when nothing matched, e.g. where to learn how to set it up
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
@@ -118,11 +119,21 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 
 	hasMore := offset+len(paginated) < total
 
-	return &ListDatasourcesResult{
+	result := &ListDatasourcesResult{
 		Datasources: summarizeDatasources(paginated),
 		Total:       total,
 		HasMore:     hasMore,
-	}, nil
+	}
+	// Only an empty result with no name filter and no paging is a real "not set
+	// up": a name filter or an offset past the end just means nothing matched.
+	if total == 0 && args.Name == "" && offset == 0 {
+		problem := "No datasources are configured"
+		if args.Type != "" {
+			problem = fmt.Sprintf("No %s datasource is configured", args.Type)
+		}
+		result.Hint = interactiveLearningHint(ctx, problem)
+	}
+	return result, nil
 }
 
 type CreateDatasourceParams struct {
@@ -473,6 +484,13 @@ type GetDatasourceByUIDParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
 }
 
+// datasourceNotFoundError marks a lookup that reached Grafana and found no such
+// datasource, as opposed to a permissions or transport failure. The message is
+// unchanged from before; the type lets callers tell the cases apart.
+type datasourceNotFoundError string
+
+func (e datasourceNotFoundError) Error() string { return string(e) }
+
 func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByUIDWithParams(
@@ -481,7 +499,7 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 	if err != nil {
 		// Check if it's a 404 Not Found Error
 		if strings.Contains(err.Error(), "404") {
-			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
+			return nil, datasourceNotFoundError(fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
 		}
 		// The datasource metadata API is not accessible to this token (e.g.
 		// it requires Org Admin before Grafana 9.0); fall back to frontend
@@ -494,7 +512,7 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 			// The settings were readable and the datasource is genuinely
 			// absent: report not-found rather than the misleading permission
 			// error, so agents can tell a typo from a credentials problem.
-			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
+			return nil, datasourceNotFoundError(fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
 		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
@@ -519,7 +537,7 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 			return ds, nil
 		}
 		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
-			return nil, fmt.Errorf("datasource with name '%s' not found. Please check if the datasource exists and is accessible", args.Name)
+			return nil, datasourceNotFoundError(fmt.Sprintf("datasource with name '%s' not found. Please check if the datasource exists and is accessible", args.Name))
 		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}
