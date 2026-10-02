@@ -1,0 +1,40 @@
+{
+  "name": "grafana-insight-cell-mcp",
+  "version": "0.1.0",
+  "description": "An MCP App that renders a Grafana 'insight cell' — a generic, trustworthy render surface for Grafana data — inline in an MCP host such as Claude Desktop.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "INPUT=mcp-app.html vite build && INPUT=shared.html vite build",
+    "build:preview": "INPUT=preview.html vite build",
+    "build:shared": "INPUT=shared.html vite build",
+    "start": "tsx server.ts",
+    "serve": "tsx server.ts",
+    "serve:http": "MCP_HTTP=1 tsx server.ts",
+    "smoke": "node smoketest.mjs",
+    "dev": "npm run build && npm run start"
+  },
+  "dependencies": {
+    "@grafana/data": "^13.1.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^16.4.5",
+    "uplot": "^1.6.32",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "cors": "^2.8.5",
+    "express": "^5.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.1.0"
+  },
+  "overrides": {
+    "dompurify": "^3.4.11",
+    "js-cookie": "^3.0.6"
+  }
+}

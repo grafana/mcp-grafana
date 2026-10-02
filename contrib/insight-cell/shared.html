@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shared Grafana insight cell</title>
+    <style>
+      body { display: flex; flex-direction: column; align-items: center; padding: 24px 12px; }
+      .share-frame { width: min(720px, 100%); }
+      .share-banner {
+        font: 12px/1.5 system-ui, sans-serif; color: #8e8e93;
+        border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;
+        padding: 8px 12px; margin-bottom: 12px;
+      }
+      .share-banner b { color: inherit; }
+    </style>
+  </head>
+  <body>
+    <div class="share-frame">
+      <div class="share-banner">
+        <b>Shared insight cell</b> — read-only snapshot. To interact (refresh with your
+        credentials, drill, ask), paste this page's link into an MCP Apps host with the
+        Grafana Insight Cell server connected.
+      </div>
+      <div class="card" id="root">
+        <div class="empty">Loading shared cell…</div>
+      </div>
+    </div>
+    <script>/*__CELL_PAYLOAD__*/</script>
+    <script type="module" src="/src/shared.ts"></script>
+  </body>
+</html>
