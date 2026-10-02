@@ -38,7 +38,7 @@ func RegisterTraceAppResource(s *mcp.Server) {
 
 func traceAppMetadata() mcp.Meta {
 	ui := map[string]any{"csp": map[string]any{
-		"connectDomains": []string{}, "resourceDomains": []string{},
+		"connectDomains": []string{}, "resourceDomains": []string{"data:"},
 	}}
 	ui["permissions"] = map[string]any{"clipboardWrite": map[string]any{}}
 	return mcp.Meta{"ui": ui}

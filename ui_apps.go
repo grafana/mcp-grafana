@@ -42,6 +42,7 @@ func RegisterAppResources(s *mcp.Server) {
 	RegisterTraceAppResource(s)
 	s.AddResource(
 		&mcp.Resource{
+			Meta:        panelViewerAppMetadata(),
 			URI:         PanelViewerResourceURI,
 			Name:        "Panel Viewer",
 			Description: "Interactive HTML viewer for Grafana panel images",
@@ -51,6 +52,7 @@ func RegisterAppResources(s *mcp.Server) {
 			return &mcp.ReadResourceResult{
 				Contents: []*mcp.ResourceContents{
 					{
+						Meta:     panelViewerAppMetadata(),
 						URI:      PanelViewerResourceURI,
 						MIMEType: appMIMEType,
 						Text:     panelViewerAppHTML,
@@ -59,4 +61,10 @@ func RegisterAppResources(s *mcp.Server) {
 			}, nil
 		},
 	)
+}
+
+func panelViewerAppMetadata() mcp.Meta {
+	return mcp.Meta{"ui": map[string]any{"csp": map[string]any{
+		"connectDomains": []string{}, "resourceDomains": []string{"data:"},
+	}}}
 }
