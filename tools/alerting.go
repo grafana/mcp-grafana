@@ -69,3 +69,12 @@ func AddAlertingTools(s *mcp.Server, enableWriteTools bool) {
 		AlertSilencesWrite.Register(s)
 	}
 }
+
+// nonNil returns s, or an empty slice when s is nil, so a list operation with
+// no results reports [] rather than leaving its result field unset.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}

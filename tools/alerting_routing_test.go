@@ -8,7 +8,6 @@ package tools
 import (
 	"testing"
 
-	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,14 +16,14 @@ func TestManageRouting(t *testing.T) {
 		name     string
 		params   ManageRoutingParams
 		wantErr  string
-		assertFn func(t *testing.T, result any)
+		assertFn func(t *testing.T, result *routingResult)
 	}{
 		// get_contact_points
 		{
 			name:   "get_contact_points lists all",
 			params: ManageRoutingParams{Operation: "get_contact_points"},
-			assertFn: func(t *testing.T, result any) {
-				cps, ok := result.([]contactPointSummary)
+			assertFn: func(t *testing.T, result *routingResult) {
+				cps, ok := result.ContactPoints, result != nil
 				require.True(t, ok)
 				require.ElementsMatch(t, allExpectedContactPoints, cps)
 			},
@@ -35,8 +34,8 @@ func TestManageRouting(t *testing.T) {
 				Operation: "get_contact_points",
 				Name:      strPtr("Email1"),
 			},
-			assertFn: func(t *testing.T, result any) {
-				cps, ok := result.([]contactPointSummary)
+			assertFn: func(t *testing.T, result *routingResult) {
+				cps, ok := result.ContactPoints, result != nil
 				require.True(t, ok)
 				require.Len(t, cps, 1)
 				require.Equal(t, "Email1", cps[0].Name)
@@ -48,8 +47,8 @@ func TestManageRouting(t *testing.T) {
 				Operation: "get_contact_points",
 				Limit:     1,
 			},
-			assertFn: func(t *testing.T, result any) {
-				cps, ok := result.([]contactPointSummary)
+			assertFn: func(t *testing.T, result *routingResult) {
+				cps, ok := result.ContactPoints, result != nil
 				require.True(t, ok)
 				require.Len(t, cps, 1)
 			},
@@ -68,8 +67,8 @@ func TestManageRouting(t *testing.T) {
 				Operation:     "get_contact_points",
 				DatasourceUID: strPtr("alertmanager"),
 			},
-			assertFn: func(t *testing.T, result any) {
-				cps, ok := result.([]contactPointSummary)
+			assertFn: func(t *testing.T, result *routingResult) {
+				cps, ok := result.ContactPoints, result != nil
 				require.True(t, ok)
 				require.NotEmpty(t, cps)
 
@@ -88,8 +87,8 @@ func TestManageRouting(t *testing.T) {
 				Operation:         "get_contact_point",
 				ContactPointTitle: strPtr("Email1"),
 			},
-			assertFn: func(t *testing.T, result any) {
-				cps, ok := result.([]*models.EmbeddedContactPoint)
+			assertFn: func(t *testing.T, result *routingResult) {
+				cps, ok := result.ContactPointIntegrations, result != nil
 				require.True(t, ok)
 				require.NotEmpty(t, cps)
 				require.Equal(t, "Email1", cps[0].Name)
@@ -113,8 +112,8 @@ func TestManageRouting(t *testing.T) {
 		{
 			name:   "get_notification_policies returns policy tree with routes",
 			params: ManageRoutingParams{Operation: "get_notification_policies"},
-			assertFn: func(t *testing.T, result any) {
-				route, ok := result.(*models.Route)
+			assertFn: func(t *testing.T, result *routingResult) {
+				route, ok := result.NotificationPolicies, result != nil
 				require.True(t, ok)
 				require.NotNil(t, route)
 				require.NotEmpty(t, route.Routes, "expected at least one child route")
@@ -125,8 +124,8 @@ func TestManageRouting(t *testing.T) {
 		{
 			name:   "get_time_intervals returns provisioned intervals",
 			params: ManageRoutingParams{Operation: "get_time_intervals"},
-			assertFn: func(t *testing.T, result any) {
-				intervals, ok := result.([]muteTimingSummary)
+			assertFn: func(t *testing.T, result *routingResult) {
+				intervals, ok := result.TimeIntervals, result != nil
 				require.True(t, ok)
 				require.NotEmpty(t, intervals)
 
@@ -145,8 +144,8 @@ func TestManageRouting(t *testing.T) {
 				Operation:        "get_time_interval",
 				TimeIntervalName: strPtr("weekends"),
 			},
-			assertFn: func(t *testing.T, result any) {
-				mt, ok := result.(*models.MuteTimeInterval)
+			assertFn: func(t *testing.T, result *routingResult) {
+				mt, ok := result.TimeInterval, result != nil
 				require.True(t, ok)
 				require.Equal(t, "weekends", mt.Name)
 				require.NotEmpty(t, mt.TimeIntervals)

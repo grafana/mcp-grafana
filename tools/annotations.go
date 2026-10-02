@@ -83,7 +83,10 @@ type CreateAnnotationInput struct {
 
 // createAnnotation sends a POST request to create a Grafana annotation.
 // If Format is "graphite", it creates a Graphite-format annotation instead.
-func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, error) {
+// createAnnotation returns the new annotation's ID. Both formats answer with the
+// same {id, message} body; the Graphite one is converted so the tool has a single
+// result type.
+func createAnnotation(ctx context.Context, args CreateAnnotationInput) (*models.PostAnnotationOKBody, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
 	if args.Format == "graphite" {
@@ -102,7 +105,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		if err != nil {
 			return nil, fmt.Errorf("create graphite annotation: %w", err)
 		}
-		return resp, nil
+		return &models.PostAnnotationOKBody{ID: resp.Payload.ID, Message: resp.Payload.Message}, nil
 	}
 
 	if args.Text == "" {
@@ -126,7 +129,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		return nil, fmt.Errorf("create annotation: %w", err)
 	}
 
-	return resp, nil
+	return resp.Payload, nil
 }
 
 var CreateAnnotationTool = mcpgrafana.MustTool(

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -75,7 +77,7 @@ type QueryPrometheusParams struct {
 
 // QueryPrometheusResult wraps the Prometheus query result with optional hints
 type QueryPrometheusResult struct {
-	Data     model.Value       `json:"data"`
+	Data     PrometheusValue   `json:"data"`
 	Hints    *EmptyResultHints `json:"hints,omitempty"`
 	Warnings []string          `json:"warnings,omitempty"`
 }
@@ -148,6 +150,64 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
 }
 
+// PrometheusValue is a query result in the shape of the Prometheus HTTP API's
+// data object, {"resultType": "vector", "result": [...]}, so callers can tell
+// a range query's matrix from an instant query's vector, scalar or string.
+type PrometheusValue struct {
+	model.Value
+}
+
+func (v PrometheusValue) MarshalJSON() ([]byte, error) {
+	if v.Value == nil {
+		return []byte("null"), nil
+	}
+	result := v.Value
+	// A typed-nil Matrix or Vector marshals as null, but the schema (and the
+	// Prometheus HTTP API) reports an empty result as [].
+	switch r := result.(type) {
+	case model.Matrix:
+		if r == nil {
+			result = model.Matrix{}
+		}
+	case model.Vector:
+		if r == nil {
+			result = model.Vector{}
+		}
+	}
+	return json.Marshal(struct {
+		ResultType model.ValueType `json:"resultType"`
+		Result     model.Value     `json:"result"`
+	}{v.Type(), result})
+}
+
+// prometheusValueSchema describes how prometheus/common/model marshals each
+// value type: samples are [unixSeconds, "value"] pairs, native histograms
+// [unixSeconds, {count, sum, buckets}].
+var prometheusValueSchema = func() *jsonschema.Schema {
+	const (
+		metric    = `{"type": "object", "additionalProperties": {"type": "string"}}`
+		sample    = `{"type": "array", "minItems": 2, "maxItems": 2, "prefixItems": [{"type": "number"}, {"type": "string"}]}`
+		histogram = `{"type": "array", "minItems": 2, "maxItems": 2, "prefixItems": [{"type": "number"}, {"type": "object"}]}`
+	)
+	orNull := func(s string) string { return `{"anyOf": [` + s + `, {"type": "null"}]}` }
+	value := func(resultType, result string) string {
+		return `{"type": "object", "required": ["resultType", "result"], "properties": {"resultType": ` + resultType + `, "result": ` + result + `}}`
+	}
+	src := `{"oneOf": [{"type": "null"}, ` +
+		value(`{"const": "matrix"}`, `{"type": "array", "items": {"type": "object", "required": ["metric"], "properties": {`+
+			`"metric": `+metric+`, "values": `+orNull(`{"type": "array", "items": `+sample+`}`)+`, "histograms": `+orNull(`{"type": "array", "items": `+histogram+`}`)+`}}}`) + `, ` +
+		value(`{"const": "vector"}`, `{"type": "array", "items": {"type": "object", "required": ["metric"], "properties": {`+
+			`"metric": `+metric+`, "value": `+sample+`, "histogram": `+histogram+`}}}`) + `, ` +
+		value(`{"enum": ["scalar", "string"]}`, sample) + `]}`
+	var s jsonschema.Schema
+	if err := json.Unmarshal([]byte(src), &s); err != nil {
+		panic(err)
+	}
+	return &s
+}()
+
+func (PrometheusValue) JSONSchema() *jsonschema.Schema { return prometheusValueSchema }
+
 // queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.
 // This is the MCP tool handler - hints are added at this layer, not in the internal function.
 func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
@@ -157,7 +217,7 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 	}
 
 	response := &QueryPrometheusResult{
-		Data:     result,
+		Data:     PrometheusValue{result},
 		Warnings: warnings,
 	}
 
@@ -428,9 +488,9 @@ var ListPrometheusLabelValues = mcpgrafana.MustTool(
 
 // PrometheusHistogramResult wraps histogram query results with debugging info
 type PrometheusHistogramResult struct {
-	Result model.Value `json:"result"`
-	Query  string      `json:"query"` // Generated PromQL for debugging
-	Hints  []string    `json:"hints,omitempty"`
+	Data  PrometheusValue `json:"data"`
+	Query string          `json:"query"` // Generated PromQL for debugging
+	Hints []string        `json:"hints,omitempty"`
 }
 
 // QueryPrometheusHistogramParams defines the parameters for querying histogram percentiles
@@ -524,9 +584,9 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 	}
 
 	return &PrometheusHistogramResult{
-		Result: result,
-		Query:  expr,
-		Hints:  hints,
+		Data:  PrometheusValue{result},
+		Query: expr,
+		Hints: hints,
 	}, nil
 }
 

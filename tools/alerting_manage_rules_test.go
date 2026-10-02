@@ -136,7 +136,7 @@ func TestManageRules_List(t *testing.T) {
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
@@ -148,7 +148,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		for _, rule := range rules {
 			require.NotEqual(t, "inactive", rule.State, "state should be normalized from 'inactive' to 'normal'")
@@ -165,7 +165,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		// Only the three alerting rules carry severity=info; the recording rule does not.
 		alertingRules := []alertRuleSummary{rule1, rule2, rulePaused}
@@ -182,7 +182,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.Empty(t, rules)
 	})
@@ -197,7 +197,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, []alertRuleSummary{rule2}, clearState(rules))
 	})
@@ -212,7 +212,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, []alertRuleSummary{rule1}, clearState(rules))
 	})
@@ -227,7 +227,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
@@ -242,7 +242,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
@@ -257,7 +257,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.Empty(t, rules)
 	})
@@ -272,7 +272,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
@@ -285,7 +285,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
@@ -304,7 +304,7 @@ func TestManageRules_List(t *testing.T) {
 		// Discover the folder UID from a known provisioned rule.
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
 		require.NoError(t, err)
-		allRules, ok := result.([]alertRuleSummary)
+		allRules, ok := result.Rules, result != nil
 		require.True(t, ok)
 
 		var folderUID string
@@ -321,7 +321,7 @@ func TestManageRules_List(t *testing.T) {
 			FolderUID: folderUID,
 		})
 		require.NoError(t, err)
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.NotEmpty(t, rules)
 		for _, r := range rules {
@@ -336,7 +336,7 @@ func TestManageRules_List(t *testing.T) {
 			FolderUID: "empty-alerts-folder",
 		})
 		require.NoError(t, err)
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.Empty(t, rules)
 	})
@@ -349,7 +349,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.Empty(t, rules)
 	})
@@ -362,7 +362,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.Len(t, rules, 1)
 		require.Equal(t, rulePausedUID, rules[0].UID)
@@ -376,7 +376,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.Empty(t, rules)
 	})
@@ -389,7 +389,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.NotEmpty(t, rules)
 	})
@@ -402,7 +402,7 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.Len(t, rules, 1)
 	})
@@ -417,7 +417,7 @@ func TestManageRules_Get(t *testing.T) {
 		})
 
 		require.NoError(t, err)
-		detail, ok := result.(*alertRuleDetail)
+		detail, ok := result.Rule, result != nil
 		require.True(t, ok)
 		require.Equal(t, rule1UID, detail.UID)
 		require.Equal(t, rule1Title, detail.Title)
@@ -455,7 +455,7 @@ func TestManageRules_Get(t *testing.T) {
 		})
 
 		require.NoError(t, err)
-		detail, ok := result.(*alertRuleDetail)
+		detail, ok := result.Rule, result != nil
 		require.True(t, ok)
 		require.Equal(t, rulePausedUID, detail.UID)
 		require.True(t, detail.IsPaused)
@@ -490,7 +490,7 @@ func TestManageRules_Get(t *testing.T) {
 			RuleUID:          rule1UID,
 		})
 		require.NoError(t, err)
-		detail, ok := result.(*alertRuleDetail)
+		detail, ok := result.Rule, result != nil
 		require.True(t, ok)
 		require.Equal(t, rule1UID, detail.UID)
 		if detail.Alerts != nil {
@@ -523,7 +523,7 @@ func TestManageRouting_GetContactPoints(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]contactPointSummary)
+		cps, ok := result.ContactPoints, result != nil
 		require.True(t, ok)
 		require.ElementsMatch(t, allExpectedContactPoints, cps)
 	})
@@ -536,7 +536,7 @@ func TestManageRouting_GetContactPoints(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]contactPointSummary)
+		cps, ok := result.ContactPoints, result != nil
 		require.True(t, ok)
 		require.Len(t, cps, 1)
 	})
@@ -550,7 +550,7 @@ func TestManageRouting_GetContactPoints(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]contactPointSummary)
+		cps, ok := result.ContactPoints, result != nil
 		require.True(t, ok)
 		require.Len(t, cps, 1)
 		require.Equal(t, "Email1", cps[0].Name)
@@ -573,7 +573,7 @@ func TestManageRouting_GetContactPoints(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]contactPointSummary)
+		cps, ok := result.ContactPoints, result != nil
 		require.True(t, ok)
 		require.NotEmpty(t, cps)
 	})
@@ -587,7 +587,7 @@ func TestManageRouting_GetContactPoints(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]contactPointSummary)
+		cps, ok := result.ContactPoints, result != nil
 		require.True(t, ok)
 		require.Empty(t, cps)
 	})
@@ -657,7 +657,7 @@ func TestManageRules_Create(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, created.UID)
 		require.Equal(t, "Test Created Alert Rule", *created.Title)
@@ -721,7 +721,7 @@ func TestManageRules_Create(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, created.UID)
 		require.Equal(t, "Test Reduce+Threshold Rule", *created.Title)
@@ -785,7 +785,7 @@ func TestManageRules_Create(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, created.UID)
 		require.Equal(t, "Test Math Expression Rule", *created.Title)
@@ -846,7 +846,7 @@ func TestManageRules_Create(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, created.UID)
 		require.Len(t, created.Data, 3)
@@ -891,7 +891,7 @@ func TestManageRules_Create(t *testing.T) {
 		})
 		require.NoError(t, err, "create recording rule should not return error")
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok, "result should be a *models.ProvisionedAlertRule")
 
 		t.Run("test_response", func(t *testing.T) {
@@ -1003,7 +1003,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		updated, ok := result.(*models.ProvisionedAlertRule)
+		updated, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, updated.UID)
 		require.Equal(t, "Updated Title", *updated.Title)
@@ -1075,7 +1075,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		updated, ok := result.(*models.ProvisionedAlertRule)
+		updated, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, updated.UID)
 
@@ -1150,7 +1150,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		updated, ok := result.(*models.ProvisionedAlertRule)
+		updated, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, updated.UID)
 
@@ -1225,7 +1225,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err, "update recording rule should not return error")
 
-		updated, ok := updateResult.(*models.ProvisionedAlertRule)
+		updated, ok := updateResult.SavedRule, updateResult != nil
 		require.True(t, ok, "result should be a *models.ProvisionedAlertRule")
 
 		t.Run("test_response", func(t *testing.T) {
@@ -1341,7 +1341,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err, "should fetch the alert rule")
 
-		detail, ok := fetchResult.(*alertRuleDetail)
+		detail, ok := fetchResult.Rule, fetchResult != nil
 		require.True(t, ok, "result should be an *alertRuleDetail")
 
 		require.Equal(t, updateParams.Title, detail.Title, "title should match")
@@ -1413,7 +1413,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err, "should fetch the recording rule")
 
-		detail, ok := fetchResult.(*alertRuleDetail)
+		detail, ok := fetchResult.Rule, fetchResult != nil
 		require.True(t, ok, "result should be an *alertRuleDetail")
 
 		require.Equal(t, updateParams.Title, detail.Title, "title should match")
@@ -1473,7 +1473,7 @@ func TestManageRules_Delete(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		msg, ok := result.(string)
+		msg, ok := result.Message, result != nil
 		require.True(t, ok)
 		require.Contains(t, msg, "deleted successfully")
 		require.Contains(t, msg, testUID)
@@ -1495,7 +1495,7 @@ func TestManageRules_Delete(t *testing.T) {
 		})
 		require.NoError(t, err) // DELETE is idempotent
 
-		msg, ok := result.(string)
+		msg, ok := result.Message, result != nil
 		require.True(t, ok)
 		require.Contains(t, msg, "deleted successfully")
 		require.Contains(t, msg, "non-existent-uid")
@@ -1577,7 +1577,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, created.UID)
 		require.Empty(t, created.Provenance, "expected empty provenance when disable_provenance defaults to true")
@@ -1610,7 +1610,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, created.UID)
 		require.Empty(t, created.Provenance, "expected empty provenance when disable_provenance is true")
@@ -1643,7 +1643,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		created, ok := result.(*models.ProvisionedAlertRule)
+		created, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, testUID, created.UID)
 		require.Equal(t, models.Provenance("api"), created.Provenance, "expected provenance 'api' when disable_provenance is false")
@@ -1690,7 +1690,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		updated, ok := result.(*models.ProvisionedAlertRule)
+		updated, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, "Test Update Provenance Default - Updated", *updated.Title)
 		require.Empty(t, updated.Provenance, "expected empty provenance when disable_provenance defaults to true")
@@ -1739,7 +1739,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		updated, ok := result.(*models.ProvisionedAlertRule)
+		updated, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, "Test Update Provenance - Updated", *updated.Title)
 		require.Empty(t, updated.Provenance, "expected empty provenance when disable_provenance is true")
@@ -1788,7 +1788,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		updated, ok := result.(*models.ProvisionedAlertRule)
+		updated, ok := result.SavedRule, result != nil
 		require.True(t, ok)
 		require.Equal(t, "Test Update Provenance False - Updated", *updated.Title)
 		require.Equal(t, models.Provenance("api"), updated.Provenance, "expected provenance 'api' when disable_provenance is false")
@@ -1806,7 +1806,7 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		require.NotEmpty(t, rules, "Expected Prometheus to have alert rules configured")
 
@@ -1835,7 +1835,7 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		for _, rule := range rules {
 			require.Equal(t, "warning", rule.Labels["severity"])
@@ -1877,7 +1877,7 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		if err != nil {
 			t.Logf("Loki ruler query failed (this may be expected): %v", err)
 		} else {
-			rules, ok := result.([]alertRuleSummary)
+			rules, ok := result.Rules, result != nil
 			require.True(t, ok)
 			t.Logf("Loki ruler returned %d rules", len(rules))
 		}
@@ -1895,7 +1895,7 @@ func TestManageRouting_GetContactPoints_Alertmanager(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]contactPointSummary)
+		cps, ok := result.ContactPoints, result != nil
 		require.True(t, ok)
 		require.NotEmpty(t, cps, "Expected Alertmanager to have receivers configured")
 
@@ -1921,7 +1921,7 @@ func TestManageRouting_GetContactPoints_Alertmanager(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]contactPointSummary)
+		cps, ok := result.ContactPoints, result != nil
 		require.True(t, ok)
 		require.Len(t, cps, 1)
 		require.Equal(t, "test-receiver", cps[0].Name)
@@ -1960,7 +1960,7 @@ func TestManageRouting_GetNotificationPolicies(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		route, ok := result.(*models.Route)
+		route, ok := result.NotificationPolicies, result != nil
 		require.True(t, ok)
 		require.NotEmpty(t, route.Receiver, "default receiver should be set")
 	})
@@ -1976,7 +1976,7 @@ func TestManageRouting_GetContactPointDetail(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cps, ok := result.([]*models.EmbeddedContactPoint)
+		cps, ok := result.ContactPointIntegrations, result != nil
 		require.True(t, ok)
 		require.Len(t, cps, 1)
 		require.Equal(t, "Email1", cps[0].Name)
@@ -2004,7 +2004,7 @@ func TestManageRouting_GetTimeIntervals(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		intervals, ok := result.([]muteTimingSummary)
+		intervals, ok := result.TimeIntervals, result != nil
 		require.True(t, ok)
 		require.NotEmpty(t, intervals, "expected provisioned 'weekends' mute timing")
 
@@ -2056,7 +2056,7 @@ func TestManageRules_SearchFolder(t *testing.T) {
 		})
 		require.NoError(t, err)
 		// Should not error regardless of whether the folder exists
-		rules, ok := result.([]alertRuleSummary)
+		rules, ok := result.Rules, result != nil
 		require.True(t, ok)
 		_ = rules
 	})
