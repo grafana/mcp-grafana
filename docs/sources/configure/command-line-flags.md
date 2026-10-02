@@ -144,6 +144,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-assistant`: Disable Grafana Assistant tools.
 - `--disable-docs`: Disable documentation tools.
 - `--disable-user`: Disable user info tools.
+- `--disable-interactive-learning-hints`: Stop tool results from pointing users at Grafana Interactive Learning (the My Learning page, `/a/grafana-pathfinder-app`) when something is not set up or a tool hits a dead end. Hints only appear when that plugin is installed and enabled.
 
 ## Configure tool limits
 
