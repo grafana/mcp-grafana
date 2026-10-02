@@ -7,7 +7,7 @@
     "dev": "vite --open /mcp-app.html"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.7.1"
+    "@modelcontextprotocol/ext-apps": "^2.0.3"
   },
   "devDependencies": {
     "typescript": "^7.0.0",
