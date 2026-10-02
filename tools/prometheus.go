@@ -161,10 +161,23 @@ func (v PrometheusValue) MarshalJSON() ([]byte, error) {
 	if v.Value == nil {
 		return []byte("null"), nil
 	}
+	result := v.Value
+	// A typed-nil Matrix or Vector marshals as null, but the schema (and the
+	// Prometheus HTTP API) reports an empty result as [].
+	switch r := result.(type) {
+	case model.Matrix:
+		if r == nil {
+			result = model.Matrix{}
+		}
+	case model.Vector:
+		if r == nil {
+			result = model.Vector{}
+		}
+	}
 	return json.Marshal(struct {
 		ResultType model.ValueType `json:"resultType"`
 		Result     model.Value     `json:"result"`
-	}{v.Type(), v.Value})
+	}{v.Type(), result})
 }
 
 // prometheusValueSchema describes how prometheus/common/model marshals each

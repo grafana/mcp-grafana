@@ -496,6 +496,9 @@ func TestPrometheusValueMatchesOutputSchema(t *testing.T) {
 		"scalar": &model.Scalar{Value: 1, Timestamp: 1000},
 		"string": &model.String{Value: "x", Timestamp: 1000},
 		"empty":  model.Vector{},
+		// Backends can return typed-nil slices for queries with no results.
+		"nil matrix": model.Matrix(nil),
+		"nil vector": model.Vector(nil),
 	}
 	for name, v := range values {
 		t.Run(name, func(t *testing.T) {
@@ -507,6 +510,10 @@ func TestPrometheusValueMatchesOutputSchema(t *testing.T) {
 	b, err := json.Marshal(PrometheusValue{model.Vector{}})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"resultType":"vector","result":[]}`, string(b))
+
+	b, err = json.Marshal(PrometheusValue{model.Matrix(nil)})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"resultType":"matrix","result":[]}`, string(b))
 }
 
 func assertMatchesOutputSchema(t *testing.T, tool *mcp.Tool, v any) {
