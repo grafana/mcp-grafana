@@ -131,6 +131,8 @@ func TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement(t *testing.
 				// resolves to not-found and the type stays unverified.
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"datasources":{}}`))
+			case "/api/plugins/" + interactiveLearningPluginID + "/settings":
+				w.WriteHeader(http.StatusNotFound)
 			case "/api/ds/query":
 				t.Errorf("ds/query must not be reached when failing closed")
 			default:

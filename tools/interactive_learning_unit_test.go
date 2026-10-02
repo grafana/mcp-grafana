@@ -8,9 +8,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
-	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,87 +105,127 @@ func TestListDatasources_InteractiveLearningHint(t *testing.T) {
 	})
 }
 
-// deadEndServer answers every datasource-by-UID lookup with 404, serves list as
-// the datasource list, and reports the Interactive Learning plugin as enabled.
-func deadEndServer(t *testing.T, list []*models.DataSource) *httptest.Server {
+// notFoundServer has one Prometheus datasource, answers every by-UID and
+// by-name metadata lookup with lookupStatus, and serves the Interactive
+// Learning plugin settings with pluginStatus and pluginEnabled. It records
+// every request path.
+type notFoundServer struct {
+	*httptest.Server
+	mu       sync.Mutex
+	requests []string
+}
+
+func newNotFoundServer(t *testing.T, lookupStatus, pluginStatus int, pluginEnabled bool) *notFoundServer {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := &notFoundServer{}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.requests = append(s.requests, r.URL.Path)
+		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.URL.Path == "/api/datasources":
-			_ = json.NewEncoder(w).Encode(list)
 		case r.URL.Path == "/api/plugins/"+interactiveLearningPluginID+"/settings":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": interactiveLearningPluginID, "enabled": true})
+			w.WriteHeader(pluginStatus)
+			if pluginStatus == http.StatusOK {
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": interactiveLearningPluginID, "enabled": pluginEnabled})
+			}
+		case r.URL.Path == "/api/frontend/settings":
+			if lookupStatus != http.StatusForbidden {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"datasources": {"Prometheus": {"id": 1, "uid": "prometheus", "name": "Prometheus", "type": "prometheus"}}}`))
+		case strings.HasPrefix(r.URL.Path, "/api/datasources/uid/"), strings.HasPrefix(r.URL.Path, "/api/datasources/name/"):
+			w.WriteHeader(lookupStatus)
+			_, _ = w.Write([]byte(`{"message":"lookup failed"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"message":"not found"}`))
 		}
 	}))
 	t.Cleanup(func() {
-		server.Close()
+		s.Close()
 		interactiveLearningCache.Clear()
 	})
-	return server
+	return s
 }
 
-func TestQueryToolDeadEnds_InteractiveLearningHint(t *testing.T) {
-	lookups := map[string]struct {
-		dsType string
-		lookup func(ctx context.Context) error
-	}{
-		"prometheus": {"prometheus", func(ctx context.Context) error {
-			_, err := backendForDatasource(ctx, "missing")
+func (s *notFoundServer) requested(path string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.requests {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDatasourceNotFound_InteractiveLearningHint(t *testing.T) {
+	lookups := map[string]func(ctx context.Context) error{
+		"by uid": func(ctx context.Context) error {
+			_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: "promethues"})
 			return err
-		}},
-		"loki": {"loki", func(ctx context.Context) error {
-			_, err := lokiBackendForDatasource(ctx, "missing")
+		},
+		"by name": func(ctx context.Context) error {
+			_, err := getDatasourceByName(ctx, GetDatasourceByNameParams{Name: "Promethues"})
 			return err
-		}},
-		"tempo": {"tempo", func(ctx context.Context) error {
-			_, err := tempoBackendForDatasource(ctx, "missing")
-			return err
-		}},
-		"pyroscope": {"grafana-pyroscope-datasource", func(ctx context.Context) error {
-			_, err := newPyroscopeClient(ctx, "missing")
-			return err
-		}},
+		},
 	}
 
-	for name, tc := range lookups {
-		t.Run(name+" with no datasource of that type gets a hint", func(t *testing.T) {
-			server := deadEndServer(t, nil)
-			err := tc.lookup(mockDatasourcesCtx(server))
+	for name, lookup := range lookups {
+		t.Run(name+" not-found gets the hint", func(t *testing.T) {
+			status := http.StatusNotFound
+			if name == "by name" {
+				// The by-name metadata lookup reports not-found via the
+				// frontend settings fallback.
+				status = http.StatusForbidden
+			}
+			server := newNotFoundServer(t, status, http.StatusOK, true)
+			err := lookup(mockDatasourcesCtx(server.Server))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "datasource with UID 'missing' not found")
-			assert.Contains(t, err.Error(), "My Learning")
-			assert.Contains(t, err.Error(), server.URL+"/a/grafana-pathfinder-app")
+			assert.ErrorAs(t, err, new(datasourceNotFoundError))
+			assert.Contains(t, err.Error(), "not found. Please check if the datasource exists and is accessible. Couldn't find that datasource.")
+			assert.Contains(t, err.Error(), "Grafana's My Learning page suggests what to set up next: "+server.URL+"/a/grafana-pathfinder-app")
 			assert.NotContains(t, err.Error(), "Pathfinder")
-			var notFound datasourceNotFoundError
-			assert.ErrorAs(t, err, &notFound)
+			assert.False(t, server.requested("/api/datasources"), "hint must not list datasources")
 		})
 
-		t.Run(name+" with a datasource of that type is a plain not-found", func(t *testing.T) {
-			server := deadEndServer(t, []*models.DataSource{{ID: 1, UID: "other", Name: "other", Type: tc.dsType}})
-			err := tc.lookup(mockDatasourcesCtx(server))
+		t.Run(name+" typo on an instance with datasources still gets the hint", func(t *testing.T) {
+			server := newNotFoundServer(t, http.StatusForbidden, http.StatusOK, true)
+			err := lookup(mockDatasourcesCtx(server.Server))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "datasource with UID 'missing' not found")
-			assert.NotContains(t, err.Error(), "My Learning")
+			assert.ErrorAs(t, err, new(datasourceNotFoundError))
+			assert.Contains(t, err.Error(), "My Learning")
 		})
 
-		t.Run(name+" hint is off when the flag is set", func(t *testing.T) {
-			server := deadEndServer(t, nil)
-			ctx := mockDatasourcesCtx(server)
-			cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-			cfg.DisableInteractiveLearningHints = true
-			err := tc.lookup(mcpgrafana.WithGrafanaConfig(ctx, cfg))
+		suppressed := map[string]struct {
+			pluginStatus  int
+			pluginEnabled bool
+			disable       bool
+		}{
+			"flag":            {http.StatusOK, true, true},
+			"plugin missing":  {http.StatusNotFound, false, false},
+			"plugin disabled": {http.StatusOK, false, false},
+		}
+		for reason, tc := range suppressed {
+			t.Run(name+" hint is off when "+reason, func(t *testing.T) {
+				server := newNotFoundServer(t, http.StatusForbidden, tc.pluginStatus, tc.pluginEnabled)
+				ctx := mockDatasourcesCtx(server.Server)
+				cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+				cfg.DisableInteractiveLearningHints = tc.disable
+				err := lookup(mcpgrafana.WithGrafanaConfig(ctx, cfg))
+				require.Error(t, err)
+				assert.ErrorAs(t, err, new(datasourceNotFoundError))
+				assert.True(t, strings.HasSuffix(err.Error(), "Please check if the datasource exists and is accessible"), err.Error())
+			})
+		}
+
+		t.Run(name+" errors other than not-found are untouched", func(t *testing.T) {
+			server := newNotFoundServer(t, http.StatusInternalServerError, http.StatusOK, true)
+			err := lookup(mockDatasourcesCtx(server.Server))
 			require.Error(t, err)
+			assert.False(t, errors.As(err, new(datasourceNotFoundError)))
 			assert.NotContains(t, err.Error(), "My Learning")
 		})
 	}
-
-	t.Run("errors other than not-found are untouched", func(t *testing.T) {
-		server := deadEndServer(t, nil)
-		orig := errors.New("boom")
-		assert.Same(t, orig, withMissingDatasourceHint(mockDatasourcesCtx(server), orig, "tempo", "Tempo"))
-	})
 }

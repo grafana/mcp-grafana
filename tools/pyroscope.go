@@ -239,7 +239,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 
 	_, err = getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, withMissingDatasourceHint(ctx, err, "grafana-pyroscope-datasource", "Pyroscope")
+		return nil, err
 	}
 
 	base, err := url.Parse(cfg.URL)

@@ -40,7 +40,7 @@ func newTempoBackend(ctx context.Context, datasourceUID string) (*tempoBackend, 
 func tempoBackendForDatasource(ctx context.Context, uid string) (*tempoBackend, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, withMissingDatasourceHint(ctx, err, "tempo", "Tempo")
+		return nil, err
 	}
 	if ds.Type != "tempo" {
 		return nil, fmt.Errorf("datasource %s is of type %s, not tempo", uid, ds.Type)

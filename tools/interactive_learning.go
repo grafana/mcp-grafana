@@ -3,8 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -76,30 +74,4 @@ func interactiveLearningHint(ctx context.Context, problem string) string {
 	}
 	link := strings.TrimRight(cfg.URL, "/") + interactiveLearningPath
 	return problem + ". Grafana's My Learning page suggests what to set up next: " + link
-}
-
-// withMissingDatasourceHint adds the Interactive Learning pointer to a
-// datasource lookup error when the lookup failed because the datasource does
-// not exist and the instance has no datasource of dsType at all. That is a
-// dead end: retrying with another UID cannot work. When other datasources of
-// the type exist the error is most likely a wrong UID, so it is returned as is,
-// as is any error that is not a plain not-found. product is the display name
-// used in the hint, for example "Tempo".
-func withMissingDatasourceHint(ctx context.Context, err error, dsType, product string) error {
-	var notFound datasourceNotFoundError
-	if !errors.As(err, &notFound) {
-		return err
-	}
-	if mcpgrafana.GrafanaConfigFromContext(ctx).DisableInteractiveLearningHints {
-		return err
-	}
-	list, listErr := listDatasources(ctx, ListDatasourcesParams{Type: dsType, Limit: 1})
-	if listErr != nil || list.Total > 0 {
-		return err
-	}
-	hint := interactiveLearningHint(ctx, fmt.Sprintf("No %s datasource is configured", product))
-	if hint == "" {
-		return err
-	}
-	return fmt.Errorf("%w. %s", err, hint)
 }

@@ -491,6 +491,16 @@ type datasourceNotFoundError string
 
 func (e datasourceNotFoundError) Error() string { return string(e) }
 
+// newDatasourceNotFoundError builds a datasourceNotFoundError and, when
+// available, appends the Interactive Learning pointer so a missing datasource
+// comes with a next step.
+func newDatasourceNotFoundError(ctx context.Context, msg string) datasourceNotFoundError {
+	if hint := interactiveLearningHint(ctx, "Couldn't find that datasource"); hint != "" {
+		msg += ". " + hint
+	}
+	return datasourceNotFoundError(msg)
+}
+
 func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByUIDWithParams(
@@ -499,7 +509,7 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 	if err != nil {
 		// Check if it's a 404 Not Found Error
 		if strings.Contains(err.Error(), "404") {
-			return nil, datasourceNotFoundError(fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
+			return nil, newDatasourceNotFoundError(ctx, fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
 		}
 		// The datasource metadata API is not accessible to this token (e.g.
 		// it requires Org Admin before Grafana 9.0); fall back to frontend
@@ -512,7 +522,7 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 			// The settings were readable and the datasource is genuinely
 			// absent: report not-found rather than the misleading permission
 			// error, so agents can tell a typo from a credentials problem.
-			return nil, datasourceNotFoundError(fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
+			return nil, newDatasourceNotFoundError(ctx, fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
 		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
@@ -537,7 +547,7 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 			return ds, nil
 		}
 		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
-			return nil, datasourceNotFoundError(fmt.Sprintf("datasource with name '%s' not found. Please check if the datasource exists and is accessible", args.Name))
+			return nil, newDatasourceNotFoundError(ctx, fmt.Sprintf("datasource with name '%s' not found. Please check if the datasource exists and is accessible", args.Name))
 		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}

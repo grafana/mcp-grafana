@@ -74,7 +74,7 @@ type lokiQueryResult struct {
 func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, withMissingDatasourceHint(ctx, err, "loki", "Loki")
+		return nil, err
 	}
 
 	switch ds.Type {
