@@ -60,10 +60,11 @@ func interactiveLearningAvailable(ctx context.Context, cfg mcpgrafana.GrafanaCon
 	return available
 }
 
-// interactiveLearningHint returns a one-sentence pointer to Grafana's My
-// Learning page, or "" when hints are disabled, no Grafana URL is configured,
-// or Interactive Learning is not available on the instance. problem says what
-// is missing, for example "No Tempo datasource is configured".
+// interactiveLearningHint returns a pointer to Grafana's My Learning page, or
+// "" when hints are disabled, no Grafana URL is configured, or Interactive
+// Learning is not available on the instance. problem optionally leads the hint
+// with what is missing, for example "No tempo datasource is configured", for
+// callers whose result does not already say so.
 func interactiveLearningHint(ctx context.Context, problem string) string {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	if cfg.DisableInteractiveLearningHints || cfg.URL == "" {
@@ -73,5 +74,9 @@ func interactiveLearningHint(ctx context.Context, problem string) string {
 		return ""
 	}
 	link := strings.TrimRight(cfg.URL, "/") + interactiveLearningPath
-	return problem + ". Grafana's My Learning page suggests what to set up next: " + link
+	hint := "Grafana's My Learning page can help you to set up your instance or add new connections: " + link
+	if problem != "" {
+		hint = problem + ". " + hint
+	}
+	return hint
 }

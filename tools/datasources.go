@@ -495,7 +495,7 @@ func (e datasourceNotFoundError) Error() string { return string(e) }
 // available, appends the Interactive Learning pointer so a missing datasource
 // comes with a next step.
 func newDatasourceNotFoundError(ctx context.Context, msg string) datasourceNotFoundError {
-	if hint := interactiveLearningHint(ctx, "Couldn't find that datasource"); hint != "" {
+	if hint := interactiveLearningHint(ctx, ""); hint != "" {
 		msg += ". " + hint
 	}
 	return datasourceNotFoundError(msg)
