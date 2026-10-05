@@ -249,7 +249,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		// object sent to Grafana matches what the panel actually declared.
 		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, datasourceType)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_sql\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus, query_loki_logs, query_sql, query_cloudwatch, query_influxdb) directly", datasourceType)
 	}
 
 	if err != nil {
@@ -990,7 +990,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, InfluxDB\\, BigQuery\\, MSSQL\\, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval), and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcpgrafana.WithTitleAnnotation("Run panel query"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

@@ -481,7 +481,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
 var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	"list_cloudwatch_metrics",
-	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions\\, then query_cloudwatch.",
+	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions, then query_cloudwatch.",
 	listCloudWatchMetrics,
 	mcpgrafana.WithTitleAnnotation("List CloudWatch metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -545,7 +545,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use list_cloudwatch_dimension_values to discover valid values for a key\\, then query_cloudwatch.",
+	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use list_cloudwatch_dimension_values to discover valid values for a key, then query_cloudwatch.",
 	listCloudWatchDimensions,
 	mcpgrafana.WithTitleAnnotation("List CloudWatch dimensions"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
