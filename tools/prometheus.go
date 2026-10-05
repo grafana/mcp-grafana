@@ -178,7 +178,7 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now'\\, 'now-1h'.",
+	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
 	queryPrometheusWithHints,
 	mcpgrafana.WithTitleAnnotation("Query Prometheus metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

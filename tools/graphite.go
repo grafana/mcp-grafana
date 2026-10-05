@@ -319,7 +319,7 @@ func listGraphiteMetrics(ctx context.Context, args ListGraphiteMetricsParams) ([
 // ListGraphiteMetrics is the MCP tool for browsing the Graphite metric tree.
 var ListGraphiteMetrics = mcpgrafana.MustTool(
 	"list_graphite_metrics",
-	"Discover available metric paths in a Graphite datasource by browsing the metric tree. Returns nodes matching the query pattern\\, each indicating whether it is a leaf metric (has data) or an expandable branch (has children). Use '*' as a wildcard at any level to enumerate the tree (e.g. '*' → top-level nodes\\, 'servers.*' → all second-level nodes under 'servers'). Drill down progressively to find the full metric path before querying with query_graphite.",
+	"Discover available metric paths in a Graphite datasource by browsing the metric tree. Returns nodes matching the query pattern, each indicating whether it is a leaf metric (has data) or an expandable branch (has children). Use '*' as a wildcard at any level to enumerate the tree (e.g. '*' → top-level nodes, 'servers.*' → all second-level nodes under 'servers'). Drill down progressively to find the full metric path before querying with query_graphite.",
 	listGraphiteMetrics,
 	mcpgrafana.WithTitleAnnotation("List Graphite metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -368,7 +368,7 @@ func listGraphiteTags(ctx context.Context, args ListGraphiteTagsParams) ([]strin
 // ListGraphiteTags is the MCP tool for listing tag names in a tagged Graphite instance.
 var ListGraphiteTags = mcpgrafana.MustTool(
 	"list_graphite_tags",
-	"List available tag names in a Graphite datasource that uses tag-based metrics. Returns a list of tag name strings (e.g. [\"name\"\\, \"env\"\\, \"region\"]). These tags can be used to build tag-based target expressions for query_graphite (e.g. seriesByTag('name=cpu.load\\,env=prod')). Optionally filter by a prefix. Requires Graphite to be configured with tag support.",
+	"List available tag names in a Graphite datasource that uses tag-based metrics. Returns a list of tag name strings (e.g. [\"name\", \"env\", \"region\"]). These tags can be used to build tag-based target expressions for query_graphite (e.g. seriesByTag('name=cpu.load,env=prod')). Optionally filter by a prefix. Requires Graphite to be configured with tag support.",
 	listGraphiteTags,
 	mcpgrafana.WithTitleAnnotation("List Graphite tags"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
