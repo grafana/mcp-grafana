@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"testing"
@@ -166,3 +167,100 @@ func TestDashboardSummaryV2(t *testing.T) {
 }
 
 func intPtrV2(i int) *int { return &i }
+
+// v2PanelWithQuery returns a v2 panel spec with id 7 holding a single query.
+// The id is a float64, as it is in a dashboard decoded from JSON.
+func v2PanelWithQuery(group string, body map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"id":    float64(7),
+		"title": "Test panel",
+		"data": map[string]interface{}{
+			"kind": "QueryGroup",
+			"spec": map[string]interface{}{
+				"queries": []interface{}{
+					map[string]interface{}{
+						"kind": "PanelQuery",
+						"spec": map[string]interface{}{
+							"refId": "B",
+							"query": map[string]interface{}{
+								"kind":       "DataQuery",
+								"group":      group,
+								"datasource": map[string]interface{}{"name": group + "-uid"},
+								"spec":       body,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestExtractPanelInfoV2(t *testing.T) {
+	_, spec := loadV2Dashboard(t)
+	panel, err := findPanelByIDV2(spec, 1)
+	require.NoError(t, err)
+
+	info, err := extractPanelInfoV2(panel, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "prom-uid", info.DatasourceUID)
+	assert.Equal(t, "prometheus", info.DatasourceType)
+	assert.Equal(t, `rate(cpu_seconds_total{job="$job"}[5m])`, info.Query)
+	assert.Equal(t, "A", info.RawTarget["refId"])
+	assert.Equal(t, map[string]interface{}{"uid": "prom-uid", "type": "prometheus"}, info.RawTarget["datasource"])
+
+	_, err = extractPanelInfoV2(panel, 1)
+	assert.ErrorContains(t, err, "queryIndex 1 out of range")
+
+	// CloudWatch targets are structured and carry no query expression.
+	cloudwatch := v2PanelWithQuery("cloudwatch", map[string]interface{}{
+		"namespace":  "AWS/ApplicationELB",
+		"metricName": "TargetResponseTime",
+		"statistic":  "p95",
+	})
+	info, err = extractPanelInfoV2(cloudwatch, 0)
+	require.NoError(t, err)
+	assert.Empty(t, info.Query)
+	assert.Equal(t, "p95", info.RawTarget["statistic"])
+	assert.Equal(t, "B", info.RawTarget["refId"])
+}
+
+func TestTemplatingV1FromV2(t *testing.T) {
+	spec := map[string]interface{}{
+		"variables": []interface{}{
+			map[string]interface{}{"kind": "ConstantVariable", "spec": map[string]interface{}{"name": "region", "query": "us-east-1"}},
+			map[string]interface{}{"kind": "TextVariable", "spec": map[string]interface{}{"name": "filter", "query": "web"}},
+			map[string]interface{}{"kind": "QueryVariable", "spec": map[string]interface{}{
+				"name":    "pods",
+				"current": map[string]interface{}{"value": []interface{}{"pod-a", "pod-b"}},
+			}},
+			map[string]interface{}{"kind": "QueryVariable", "spec": map[string]interface{}{
+				"name":    "all",
+				"current": map[string]interface{}{"value": "$__all"},
+			}},
+		},
+	}
+
+	assert.Equal(t, templateVariableValues{
+		"region": {"us-east-1"},
+		"filter": {"web"},
+		"pods":   {"pod-a", "pod-b"},
+	}, extractTemplateVariableValues(templatingV1FromV2(spec)))
+}
+
+func TestRunSinglePanelQuery_V2Dashboard(t *testing.T) {
+	_, spec := loadV2Dashboard(t)
+	spec["elements"].(map[string]interface{})["panel-unsupported"] = map[string]interface{}{
+		"kind": "Panel",
+		"spec": v2PanelWithQuery("test-unsupported", map[string]interface{}{"expr": "up"}),
+	}
+
+	// An unsupported datasource type fails only after the panel, its query and
+	// the dashboard variables are read, so no Grafana client is needed.
+	_, err := runSinglePanelQuery(context.Background(), singlePanelQueryParams{DB: spec, IsV2: true, PanelID: 7})
+	assert.ErrorContains(t, err, "datasource type 'test-unsupported' is not supported by run_panel_query")
+
+	// The v1 lookup cannot read a v2 spec.
+	_, err = runSinglePanelQuery(context.Background(), singlePanelQueryParams{DB: spec, PanelID: 7})
+	assert.ErrorContains(t, err, "finding panel: dashboard has no panels")
+}

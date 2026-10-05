@@ -53,6 +53,7 @@ type RunPanelQueryResult struct {
 // singlePanelQueryParams holds the parameters for running a single panel query.
 type singlePanelQueryParams struct {
 	DB         map[string]interface{}
+	IsV2       bool
 	PanelID    int
 	QueryIndex int
 	Start      string
@@ -111,6 +112,7 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 	for _, panelID := range args.PanelIDs {
 		result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{
 			DB:         db,
+			IsV2:       dashboard.IsV2,
 			PanelID:    panelID,
 			QueryIndex: queryIndex,
 			Start:      start,
@@ -139,14 +141,25 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 
 // runSinglePanelQuery executes a single panel's query within a dashboard
 func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*PanelQueryResult, error) {
-	// Find the panel by ID
-	panel, err := findPanelByID(params.DB, params.PanelID)
-	if err != nil {
-		return nil, fmt.Errorf("finding panel: %w", err)
+	// Find the panel by ID and extract its query and datasource info. The rest
+	// of this function reads v1 variables, so a v2 dashboard's are converted.
+	db := params.DB
+	var panelData *panelInfo
+	var err error
+	if params.IsV2 {
+		panel, findErr := findPanelByIDV2(params.DB, params.PanelID)
+		if findErr != nil {
+			return nil, fmt.Errorf("finding panel: %w", findErr)
+		}
+		panelData, err = extractPanelInfoV2(panel, params.QueryIndex)
+		db = templatingV1FromV2(params.DB)
+	} else {
+		panel, findErr := findPanelByID(params.DB, params.PanelID)
+		if findErr != nil {
+			return nil, fmt.Errorf("finding panel: %w", findErr)
+		}
+		panelData, err = extractPanelInfo(panel, params.QueryIndex)
 	}
-
-	// Extract query and datasource info from the panel
-	panelData, err := extractPanelInfo(panel, params.QueryIndex)
 	if err != nil {
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
@@ -154,7 +167,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// Extract template variables from the dashboard. Keep both the first value
 	// (used for datasource references) and the complete value list (used for
 	// formatted query interpolation).
-	templateVariables := extractTemplateVariableValues(params.DB)
+	templateVariables := extractTemplateVariableValues(db)
 	vars := firstTemplateVariableValues(templateVariables)
 
 	// Apply variable overrides from user
