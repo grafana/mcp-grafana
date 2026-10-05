@@ -223,6 +223,55 @@ func TestDatasourceFallbackTransport_LokiPatternsDoesNotInheritFallback(t *testi
 	assert.Contains(t, requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/loki/api/v1/patterns")
 }
 
+func TestDatasourceFallbackTransport_HTMLFallbackIsNotSuccess(t *testing.T) {
+	resetFallbackCache()
+
+	// Reproduces a Loki datasource behind Grafana: a transient 500 on the
+	// proxy path sends the request to /resources, which Loki answers with its
+	// UI's index.html and a 200. That page must not be returned as the
+	// response, nor pin every later request for this path to /resources.
+	var requests []*http.Request
+	mock := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req)
+
+		if strings.Contains(req.URL.Path, "/api/datasources/uid/test-uid/resources") {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+				Body:       io.NopCloser(strings.NewReader("<!DOCTYPE html><title>Loki UI</title>")),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"message":"query timed out"}`)),
+		}, nil
+	})
+
+	rt := newDatasourceFallbackTransport(mock,
+		"/api/datasources/proxy/uid/test-uid",
+		"/api/datasources/uid/test-uid/resources",
+	)
+
+	req1, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range", nil)
+	resp, err := rt.RoundTrip(req1)
+	require.NoError(t, err)
+	require.Len(t, requests, 2, "should still try the fallback on 500")
+
+	// The caller gets the primary's real error, not the HTML page.
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, `{"message":"query timed out"}`, string(body))
+
+	// The HTML answer was not cached: the next request tries the primary again.
+	req2, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range", nil)
+	_, err = rt.RoundTrip(req2)
+	require.NoError(t, err)
+	require.Len(t, requests, 4)
+	assert.Contains(t, requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range")
+}
+
 func TestDatasourceFallbackTransport_BothFail(t *testing.T) {
 	resetFallbackCache()
 
