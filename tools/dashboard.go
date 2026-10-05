@@ -257,6 +257,9 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.P
 		return updateDashboardWithPatches(ctx, args)
 	} else if args.Dashboard != nil {
 		// Full dashboard update: use the provided JSON
+		if err := rejectV1BodyOverV2Stored(ctx, args.Dashboard); err != nil {
+			return nil, err
+		}
 		return updateDashboardWithFullJSON(ctx, args)
 	} else if args.UID != "" && len(args.Operations) == 0 {
 		return nil, fmt.Errorf("'uid' was provided without 'operations'. To update an existing dashboard, provide both 'uid' and 'operations' (array of patch operations). To replace a dashboard entirely, provide 'dashboard' (full JSON) instead")
@@ -465,6 +468,75 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 	return dashboard.Payload, nil
 }
 
+// rejectV1BodyOverV2Stored refuses a classic v1 full-JSON body whose uid names a
+// dashboard stored as v2. The legacy save endpoint would down-convert it to v1,
+// silently dropping v2-only structure such as tabs. It is the mirror of the
+// v2-over-v1 check in createOrUpdateDashboardV2.
+func rejectV1BodyOverV2Stored(ctx context.Context, dashboard map[string]interface{}) error {
+	uid, _ := dashboard["uid"].(string)
+	if uid == "" || isV2DashboardJSON(dashboard) {
+		return nil
+	}
+	k8s := mcpgrafana.KubernetesClientFromContext(ctx)
+	if k8s == nil {
+		return nil
+	}
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		// Fail closed, like fetchDashboard: an inconclusive check must not let a
+		// possibly lossy write through.
+		return fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
+	}
+	if !slices.Contains(versions, dashboardReadVersion) {
+		return nil // pre-v2 Grafana: no v2 dashboards can exist
+	}
+	existing, err := fetchDashboardViaK8s(ctx, k8s, uid)
+	if isK8sNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check existing dashboard %s: %w", uid, err)
+	}
+	if existing.IsV2 {
+		return fmt.Errorf("dashboard %q is stored as %s and cannot be replaced with a classic v1 (panels[]) body: Grafana would down-convert it, dropping v2-only content such as tabs. Use patch operations (uid + operations) against the v2 spec, or send a full v2 body (elements/layout); fetch it with get_dashboard_by_uid to see its current v2 structure", uid, existing.APIVersion)
+	}
+	return nil
+}
+
+// preferredV2Version picks the most stable, newest v2 version the dashboard API
+// serves (v2 > v2beta2 > v2beta1 > v2alpha1), so new v2 dashboards aren't pinned
+// to a version that older or newer Grafanas don't serve.
+func preferredV2Version(versions []string) string {
+	rank := func(v string) (int, int) {
+		rest := strings.TrimPrefix(v, "v2")
+		stability := 2
+		for i, s := range []string{"alpha", "beta"} {
+			if after, ok := strings.CutPrefix(rest, s); ok {
+				stability, rest = i, after
+				break
+			}
+		}
+		n, _ := strconv.Atoi(rest)
+		return stability, n
+	}
+	best := ""
+	for _, v := range versions {
+		if !strings.HasPrefix(v, "v2") {
+			continue
+		}
+		if best == "" {
+			best = v
+			continue
+		}
+		s, n := rank(v)
+		bs, bn := rank(best)
+		if s > bs || (s == bs && n > bn) {
+			best = v
+		}
+	}
+	return best
+}
+
 // isV2DashboardJSON reports whether a full dashboard JSON body uses the v2
 // schema, identified by the top-level `elements` or `layout` keys that replace
 // the classic `panels[]`.
@@ -503,12 +575,6 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	if err != nil {
 		return nil, err
 	}
-	// TODO: negotiate the version to write instead of hardcoding v2beta1 — e.g.
-	// discover the group's preferred/served v2 version via GET /apis/dashboard.grafana.app
-	// (it could be v2, v2beta1, v2alpha1 depending on the Grafana version) rather
-	// than assuming v2beta1. An existing v2 dashboard reuses its own stored version
-	// below; this default only applies when creating a brand-new dashboard.
-	version := "v2beta1"
 
 	// If a uid is given and the dashboard already exists, update it in place
 	// using its current object (for resourceVersion); if it genuinely does not
@@ -534,9 +600,8 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			}
 			obj := existing.Object
 			obj["spec"] = spec
-			version = existing.APIVersion // an existing v2 dashboard's stored v2 version
 			applyV2WriteMetadata(obj, args)
-			updated, err := k8s.Update(ctx, dashboardDescriptor(version), ns, uid, obj)
+			updated, err := k8s.Update(ctx, dashboardDescriptor(existing.APIVersion), ns, uid, obj)
 			if err != nil {
 				return nil, fmt.Errorf("update dashboard %q via k8s api: %w", uid, err)
 			}
@@ -547,7 +612,15 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		// not found — fall through to create
 	}
 
-	// Create a new dashboard object.
+	// Create a new dashboard object at the best v2 version this Grafana serves.
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		return nil, fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
+	}
+	version := preferredV2Version(versions)
+	if version == "" {
+		return nil, fmt.Errorf("this Grafana does not serve a v2 version of %s (served: %v), so a v2 (elements/layout) dashboard cannot be created; send a classic v1 (panels[]) body instead", dashboardAPIGroup, versions)
+	}
 	metadata := map[string]interface{}{"namespace": ns}
 	if uid != "" {
 		metadata["name"] = uid
