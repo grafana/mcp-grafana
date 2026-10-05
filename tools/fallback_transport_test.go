@@ -272,6 +272,60 @@ func TestDatasourceFallbackTransport_HTMLFallbackIsNotSuccess(t *testing.T) {
 	assert.Contains(t, requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range")
 }
 
+// errAfterReader yields data, then fails, like a connection reset mid-body.
+type errAfterReader struct {
+	data string
+	done bool
+}
+
+func (r *errAfterReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.ErrUnexpectedEOF
+	}
+	r.done = true
+	return copy(p, r.data), nil
+}
+
+func TestDatasourceFallbackTransport_PrimaryBodyReadErrorStillFallsBack(t *testing.T) {
+	resetFallbackCache()
+
+	var requests []*http.Request
+	mock := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req)
+
+		if strings.Contains(req.URL.Path, "/api/datasources/uid/test-uid/resources") {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"status":"success"}`)),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body:       io.NopCloser(&errAfterReader{data: `{"message":"par`}),
+		}, nil
+	})
+
+	rt := newDatasourceFallbackTransport(mock,
+		"/api/datasources/proxy/uid/test-uid",
+		"/api/datasources/uid/test-uid/resources",
+	)
+
+	// A primary whose error body cannot be read must not stop the fallback
+	// from being tried, nor its good answer from being returned and cached.
+	req1, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/api/v1/labels", nil)
+	resp, err := rt.RoundTrip(req1)
+	require.NoError(t, err)
+	require.Len(t, requests, 2)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	req2, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/api/v1/labels", nil)
+	_, err = rt.RoundTrip(req2)
+	require.NoError(t, err)
+	require.Len(t, requests, 3)
+	assert.Contains(t, requests[2].URL.Path, "/api/datasources/uid/test-uid/resources/api/v1/labels")
+}
+
 func TestDatasourceFallbackTransport_BothFail(t *testing.T) {
 	resetFallbackCache()
 

@@ -124,12 +124,11 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	// A retryable status — try the fallback endpoint (see the type comment
 	// for which statuses are retryable in which mode, and why). Keep the
 	// primary's error body: it is returned if the fallback turns out to be
-	// an HTML page rather than an API answer.
-	primaryBody, err := io.ReadAll(io.LimitReader(resp.Body, maxPrimaryErrorBodyBytes))
+	// an HTML page rather than an API answer. A read error is not fatal —
+	// keep whatever was read (possibly nothing) and still try the fallback,
+	// since that body only matters if the fallback is HTML.
+	primaryBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxPrimaryErrorBodyBytes))
 	resp.Body.Close() //nolint:errcheck
-	if err != nil {
-		return nil, fmt.Errorf("reading primary response body: %w", err)
-	}
 
 	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
 	if bodyBytes != nil {
