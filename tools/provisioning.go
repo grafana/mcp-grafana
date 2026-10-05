@@ -383,7 +383,7 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 var ValidateProvisioningFile = mcpgrafana.MustTool(
 	"validate_provisioning_file",
 	"Validate a file in a provisioning repository at a given branch or commit by dry-run applying it. "+
-		"Returns whether the file would be accepted (valid)\\, what resource action would result (create/update)\\, the target resource type\\, and any structured validation errors. "+
+		"Returns whether the file would be accepted (valid), what resource action would result (create/update), the target resource type, and any structured validation errors. "+
 		"Use to confirm a draft dashboard or other resource will be accepted before merging or applying a PR — this is the same validation surface that Grafana's PR commenter reports.",
 	validateProvisioningFile,
 	mcpgrafana.WithTitleAnnotation("Validate provisioning file"),

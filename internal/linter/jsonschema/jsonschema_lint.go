@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -18,7 +19,23 @@ type JSONSchemaLinter struct {
 	Errors    []JSONSchemaError
 	FixMode   bool
 	Fixed     map[string]bool
+	// StrayEscapes are ordinary (non-tag) string literals containing `\,`.
+	StrayEscapes []StrayEscapeError
 }
+
+// StrayEscapeError is a string literal outside a struct tag whose value
+// contains a backslash-escaped comma. The escape only means something inside a
+// jsonschema tag; anywhere else (e.g. a tool description) the backslash reaches
+// the model verbatim and wastes tokens.
+type StrayEscapeError struct {
+	FilePath string
+	Line     int
+	Column   int
+}
+
+// strayEscapePattern matches a single backslash before a comma. A doubled
+// backslash (`\\,`) is a deliberate literal backslash and is left alone.
+var strayEscapePattern = regexp.MustCompile(`(^|[^\\])\\,`)
 
 // JSONSchemaError represents a linting error with file position details
 type JSONSchemaError struct {
@@ -46,6 +63,7 @@ var tagPattern = regexp.MustCompile(`jsonschema:"([^"]*)description=(.*?[^\\],)(
 func (l *JSONSchemaLinter) FindUnescapedCommas(baseDir string) error {
 	// Reset errors
 	l.Errors = nil
+	l.StrayEscapes = nil
 	if l.FixMode {
 		l.Fixed = make(map[string]bool)
 	}
@@ -77,6 +95,9 @@ func (l *JSONSchemaLinter) FindUnescapedCommas(baseDir string) error {
 		}
 
 		fileErrors := []JSONSchemaError{}
+		if !strings.HasSuffix(path, "_test.go") {
+			l.StrayEscapes = append(l.StrayEscapes, findStrayEscapes(fset, f, path)...)
+		}
 
 		// Visit all struct types
 		ast.Inspect(f, func(n ast.Node) bool {
@@ -152,6 +173,34 @@ func (l *JSONSchemaLinter) FindUnescapedCommas(baseDir string) error {
 	return nil
 }
 
+// findStrayEscapes reports string literals outside struct tags whose value
+// contains `\,`.
+func findStrayEscapes(fset *token.FileSet, f *ast.File, path string) []StrayEscapeError {
+	tags := map[*ast.BasicLit]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if field, ok := n.(*ast.Field); ok && field.Tag != nil {
+			tags[field.Tag] = true
+		}
+		return true
+	})
+
+	var out []StrayEscapeError
+	ast.Inspect(f, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING || tags[lit] {
+			return true
+		}
+		value, err := strconv.Unquote(lit.Value)
+		if err != nil || !strayEscapePattern.MatchString(value) {
+			return true
+		}
+		pos := fset.Position(lit.Pos())
+		out = append(out, StrayEscapeError{FilePath: path, Line: pos.Line, Column: pos.Column})
+		return true
+	})
+	return out
+}
+
 // escapeUnescapedCommas escapes any unescaped commas in the description
 func escapeUnescapedCommas(desc string) string {
 	// Use regex to find all commas that are not preceded by a backslash
@@ -201,6 +250,18 @@ func (l *JSONSchemaLinter) fixFile(path string, errors []JSONSchemaError) error 
 
 // PrintErrors outputs all the found errors
 func (l *JSONSchemaLinter) PrintErrors() {
+	l.printTagErrors()
+	if len(l.StrayEscapes) > 0 {
+		fmt.Printf("\nFound %d string literal(s) outside struct tags containing an escaped comma:\n\n", len(l.StrayEscapes))
+		for i, e := range l.StrayEscapes {
+			relPath := displayPath(e.FilePath)
+			fmt.Printf("%d. %s:%d:%d\n", i+1, relPath, e.Line, e.Column)
+		}
+		fmt.Println("\nComma escaping is only needed inside jsonschema struct tags; elsewhere (e.g. tool descriptions) the backslash reaches the model verbatim. Use a plain comma.")
+	}
+}
+
+func (l *JSONSchemaLinter) printTagErrors() {
 	if len(l.Errors) == 0 {
 		fmt.Println("No unescaped commas found in jsonschema descriptions.")
 		return
@@ -213,7 +274,7 @@ func (l *JSONSchemaLinter) PrintErrors() {
 	}
 
 	for i, err := range l.Errors {
-		relPath, _ := filepath.Rel(".", err.FilePath)
+		relPath := displayPath(err.FilePath)
 		fmt.Printf("%d. %s:%d:%d - Struct: %s, Field: %s\n",
 			i+1, relPath, err.Line, err.Column, err.Struct, err.Field)
 		fmt.Printf("   - %s\n", err.Tag)
@@ -231,4 +292,16 @@ func (l *JSONSchemaLinter) PrintErrors() {
 		fixedFileCount := len(l.Fixed)
 		fmt.Printf("Fixed %d file(s).\n", fixedFileCount)
 	}
+}
+
+// displayPath returns path relative to the working directory when possible.
+func displayPath(path string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	if rel, err := filepath.Rel(wd, path); err == nil {
+		return rel
+	}
+	return path
 }

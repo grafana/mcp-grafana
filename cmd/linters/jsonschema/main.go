@@ -51,7 +51,7 @@ func main() {
 	jsonLinter.PrintErrors()
 
 	// Exit with error code if issues were found
-	if len(jsonLinter.Errors) > 0 {
+	if len(jsonLinter.Errors) > 0 || len(jsonLinter.StrayEscapes) > 0 {
 		os.Exit(1)
 	}
 }

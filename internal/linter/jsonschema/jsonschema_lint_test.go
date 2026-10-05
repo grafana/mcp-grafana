@@ -176,3 +176,37 @@ type Invalid struct {
 		t.Errorf("Fixed file not tracked in linter.Fixed")
 	}
 }
+
+func TestFindStrayEscapes(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Each literal's Go source is shown in the comment; only a single backslash
+	// before a comma outside a struct tag should be reported.
+	content := "package test\n\n" +
+		"type T struct {\n\tF string `jsonschema:\"description=a\\\\, b\"`\n}\n\n" + // tag: allowed
+		"const stray = \"one\\\\, two\"\n" + // "one\\, two": flagged
+		"const raw = `one\\, two`\n" + // `one\, two`: flagged
+		"const plain = \"one, two\"\n" + // allowed
+		"const literal = \"a\\\\\\\\, b\"\n" // "a\\\\, b" (literal backslash): allowed
+	if err := os.WriteFile(filepath.Join(tmpDir, "x.go"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// _test.go files are skipped.
+	if err := os.WriteFile(filepath.Join(tmpDir, "x_test.go"), []byte("package test\n\nconst s = \"a\\\\, b\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	linter := &JSONSchemaLinter{}
+	if err := linter.FindUnescapedCommas(tmpDir); err != nil {
+		t.Fatalf("Linter failed: %v", err)
+	}
+	if len(linter.Errors) != 0 {
+		t.Errorf("Expected 0 tag errors, got %d", len(linter.Errors))
+	}
+	var lines []int
+	for _, e := range linter.StrayEscapes {
+		lines = append(lines, e.Line)
+	}
+	if len(lines) != 2 || lines[0] != 7 || lines[1] != 8 {
+		t.Errorf("Expected stray escapes on lines 7 and 8, got %v", lines)
+	}
+}
