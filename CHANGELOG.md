@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-10-06
+
+### Added
+
+- `update_dashboard` now steers models towards schema v2 for new dashboards, keeps existing dashboards in their stored schema, and includes minimal v2 examples (grid and tabs layouts) in its description ([#1294](https://github.com/grafana/mcp-grafana/pull/1294))
+
+### Fixed
+
+- `update_dashboard` no longer silently overwrites a v2 dashboard with a v1 `panels[]` body, which dropped its v2 structure such as tabs; it now returns an error suggesting patches or a v2 body. New v2 dashboards are created at the most stable v2 API version Grafana serves instead of a hardcoded `v2beta1` ([#1275](https://github.com/grafana/mcp-grafana/pull/1275))
+- `run_panel_query` works on schema v2 dashboards instead of failing with `dashboard has no panels` ([#1287](https://github.com/grafana/mcp-grafana/pull/1287))
+- Datasource requests no longer treat an HTML page returned by the fallback `/resources` route (such as Loki's web UI) as success, which caused `invalid character '<'` errors that persisted until restart ([#1295](https://github.com/grafana/mcp-grafana/pull/1295))
+- Tool descriptions no longer show a literal `\,` in place of every comma ([#1296](https://github.com/grafana/mcp-grafana/pull/1296))
+- The trace and panel viewer MCP apps declare `data:` resources in their CSP, so hosts like MCP Inspector no longer block their embedded fonts and images ([#1284](https://github.com/grafana/mcp-grafana/pull/1284))
+
 ## [2.0.0] - 2026-09-29
 
 2.0 moves the server from `mark3labs/mcp-go` to the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk). The major version bump is for the Go library: the SDK's types are part of this module's exported API.
@@ -568,6 +582,8 @@ This is the last 1.x release; the next release will be 2.0.
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[2.0.1]: https://github.com/grafana/mcp-grafana/compare/v2.0.0...v2.0.1
+[2.0.0]: https://github.com/grafana/mcp-grafana/compare/v1.6.3...v2.0.0
 [1.6.3]: https://github.com/grafana/mcp-grafana/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/grafana/mcp-grafana/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/grafana/mcp-grafana/compare/v1.6.0...v1.6.1
