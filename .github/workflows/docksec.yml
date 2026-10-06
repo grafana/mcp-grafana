@@ -1,0 +1,65 @@
+name: DockSec
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.alpine'
+      - '.github/workflows/docksec.yml'
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.alpine'
+      - '.github/workflows/docksec.yml'
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan ${{ matrix.dockerfile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: [Dockerfile, Dockerfile.alpine]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Stage Dockerfile
+        # DockSec's Trivy pass scans the target's whole directory and matches by file name,
+        # so a same-named file elsewhere in the tree (testdata/gitserver/Dockerfile) would be
+        # reported as this one. Scan an isolated copy instead.
+        env:
+          TARGET: ${{ matrix.dockerfile }}
+        run: |
+          mkdir docksec-target
+          cp -- "$TARGET" docksec-target/
+
+      - name: Run DockSec
+        uses: OWASP/DockSec@d52c8e928552dc39003abda21ac6bc4662b06c39 # v2026.9.21
+        with:
+          dockerfile: docksec-target/${{ matrix.dockerfile }}
+          scan_only: 'true'
+          sarif: 'true'
+          output_dir: ${{ github.workspace }}/docksec-results
+
+      - name: Upload SARIF to Code Scanning
+        # Not `if: always()`: on a fork pull_request, GITHUB_TOKEN is read-only and this
+        # upload would fail every time, turning a routine fork contribution into a red
+        # required check. Skip it there instead of forcing a failure.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@3ea06614dafe36dec890db3446326e0d40ce53d4 # v3
+        with:
+          sarif_file: docksec-results
+          category: docksec-${{ matrix.dockerfile }}
