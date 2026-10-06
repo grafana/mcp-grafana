@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -7,9 +7,6 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version < '3.14' and sys_platform != 'win32'",
 ]
-
-[options]
-exclude-newer = "2026-09-15T23:00:00Z"
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -887,7 +884,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.84.10"
+version = "1.88.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -903,9 +900,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c9/c4/512c8cb204450b585bb7bee2cef9466c8b79b90cf774766f319de5c444ed/litellm-1.84.10.tar.gz", hash = "sha256:5ccb6aec803c35f463a7ea1a446030fe99f7c556388b435dc2fb7ad91aa48a24", size = 15123874, upload-time = "2026-06-24T03:57:19.791Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/a6/d2312da4d65390f0d899a669731500983c8a10bd89009657680949c5766d/litellm-1.88.6.tar.gz", hash = "sha256:07d947dfe92f137d5296c40285dbcf97cb405b4300d73c0feda48d76468d6eb4", size = 13889078, upload-time = "2026-08-09T00:06:33.818Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/88/e45bcdefc7a85bbef8eb852111dd4e02b92ea25727b6009c78893a768deb/litellm-1.84.10-py3-none-any.whl", hash = "sha256:7e175ebec04aa92149794adc83e4dd82b60d2b833c1ec265d68c08e8f56edde5", size = 16753091, upload-time = "2026-06-24T03:57:16.759Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/0b/2e42b95ccca2e2a8a524808e9c414f70a0352165dac589efa01192afb8ba/litellm-1.88.6-py3-none-any.whl", hash = "sha256:8c01f7e9aebded5b3509128be648518a2ec4f1feb8dfb87a539895091651898b", size = 15271205, upload-time = "2026-08-09T00:06:30.607Z" },
 ]
 
 [[package]]
@@ -1915,7 +1912,7 @@ dev = [
 dev = [
     { name = "anyio", specifier = ">=4.9.0" },
     { name = "deepeval", specifier = ">=1.0.0" },
-    { name = "litellm", specifier = ">=1.84.0,<1.85" },
+    { name = "litellm", specifier = ">=1.88.6,<1.89" },
     { name = "mcp", specifier = ">=1.9.3,<2" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-rerunfailures", specifier = ">=15.0" },

@@ -23,12 +23,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@emotion/css": "11.10.6",
+    "@emotion/css": "11.13.5",
     "@fontsource/inter": "^5.3.0",
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/core": "2.0.0",
-    "@modelcontextprotocol/ext-apps": "2.0.0",
-    "lucide-react": "^0.468.0",
+    "@modelcontextprotocol/client": "2.3.0",
+    "@modelcontextprotocol/core": "2.3.0",
+    "@modelcontextprotocol/ext-apps": "2.0.3",
+    "lucide-react": "^0.577.0",
     "zod": "^4.2.0"
   },
   "peerDependencies": {
@@ -39,7 +39,7 @@
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.0.0",
-    "@types/react": "18.3.28",
+    "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "jsdom": "^26.1.0",
     "react": "18.3.1",
