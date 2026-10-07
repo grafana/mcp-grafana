@@ -298,7 +298,7 @@ var ManageAgento11yAgents = mcpgrafana.MustTool(
 	"agento11y_manage_agents",
 	`Read the agent catalog of Grafana Agent Observability (the grafana-agento11y-app plugin): which agents send telemetry, what their system prompts and tools are, how their prompt versions evolved, and how each version scored.
 
-The catalog is derived from ingested telemetry, not from a registration step: an agent exists here once its generations have been seen. It answers "what is this agent" while agento11y_manage_conversations and agento11y_manage_generations answer "what did it do".
+The catalog is derived from ingested telemetry, not from a registration step: an agent exists here once its generations have been seen. It answers "what is this agent", not "what did it do".
 
 Operations:
 - 'list': agents in this tenant, newest activity first. Each row carries the latest effective version, first and latest seen times, generation and version counts, tool count, a system prompt prefix, and token_estimate. Paginated via limit and cursor
@@ -310,7 +310,7 @@ Versions: an effective version is always 'sha256:<64 lowercase hex>', and only t
 
 Response size: 'get' returns the whole system prompt plus every tool schema, which can be tens of thousands of tokens. Check token_estimate.total from 'list' or 'list_versions' before fetching, and prefer the system_prompt_prefix in those rows when a prefix is enough.
 
-Cross-referencing: pass an agent name from 'list' to agento11y_manage_conversations as the search filter agent = "<name>" to find what that agent actually did.
+Cross-referencing: an agent name from 'list' is the value of the agent = "<name>" filter in conversation search.
 
 Pagination: when a response carries next_cursor, call the same operation again with cursor set to it. For 'list', also repeat the same name_prefix, start_time, and end_time using absolute RFC3339 times; the cursor is bound to those filters and a relative value such as now-7d or 7d re-resolves and is rejected.
 
@@ -322,8 +322,8 @@ When to use:
 - Checking whether a new prompt version scores worse than the previous one
 
 When NOT to use:
-- Reading individual conversations, generations, or their scores (use agento11y_manage_conversations and agento11y_manage_generations)
-- Inspecting evaluators or the rules that schedule them (use agento11y_manage_evaluators and agento11y_manage_eval_rules)`,
+- Reading individual conversations, generations, or their scores
+- Inspecting evaluators or the rules that schedule them`,
 	manageAgento11yAgents,
 	mcpgrafana.WithTitleAnnotation("Manage Agent Observability agents"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

@@ -22,8 +22,7 @@ When to use:
 - Debugging why an alert went to a specific receiver
 - Checking grouping, timing, or mute interval settings
 
-When NOT to use:
-- Checking alert rule configuration or state (use alerting_rules_read)`
+Does not show alert rule configuration or state.`
 
 // ManageRoutingParams is the param struct for the alerting_manage_routing tool.
 type ManageRoutingParams struct {
@@ -208,8 +207,7 @@ var AlertRoutingWrite = mcpgrafana.MustTool(
 	"alerting_routing_write",
 	`Create Grafana-managed contact points for alert notifications using operation 'create_contact_point'.
 Requires name, type and integration-specific settings. Returns uid, name and type without settings or secrets.
-Contact points remain editable in the Grafana UI by default. External Alertmanager receivers are not supported.
-Use alerting_manage_routing to list or inspect contact points.`,
+Contact points remain editable in the Grafana UI by default. External Alertmanager receivers are not supported. Does not list or inspect existing contact points.`,
 	manageRoutingWrite,
 	mcpgrafana.WithTitleAnnotation("Write alerting routing"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),

@@ -20,16 +20,13 @@ const alertSilencesWriteDescription = `Create, update, and delete Grafana alerti
 
 Operations:
 - 'create': create a new silence. Requires matchers, starts_at, ends_at (RFC3339) and comment.
-- 'update': modify an existing silence by silence_id. Requires matchers, starts_at, ends_at and comment. The id is only kept when the posted matchers and starts_at match the stored ones, so pass back the starts_at returned by alerting_silences_read 'get'; otherwise Alertmanager expires the old silence and returns a new id.
+- 'update': modify an existing silence by silence_id. Requires matchers, starts_at, ends_at and comment. The id is only kept when the posted matchers and starts_at match the stored ones, so pass back the stored starts_at of the silence; otherwise Alertmanager expires the old silence and returns a new id.
 - 'delete': expire/remove a silence by silence_id.
 
 When to use:
 - Muting noisy or expected alerts during maintenance windows
 
-When NOT to use:
-- Listing or inspecting silences (use alerting_silences_read)
-- Changing alert rule configuration or state (use alerting_rules_write)
-- Checking how alerts are routed to receivers (use alerting_manage_routing)`
+Does not list or inspect silences, change alert rules, or manage notification routing.`
 
 const alertSilencesReadDescription = `List and inspect Grafana alerting silences. A silence temporarily suppresses notifications for alerts whose labels match a set of matchers.
 
@@ -40,10 +37,7 @@ Operations:
 When to use:
 - Inspecting which alerts are currently silenced and why
 
-When NOT to use:
-- Creating, updating or deleting silences (use alerting_silences_write)
-- Changing alert rule configuration or state (use alerting_rules_read or alerting_rules_write)
-- Checking how alerts are routed to receivers (use alerting_manage_routing)`
+Read-only: does not create, update, or delete silences, and does not show alert rules or notification routing.`
 
 const (
 	// silencesBasePath is the Grafana-managed Alertmanager v2 base path.

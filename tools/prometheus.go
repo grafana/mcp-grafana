@@ -178,7 +178,7 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
+	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
 	queryPrometheusWithHints,
 	mcpgrafana.WithTitleAnnotation("Query Prometheus metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -253,7 +253,7 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Filters metric names using the provided regex. Supports pagination (page * limit must not exceed 10000) and an optional time range to restrict results to metrics active within that window. Cloud Monitoring ignores the time range.",
+	"Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Filters metric names using the provided regex. Supports pagination (page * limit must not exceed 10000) and an optional time range to restrict results to metrics active within that window. Cloud Monitoring ignores the time range.",
 	listPrometheusMetricNames,
 	mcpgrafana.WithTitleAnnotation("List Prometheus metric names"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -417,7 +417,7 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 
 var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"list_prometheus_label_values",
-	"Use after list_prometheus_metric_names to find label values for filtering queries. Gets the values for a specific label name in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Allows filtering by series selectors and time range.",
+	"Gets the values for a specific label name in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Allows filtering by series selectors and time range.",
 	listPrometheusLabelValues,
 	mcpgrafana.WithTitleAnnotation("List Prometheus label values"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -569,7 +569,7 @@ func isPrometheusResultEmptyOrNaN(v model.Value) bool {
 // QueryPrometheusHistogram is a tool for querying histogram percentiles
 var QueryPrometheusHistogram = mcpgrafana.MustTool(
 	"query_prometheus_histogram",
-	`Query Prometheus histogram percentiles. DISCOVER FIRST: Use list_prometheus_metric_names with regex='.*_bucket$' to find histograms.
+	`Query Prometheus histogram percentiles from classic histogram '_bucket' series.
 
 Generates histogram_quantile PromQL. Example: metric='http_duration', percentile=95, labels='job="api"'
 

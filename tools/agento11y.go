@@ -463,7 +463,7 @@ When to use:
 - Reviewing evaluation results and user ratings across conversations
 
 When NOT to use:
-- Fetching a single generation or its evaluation scores (use agento11y_manage_generations)`,
+- Fetching a single generation or its evaluation scores`,
 	manageAgento11yConversations,
 	mcpgrafana.WithTitleAnnotation("Manage Agent Observability conversations"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -481,11 +481,11 @@ Operations:
 - 'scores': evaluation scores for a generation (evaluator, score key, score type, value, passed, explanation)
 
 When to use:
-- Drilling into one generation found via agento11y_manage_conversations
+- Drilling into one generation of a conversation
 - Checking why an evaluation passed or failed for a specific generation
 
 When NOT to use:
-- Searching or listing conversations (use agento11y_manage_conversations)`,
+- Searching or listing conversations`,
 	manageAgento11yGenerations,
 	mcpgrafana.WithTitleAnnotation("Manage Agent Observability generations"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -496,7 +496,7 @@ When NOT to use:
 
 const manageAgento11yEvaluatorsDescriptionFmt = `%s
 
-An evaluator is a scoring function (kind: llm_judge, json_schema, regex, or heuristic) that scores generations. The scores returned by agento11y_manage_generations operation 'scores' name the evaluator that produced them. Templates are versioned starting points for evaluators. Judge providers and models are the LLM backends an llm_judge evaluator can use.
+An evaluator is a scoring function (kind: llm_judge, json_schema, regex, or heuristic) that scores generations. Generation scores name the evaluator that produced them. Templates are versioned starting points for evaluators. Judge providers and models are the LLM backends an llm_judge evaluator can use.
 
 Operations:
 - 'list_evaluators': evaluators in this tenant (paginated)
@@ -512,12 +512,12 @@ Identifiers (evaluator_id, template_id) accept only letters, digits, '_', and '.
 Permissions: reads need grafana-agento11y-app.data:read (Agento11y Editor or Admin). %s
 
 When to use:
-- A score from agento11y_manage_generations names an evaluator and you need to see what it checks
+- A generation score names an evaluator and you need to see what it checks
 - Inspecting a template before deriving an evaluator from it%s
 
 When NOT to use:
-- Finding which rule scheduled an evaluator, or which guard enforces it (use agento11y_manage_eval_rules)
-- Listing conversations, generations, or scores (use agento11y_manage_conversations and agento11y_manage_generations)%s`
+- Finding which rule scheduled an evaluator, or which guard enforces it
+- Listing conversations, generations, or scores%s`
 
 func manageAgento11yEvaluatorsDescription(readOnly bool) string {
 	if readOnly {
@@ -533,7 +533,7 @@ func manageAgento11yEvaluatorsDescription(readOnly bool) string {
 		"Manage the evaluator catalog of Grafana Agent Observability (the grafana-agento11y-app plugin): read evaluators, evaluator templates, and the judge model catalog, and create, test, or delete evaluators.",
 		`
 - 'upsert_evaluator': create or update an evaluator from an inline 'definition'. POST is create-or-update keyed on definition.evaluator_id; there is no separate update operation, and re-using an existing 'version' returns 409, so bump the version to change an evaluator
-- 'delete_evaluator': soft-delete an evaluator by ID. Rules and guards that reference it keep the reference and silently stop producing scores, so check agento11y_manage_eval_rules first
+- 'delete_evaluator': soft-delete an evaluator by ID. Rules and guards that reference it keep the reference and silently stop producing scores
 - 'fork_template': derive a new evaluator from a template in one call. Prefer this over copying 'get_template' output into 'upsert_evaluator', which the API rejects
 - 'test_evaluator': run an inline evaluator definition against one generation and return its scores without persisting anything. Useful for tuning a judge config before 'upsert_evaluator'`,
 		"Every write, plus 'test_evaluator' (which persists nothing), needs grafana-agento11y-app.eval:write, granted only by the Agento11y Admin role; an Editor token gets 403.",
@@ -565,8 +565,8 @@ When to use:
 - Auditing which guards are live and whether they warn or deny%s
 
 When NOT to use:
-- Inspecting what an evaluator checks, or the template it came from (use agento11y_manage_evaluators)
-- Listing conversations, generations, or scores (use agento11y_manage_conversations and agento11y_manage_generations)%s`
+- Inspecting what an evaluator checks, or the template it came from
+- Listing conversations, generations, or scores%s`
 
 func manageAgento11yEvalRulesDescription(readOnly bool) string {
 	if readOnly {
@@ -622,8 +622,8 @@ When to use:
 - Reading what is already curated: which collections exist, how large they are, and what is in them%s
 
 When NOT to use:
-- Searching or reading live conversations and generations (use agento11y_manage_conversations and agento11y_manage_generations)
-- Inspecting evaluators or the rules that schedule them (use agento11y_manage_evaluators and agento11y_manage_eval_rules)%s`
+- Searching or reading live conversations and generations
+- Inspecting evaluators or the rules that schedule them%s`
 
 func manageAgento11yEvalCollectionsDescription(readOnly bool) string {
 	if readOnly {
@@ -648,7 +648,7 @@ func manageAgento11yEvalCollectionsDescription(readOnly bool) string {
 		"Every write needs grafana-agento11y-app.eval:write, granted only by the Agento11y Admin role; an Editor token gets 403.",
 		`
 - Turning a triaged failure into a regression collection: 'save_conversation', then 'create_collection' or 'add_collection_members'
-- Bookmarking a conversation found via agento11y_manage_conversations so a collection can reference it by a stable ID
+- Bookmarking a live conversation so a collection can reference it by a stable ID
 - Collection hygiene: renaming a collection, or removing a conversation that no longer belongs in it`,
 		"",
 	)
@@ -680,9 +680,9 @@ When to use:
 - Finding which test cases an experiment failed on, then reading one failing trial in full%s
 
 When NOT to use:
-- Reading scores on live production traffic (use agento11y_manage_generations and agento11y_manage_conversations)
-- Inspecting the test cases a suite defines, or editing them (use agento11y_manage_test_suites)
-- Inspecting what an evaluator checks (use agento11y_manage_evaluators)%s`
+- Reading scores on live production traffic
+- Inspecting the test cases a suite defines, or editing them
+- Inspecting what an evaluator checks%s`
 
 func manageAgento11yExperimentsDescription(readOnly bool) string {
 	if readOnly {
@@ -727,8 +727,8 @@ When to use:
 - Reading the test cases at the version an experiment used, after it reported a failing case%s
 
 When NOT to use:
-- Reading how a suite scored, or the trials, scores, and artifacts behind it (use agento11y_manage_experiments)
-- Changing what an evaluator checks (use agento11y_manage_evaluators)%s`
+- Reading how a suite scored, or the trials, scores, and artifacts behind it
+- Changing what an evaluator checks%s`
 
 func manageAgento11yTestSuitesDescription(readOnly bool) string {
 	if readOnly {

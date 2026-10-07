@@ -153,7 +153,7 @@ type CreateIncidentParams struct {
 	AttachCaption string                     `json:"attachCaption" jsonschema:"description=The caption of the attachment"`
 	AttachURL     string                     `json:"attachUrl" jsonschema:"description=The URL of the attachment"`
 	Labels        []incident.IncidentLabel   `json:"labels" jsonschema:"description=The labels to add to the incident"`
-	CustomFields  []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set on the new incident. Use list_incident_custom_fields to discover the available fields and their valid values"`
+	CustomFields  []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set on the new incident"`
 }
 
 // createIncident creates an incident and then records any custom field values.
@@ -199,7 +199,7 @@ func createIncident(ctx context.Context, args CreateIncidentParams) (*IncidentRe
 
 var CreateIncident = mcpgrafana.MustTool(
 	"create_incident",
-	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status, labels and custom fields. This tool should be used judiciously and sparingly, and only after confirmation from the user, as it may notify or alarm lots of people.",
+	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status, labels and custom fields. Creating an incident may notify or page many people.",
 	createIncident,
 	mcpgrafana.WithTitleAnnotation("Create incident"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
@@ -283,7 +283,7 @@ type UpdateIncidentParams struct {
 	Status       string                     `json:"status" jsonschema:"description=The new status of the incident. Valid values: 'active'\\, 'resolved'"`
 	Severity     string                     `json:"severity" jsonschema:"description=The new severity of the incident\\, e.g. 'minor'\\, 'major'\\, 'critical'"`
 	Title        string                     `json:"title" jsonschema:"description=The new title of the incident"`
-	CustomFields []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set. Only the listed fields are changed. Use list_incident_custom_fields to discover the available fields and their valid values"`
+	CustomFields []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set. Only the listed fields are changed"`
 }
 
 // updateIncident applies the requested changes to an incident.

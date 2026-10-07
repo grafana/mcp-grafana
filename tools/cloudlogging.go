@@ -109,11 +109,11 @@ func parseCloudLoggingStringList(body []byte) ([]string, error) {
 
 // CloudLoggingQueryParams defines the parameters for query_cloud_logging.
 type CloudLoggingQueryParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Google Cloud Logging datasource. Use list_datasources (type googlecloud-logging-datasource) to find it."`
-	ProjectID     string `json:"projectId" jsonschema:"required,description=GCP project ID to read logs from (e.g. my-prod-project). Use list_cloud_logging_projects if unknown."`
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Google Cloud Logging datasource (type googlecloud-logging-datasource)."`
+	ProjectID     string `json:"projectId" jsonschema:"required,description=GCP project ID to read logs from (e.g. my-prod-project)."`
 	Filter        string `json:"filter,omitempty" jsonschema:"description=Cloud Logging query language filter\\, e.g. resource.type=\"k8s_container\" AND severity>=ERROR. Leave empty to return all logs in the time range. Do NOT add timestamp clauses: the time range is applied automatically from start/end."`
-	BucketID      string `json:"bucketId,omitempty" jsonschema:"description=Optional log bucket to scope the query\\, exactly as returned by list_cloud_logging_buckets (e.g. global/buckets/_Default). Omit to search the project's default scope."`
-	ViewID        string `json:"viewId,omitempty" jsonschema:"description=Optional log view within bucketId\\, as returned by list_cloud_logging_views. Only meaningful when bucketId is set; defaults to _AllLogs."`
+	BucketID      string `json:"bucketId,omitempty" jsonschema:"description=Optional log bucket to scope the query\\, as '<location>/buckets/<name>' (e.g. global/buckets/_Default). Omit to search the project's default scope."`
+	ViewID        string `json:"viewId,omitempty" jsonschema:"description=Optional log view within bucketId (e.g. _AllLogs). Only meaningful when bucketId is set; defaults to _AllLogs."`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"description=Maximum number of log entries to return\\, newest first. Default: 100\\, max: 1000."`
@@ -371,7 +371,7 @@ var QueryCloudLogging = mcpgrafana.MustTool(
 	"query_cloud_logging",
 	`Query logs from a Google Cloud Logging datasource using the Cloud Logging query language. Returns entries newest-first with timestamp, severity, body, log entry id, trace id, and labels (resource/log labels as JSON).
 
-The time range (start/end, default last hour) is applied automatically: do NOT put timestamp clauses in the filter. Results are capped at 'limit' (default 100, max 1000); 'truncated' is true when the cap was hit, so narrow the filter or time range to see more.
+The time range (start/end, default last hour) is applied automatically, so the filter needs no timestamp clauses. Results are capped at 'limit' (default 100, max 1000); 'truncated' is true when the cap was hit.
 
 Filter examples:
   resource.type="k8s_container" AND resource.labels.namespace_name="payments" AND severity>=ERROR
@@ -379,7 +379,7 @@ Filter examples:
   resource.type="cloud_run_revision" AND httpRequest.status>=500
   labels."k8s-pod/app"="api" AND NOT textPayload:"healthz"
 
-If the project is unknown, call list_cloud_logging_projects first. Pass bucketId (from list_cloud_logging_buckets) to read a specific log bucket, optionally with viewId.`,
+bucketId reads a specific log bucket, optionally narrowed with viewId.`,
 	queryCloudLogging,
 	mcpgrafana.WithTitleAnnotation("Query Google Cloud Logging"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -409,7 +409,7 @@ func listCloudLoggingProjects(ctx context.Context, args ListCloudLoggingProjects
 
 var ListCloudLoggingProjects = mcpgrafana.MustTool(
 	"list_cloud_logging_projects",
-	"START HERE for Google Cloud Logging: List the GCP project IDs the datasource's credentials can read logs from (at most 100; use 'query' to narrow). NEXT: pass a projectId to query_cloud_logging, or to list_cloud_logging_buckets to scope by log bucket.",
+	"List the GCP project IDs the Google Cloud Logging datasource's credentials can read logs from (at most 100; 'query' narrows the list).",
 	listCloudLoggingProjects,
 	mcpgrafana.WithTitleAnnotation("List Cloud Logging projects"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -440,7 +440,7 @@ func listCloudLoggingBuckets(ctx context.Context, args ListCloudLoggingBucketsPa
 
 var ListCloudLoggingBuckets = mcpgrafana.MustTool(
 	"list_cloud_logging_buckets",
-	"List the log buckets in a GCP project, as '<location>/buckets/<name>' (e.g. global/buckets/_Default). Pass a value verbatim as bucketId to query_cloud_logging or list_cloud_logging_views.",
+	"List the log buckets in a GCP project, as '<location>/buckets/<name>' (e.g. global/buckets/_Default). Each value is a valid bucketId as-is.",
 	listCloudLoggingBuckets,
 	mcpgrafana.WithTitleAnnotation("List Cloud Logging buckets"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -453,7 +453,7 @@ var ListCloudLoggingBuckets = mcpgrafana.MustTool(
 type ListCloudLoggingViewsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Google Cloud Logging datasource"`
 	ProjectID     string `json:"projectId" jsonschema:"required,description=GCP project ID that owns the bucket"`
-	BucketID      string `json:"bucketId" jsonschema:"required,description=Log bucket exactly as returned by list_cloud_logging_buckets (e.g. global/buckets/_Default)"`
+	BucketID      string `json:"bucketId" jsonschema:"required,description=Log bucket as '<location>/buckets/<name>' (e.g. global/buckets/_Default)"`
 }
 
 func listCloudLoggingViews(ctx context.Context, args ListCloudLoggingViewsParams) ([]string, error) {
@@ -476,7 +476,7 @@ func listCloudLoggingViews(ctx context.Context, args ListCloudLoggingViewsParams
 
 var ListCloudLoggingViews = mcpgrafana.MustTool(
 	"list_cloud_logging_views",
-	"List the log views in a log bucket (e.g. _AllLogs, _Default). Pass one as viewId, together with the same bucketId, to query_cloud_logging.",
+	"List the log views in a log bucket (e.g. _AllLogs, _Default). Each value is a valid viewId for the same bucketId.",
 	listCloudLoggingViews,
 	mcpgrafana.WithTitleAnnotation("List Cloud Logging views"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
