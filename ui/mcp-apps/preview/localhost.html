@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Local MCP App host</title>
+    <style>
+      body { margin: 0; font: 13px system-ui, sans-serif; display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+      iframe { width: 100%; height: 100%; border: 0; border-right: 1px solid #ddd; }
+      #log { margin: 0; padding: 12px; font: 11px ui-monospace, monospace; white-space: pre-wrap; overflow: auto; background: #fafafa; }
+    </style>
+  </head>
+  <body>
+    <iframe id="app" title="app"></iframe>
+    <pre id="log">starting…</pre>
+    <script type="module" src="./localhost.ts"></script>
+  </body>
+</html>
