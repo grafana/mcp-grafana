@@ -145,7 +145,11 @@ func doAPIRequest(ctx context.Context, endpoint, method, body string, headers ma
 		req.Header.Set(k, v)
 	}
 
-	resp, err := (&http.Client{Transport: transport}).Do(req)
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = mcpgrafana.DefaultGrafanaClientTimeout
+	}
+	resp, err := (&http.Client{Transport: transport, Timeout: timeout}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
