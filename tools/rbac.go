@@ -167,9 +167,12 @@ var RequiredPermissions = map[string][]string{
 	"install_plugin":            {"plugins:install"},
 	"search_plugin_information": {}, // grafana.com catalog
 
-	// Provisioning (Kubernetes-style resource actions)
-	"list_provisioning_repositories": {"provisioning.grafana.app/repositories:list"},
-	"validate_provisioning_file":     {"provisioning.grafana.app/repositories:get"},
+	// Provisioning. Grafana maps /apis verbs onto legacy action names
+	// (pkg/services/authz/rbac/mapper.go), so list/get on
+	// provisioning.grafana.app repositories is provisioning.repositories:read.
+	// Reading a single file is authorized against the resource it parses to.
+	"list_provisioning_repositories": {"provisioning.repositories:read"},
+	"validate_provisioning_file":     {"dashboards:read", "folders:read"},
 
 	// Docs (grafana.com)
 	"search_docs": {},
