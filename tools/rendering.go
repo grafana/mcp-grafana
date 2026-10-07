@@ -65,8 +65,8 @@ func (StringOrSlice) JSONSchema() *jsonschema.Schema {
 type GetPanelImageParams struct {
 	DashboardUID string                   `json:"dashboardUid,omitempty" jsonschema:"description=The UID of a stored dashboard containing the panel. Required unless provisioningPreview is provided."`
 	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
-	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000"`
-	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500 (1000 for explore)"`
+	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000. The image renderer raises values below its configured minimum viewport width (1000 by default)."`
+	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500 (1000 for explore). The image renderer raises values below its configured minimum viewport height (500 by default)."`
 	TimeRange    *RenderTimeRange         `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
 	Variables    map[string]StringOrSlice `json:"variables,omitempty" jsonschema:"description=Dashboard variables to apply. Values can be a single string or an array of strings for multi-value variables (e.g.\\, {\"var-datasource\": \"prometheus\"\\, \"var-instance\": [\"server1\"\\, \"server2\"]})"`
 	Theme        *string                  `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`

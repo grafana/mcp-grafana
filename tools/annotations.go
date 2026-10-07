@@ -92,7 +92,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		}
 		req := &models.PostGraphiteAnnotationsCmd{
 			What: args.What,
-			When: args.When,
+			When: args.When / 1000, // the Graphite endpoint takes epoch seconds
 			Tags: args.Tags,
 			Data: args.GraphiteData,
 		}

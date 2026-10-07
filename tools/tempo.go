@@ -368,10 +368,32 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 	if err != nil {
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
+	if tempoTraceIsEmpty(body) {
+		return mcpgrafana.NewToolResultError(tempoAPIError(http.StatusNotFound, []byte("trace not found")).Error()), nil
+	}
 
 	result := tempoToolResult(body, "trace", "json")
 	enrichTempoTrace(ctx, args, body, result)
 	return result, nil
+}
+
+// tempoTraceIsEmpty reports whether a /api/v2/traces response holds no trace.
+// Unlike v1 (and the diff endpoint), Tempo's v2 trace-by-ID endpoint answers
+// an unknown ID with 200 and an empty trace: `{}` in the LLM format, or an
+// empty "trace" object in JSON.
+func tempoTraceIsEmpty(body string) bool {
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return false
+	}
+	if len(resp) == 0 {
+		return true
+	}
+	trace, ok := resp["trace"]
+	if !ok {
+		return false
+	}
+	return strings.Join(strings.Fields(string(trace)), "") == "{}"
 }
 
 type traceDiffAPIRequest struct {

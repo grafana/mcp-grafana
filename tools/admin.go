@@ -3,11 +3,14 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
 
+	"github.com/go-openapi/runtime"
+	"github.com/go-openapi/strfmt"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/access_control"
-	"github.com/grafana/grafana-openapi-client-go/client/org"
+	"github.com/grafana/grafana-openapi-client-go/client/orgs"
 	"github.com/grafana/grafana-openapi-client-go/client/teams"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -41,22 +44,64 @@ var ListTeams = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-type ListUsersByOrgParams struct{}
+const (
+	defaultListUsersByOrgLimit = 100
+	maxListUsersByOrgLimit     = 1000
+)
 
-func listUsersByOrg(ctx context.Context, args ListUsersByOrgParams) ([]*models.OrgUserDTO, error) {
+type ListUsersByOrgParams struct {
+	Query string `json:"query,omitempty" jsonschema:"description=Optional search string matched against login\\, email and name"`
+	Limit int    `json:"limit,omitempty" jsonschema:"default=100,description=Maximum number of users to return (max 1000)"`
+	Page  int    `json:"page,omitempty" jsonschema:"default=1,description=Page number for pagination (1-indexed)"`
+}
+
+func listUsersByOrg(ctx context.Context, args ListUsersByOrgParams) (*models.SearchOrgUsersQueryResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
-	params := org.NewGetOrgUsersForCurrentOrgParamsWithContext(ctx)
-	search, err := c.Org.GetOrgUsersForCurrentOrg(params)
+	limit := args.Limit
+	if limit <= 0 {
+		limit = defaultListUsersByOrgLimit
+	}
+	if limit > maxListUsersByOrgLimit {
+		limit = maxListUsersByOrgLimit
+	}
+	page := args.Page
+	if page <= 0 {
+		page = 1
+	}
+
+	// The client has no method for the current-org search endpoint
+	// (GET /api/org/users/search), so reuse the admin search operation, which
+	// has the same response shape, and point it at the current-org path.
+	params := orgs.NewSearchOrgUsersParamsWithContext(ctx)
+	resp, err := c.Orgs.SearchOrgUsersWithParams(params, func(op *runtime.ClientOperation) {
+		op.ID = "searchOrgUsersForCurrentOrg"
+		op.PathPattern = "/org/users/search"
+		op.Params = runtime.ClientRequestWriterFunc(func(r runtime.ClientRequest, reg strfmt.Registry) error {
+			// Keeps the default timeout; the unused org_id path param is ignored.
+			if err := params.WriteToRequest(r, reg); err != nil {
+				return err
+			}
+			if args.Query != "" {
+				if err := r.SetQueryParam("query", args.Query); err != nil {
+					return err
+				}
+			}
+			if err := r.SetQueryParam("perpage", strconv.Itoa(limit)); err != nil {
+				return err
+			}
+			return r.SetQueryParam("page", strconv.Itoa(page))
+		})
+	})
 	if err != nil {
 		return nil, fmt.Errorf("search users: %w", err)
 	}
-	return search.Payload, nil
+	return resp.Payload, nil
 }
 
 var ListUsersByOrg = mcpgrafana.MustTool(
 	"list_users_by_org",
-	"List users in the Grafana organization. Returns a list of organization users with details like userid, email, role etc.",
+	"List users in the Grafana organization, optionally filtered by a search query. Results are paginated; the response includes totalCount, page and perPage alongside organization users with details like userid, email, role etc.",
 	listUsersByOrg,
 	mcpgrafana.WithTitleAnnotation("List users by org"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
