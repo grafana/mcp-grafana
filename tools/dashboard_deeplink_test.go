@@ -93,6 +93,8 @@ func TestUpdateDashboardDeeplink(t *testing.T) {
 				assert.Equal(t, "success", *result.Status)
 				assert.Equal(t, int64(2), *result.Version)
 				assert.Equal(t, "test-folder", result.FolderUID)
+				require.NotNil(t, result.Title)
+				assert.Equal(t, "New title", *result.Title)
 			})
 		}
 	}
