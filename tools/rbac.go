@@ -3,6 +3,12 @@ package tools
 // RequiredPermissions maps each tool name to the Grafana RBAC actions its
 // calls need. A caller missing any of them gets a 403 from that tool.
 //
+// Calls to /apis endpoints are checked twice: the user's legacy action (the
+// verb mapped by Grafana's pkg/services/authz/rbac/mapper.go, e.g.
+// dashboards:read) and, for on-behalf-of tokens, the token's delegated
+// group/resource:verb permission (e.g. dashboard.grafana.app/dashboards:get).
+// Tools that use /apis declare both forms.
+//
 // Every registered tool must have an entry, including tools that need no
 // RBAC action (an empty list): TestRequiredPermissions_CoversEveryTool in
 // cmd/mcp-grafana fails otherwise. Declare the actions for every operation a
@@ -22,17 +28,19 @@ var RequiredPermissions = map[string][]string{
 
 	// Dashboards and folders
 	"search_dashboards":           {"dashboards:read", "folders:read"},
-	"get_dashboard_by_uid":        {"dashboards:read"},
-	"get_dashboard_summary":       {"dashboards:read"},
-	"get_dashboard_property":      {"dashboards:read"},
-	"get_dashboard_panel_queries": {"dashboards:read"},
-	"list_dashboard_versions":     {"dashboards:read"},
-	"update_dashboard":            {"dashboards:read", "dashboards:create", "dashboards:write", "folders:read"},
-	"search_folders":              {"folders:read"},
-	"create_folder":               {"folders:read", "folders:create", "folders:write"},
-	"run_panel_query":             {"dashboards:read", "datasources:read", "datasources:query"},
-	"get_panel_image":             {"dashboards:read", "datasources:query"},
-	"generate_deeplink":           {}, // short URLs need no RBAC action
+	"get_dashboard_by_uid":        dashboardRead,
+	"get_dashboard_summary":       dashboardRead,
+	"get_dashboard_property":      dashboardRead,
+	"get_dashboard_panel_queries": dashboardRead,
+	"list_dashboard_versions":     {"dashboards:read"}, // legacy versions API only
+	"update_dashboard": append(append([]string{}, dashboardRead...),
+		"dashboards:create", "dashboards:write", "folders:read",
+		"dashboard.grafana.app/dashboards:create", "dashboard.grafana.app/dashboards:update"),
+	"search_folders":    {"folders:read"},
+	"create_folder":     {"folders:read", "folders:create", "folders:write"},
+	"run_panel_query":   append(append([]string{}, dashboardRead...), datasourceQuery...),
+	"get_panel_image":   {"dashboards:read", "datasources:query"},
+	"generate_deeplink": {}, // short URLs need no RBAC action
 
 	// Snapshots
 	"list_snapshots":  {"snapshots:read"},
@@ -167,12 +175,14 @@ var RequiredPermissions = map[string][]string{
 	"install_plugin":            {"plugins:install"},
 	"search_plugin_information": {}, // grafana.com catalog
 
-	// Provisioning. Grafana maps /apis verbs onto legacy action names
-	// (pkg/services/authz/rbac/mapper.go), so list/get on
-	// provisioning.grafana.app repositories is provisioning.repositories:read.
-	// Reading a single file is authorized against the resource it parses to.
-	"list_provisioning_repositories": {"provisioning.repositories:read"},
-	"validate_provisioning_file":     {"dashboards:read", "folders:read"},
+	// Provisioning. Reading a single file is authorized against the resource
+	// it parses to (in practice a dashboard or folder), not the repository.
+	"list_provisioning_repositories": {"provisioning.repositories:read", "provisioning.grafana.app/repositories:list"},
+	"validate_provisioning_file": {
+		"provisioning.repositories:read", "provisioning.grafana.app/repositories:get",
+		"dashboards:read", "dashboard.grafana.app/dashboards:get",
+		"folders:read", "folder.grafana.app/folders:get",
+	},
 
 	// Docs (grafana.com)
 	"search_docs": {},
@@ -185,6 +195,10 @@ var RequiredPermissions = map[string][]string{
 
 var (
 	datasourceQuery = []string{"datasources:read", "datasources:query"}
+
+	// fetchDashboard reads through dashboard.grafana.app when Grafana serves
+	// it, and the legacy API otherwise.
+	dashboardRead = []string{"dashboards:read", "dashboard.grafana.app/dashboards:get"}
 
 	resourcePermissionsRead = []string{
 		"dashboards.permissions:read",
