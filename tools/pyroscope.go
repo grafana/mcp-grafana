@@ -92,7 +92,7 @@ func listPyroscopeLabelNames(ctx context.Context, args ListPyroscopeLabelNamesPa
 		return nil, fmt.Errorf("failed to call Pyroscope API: %w", err)
 	}
 
-	return res.Msg.Names, nil
+	return nonNilStrings(res.Msg.Names), nil
 }
 
 const listPyroscopeLabelValuesToolPrompt = `
@@ -160,7 +160,16 @@ func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValues
 		return nil, fmt.Errorf("failed to call Pyroscope API: %w", err)
 	}
 
-	return res.Msg.Names, nil
+	return nonNilStrings(res.Msg.Names), nil
+}
+
+// nonNilStrings returns s, or an empty slice if s is nil, so that an empty
+// result serialises as [] rather than null.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 const listPyroscopeProfileTypesToolPrompt = `
