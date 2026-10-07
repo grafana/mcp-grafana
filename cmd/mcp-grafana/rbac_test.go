@@ -9,8 +9,7 @@ import (
 )
 
 // TestRequiredPermissions_CoversEveryTool keeps tools.RequiredPermissions in
-// step with the registered tools. Hosted deployments grant a delegated token
-// built from that map, so a tool missing from it 403s in production.
+// step with the registered tools.
 func TestRequiredPermissions_CoversEveryTool(t *testing.T) {
 	registered := registerAllCategories(t, disabledTools{})
 

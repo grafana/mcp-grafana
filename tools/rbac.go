@@ -1,9 +1,7 @@
 package tools
 
 // RequiredPermissions maps each tool name to the Grafana RBAC actions its
-// calls need. Hosted deployments that mint a delegated token for this server
-// (for example Grafana Cloud MCP) grant the union of these, so a tool missing
-// an action here fails with 403 even for an Admin.
+// calls need. A caller missing any of them gets a 403 from that tool.
 //
 // Every registered tool must have an entry, including tools that need no
 // RBAC action (an empty list): TestRequiredPermissions_CoversEveryTool in
