@@ -19,20 +19,16 @@ When to use:
 - Finding alert rules by state, folder, group, or name
 - Comparing rule versions to see what changed
 
-When NOT to use:
-- Creating, updating, or deleting alert rules (use alerting_rules_write)
-- Checking how alerts are routed to receivers (use alerting_manage_routing)`
+Read-only: does not create, update, or delete rules, and does not show notification routing.`
 
 const alertRulesWriteDescription = `Create, update, and delete Grafana alert rules.
 
 When to use:
 - Creating, updating, or deleting alert rules
 
-To update a rule, first use alerting_rules_read with operation 'get' to retrieve its full configuration, then call this tool with operation 'update' and all required fields plus your changes.
+Operation 'update' replaces the whole rule: it takes all required fields, not only the changed ones.
 
-When NOT to use:
-- Listing or inspecting alert rules (use alerting_rules_read)
-- Checking how alerts are routed to receivers (use alerting_manage_routing)`
+Does not list or inspect rules, and does not manage notification routing.`
 
 var AlertRulesRead = mcpgrafana.MustTool(
 	"alerting_rules_read",

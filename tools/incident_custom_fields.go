@@ -60,7 +60,7 @@ type IncidentCustomFieldValue struct {
 // IncidentCustomFieldInput sets the value of a single custom field on an
 // incident.
 type IncidentCustomFieldInput struct {
-	Field  string   `json:"field" jsonschema:"required,description=The name or UUID of the custom field to set. Use list_incident_custom_fields to discover the available fields"`
+	Field  string   `json:"field" jsonschema:"required,description=The name or UUID of the custom field to set"`
 	Values []string `json:"values" jsonschema:"description=The value(s) to set. Text and number fields take a single value; single-select fields take one option; multi-select fields take one or more options. Select options may be given as their label\\, value or UUID. Pass an empty list to clear the field"`
 }
 
@@ -91,7 +91,7 @@ func listIncidentCustomFields(ctx context.Context, args ListIncidentCustomFields
 
 var ListIncidentCustomFields = mcpgrafana.MustTool(
 	"list_incident_custom_fields",
-	"List the custom fields configured for Grafana incidents, including their type and, for select fields, the options that may be chosen. Use this to discover which fields exist and which values are valid before setting them with create_incident or update_incident.",
+	"List the custom fields configured for Grafana incidents, including their type and, for select fields, the options that may be chosen.",
 	listIncidentCustomFields,
 	mcpgrafana.WithTitleAnnotation("List incident custom fields"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

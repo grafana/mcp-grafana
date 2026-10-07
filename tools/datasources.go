@@ -135,7 +135,7 @@ type CreateDatasourceParams struct {
 	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
 	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
-	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected values from the user."`
+	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=True once the field schema has been retrieved; required to create a schema-backed datasource."`
 }
 
 type CreateDatasourceResult struct {
@@ -162,7 +162,8 @@ func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
 		Message: "No schema is available for this datasource type. " +
 			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
 			"Provide the collected values as top-level arguments — name (required), plus any relevant optional ones such as url, database, basicAuth, isDefault, or withCredentials. " +
-			"Do NOT use the fields map; it applies only to schema-based types.",
+			"Do NOT use the fields map; it applies only to schema-based types. " +
+			"Secrets cannot be set here — direct the user to the Grafana UI for those, and if the user shares a credential in the conversation, remind them to rotate it.",
 	}
 }
 
@@ -449,7 +450,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the display name in the top-level name argument, schemaReviewed=true, and the fields map populated with values confirmed by the user. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
+	"Create a datasource in two steps. Called with only the type, it returns the plugin's field schema and creates nothing. Called with the type, the display name in the top-level name argument, schemaReviewed=true, and field values in the fields map, it creates the datasource. The plugin for the type must already be installed. Secrets (passwords, tokens) are not accepted. Returns UID, health check, and a config page link.",
 	createDatasource,
 	mcpgrafana.WithTitleAnnotation("Create datasource"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
@@ -460,7 +461,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret datasource fields by UID. Omitted fields are preserved. IMPORTANT: always call this tool twice. First call: provide only the uid — the tool returns the datasource's field schema. After receiving the schema, ask the user which fields they want to change and confirm each new value; do not infer or reset fields the user did not mention. Second call: provide the uid, schemaReviewed=true, and the changed values in the fields map. Returns an update message and a health check. For secrets, direct the user to the Grafana UI.",
+	"Update non-secret datasource fields by UID in two steps. Called with only the uid, it returns the datasource's field schema and changes nothing. Called with the uid, schemaReviewed=true, and the changed values in the fields map, it applies the update. Omitted fields are preserved. Secrets (passwords, tokens) cannot be changed. Returns an update message and a health check.",
 	updateDatasource,
 	mcpgrafana.WithTitleAnnotation("Update datasource"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -563,7 +564,7 @@ type UpdateDatasourceParams struct {
 	IsDefault      *bool                  `json:"isDefault,omitempty" jsonschema:"description=Make this the default datasource"`
 	JSONData       map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; replaces existing jsonData when set"`
 	Fields         map[string]any         `json:"fields,omitempty" jsonschema:"description=Datasource field values to change\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly\\, merging jsonData changes into the existing settings. Only include the fields you want to change. Example: {\"httpMethod\": \"POST\"}."`
-	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected the changes from the user."`
+	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=True once the field schema has been retrieved; required to apply the update."`
 }
 
 type UpdateDatasourceResult struct {

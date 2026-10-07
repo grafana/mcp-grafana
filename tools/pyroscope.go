@@ -638,7 +638,7 @@ var QueryPyroscope = mcpgrafana.MustTool(
 
 type QueryPyroscopeParams struct {
 	DataSourceUID string   `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
-	ProfileType   string   `json:"profile_type" jsonschema:"required,description=The profile type\\, use list_pyroscope_profile_types to discover available types"`
+	ProfileType   string   `json:"profile_type" jsonschema:"required,description=The profile type (e.g. process_cpu:cpu:nanoseconds:cpu:nanoseconds)"`
 	QueryType     string   `json:"query_type,omitempty" jsonschema:"description=Query type: \"profile\" (flamegraph)\\, \"metrics\" (time-series)\\, or \"both\" (default). Use \"both\" for complete analysis"`
 	Format        string   `json:"format,omitempty" jsonschema:"description=Profile output format: \"table\" (default) for a per-function flat/cum table\\, or \"dot\" for a call graph in Graphviz DOT format"`
 	Matchers      string   `json:"matchers,omitempty" jsonschema:"description=Prometheus style matchers (defaults to: {})"`

@@ -262,8 +262,6 @@ var QuerySQL = mcpgrafana.MustTool(
 	"query_sql",
 	`Query a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL) via Grafana.
 
-REQUIRED FIRST: Use list_sql_tables to find tables, then describe_sql_table to see column schemas, then query.
-
 Supports datasource-specific macros: $__timeFilter(column), $__from/$__to, $__interval, ${varname}
 
 Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
@@ -279,7 +277,7 @@ Example: SELECT timestamp, message FROM logs WHERE $__timeFilter(timestamp) LIMI
 
 var ListSQLDatabases = mcpgrafana.MustTool(
 	"list_sql_databases",
-	"List databases, schemas, or catalogs from a supported SQL datasource. Returns the organizational units available for use with list_sql_tables. For Athena: omit catalog to list catalogs, or pass catalog to list databases in it.",
+	"List databases, schemas, or catalogs from a supported SQL datasource. Returns the organizational units (databases, schemas, or catalogs) that contain tables. For Athena: omit catalog to list catalogs, or pass catalog to list databases in it.",
 	listSQLDatabasesHandler,
 	mcpgrafana.WithTitleAnnotation("List SQL databases"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -290,7 +288,7 @@ var ListSQLDatabases = mcpgrafana.MustTool(
 
 var ListSQLTables = mcpgrafana.MustTool(
 	"list_sql_tables",
-	"START HERE for SQL datasources: List tables from a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Returns table names, schemas, and metadata. NEXT: Use describe_sql_table to see column schemas.",
+	"List tables from a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Returns table names, schemas, and metadata.",
 	listSQLTablesHandler,
 	mcpgrafana.WithTitleAnnotation("List SQL tables"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -301,7 +299,7 @@ var ListSQLTables = mcpgrafana.MustTool(
 
 var DescribeSQLTable = mcpgrafana.MustTool(
 	"describe_sql_table",
-	"Get column schema for a table in a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). NEXT: Use query_sql with discovered column names.",
+	"Get column schema for a table in a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Returns column names and types.",
 	describeSQLTableHandler,
 	mcpgrafana.WithTitleAnnotation("Describe SQL table"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
