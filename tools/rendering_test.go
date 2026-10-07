@@ -194,6 +194,7 @@ func TestBuildRenderURL(t *testing.T) {
 				"panes=",
 				"prom-uid",
 				"kiosk=true",
+				"forcePollingMode=true",
 			},
 			notContains: []string{
 				"/render/d",

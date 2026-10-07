@@ -268,6 +268,11 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 				params.Add(key, v)
 			}
 		}
+		// Newer renderers wait for a "render done" signal that only dashboards
+		// send (behind Grafana's reportRenderBinding flag), so an Explore render
+		// would hang until it times out. Ask them to poll instead; older
+		// renderers ignore the param.
+		params.Set("forcePollingMode", "true")
 	} else if hasPreview {
 		// Repo is a single segment and gets the stricter url.PathEscape (which
 		// also encodes sub-delim characters like @, $, &, ;, =, :). For the
