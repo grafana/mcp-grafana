@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-10-07
+
+### Added
+
+- `get_panel_image` can render an ad-hoc Explore view as a PNG via a new `explore` input (datasource UID and queries), without saving a dashboard first; requires Grafana 10.2+ ([#1298](https://github.com/grafana/mcp-grafana/pull/1298))
+- `update_dashboard` returns an absolute dashboard deeplink in its `url` field, using Grafana's public URL when available ([#1300](https://github.com/grafana/mcp-grafana/pull/1300))
+
+### Fixed
+
+- `query_cloudwatch` accepts percentile statistics such as `p95` and `p99.9`; `statistic` was previously restricted to an enum of basic statistics ([#1299](https://github.com/grafana/mcp-grafana/pull/1299))
+- Tool and parameter descriptions no longer contain model directives or references to other tools, to meet connector directory requirements ([#1304](https://github.com/grafana/mcp-grafana/pull/1304))
+
 ## [2.0.1] - 2026-10-06
 
 ### Added
@@ -582,6 +594,7 @@ This is the last 1.x release; the next release will be 2.0.
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[2.0.2]: https://github.com/grafana/mcp-grafana/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/grafana/mcp-grafana/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/grafana/mcp-grafana/compare/v1.6.3...v2.0.0
 [1.6.3]: https://github.com/grafana/mcp-grafana/compare/v1.6.2...v1.6.3
