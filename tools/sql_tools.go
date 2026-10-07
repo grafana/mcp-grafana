@@ -273,6 +273,7 @@ Example: SELECT timestamp, message FROM logs WHERE $__timeFilter(timestamp) LIMI
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 var ListSQLDatabases = mcpgrafana.MustTool(
@@ -284,6 +285,7 @@ var ListSQLDatabases = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 var ListSQLTables = mcpgrafana.MustTool(
@@ -295,6 +297,7 @@ var ListSQLTables = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 var DescribeSQLTable = mcpgrafana.MustTool(
@@ -306,6 +309,7 @@ var DescribeSQLTable = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 func AddSQLTools(s *mcp.Server, enableQueryTools bool) {

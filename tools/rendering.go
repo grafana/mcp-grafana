@@ -481,6 +481,7 @@ var GetPanelImage = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("dashboards:read", "datasources:query"),
 )
 
 func AddRenderingTools(s *mcp.Server) {

@@ -5,20 +5,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/grafana/mcp-grafana/v2/tools"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
-// TestRequiredPermissions_CoversEveryTool keeps tools.RequiredPermissions in
-// step with the registered tools.
-func TestRequiredPermissions_CoversEveryTool(t *testing.T) {
-	registered := registerAllCategories(t, disabledTools{})
-
-	for name := range registered {
-		_, ok := tools.RequiredPermissions[name]
-		assert.True(t, ok, "tool %q has no entry in tools.RequiredPermissions (tools/rbac.go); "+
-			"add the RBAC actions it needs, or an empty list if it needs none", name)
-	}
-	for name := range tools.RequiredPermissions {
-		assert.True(t, registered[name], "tools.RequiredPermissions lists %q, which is not a registered tool", name)
+// TestEveryToolDeclaresPermissions fails when a tool is registered without
+// mcpgrafana.RequiresPermissions. It checks the read-write and read-only
+// variants, which are separate MustTool calls for some tools.
+func TestEveryToolDeclaresPermissions(t *testing.T) {
+	for _, readOnly := range []bool{false, true} {
+		for name, tool := range listAllCategoryTools(t, disabledTools{write: readOnly}) {
+			_, ok := mcpgrafana.ToolRequiredPermissions(tool)
+			assert.True(t, ok, "tool %q declares no RBAC permissions: add mcpgrafana.RequiresPermissions(...) "+
+				"to its MustTool call, e.g. RequiresPermissions(datasourceQuery...) for a datasource query tool "+
+				"(see tools/rbac.go), or RequiresPermissions() if it needs none", name)
+		}
 	}
 }

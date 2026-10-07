@@ -386,6 +386,7 @@ bucketId reads a specific log bucket, optionally narrowed with viewId.`,
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudLoggingProjectsParams defines the parameters for listing GCP projects.
@@ -416,6 +417,7 @@ var ListCloudLoggingProjects = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudLoggingBucketsParams defines the parameters for listing log buckets.
@@ -447,6 +449,7 @@ var ListCloudLoggingBuckets = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudLoggingViewsParams defines the parameters for listing log views.
@@ -483,6 +486,7 @@ var ListCloudLoggingViews = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddCloudLoggingTools registers the Google Cloud Logging tools with the MCP server.

@@ -317,6 +317,7 @@ Cross-account monitoring: Use accountId to query metrics from a specific source 
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudWatchNamespacesParams defines the parameters for listing CloudWatch namespaces
@@ -424,6 +425,7 @@ var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudWatchMetricsParams defines the parameters for listing CloudWatch metrics
@@ -486,6 +488,7 @@ var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudWatchDimensionsParams defines the parameters for listing CloudWatch dimensions
@@ -550,6 +553,7 @@ var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudWatchDimensionValuesParams defines the parameters for listing
@@ -617,6 +621,7 @@ var ListCloudWatchDimensionValues = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server.

@@ -470,6 +470,7 @@ When NOT to use:
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yRead...),
 )
 
 var ManageAgento11yGenerations = mcpgrafana.MustTool(
@@ -492,6 +493,7 @@ When NOT to use:
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yRead...),
 )
 
 const manageAgento11yEvaluatorsDescriptionFmt = `%s
@@ -766,6 +768,7 @@ var ManageAgento11yEvaluatorsRead = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yRead...),
 )
 
 var ManageAgento11yEvalRulesRead = mcpgrafana.MustTool(
@@ -777,6 +780,7 @@ var ManageAgento11yEvalRulesRead = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yRead...),
 )
 
 var ManageAgento11yEvalCollectionsRead = mcpgrafana.MustTool(
@@ -788,6 +792,7 @@ var ManageAgento11yEvalCollectionsRead = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yRead...),
 )
 
 var ManageAgento11yExperimentsRead = mcpgrafana.MustTool(
@@ -799,6 +804,7 @@ var ManageAgento11yExperimentsRead = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yRead...),
 )
 
 var ManageAgento11yTestSuitesRead = mcpgrafana.MustTool(
@@ -810,6 +816,7 @@ var ManageAgento11yTestSuitesRead = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yRead...),
 )
 
 var ManageAgento11yEvaluatorsReadWrite = mcpgrafana.MustTool(
@@ -820,6 +827,7 @@ var ManageAgento11yEvaluatorsReadWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yWrite...),
 )
 
 var ManageAgento11yEvalRulesReadWrite = mcpgrafana.MustTool(
@@ -830,6 +838,7 @@ var ManageAgento11yEvalRulesReadWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yWrite...),
 )
 
 var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
@@ -840,6 +849,7 @@ var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yWrite...),
 )
 
 var ManageAgento11yExperimentsReadWrite = mcpgrafana.MustTool(
@@ -850,6 +860,7 @@ var ManageAgento11yExperimentsReadWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yWrite...),
 )
 
 var ManageAgento11yTestSuitesReadWrite = mcpgrafana.MustTool(
@@ -860,6 +871,7 @@ var ManageAgento11yTestSuitesReadWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(agento11yWrite...),
 )
 
 func AddAgento11yTools(s *mcp.Server, enableWriteTools bool) {

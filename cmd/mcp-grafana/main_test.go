@@ -1283,6 +1283,17 @@ var metadataToolNames = []string{
 // and returns the set of advertised tool names.
 func registerAllCategories(t *testing.T, dt disabledTools) map[string]bool {
 	t.Helper()
+	names := make(map[string]bool)
+	for name := range listAllCategoryTools(t, dt) {
+		names[name] = true
+	}
+	return names
+}
+
+// listAllCategoryTools enables every tool category on top of dt and returns
+// the tools a client sees in tools/list.
+func listAllCategoryTools(t *testing.T, dt disabledTools) map[string]*mcp.Tool {
+	t.Helper()
 
 	categories := make([]string, 0, len(dt.toolEntries()))
 	for _, e := range dt.toolEntries() {
@@ -1297,11 +1308,11 @@ func registerAllCategories(t *testing.T, dt disabledTools) map[string]bool {
 	result, err := session.ListTools(context.Background(), nil)
 	require.NoError(t, err)
 
-	names := make(map[string]bool, len(result.Tools))
+	tools := make(map[string]*mcp.Tool, len(result.Tools))
 	for _, tool := range result.Tools {
-		names[tool.Name] = true
+		tools[tool.Name] = tool
 	}
-	return names
+	return tools
 }
 
 func TestProcessTools_QueryToolsRegisteredByDefault(t *testing.T) {

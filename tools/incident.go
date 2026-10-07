@@ -156,6 +156,7 @@ var ListIncidents = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentRead...),
 )
 
 type CreateIncidentParams struct {
@@ -219,6 +220,7 @@ var CreateIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentWrite...),
 )
 
 type AddActivityToIncidentParams struct {
@@ -250,6 +252,7 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentWrite...),
 )
 
 func AddIncidentTools(s *mcp.Server, enableWriteTools bool) {
@@ -290,6 +293,7 @@ var GetIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentRead...),
 )
 
 type UpdateIncidentParams struct {
@@ -381,4 +385,5 @@ var UpdateIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentWrite...),
 )

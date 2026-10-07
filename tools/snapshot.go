@@ -232,6 +232,7 @@ var ListSnapshotsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("snapshots:read"),
 )
 
 var GetSnapshotTool = mcpgrafana.MustTool(
@@ -243,6 +244,7 @@ var GetSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("snapshots:read"),
 )
 
 var CreateSnapshotTool = mcpgrafana.MustTool(
@@ -254,6 +256,7 @@ var CreateSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("snapshots:create"),
 )
 
 var DeleteSnapshotTool = mcpgrafana.MustTool(
@@ -265,6 +268,7 @@ var DeleteSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("snapshots:delete"),
 )
 
 func AddSnapshotTools(s *mcp.Server, enableWriteTools bool) {

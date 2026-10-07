@@ -98,6 +98,7 @@ var ListIncidentCustomFields = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentRead...),
 )
 
 func describeIncidentCustomField(f incident.CustomMetadataField) IncidentCustomFieldDefinition {

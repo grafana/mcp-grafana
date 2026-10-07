@@ -39,6 +39,7 @@ var AlertRulesRead = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("alert.rules:read", "alert.rules.external:read", "folders:read"),
 )
 
 var AlertRulesWrite = mcpgrafana.MustTool(
@@ -49,6 +50,10 @@ var AlertRulesWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(
+		"alert.rules:read", "alert.rules:create", "alert.rules:write", "alert.rules:delete",
+		"alert.provisioning.provenance:write", "folders:read",
+	),
 )
 
 func AddAlertingTools(s *mcp.Server, enableWriteTools bool) {

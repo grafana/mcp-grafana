@@ -782,6 +782,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
 )
 
 var UpdateDashboard = mcpgrafana.MustTool(
@@ -792,6 +793,11 @@ var UpdateDashboard = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions(
+		"dashboards:create", "dashboards:write", "folders:read",
+		"dashboard.grafana.app/dashboards:create", "dashboard.grafana.app/dashboards:update",
+	),
 )
 
 type DashboardPanelQueriesParams struct {
@@ -870,6 +876,7 @@ var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
 )
 
 // GetDashboardPropertyParams defines parameters for getting specific dashboard properties
@@ -922,6 +929,7 @@ var GetDashboardProperty = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
 )
 
 // GetDashboardSummaryParams defines parameters for getting a dashboard summary
@@ -1037,6 +1045,7 @@ var GetDashboardSummary = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
 )
 
 // applyJSONPath applies a value to a JSONPath or removes it if remove=true
