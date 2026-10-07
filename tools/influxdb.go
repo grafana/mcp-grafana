@@ -28,7 +28,7 @@ const (
 
 // InfluxDBQueryParams defines the parameters for querying an InfluxDB datasource.
 type InfluxDBQueryParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource to query. Use list_datasources to find available UIDs."`
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource to query."`
 	Query         string `json:"query" jsonschema:"required,description=Raw query string. InfluxQL for v1.x datasources (e.g. SELECT * FROM cpu WHERE time > now() - 1h)\\, or Flux for v2.x datasources (e.g. from(bucket: \"mybucket\") |> range(start: -1h))."`
 	Dialect       string `json:"dialect,omitempty" jsonschema:"description=Query dialect: 'influxql' or 'flux'. If omitted\\, inferred from the datasource's configured query language (v1 -> influxql\\, v2 -> flux)."`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the query. Time formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Defaults to 1 hour ago."`

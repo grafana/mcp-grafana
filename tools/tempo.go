@@ -686,7 +686,7 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
-	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL; call get_tempo_traceql_docs with topic 'metrics' for the reference. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
+	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
 	queryTempoMetrics,
 	mcpgrafana.WithTitleAnnotation("Query Tempo metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -717,7 +717,7 @@ var DiffTempoTracesTool = mcpgrafana.MustTool(
 
 var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_names",
-	"List available attribute names for TraceQL queries. Always pass a scope (resource, span, etc.) to avoid very large responses.",
+	"List available attribute names for TraceQL queries. Without a scope (resource, span, etc.) the response can be very large.",
 	listTempoAttributeNames,
 	mcpgrafana.WithTitleAnnotation("List Tempo attribute names"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

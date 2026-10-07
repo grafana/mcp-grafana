@@ -33,7 +33,7 @@ type GenerateDeeplinkParams struct {
 // that file; pullRequestUrl is read by the preview banner to surface the
 // upstream PR.
 type DeeplinkProvisioningPreview struct {
-	Repo           string `json:"repo" jsonschema:"required,description=Provisioning repository slug. List repositories via list_provisioning_repositories if unknown."`
+	Repo           string `json:"repo" jsonschema:"required,description=Provisioning repository slug (the repository name)."`
 	Path           string `json:"path" jsonschema:"required,description=Path to the dashboard file within the repository\\, relative to its root."`
 	Ref            string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA. Defaults to the repository's main branch when omitted."`
 	PullRequestURL string `json:"pullRequestUrl,omitempty" jsonschema:"description=Upstream pull request URL to surface in Grafana's preview banner."`

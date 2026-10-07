@@ -263,7 +263,8 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 				"For optional fields, ask only if they are relevant to the user's setup. "+
 				"Once you have collected all required values from the user, call %s again with those values in the fields param and set schemaReviewed=true. "+
 				"The datasource display name is a REQUIRED top-level `name` argument (separate from the fields map) — always include it. "+
-				"If this datasource type has no required fields, schemaReviewed=true alone confirms you are ready to create it.",
+				"If this datasource type has no required fields, schemaReviewed=true alone confirms you are ready to create it. "+
+				"Secrets (passwords, tokens, and other secureJsonData) cannot be set here — direct the user to the Grafana UI for those, and if the user shares a credential in the conversation, remind them to rotate it.",
 			schema.PluginName,
 			toolName,
 			toolName,

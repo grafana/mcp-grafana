@@ -26,7 +26,7 @@ const (
 
 // CloudWatchQueryParams defines the parameters for querying CloudWatch
 type CloudWatchQueryParams struct {
-	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource to query. Use list_datasources to find available UIDs."`
+	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource to query."`
 	Namespace     string            `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS\\, AWS/EC2\\, AWS/RDS\\, AWS/Lambda)"`
 	MetricName    string            `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization\\, MemoryUtilization\\, Invocations)"`
 	Dimensions    map[string]string `json:"dimensions,omitempty" jsonschema:"description=Dimensions as key-value pairs (e.g. {\"ClusterName\": \"my-cluster\"})"`
@@ -304,8 +304,6 @@ var QueryCloudWatch = mcpgrafana.MustTool(
 	"query_cloudwatch",
 	`Query AWS CloudWatch metrics via Grafana. Requires region.
 
-REQUIRED FIRST: Use list_cloudwatch_namespaces -> list_cloudwatch_metrics -> list_cloudwatch_dimensions -> then query.
-
 Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 
 Common namespaces: AWS/EC2, AWS/ECS, AWS/RDS, AWS/Lambda, ECS/ContainerInsights
@@ -419,7 +417,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
 var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	"list_cloudwatch_namespaces",
-	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. Supports cross-account monitoring via optional accountId parameter. NEXT: Use list_cloudwatch_metrics with a namespace.",
+	"List available CloudWatch namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchNamespaces,
 	mcpgrafana.WithTitleAnnotation("List CloudWatch namespaces"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -481,7 +479,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
 var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	"list_cloudwatch_metrics",
-	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions, then query_cloudwatch.",
+	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchMetrics,
 	mcpgrafana.WithTitleAnnotation("List CloudWatch metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -545,7 +543,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use list_cloudwatch_dimension_values to discover valid values for a key, then query_cloudwatch.",
+	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchDimensions,
 	mcpgrafana.WithTitleAnnotation("List CloudWatch dimensions"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -560,7 +558,7 @@ type ListCloudWatchDimensionValuesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
 	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS)"`
 	MetricName    string `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization)"`
-	DimensionKey  string `json:"dimensionKey" jsonschema:"required,description=Dimension key to list values for (e.g. ClusterName)\\, as returned by list_cloudwatch_dimensions"`
+	DimensionKey  string `json:"dimensionKey" jsonschema:"required,description=Dimension key to list values for (e.g. ClusterName)"`
 	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
 	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to filter dimension values from a specific source account\\, or 'all' for all linked accounts."`
 }
@@ -612,7 +610,7 @@ func listCloudWatchDimensionValues(ctx context.Context, args ListCloudWatchDimen
 // ListCloudWatchDimensionValues is a tool for listing CloudWatch dimension values
 var ListCloudWatchDimensionValues = mcpgrafana.MustTool(
 	"list_cloudwatch_dimension_values",
-	"List values for a CloudWatch dimension key (e.g. the specific cluster names behind a ClusterName dimension). Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_dimensions to avoid guessing dimension values. NEXT: Use query_cloudwatch with the discovered value.",
+	"List values for a CloudWatch dimension key (e.g. the specific cluster names behind a ClusterName dimension). Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchDimensionValues,
 	mcpgrafana.WithTitleAnnotation("List CloudWatch dimension values"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
