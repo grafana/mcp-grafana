@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -248,6 +249,36 @@ func TestGenerateDeeplink(t *testing.T) {
 		result, err := generateDeeplink(ctxWithPublicURL, params)
 		require.NoError(t, err)
 		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+	})
+
+	t.Run("Trailing slash on base URL does not produce double slash", func(t *testing.T) {
+		// Embedders (e.g. the hosted Cloud MCP server) set PublicURL directly
+		// from a stack URL that may end in "/".
+		withPublic := mcpgrafana.WithGrafanaClient(
+			mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://internal:3000"}),
+			&mcpgrafana.GrafanaClient{PublicURL: "https://example.grafana.net/"},
+		)
+		withConfig := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "https://example.grafana.net/"})
+
+		for name, ctx := range map[string]context.Context{"public URL": withPublic, "config URL": withConfig} {
+			t.Run(name, func(t *testing.T) {
+				panelID := 1
+				result, err := generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType: "panel",
+					DashboardUID: stringPtr("abc123"),
+					PanelID:      &panelID,
+				})
+				require.NoError(t, err)
+				assert.Equal(t, "https://example.grafana.net/d/abc123?viewPanel=1", result)
+
+				result, err = generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType:  "explore",
+					DatasourceUID: stringPtr("ds1"),
+				})
+				require.NoError(t, err)
+				assert.True(t, strings.HasPrefix(result, "https://example.grafana.net/explore?"), result)
+			})
+		}
 	})
 
 	t.Run("Falls back to config URL when public URL is empty", func(t *testing.T) {
