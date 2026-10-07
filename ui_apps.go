@@ -27,6 +27,29 @@ func WithUIResource(resourceURI string) ToolOption {
 	}
 }
 
+// AttachUIResource marks a tool *result* as renderable by an app, by setting
+// `_meta.ui.resourceUri` on the result itself.
+//
+// WithUIResource on the tool definition tells a host which resource to fetch;
+// it does not say that a particular result should be rendered by it. Hosts that
+// visualize tool output themselves will do so unless the result names its app,
+// so a tool that wants its own view must call this in addition to
+// WithUIResource. Existing `_meta.ui` keys are preserved.
+func AttachUIResource(res *mcp.CallToolResult, resourceURI string) {
+	if res == nil || resourceURI == "" {
+		return
+	}
+	if res.Meta == nil {
+		res.Meta = mcp.Meta{}
+	}
+	ui, _ := res.Meta["ui"].(map[string]any)
+	if ui == nil {
+		ui = map[string]any{}
+	}
+	ui["resourceUri"] = resourceURI
+	res.Meta["ui"] = ui
+}
+
 // NewUIContentMeta builds an mcp.Meta that sets `_meta.ui.kind = kind`
 // on a tool-result content item. Use the UIContentKind* constants.
 func NewUIContentMeta(kind string) mcp.Meta {

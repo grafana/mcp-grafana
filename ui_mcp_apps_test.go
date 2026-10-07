@@ -8,6 +8,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// AttachUIResource must not clobber other result meta — the Tempo tools set
+// `type` and `encoding` on theirs.
+func TestAttachUIResourcePreservesExistingMeta(t *testing.T) {
+	res := NewToolResultText("body")
+	res.Meta = mcp.Meta{"type": "metrics", "ui": map[string]any{"kind": "deeplink"}}
+
+	AttachUIResource(res, "ui://grafana/example.html")
+
+	require.Equal(t, "metrics", res.Meta["type"])
+	ui, ok := res.Meta["ui"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "deeplink", ui["kind"], "existing ui keys survive")
+	require.Equal(t, "ui://grafana/example.html", ui["resourceUri"])
+}
+
+// A nil result or an empty URI is a no-op rather than an empty meta block.
+func TestAttachUIResourceIgnoresEmptyInput(t *testing.T) {
+	AttachUIResource(nil, "ui://grafana/example.html")
+
+	res := NewToolResultText("body")
+	AttachUIResource(res, "")
+	require.Nil(t, res.Meta)
+}
+
 func TestMCPAppResources(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
 	RegisterAppResources(s)
