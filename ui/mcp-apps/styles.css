@@ -1,6 +1,8 @@
-@import '@fontsource/inter/latin-400.css';
-@import '@fontsource/inter/latin-500.css';
-@import '@fontsource/inter/latin-600.css';
+/* Reference the woff2 files directly: @fontsource's stylesheets also list a woff
+   fallback, and apps inline every asset, so each would ship both formats. */
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 400; src: url('@fontsource/inter/files/inter-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 500; src: url('@fontsource/inter/files/inter-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 600; src: url('@fontsource/inter/files/inter-latin-600-normal.woff2') format('woff2'); }
 @keyframes mcp-spin { to { transform: rotate(360deg); } }
 :root, [data-color-mode='light'] {
   color-scheme: light;
