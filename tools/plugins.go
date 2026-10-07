@@ -224,11 +224,32 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 		return nil, fmt.Errorf("install plugin: unexpected status %d: %s", status, body)
 	}
 
+	// The install response carries no plugin metadata, so look the type up to
+	// tailor the follow-up. If the lookup fails, omit the suggestion.
+	suggestion := ""
+	if plugin, err := getPlugin(ctx, GetPluginParams{PluginID: pluginID}); err == nil {
+		suggestion = pluginInstallSuggestion(plugin.Type)
+	}
+
 	return &InstallPluginResult{
 		PluginID:   pluginID,
 		Message:    "Plugin installed successfully. Grafana may need to be restarted for the plugin to become active.",
-		Suggestion: "Configure a new data source for the plugin.", // For now keeping this static to a single suggestion, down the line we may end up with a list
+		Suggestion: suggestion,
 	}, nil
+}
+
+// pluginInstallSuggestion returns the natural next step after installing a
+// plugin of the given type, or "" for unknown types.
+func pluginInstallSuggestion(pluginType string) string {
+	switch pluginType {
+	case "datasource":
+		return "Configure a new data source for the plugin."
+	case "panel":
+		return "Add a panel using this visualization to a dashboard."
+	case "app":
+		return "Enable and configure the app plugin."
+	}
+	return ""
 }
 
 var InstallPlugin = mcpgrafana.MustTool(
