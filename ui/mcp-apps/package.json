@@ -2,9 +2,6 @@
   "name": "@mcp-grafana/mcp-apps",
   "version": "0.0.0",
   "type": "module",
-  "sideEffects": [
-    "**/*.css"
-  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
