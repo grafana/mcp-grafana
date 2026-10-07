@@ -61,7 +61,7 @@ func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 	// falling back to the configured URL if the client is not available or has no public URL.
 	var baseURL string
 	if gc := mcpgrafana.GrafanaClientFromContext(ctx); gc != nil && gc.PublicURL != "" {
-		baseURL = gc.PublicURL
+		baseURL = strings.TrimRight(gc.PublicURL, "/")
 	} else {
 		config := mcpgrafana.GrafanaConfigFromContext(ctx)
 		baseURL = config.URL
