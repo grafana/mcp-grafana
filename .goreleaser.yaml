@@ -116,6 +116,26 @@ archives:
       - goos: windows
         formats: zip
 
+# One SPDX SBOM per archive, generated with syft.
+sboms:
+  - artifacts: archive
+
+# Keyless (GitHub OIDC) cosign signature over the checksums file, which covers
+# every archive and SBOM. Verify with:
+#   cosign verify-blob mcp-grafana_<version>_checksums.txt \
+#     --bundle mcp-grafana_<version>_checksums.txt.sigstore.json \
+#     --certificate-identity-regexp '^https://github.com/grafana/mcp-grafana/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+
 changelog:
   # In CI, release notes are extracted from CHANGELOG.md and passed via
   # --release-notes, which overrides auto-generation entirely.
