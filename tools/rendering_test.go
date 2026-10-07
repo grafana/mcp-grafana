@@ -204,6 +204,25 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
+			name:    "Explore render passes custom dimensions",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{DatasourceUID: "prom-uid"},
+				Width:   intPtr(400),
+				Height:  intPtr(200),
+				Scale:   intPtr(2),
+			},
+			contains: []string{
+				"http://localhost:3000/render/explore?",
+				"width=400",
+				"height=200",
+				"scale=2",
+			},
+			notContains: []string{
+				"height=1000",
+			},
+		},
+		{
 			name:    "Explore requires datasourceUid",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{

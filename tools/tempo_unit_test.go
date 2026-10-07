@@ -326,6 +326,33 @@ func TestTempoGetTrace(t *testing.T) {
 	assert.Equal(t, "application/vnd.grafana.llm", capturedAccept, "should request LLM format without JSON fallback")
 }
 
+func TestTempoGetTrace_NotFound(t *testing.T) {
+	// Tempo's v2 trace-by-ID endpoint returns 200 with an empty trace for unknown IDs.
+	for name, body := range map[string]string{
+		"llm format":  `{}`,
+		"json format": `{"trace":{},"metrics":{"inspectedBytes":"0"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			})
+			defer cleanup()
+
+			call := tempoTestContext(t, ts.URL)
+			result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
+				"datasourceUid": "test-tempo",
+				"trace_id":      "0000000000000000000000000000dead",
+			}))
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.True(t, result.IsError)
+			assert.Equal(t, "tempo API returned 404: trace not found", result.Content[0].(*mcp.TextContent).Text)
+		})
+	}
+}
+
 func TestTempoTraceDiff(t *testing.T) {
 	var capturedPath string
 	var capturedMethod string

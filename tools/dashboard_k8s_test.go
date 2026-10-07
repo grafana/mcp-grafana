@@ -200,6 +200,16 @@ func TestUpdateDashboardV2_SetsFolderAndMessageAnnotations(t *testing.T) {
 	assert.Equal(t, "tweak title", ann["grafana.app/message"])
 }
 
+func TestPostDashboardOKBodyFromK8s_SetsTitle(t *testing.T) {
+	body := postDashboardOKBodyFromK8s(map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "u1", "generation": float64(3)},
+		"spec":     map[string]interface{}{"title": "Saved title"},
+	}, "u1")
+	require.NotNil(t, body.Title)
+	assert.Equal(t, "Saved title", *body.Title)
+	assert.Equal(t, int64(3), *body.Version)
+}
+
 // TestCreateOrUpdateDashboardV2_RespectsOverwriteFalse verifies a full-JSON v2
 // save refuses to replace an existing dashboard when overwrite is false, matching
 // the legacy save path.

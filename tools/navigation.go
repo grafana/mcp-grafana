@@ -25,7 +25,7 @@ type GenerateDeeplinkParams struct {
 	Queries             []map[string]interface{}     `json:"queries,omitempty" jsonschema:"description=List of query objects for explore links (e.g. [{\"refId\":\"A\"\\,\"expr\":\"up\"}])"`
 	QueryParams         map[string]string            `json:"queryParams,omitempty" jsonschema:"description=Additional URL query parameters (for dashboard/panel types)"`
 	TimeRange           *TimeRange                   `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
-	Shorten             bool                         `json:"shorten,omitempty" jsonschema:"description=If true\\, try to shorten the generated URL to /goto/<uid>. If shortening fails\\, return the original deeplink."`
+	Shorten             bool                         `json:"shorten,omitempty" jsonschema:"description=If true\\, try to shorten the generated URL to /goto/<uid>. If shortening fails\\, an error containing the full deeplink is returned."`
 }
 
 // DeeplinkProvisioningPreview identifies a not-yet-applied dashboard inside a
@@ -177,12 +177,10 @@ func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, 
 
 	shortURL, err := shortenURL(ctx, deeplink)
 	if err != nil {
-		// Compatibility-first behavior: never fail deeplink generation when
-		// short-url creation is unavailable; return the long URL instead.
-		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
-			"failed to shorten generated deeplink; returning full URL",
-			"error", err)
-		return deeplink, nil
+		// Fail visibly: silently returning the long URL hides that the
+		// caller did not get what it asked for. The error carries the full
+		// deeplink so it is still usable.
+		return "", fmt.Errorf("failed to shorten deeplink (full URL: %s): %w", deeplink, err)
 	}
 
 	return shortURL, nil
@@ -315,7 +313,7 @@ func normalizeShortURLWithPublicBase(rawShortURL, publicBaseURL string) (string,
 
 var GenerateDeeplink = mcpgrafana.MustTool(
 	"generate_deeplink",
-	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to also attempt a /goto/<uid> short URL; if shortening fails, the full deeplink is returned.",
+	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to return a /goto/<uid> short URL instead; if shortening fails, an error containing the full deeplink is returned.",
 	generateDeeplink,
 	mcpgrafana.WithTitleAnnotation("Generate navigation deeplink"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),

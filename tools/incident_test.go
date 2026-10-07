@@ -94,3 +94,21 @@ func TestIncidentTools(t *testing.T) {
 		assert.Equal(t, "2021-08-07T11:58:23Z", result.EventTime)
 	})
 }
+
+func TestNewIncidentResultDropsPlaceholderAssignments(t *testing.T) {
+	commander := incident.Assignment{RoleID: 7, User: incident.UserPreview{UserID: "grafana-incident:user-1"}}
+	inc := &incident.Incident{IncidentMembership: incident.IncidentMembership{
+		// The Incident API pads assignments to 10 entries with zero values.
+		Assignments:      []incident.Assignment{commander, {}, {}, {}, {}, {}, {}, {}, {}, {}},
+		TotalAssignments: 1,
+	}}
+	result, err := newIncidentResult(context.Background(), nil, inc, false)
+	require.NoError(t, err)
+	assert.Equal(t, []incident.Assignment{commander}, result.IncidentMembership.Assignments)
+
+	empty := &incident.Incident{IncidentMembership: incident.IncidentMembership{Assignments: make([]incident.Assignment, 10)}}
+	result, err = newIncidentResult(context.Background(), nil, empty, false)
+	require.NoError(t, err)
+	assert.Empty(t, result.IncidentMembership.Assignments)
+	assert.NotNil(t, result.IncidentMembership.Assignments, "should serialize as [] rather than null")
+}

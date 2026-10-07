@@ -28,6 +28,7 @@ type IncidentResult struct {
 // newIncidentResult wraps an incident, optionally reading back its custom field
 // values.
 func newIncidentResult(ctx context.Context, c *incident.Client, inc *incident.Incident, includeCustomFields bool) (*IncidentResult, error) {
+	inc.IncidentMembership.Assignments = realAssignments(inc.IncidentMembership.Assignments)
 	result := &IncidentResult{Incident: inc}
 	if !includeCustomFields {
 		return result, nil
@@ -38,6 +39,19 @@ func newIncidentResult(ctx context.Context, c *incident.Client, inc *incident.In
 	}
 	result.CustomFields = customFields
 	return result, nil
+}
+
+// realAssignments drops the zero-value placeholders the Incident API pads
+// incidentMembership.assignments with (it always returns 10 entries, whatever
+// totalAssignments says).
+func realAssignments(assignments []incident.Assignment) []incident.Assignment {
+	kept := make([]incident.Assignment, 0, len(assignments))
+	for _, a := range assignments {
+		if a.RoleID != 0 || a.User.UserID != "" {
+			kept = append(kept, a)
+		}
+	}
+	return kept
 }
 
 type ListIncidentsParams struct {

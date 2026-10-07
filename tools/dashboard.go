@@ -408,6 +408,11 @@ func postDashboardOKBodyFromK8s(obj map[string]interface{}, uid string) *models.
 		UID:    &uid,
 		Status: &status,
 	}
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		if title, ok := spec["title"].(string); ok {
+			body.Title = &title
+		}
+	}
 	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
 		// The legacy dashboard "version" is the k8s metadata.generation: Grafana's
 		// own unstructured->legacy conversion does exactly this mapping
@@ -488,6 +493,10 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to save dashboard: %w", err)
+	}
+	// Grafana's save response has no title; report the one that was saved.
+	if title, ok := args.Dashboard["title"].(string); ok && dashboard.Payload != nil && dashboard.Payload.Title == nil {
+		dashboard.Payload.Title = &title
 	}
 	return dashboard.Payload, nil
 }
