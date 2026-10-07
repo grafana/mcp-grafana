@@ -263,6 +263,12 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.P
 			DashboardUID: dashboard.UID,
 		}); err == nil {
 			dashboard.URL = &deeplink
+		} else {
+			mcpgrafana.LoggerFromContext(ctx).DebugContext(ctx,
+				"failed to generate dashboard deeplink",
+				"uid", *dashboard.UID,
+				"error", err,
+			)
 		}
 	}
 	return dashboard, nil
