@@ -643,7 +643,7 @@ func TestShortenURL(t *testing.T) {
 	})
 }
 
-func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
+func TestGenerateDeeplink_Shorten(t *testing.T) {
 	t.Run("Returns shortened URL when shortening succeeds", func(t *testing.T) {
 		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, http.MethodPost, r.Method)
@@ -663,7 +663,7 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 		assert.Equal(t, "https://grafana.example.com/goto/abc123", result)
 	})
 
-	t.Run("Falls back to long URL when shortening fails", func(t *testing.T) {
+	t.Run("Returns error with long URL when shortening fails", func(t *testing.T) {
 		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -677,8 +677,11 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 			DashboardUID: stringPtr("abc123"),
 			Shorten:      true,
 		})
-		require.NoError(t, err)
-		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+		require.Error(t, err)
+		assert.Empty(t, result)
+		assert.Contains(t, err.Error(), "failed to shorten deeplink")
+		assert.Contains(t, err.Error(), "https://grafana.example.com/d/abc123")
+		assert.Contains(t, err.Error(), "status 403")
 	})
 
 	t.Run("Read-only mode ignores shorten and returns long URL", func(t *testing.T) {
