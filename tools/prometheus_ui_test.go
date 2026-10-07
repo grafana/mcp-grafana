@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -70,6 +71,45 @@ func TestMetricsAppResultDropsTheViewWhenTooLarge(t *testing.T) {
 	assert.Greater(t, len(out.Content[0].(*mcp.TextContent).Text), maxMetricsViewBytes)
 	assert.Nil(t, out.StructuredContent, "no viewer data past the budget")
 	assert.Nil(t, out.Meta, "and no app to render it")
+}
+
+// The Explore link has to carry enough state for the query to reopen as it ran.
+func TestExploreURLForQueryCarriesTheQuery(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaClient(t.Context(), &mcpgrafana.GrafanaClient{
+		PublicURL: "https://example.grafana.net",
+		Version:   "12.1.0",
+	})
+
+	ranged := exploreURLForQuery(ctx, QueryPrometheusParams{
+		Expr: "node_load1", DatasourceUID: "prom-uid", QueryType: "range",
+		StartTime: "now-1h", EndTime: "now",
+	})
+	require.NotEmpty(t, ranged)
+	parsed, err := url.Parse(ranged)
+	require.NoError(t, err)
+	assert.Equal(t, "https", parsed.Scheme)
+	assert.Equal(t, "/explore", parsed.Path)
+	// Grafana 10.2+ reads Explore state from `panes`.
+	assert.Equal(t, "1", parsed.Query().Get("schemaVersion"))
+	panes := parsed.Query().Get("panes")
+	assert.Contains(t, panes, `"expr":"node_load1"`)
+	assert.Contains(t, panes, `"uid":"prom-uid"`)
+	assert.Contains(t, panes, `"range":true`)
+	assert.Contains(t, panes, `"from":"now-1h"`)
+
+	instant := exploreURLForQuery(ctx, QueryPrometheusParams{
+		Expr: "go_goroutines", DatasourceUID: "prom-uid", QueryType: "instant",
+	})
+	assert.Contains(t, instant, "instant%22%3Atrue")
+}
+
+// Without a resolvable public URL there is no link to offer, and an empty
+// string must not become a broken header action.
+func TestExploreURLForQueryIsEmptyWithoutAPublicURL(t *testing.T) {
+	assert.Empty(t, exploreURLForQuery(t.Context(), QueryPrometheusParams{Expr: "up", DatasourceUID: "p"}))
+	ctx := mcpgrafana.WithGrafanaClient(t.Context(), &mcpgrafana.GrafanaClient{PublicURL: "https://example.grafana.net"})
+	assert.Empty(t, exploreURLForQuery(ctx, QueryPrometheusParams{Expr: "", DatasourceUID: "p"}))
+	assert.Empty(t, exploreURLForQuery(ctx, QueryPrometheusParams{Expr: "up", DatasourceUID: ""}))
 }
 
 func TestMetricsAppResultOmitsAbsentExploreURL(t *testing.T) {

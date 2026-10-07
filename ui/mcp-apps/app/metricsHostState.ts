@@ -47,6 +47,8 @@ export type MetricsHostState = {
   refresh: () => Promise<void>;
   /** Hand a brushed window back to the agent as a question. */
   askAboutRange: (fromMs: number, toMs: number) => void;
+  /** Ask the host to open a Grafana URL; the iframe cannot navigate itself. */
+  openInGrafana: (target: { url: string }) => void;
   close: () => void;
 };
 
@@ -182,6 +184,16 @@ export function createMetricsHostState(app: App): MetricsHostState {
       .catch(() => set({ notice: 'Could not send the selection to the agent.' }));
   };
 
+  const openInGrafana = ({ url }: { url: string }) => {
+    if (!url) return;
+    void app
+      .openLink({ url })
+      .then((response) => {
+        set({ notice: response.isError ? 'The host could not open Grafana. Try the link again.' : undefined });
+      })
+      .catch(() => set({ notice: 'Could not open Grafana. Try the link again.' }));
+  };
+
   return {
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
@@ -190,6 +202,7 @@ export function createMetricsHostState(app: App): MetricsHostState {
     },
     refresh,
     askAboutRange,
+    openInGrafana,
     close: () => void app.close(),
   };
 }

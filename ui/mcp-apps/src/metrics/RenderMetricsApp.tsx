@@ -6,7 +6,7 @@
  * `app/MetricsApplication.tsx`.
  */
 
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { SquareDashedMousePointer } from 'lucide-react';
 
 import { getRenderMetricsAppStyles } from './RenderMetricsApp.styles';
@@ -32,6 +32,11 @@ export interface RenderMetricsAppProps {
   /** Overrides the unit inferred from the metric name. */
   unit?: Unit;
   thresholds?: Threshold[];
+  /**
+   * Opens the Explore link through the host. A sandboxed iframe cannot navigate
+   * on its own, so without this the header link does nothing when clicked.
+   */
+  onOpenInGrafana?: (target: { url: string }) => void;
   /** Hands a brushed time window back to the agent. */
   onSelectRange?: (fromMs: number, toMs: number) => void;
   /** Re-runs the query. Omitted when the host did not report the tool input. */
@@ -63,6 +68,7 @@ export function RenderMetricsApp({
   exploreUrl,
   unit: unitOverride,
   thresholds,
+  onOpenInGrafana,
   onSelectRange,
   onRefresh,
   refreshing = false,
@@ -84,6 +90,20 @@ export function RenderMetricsApp({
   const canSelectRange = Boolean(onSelectRange) && kind === 'timeseries';
 
   const grafanaUrl = exploreUrl ?? result.exploreUrl;
+  const safeGrafanaUrl = isSafeGrafanaUrl(grafanaUrl) ? grafanaUrl : undefined;
+  // The host owns navigation: hand it the URL rather than letting the anchor
+  // try, which a sandboxed iframe silently blocks.
+  const openInGrafana = safeGrafanaUrl
+    ? {
+        href: safeGrafanaUrl,
+        onClick: onOpenInGrafana
+          ? (event: MouseEvent<HTMLAnchorElement>) => {
+              event.preventDefault();
+              onOpenInGrafana({ url: safeGrafanaUrl });
+            }
+          : undefined,
+      }
+    : undefined;
   const pointCount = result.series.reduce((total, s) => total + s.points.length, 0);
   // The empty state says this in the body; repeating it here reads as a stutter.
   const description =
@@ -102,7 +122,7 @@ export function RenderMetricsApp({
         title: title ? <span className={styles.query}>{title}</span> : 'Query result',
         description,
       }}
-      openInGrafana={isSafeGrafanaUrl(grafanaUrl) ? { href: grafanaUrl } : undefined}
+      openInGrafana={openInGrafana}
       secondaryAction={
         onRefresh
           ? { label: refreshing ? 'Refreshing…' : 'Refresh', onClick: onRefresh, pending: refreshing }

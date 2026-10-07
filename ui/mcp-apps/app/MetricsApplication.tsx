@@ -24,6 +24,7 @@ export function MetricsApplication({ host }: { host: MetricsHostState }) {
         colorMode={state.colorMode}
         expr={state.args?.expr}
         channel={state.channel}
+        onOpenInGrafana={host.openInGrafana}
         onSelectRange={host.askAboutRange}
         onRefresh={canRefresh ? host.refresh : undefined}
         refreshing={state.refreshing}
