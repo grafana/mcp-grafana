@@ -66,9 +66,12 @@ jobs:
 
       - name: Build and Push to GAR (mirrored to Docker Hub)
         uses: grafana/shared-workflows/actions/docker-build-push-image@34f27887c37cafe70d34af57dfc86b468a31b8c4 # docker-build-push-image/v0.3.3
+        id: build
         with:
           context: .
           file: ./Dockerfile
+          # Keep GAR credentials for the signing steps below.
+          gar-delete-credentials-file: "false"
           registries: gar
           gar-environment: prod
           gar-repository: dockerhub-mcp-grafana-prod-mirror
@@ -80,6 +83,18 @@ jobs:
             ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.version || '' }}
           push: ${{ needs.prepare.outputs.is_tag == 'true' }}
 
+      - name: Sign image and attest SBOMs
+        if: needs.prepare.outputs.is_tag == 'true'
+        uses: ./.github/actions/sign-image
+        with:
+          images: ${{ steps.build.outputs.images }}
+          digest: ${{ steps.build.outputs.digest }}
+          platforms: ${{ needs.prepare.outputs.platforms }}
+
+      - name: Delete Google Application Credentials file
+        if: always() && env.GOOGLE_APPLICATION_CREDENTIALS != ''
+        run: rm -f "$GOOGLE_APPLICATION_CREDENTIALS"
+
   docker-alpine:
     runs-on: ubuntu-latest
     needs: prepare
@@ -90,9 +105,12 @@ jobs:
 
       - name: Build and Push Alpine to GAR (mirrored to Docker Hub)
         uses: grafana/shared-workflows/actions/docker-build-push-image@34f27887c37cafe70d34af57dfc86b468a31b8c4 # docker-build-push-image/v0.3.3
+        id: build
         with:
           context: .
           file: ./Dockerfile.alpine
+          # Keep GAR credentials for the signing steps below.
+          gar-delete-credentials-file: "false"
           registries: gar
           gar-environment: prod
           gar-repository: dockerhub-mcp-grafana-prod-mirror
@@ -103,6 +121,18 @@ jobs:
             ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'alpine' || '' }}
             ${{ needs.prepare.outputs.is_tag == 'true' && format('{0}-alpine', needs.prepare.outputs.version) || '' }}
           push: ${{ needs.prepare.outputs.is_tag == 'true' }}
+
+      - name: Sign image and attest SBOMs
+        if: needs.prepare.outputs.is_tag == 'true'
+        uses: ./.github/actions/sign-image
+        with:
+          images: ${{ steps.build.outputs.images }}
+          digest: ${{ steps.build.outputs.digest }}
+          platforms: ${{ needs.prepare.outputs.platforms }}
+
+      - name: Delete Google Application Credentials file
+        if: always() && env.GOOGLE_APPLICATION_CREDENTIALS != ''
+        run: rm -f "$GOOGLE_APPLICATION_CREDENTIALS"
 
   mcp-registry:
     runs-on: ubuntu-latest
