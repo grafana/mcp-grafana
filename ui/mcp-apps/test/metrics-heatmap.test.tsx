@@ -8,7 +8,7 @@ const options: EChartsOption[] = [];
 vi.mock('../src/viz/useEChart', () => ({
   useEChart: (build: (colors: Record<string, string>) => EChartsOption) => {
     options.push(build({ foreground: '#000', muted: '#666' }));
-    return { containerRef: () => {}, chartRef: { current: null } };
+    return { containerRef: () => {}, chart: null };
   },
 }));
 

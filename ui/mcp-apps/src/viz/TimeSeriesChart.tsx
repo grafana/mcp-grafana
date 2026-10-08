@@ -38,7 +38,7 @@ export function TimeSeriesChart({
   const names = shortSeriesNames(series);
   const yDecimals = decimals ?? axisDecimals(series.flatMap((s) => s.points.map(([, v]) => v)), unit);
 
-  const { containerRef, chartRef } = useEChart(
+  const { containerRef, chart } = useEChart(
     () => ({
       animation: false,
       tooltip: {
@@ -79,8 +79,9 @@ export function TimeSeriesChart({
   );
 
   // Arm or disarm the brush cursor, and report the window once drawn.
+  // Depends on `chart`, so it binds to every new instance, including one created
+  // while selection is already armed.
   useEffect(() => {
-    const chart = chartRef.current;
     if (!chart || !onSelectRange) return;
 
     const handleBrushEnd = (params: unknown) => {
@@ -104,7 +105,7 @@ export function TimeSeriesChart({
     return () => {
       chart.off('brushEnd', handleBrushEnd);
     };
-  }, [chartRef, onSelectRange, selecting, series]);
+  }, [chart, onSelectRange, selecting, series]);
 
   return (
     <div ref={containerRef} className={styles.chart} style={{ '--viz-height': `${height}px` } as CSSProperties} />

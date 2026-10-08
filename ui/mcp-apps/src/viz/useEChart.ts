@@ -15,6 +15,10 @@ import type { McpAppColorMode } from '../McpAppShell';
  * `containerRef` is a callback ref, so the chart also follows the container
  * itself: a component that shows an empty state instead of the chart div, and
  * later gets data, still gets a chart.
+ *
+ * `chart` is state, not a ref, so effects that bind to the instance (event
+ * handlers, actions) re-run whenever a new one is created — on mount, after an
+ * empty state, and after a colour-mode change re-creates it.
  */
 export function useEChart(
   buildOption: (colors: ThemeColors) => EChartsOption,
@@ -22,7 +26,7 @@ export function useEChart(
   deps: readonly unknown[] = []
 ) {
   const [container, containerRef] = useState<HTMLDivElement | null>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const [chart, setChart] = useState<echarts.ECharts | null>(null);
   // Keep the latest builder without making it a dependency — callers pass
   // inline closures, which would otherwise re-init on every render.
   const builderRef = useRef(buildOption);
@@ -32,29 +36,28 @@ export function useEChart(
     if (!container) return;
 
     const colors = readThemeColors(container, colorMode);
-    const chart = echarts.init(container, grafanaEChartsTheme(colors), { renderer: 'canvas' });
-    chartRef.current = chart;
-    chart.setOption(builderRef.current(colors));
+    const instance = echarts.init(container, grafanaEChartsTheme(colors), { renderer: 'canvas' });
+    instance.setOption(builderRef.current(colors));
+    setChart(instance);
 
-    const observer = new ResizeObserver(() => chart.resize());
+    const observer = new ResizeObserver(() => instance.resize());
     observer.observe(container);
 
     return () => {
       observer.disconnect();
-      chart.dispose();
-      chartRef.current = null;
+      instance.dispose();
+      setChart(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorMode, container]);
 
   useEffect(() => {
-    const chart = chartRef.current;
     if (!chart || !container) return;
     const colors = readThemeColors(container, colorMode);
     // `notMerge` so removed series do not linger when the query changes.
     chart.setOption(builderRef.current(colors), { notMerge: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorMode, container, ...deps]);
+  }, [chart, ...deps]);
 
-  return { containerRef, chartRef };
+  return { containerRef, chart };
 }

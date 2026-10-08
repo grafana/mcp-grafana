@@ -7,7 +7,7 @@ import { matrixSingleSeries, vectorSingleUnbounded } from './metricsFixtures';
 
 // jsdom has no canvas or ResizeObserver; the chart itself is not under test here.
 vi.mock('../src/viz/useEChart', () => ({
-  useEChart: () => ({ containerRef: { current: null }, chartRef: { current: null } }),
+  useEChart: () => ({ containerRef: () => {}, chart: null }),
 }));
 
 afterEach(cleanup);
