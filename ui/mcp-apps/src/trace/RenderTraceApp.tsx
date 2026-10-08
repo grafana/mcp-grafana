@@ -2,6 +2,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import { McpAppShell, type McpAppColorMode, type McpAppFeedback } from '../McpAppShell';
+import { isSafeUrl } from '../sanitize';
 import { getTraceSummary, TraceViewer } from './TraceViewer';
 import type { TraceViewResult, TraceNavigationTarget } from './types';
 
@@ -13,21 +14,12 @@ export interface RenderTraceAppProps {
   feedback?: McpAppFeedback;
 }
 
-function isSafeGrafanaUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password;
-  } catch {
-    return false;
-  }
-}
-
 export function RenderTraceApp({ result, colorMode, onOpenInGrafana, share, feedback }: RenderTraceAppProps) {
   const summary = useMemo(() => getTraceSummary(result), [result]);
   const requestedFocusMissing = Boolean(
     result.focusSpanId && !result.spans.some((span) => span.id === result.focusSpanId)
   );
-  const safeGrafanaUrl = isSafeGrafanaUrl(result.grafanaUrl) ? result.grafanaUrl : undefined;
+  const safeGrafanaUrl = isSafeUrl(result.grafanaUrl) ? result.grafanaUrl : undefined;
   const openInGrafana = safeGrafanaUrl
     ? {
         href: result.grafanaUrl,

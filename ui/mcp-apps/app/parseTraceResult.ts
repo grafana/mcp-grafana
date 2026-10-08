@@ -1,3 +1,4 @@
+import { isSafeUrl } from '../src/sanitize';
 import type { TraceViewResult } from '../src/trace/types';
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -20,15 +21,9 @@ export function parseTraceResult(value: unknown): TraceViewResult | undefined {
   if (typeof value.grafanaUrl !== 'string') {
     return undefined;
   }
-  if (value.grafanaUrl) {
-    try {
-      const url = new URL(value.grafanaUrl);
-      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
-        return undefined;
-      }
-    } catch {
-      return undefined;
-    }
+  // An empty link means "no link"; anything else must be safe to open.
+  if (value.grafanaUrl && !isSafeUrl(value.grafanaUrl)) {
+    return undefined;
   }
   for (const span of value.spans) {
     if (
