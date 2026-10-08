@@ -244,7 +244,7 @@ var GetSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions("snapshots:read"),
+	mcpgrafana.RequiresPermissions(), // snapshots are fetched by key without an RBAC check
 )
 
 var CreateSnapshotTool = mcpgrafana.MustTool(
@@ -256,7 +256,7 @@ var CreateSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions("snapshots:create"),
+	mcpgrafana.RequiresPermissions("snapshots:create", "dashboards:read"),
 )
 
 var DeleteSnapshotTool = mcpgrafana.MustTool(
@@ -268,7 +268,8 @@ var DeleteSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions("snapshots:delete"),
+	// dashboards:write lets a non-creator delete a snapshot of an existing dashboard.
+	mcpgrafana.RequiresPermissions("snapshots:delete", "dashboards:write"),
 )
 
 func AddSnapshotTools(s *mcp.Server, enableWriteTools bool) {
