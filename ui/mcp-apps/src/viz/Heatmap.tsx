@@ -109,6 +109,8 @@ export function Heatmap({
     (colors) => ({
       animation: false,
       tooltip: {
+        // Keep it inside the chart: the iframe clips anything past its edge.
+        confine: true,
         position: 'top',
         formatter: (params: unknown) => {
           const { value } = params as { value: [number, number, number] };

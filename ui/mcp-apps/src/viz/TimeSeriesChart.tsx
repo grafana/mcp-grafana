@@ -42,14 +42,16 @@ export function TimeSeriesChart({
     () => ({
       animation: false,
       tooltip: {
+        // Keep it inside the chart: the iframe clips anything past its edge.
+        confine: true,
         trigger: 'axis',
         valueFormatter: (value: unknown) =>
           typeof value === 'number' ? formatValue(value, unit, decimals).formatted : String(value),
       },
       legend: series.length > 1 ? { type: 'scroll', bottom: 0, itemGap: 16 } : undefined,
-      // containLabel keeps the top tick label inside the grid, so little top
-      // padding is needed.
-      grid: { left: 8, right: 12, top: 4, bottom: series.length > 1 ? 32 : 8, containLabel: true },
+      // containLabel keeps the top tick label inside the grid, so no top padding;
+      // spacing above the chart is the consumer's layout.
+      grid: { left: 8, right: 12, top: 0, bottom: series.length > 1 ? 32 : 8, containLabel: true },
       // Narrow panels are the norm in a chat; drop labels rather than
       // overprint them.
       xAxis: { type: 'time', axisLabel: { hideOverlap: true } },

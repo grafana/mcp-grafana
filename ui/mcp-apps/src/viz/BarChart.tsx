@@ -40,6 +40,8 @@ export function BarChart({
     (colors) => ({
       animation: false,
       tooltip: {
+        // Keep it inside the chart: the iframe clips anything past its edge.
+        confine: true,
         trigger: 'item',
         valueFormatter: (value: unknown) =>
           typeof value === 'number' ? formatValue(value, unit, decimals).formatted : String(value),

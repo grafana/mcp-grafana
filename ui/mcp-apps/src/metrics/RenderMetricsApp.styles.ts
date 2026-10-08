@@ -9,11 +9,16 @@ export const getRenderMetricsAppStyles = () => {
   } = getDesignTokens();
 
   return {
-    /** Toolbar plus chart, one block like the trace viewer's controls and waterfall. */
+    /**
+     * Toolbar plus chart, one block like the trace viewer's controls and
+     * waterfall. The extra top margin adds to the shell's content gap, so the
+     * toolbar has as much room above it as the chart leaves below it.
+     */
     viz: css({
       display: 'grid',
-      gap: spacing[2],
+      gap: spacing[3],
       minWidth: 0,
+      marginBlockStart: spacing[1],
     }),
 
     /** The chart's control row: visualization picker and icon controls. */
