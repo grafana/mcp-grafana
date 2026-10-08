@@ -77,6 +77,31 @@ describe('RenderMetricsApp', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
   });
 
+  it('puts Refresh in the control row, between the picker and range selection', () => {
+    const onRefresh = vi.fn();
+    const timeseries = parsePrometheusResult(matrixSingleSeries)!;
+    const { rerender } = render(
+      <RenderMetricsApp result={timeseries} colorMode="light" onRefresh={onRefresh} onSelectRange={() => {}} />
+    );
+
+    const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(names).toEqual(['Time series', 'Refresh', 'Ask about a time window']);
+
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    expect(refresh.textContent).toBe('');
+    fireEvent.click(refresh);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // In flight: busy, and a second click does not queue another query.
+    rerender(
+      <RenderMetricsApp result={timeseries} colorMode="light" onRefresh={onRefresh} onSelectRange={() => {}} refreshing />
+    );
+    expect(refresh.getAttribute('aria-busy')).toBe('true');
+    expect(refresh.parentElement?.dataset.tooltip).toBe('Refreshing…');
+    fireEvent.click(refresh);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
   it('arms range selection from an icon button and explains what to do next', () => {
     const timeseries = parsePrometheusResult(matrixSingleSeries)!;
     render(<RenderMetricsApp result={timeseries} colorMode="light" onSelectRange={() => {}} />);

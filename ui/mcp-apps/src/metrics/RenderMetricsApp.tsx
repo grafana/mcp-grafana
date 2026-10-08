@@ -7,10 +7,9 @@
  */
 
 import { useEffect, useState } from 'react';
-import { SquareDashedMousePointer } from 'lucide-react';
+import { RefreshCw, SquareDashedMousePointer } from 'lucide-react';
 
 import { getRenderMetricsAppStyles } from './RenderMetricsApp.styles';
-import { Button } from '../design';
 import { openInGrafanaAction } from '../grafanaLink';
 import { McpAppShell, type McpAppColorMode, type McpAppFeedback } from '../McpAppShell';
 import { inferUnit, type Threshold, type Unit } from '../viz/format';
@@ -22,6 +21,7 @@ import { Table } from '../viz/Table';
 import { TimeSeriesChart } from '../viz/TimeSeriesChart';
 import { commonMetricName, latestValue, seriesName, shortSeriesNames } from '../viz/types';
 import { pickViz, type ParsedMetrics, type VizKind } from './pickViz';
+import { IconButton } from './IconButton';
 import { VizPicker } from './VizPicker';
 
 export interface RenderMetricsAppProps {
@@ -108,41 +108,45 @@ export function RenderMetricsApp({
         description,
       }}
       openInGrafana={openInGrafana}
-      secondaryAction={
-        onRefresh
-          ? { label: refreshing ? 'Refreshing…' : 'Refresh', onClick: onRefresh, pending: refreshing }
-          : undefined
-      }
       feedback={notice}
     >
-      <div className={styles.controls}>
-        <VizPicker options={options} value={kind} onChange={setOverride} />
-        {canSelectRange && (
-          <span className={styles.tooltip} data-tooltip={armed ? 'Cancel selection' : 'Ask about a time window'}>
-            <Button
-              variant="secondary"
-              size="xs"
-              className={styles.iconButton}
-              aria-label="Ask about a time window"
+      <div className={styles.viz}>
+        <div className={styles.controls}>
+          <VizPicker options={options} value={kind} onChange={setOverride} />
+          {/* Refresh sits between the two, so it stays beside the picker when
+              range selection is not offered for the current view. */}
+          {onRefresh && (
+            <IconButton
+              label="Refresh"
+              tooltip={refreshing ? 'Refreshing…' : 'Refresh'}
+              icon={<RefreshCw size={14} aria-hidden="true" className={refreshing ? styles.spin : undefined} />}
+              aria-busy={refreshing || undefined}
+              aria-disabled={refreshing || undefined}
+              onClick={refreshing ? undefined : onRefresh}
+            />
+          )}
+          {canSelectRange && (
+            <IconButton
+              label="Ask about a time window"
+              tooltip={armed ? 'Cancel selection' : undefined}
+              icon={<SquareDashedMousePointer size={14} aria-hidden="true" />}
               aria-pressed={armed}
               onClick={() => setSelecting((on) => !on)}
-            >
-              <SquareDashedMousePointer size={14} aria-hidden="true" />
-            </Button>
-          </span>
-        )}
-      </div>
+            />
+          )}
+        </div>
 
-      {/* The icon-only toggle cannot say what to do next, so while selection is
-          armed the instruction sits on the chart, where the drag happens. An
-          overlay rather than a row, so arming it moves nothing. */}
-      <div className={styles.vizArea}>
-        {renderViz()}
-        {armed && (
-          <span className={styles.selectHint} role="status">
-            Drag across the chart to select a window · Esc to cancel
-          </span>
-        )}
+        {/* The icon-only toggle cannot say what to do next, so while selection is
+            armed the instruction sits on the chart, where the drag happens. An
+            overlay rather than a row, so arming it moves nothing. */}
+        <div className={styles.vizArea}>
+          {renderViz()}
+          {armed && (
+            <span className={styles.selectHint} role="status">
+              Drag across the chart to select a window · Esc to cancel
+            </span>
+          )}
+        </div>
       </div>
 
       {result.warnings.map((warning) => (

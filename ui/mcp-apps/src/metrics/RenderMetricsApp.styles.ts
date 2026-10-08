@@ -1,116 +1,136 @@
 import { css } from '@emotion/css';
+import { getDesignTokens } from '../design';
 
 /** Styles for `RenderMetricsApp`, per the package's styles-factory convention. */
-export const getRenderMetricsAppStyles = () => ({
-  /** The chart's control row: visualization picker and selection toggle. */
-  controls: css({
-    display: 'flex',
-    gap: 8,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    marginBottom: 8,
-  }),
+export const getRenderMetricsAppStyles = () => {
+  const {
+    primitives: { borderRadius, borderWidth, spacing, typography },
+    semantic: { colors },
+  } = getDesignTokens();
 
-  picker: css({ position: 'relative' }),
+  return {
+    /** Toolbar plus chart, one block like the trace viewer's controls and waterfall. */
+    viz: css({
+      display: 'grid',
+      gap: spacing[2],
+      minWidth: 0,
+    }),
 
-  pickerMenu: css({
-    position: 'absolute',
-    top: 'calc(100% + 4px)',
-    right: 0,
-    zIndex: 2,
-    minWidth: 160,
-    // A chat panel can be very narrow; never overflow it.
-    maxWidth: 'calc(100vw - 12px)',
-    margin: 0,
-    padding: 4,
-    listStyle: 'none',
-    borderRadius: 6,
-    border: '1px solid var(--mcp-border)',
-    background: 'var(--mcp-background)',
-    boxShadow: '0 4px 16px rgb(0 0 0 / 12%)',
-  }),
+    /** The chart's control row: visualization picker and icon controls. */
+    controls: css({
+      display: 'flex',
+      gap: spacing[2],
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+    }),
 
-  /** A ghost Button, stretched to a full-width menu row. */
-  pickerOption: css({
-    width: '100%',
-    justifyContent: 'flex-start',
-    '&[aria-selected="true"]': { background: 'var(--mcp-accent)' },
-  }),
+    picker: css({ position: 'relative' }),
 
-  /** Square, icon-only variant of the shell's xs Button. */
-  iconButton: css({ width: 24, padding: 0 }),
-
-  /**
-   * Tooltip for an icon-only control, shown on hover and keyboard focus. Text
-   * comes from `data-tooltip`; the button carries its own accessible name, so
-   * this is visual only. Anchored to the right edge, since the control sits
-   * at the end of the row.
-   */
-  tooltip: css({
-    position: 'relative',
-    display: 'inline-flex',
-    '&::after': {
-      content: 'attr(data-tooltip)',
+    pickerMenu: css({
       position: 'absolute',
-      top: 'calc(100% + 6px)',
+      top: `calc(100% + ${spacing[1]})`,
       right: 0,
-      zIndex: 3,
-      padding: '4px 8px',
-      borderRadius: 4,
-      fontSize: 11,
+      zIndex: 2,
+      minWidth: 160,
+      // A chat panel can be very narrow; never overflow it.
+      maxWidth: `calc(100vw - ${spacing[3]})`,
+      margin: 0,
+      padding: spacing[1],
+      listStyle: 'none',
+      borderRadius: borderRadius.md,
+      border: `${borderWidth.thin} solid ${colors.line.border}`,
+      background: colors.surface.background,
+      boxShadow: '0 4px 16px rgb(0 0 0 / 12%)',
+    }),
+
+    /** A ghost Button, stretched to a full-width menu row. */
+    pickerOption: css({
+      width: '100%',
+      justifyContent: 'flex-start',
+      '&[aria-selected="true"]': { background: colors.interactive.accent },
+    }),
+
+    /** Square, icon-only variant of the shell's xs Button (24px tall). */
+    iconButton: css({ width: spacing[6], padding: 0 }),
+
+    /** Refresh icon while a refresh is in flight. */
+    spin: css({
+      animation: 'mcp-spin 800ms linear infinite',
+      '@media (prefers-reduced-motion: reduce)': { animation: 'none' },
+    }),
+
+    /**
+     * Tooltip for an icon-only control, shown on hover and keyboard focus. Text
+     * comes from `data-tooltip`; the button carries its own accessible name, so
+     * this is visual only. Anchored to the right edge, since the controls sit
+     * at the end of the row.
+     */
+    tooltip: css({
+      position: 'relative',
+      display: 'inline-flex',
+      '&::after': {
+        content: 'attr(data-tooltip)',
+        position: 'absolute',
+        top: `calc(100% + ${spacing[1.5]})`,
+        right: 0,
+        zIndex: 3,
+        padding: `${spacing[1]} ${spacing[2]}`,
+        borderRadius: borderRadius.sm,
+        fontSize: typography.fontSize.ui.xs,
+        lineHeight: 1.4,
+        whiteSpace: 'nowrap',
+        pointerEvents: 'none',
+        color: colors.surface.background,
+        background: colors.surface.foreground,
+        opacity: 0,
+        transition: 'opacity 120ms ease-in',
+      },
+      '&:hover::after, &:has(:focus-visible)::after': { opacity: 1, transitionDelay: '300ms' },
+      '@media (prefers-reduced-motion: reduce)': { '&::after': { transition: 'none' } },
+    }),
+
+    /** Positioning context for the selection hint. */
+    vizArea: css({ position: 'relative' }),
+
+    /** Instruction shown over the top of the chart while selection is armed. */
+    selectHint: css({
+      position: 'absolute',
+      top: spacing[1],
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: 1,
+      maxWidth: `calc(100% - ${spacing[4]})`,
+      padding: `${spacing[1]} ${spacing[2.5]}`,
+      borderRadius: borderRadius.md,
+      fontSize: typography.fontSize.ui.xs,
       lineHeight: 1.4,
-      whiteSpace: 'nowrap',
+      textAlign: 'center',
+      // Must not block the drag it describes.
       pointerEvents: 'none',
-      color: 'var(--mcp-background)',
-      background: 'var(--mcp-foreground)',
-      opacity: 0,
-      transition: 'opacity 120ms ease-in',
-    },
-    '&:hover::after, &:has(:focus-visible)::after': { opacity: 1, transitionDelay: '300ms' },
-    '@media (prefers-reduced-motion: reduce)': { '&::after': { transition: 'none' } },
-  }),
+      color: colors.surface.foreground,
+      background: colors.interactive.muted,
+      border: `${borderWidth.thin} solid ${colors.line.border}`,
+    }),
 
-  /** Positioning context for the selection hint. */
-  vizArea: css({ position: 'relative' }),
-
-  /** Instruction shown over the top of the chart while selection is armed. */
-  selectHint: css({
-    position: 'absolute',
-    top: 4,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 1,
-    maxWidth: 'calc(100% - 16px)',
-    padding: '3px 10px',
-    borderRadius: 999,
-    fontSize: 11,
-    lineHeight: 1.4,
-    textAlign: 'center',
-    // Must not block the drag it describes.
-    pointerEvents: 'none',
-    color: 'var(--mcp-foreground)',
-    background: 'var(--mcp-muted)',
-    border: '1px solid var(--mcp-border)',
-  }),
-
-  /** The PromQL expression reads as code, not prose. */
-  query: css({
-    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-    fontSize: 13,
-    overflowWrap: 'anywhere',
-  }),
-  empty: css({
-    padding: '32px 0',
-    textAlign: 'center',
-    color: 'var(--mcp-muted-foreground)',
-    fontSize: 13,
-  }),
-  warning: css({ fontSize: 12, color: 'var(--mcp-muted-foreground)', marginTop: 8 }),
-  debug: css({
-    fontSize: 11,
-    color: 'var(--mcp-muted-foreground)',
-    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-    marginTop: 8,
-  }),
-});
+    /** The PromQL expression reads as code, not prose. */
+    query: css({
+      fontFamily: typography.fontFamily.monospace,
+      fontSize: typography.fontSize.ui.md,
+      overflowWrap: 'anywhere',
+    }),
+    empty: css({
+      padding: `${spacing[7]} 0`,
+      textAlign: 'center',
+      color: colors.interactive.mutedForeground,
+      fontSize: typography.fontSize.ui.sm,
+    }),
+    // Direct children of the shell's content, which already spaces them.
+    warning: css({ fontSize: typography.fontSize.ui.sm, color: colors.interactive.mutedForeground }),
+    debug: css({
+      fontSize: typography.fontSize.ui.xs,
+      color: colors.interactive.mutedForeground,
+      fontFamily: typography.fontFamily.monospace,
+    }),
+  };
+};
