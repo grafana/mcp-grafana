@@ -162,6 +162,9 @@ var ManageRouting = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("alert.notifications:read", "alert.notifications.external:read"),
+	// datasource_uid reads an external Alertmanager through the datasource proxy.
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ManageRoutingWriteParams is the param struct for alerting_routing_write.
@@ -214,4 +217,7 @@ Contact points remain editable in the Grafana UI by default. External Alertmanag
 	mcpgrafana.WithIdempotentHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// POST /api/v1/provisioning/contact-points: receivers:create plus
+	// provenance:write.
+	mcpgrafana.RequiresPermissions("alert.notifications.receivers:create", "alert.provisioning.provenance:write"),
 )

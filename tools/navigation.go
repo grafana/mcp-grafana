@@ -320,6 +320,7 @@ var GenerateDeeplink = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // short URLs need no RBAC action
 )
 
 var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
@@ -331,6 +332,7 @@ var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // short URLs need no RBAC action
 )
 
 func AddNavigationTools(s *mcp.Server, enableWriteTools bool) {

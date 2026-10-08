@@ -121,6 +121,7 @@ var SearchDashboards = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("dashboards:read", "folders:read"),
 )
 
 type SearchFoldersParams struct {
@@ -153,6 +154,7 @@ var SearchFolders = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("folders:read"),
 )
 
 func AddSearchTools(s *mcp.Server) {

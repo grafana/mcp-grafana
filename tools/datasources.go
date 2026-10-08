@@ -446,6 +446,7 @@ var ListDatasources = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 var CreateDatasource = mcpgrafana.MustTool(
@@ -457,6 +458,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read", "datasources:create"),
 )
 
 var UpdateDatasource = mcpgrafana.MustTool(
@@ -468,6 +470,7 @@ var UpdateDatasource = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read", "datasources:write"),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -552,6 +555,7 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 type UpdateDatasourceParams struct {
@@ -911,6 +915,7 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.

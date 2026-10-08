@@ -1010,6 +1010,8 @@ var RunPanelQuery = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddRunPanelQueryTools registers run panel query tools with the MCP server.

@@ -422,6 +422,7 @@ var AlertSilencesRead = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("alert.silences:read", "alert.instances:read"),
 )
 
 var AlertSilencesWrite = mcpgrafana.MustTool(
@@ -432,4 +433,10 @@ var AlertSilencesWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// General (not rule-scoped) silences are gated on alert.instances:*, not
+	// alert.silences:*.
+	mcpgrafana.RequiresPermissions(
+		"alert.silences:read", "alert.silences:create", "alert.silences:write",
+		"alert.instances:read", "alert.instances:create", "alert.instances:write",
+	),
 )

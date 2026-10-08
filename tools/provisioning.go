@@ -167,6 +167,7 @@ var ListProvisioningRepositories = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("provisioning.repositories:read", "provisioning.grafana.app/repositories:list"),
 )
 
 // ValidateProvisioningFileParams identifies a single file to validate inside
@@ -391,6 +392,13 @@ var ValidateProvisioningFile = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Reading a single file is authorized against the resource it parses to
+	// (in practice a dashboard or folder), not the repository.
+	mcpgrafana.RequiresPermissions(
+		"provisioning.repositories:read", "provisioning.grafana.app/repositories:get",
+		"dashboards:read", "dashboard.grafana.app/dashboards:get",
+		"folders:read", "folder.grafana.app/folders:get",
+	),
 )
 
 func AddProvisioningTools(s *mcp.Server) {

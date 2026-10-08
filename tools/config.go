@@ -121,6 +121,7 @@ var SuggestLokiAlloyLabelConfig = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
 
 // AddConfigTools registers the config-generation tool set.
