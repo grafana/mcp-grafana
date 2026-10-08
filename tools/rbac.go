@@ -22,8 +22,9 @@ var (
 		"users.permissions:read",
 	}
 
-	incidentRead  = []string{"plugins.app:access", "grafana-incident-app.incidents:read"}
-	incidentWrite = []string{"plugins.app:access", "grafana-incident-app.incidents:read", "grafana-incident-app.incidents:write"}
+	// IRM has no incident RBAC actions: past plugin access, incidents are
+	// authorized by basic role.
+	incidentAccess = []string{"plugins.app:access"}
 
 	agento11yRead = []string{
 		"plugins.app:access",

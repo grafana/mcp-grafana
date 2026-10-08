@@ -163,6 +163,8 @@ var ManageRouting = mcpgrafana.MustTool(
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("alert.notifications:read", "alert.notifications.external:read"),
+	// datasource_uid reads an external Alertmanager through the datasource proxy.
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ManageRoutingWriteParams is the param struct for alerting_routing_write.

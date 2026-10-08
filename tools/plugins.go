@@ -130,7 +130,8 @@ var GetPlugin = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions(),
+	// Grafana denies an app plugin's settings without it.
+	mcpgrafana.RequiresPermissions("plugins.app:access"),
 )
 
 type InstallPluginParams struct {

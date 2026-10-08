@@ -22,9 +22,21 @@ const readmePath = "../../README.md"
 // `go test ./cmd/mcp-grafana -run TestReadmeToolPermissions -update-readme`
 // to regenerate it. The other columns are written by hand.
 func TestReadmeToolPermissions(t *testing.T) {
-	declared := make(map[string][]string)
+	declared := make(map[string]string)
+	readOnly := listAllCategoryTools(t, disabledTools{write: true})
 	for name, tool := range listAllCategoryTools(t, disabledTools{}) {
-		declared[name], _ = mcpgrafana.ToolRequiredPermissions(tool)
+		perms, _ := mcpgrafana.ToolRequiredPermissions(tool)
+		var roPerms []string
+		if ro, ok := readOnly[name]; ok {
+			roPerms, _ = mcpgrafana.ToolRequiredPermissions(ro)
+		}
+		declared[name] = formatPermissions(perms, roPerms)
+	}
+	for name, tool := range readOnly {
+		if _, ok := declared[name]; !ok {
+			perms, _ := mcpgrafana.ToolRequiredPermissions(tool)
+			declared[name] = formatPermissions(perms, perms)
+		}
 	}
 
 	raw, err := os.ReadFile(readmePath)
@@ -41,9 +53,9 @@ func TestReadmeToolPermissions(t *testing.T) {
 	var rows [][]string
 	listed := make(map[string]bool)
 	for i, line := range lines[start:end] {
-		cells := strings.Split(strings.Trim(line, "|"), "|")
-		for j := range cells {
-			cells[j] = strings.TrimSpace(cells[j])
+		cells := splitTableRow(line)
+		if i > 0 && !assert.Len(t, cells, len(rows[0]), "README tool table row has the wrong number of cells: %s", line) {
+			continue
 		}
 		if i > 1 {
 			name := strings.Trim(cells[0], "`")
@@ -52,7 +64,7 @@ func TestReadmeToolPermissions(t *testing.T) {
 				continue
 			}
 			listed[name] = true
-			cells[3] = formatPermissions(perms)
+			cells[3] = perms
 		}
 		rows = append(rows, cells)
 	}
@@ -61,6 +73,9 @@ func TestReadmeToolPermissions(t *testing.T) {
 	}
 
 	want := strings.Join(slices.Concat(lines[:start], formatTable(rows), lines[end:]), "\n")
+	if t.Failed() {
+		return
+	}
 	if *updateReadme {
 		require.NoError(t, os.WriteFile(readmePath, []byte(want), 0o644))
 		return
@@ -69,7 +84,40 @@ func TestReadmeToolPermissions(t *testing.T) {
 		"`go test ./cmd/mcp-grafana -run TestReadmeToolPermissions -update-readme`")
 }
 
-func formatPermissions(perms []string) string {
+// splitTableRow splits a markdown table row into trimmed cells, leaving
+// escaped pipes (\|) inside their cell.
+func splitTableRow(line string) []string {
+	var cells []string
+	var cell strings.Builder
+	line = strings.TrimSpace(line)
+	line = strings.TrimSuffix(strings.TrimPrefix(line, "|"), "|")
+	for i := 0; i < len(line); i++ {
+		switch {
+		case line[i] == '\\' && i+1 < len(line) && line[i+1] == '|':
+			cell.WriteString(`\|`)
+			i++
+		case line[i] == '|':
+			cells = append(cells, strings.TrimSpace(cell.String()))
+			cell.Reset()
+		default:
+			cell.WriteByte(line[i])
+		}
+	}
+	return append(cells, strings.TrimSpace(cell.String()))
+}
+
+// formatPermissions renders a tool's actions. When the read-only variant
+// (--disable-write) needs fewer, the extra write actions are listed apart so
+// read-only deployments don't over-grant.
+func formatPermissions(readWrite, readOnly []string) string {
+	writeOnly := slices.DeleteFunc(slices.Clone(readWrite), func(p string) bool { return slices.Contains(readOnly, p) })
+	if readOnly == nil || len(writeOnly) == 0 || len(readOnly)+len(writeOnly) != len(readWrite) {
+		return quotePermissions(readWrite)
+	}
+	return quotePermissions(readOnly) + "; with writes enabled also " + quotePermissions(writeOnly)
+}
+
+func quotePermissions(perms []string) string {
 	if len(perms) == 0 {
 		return "None"
 	}
@@ -104,4 +152,11 @@ func formatTable(rows [][]string) []string {
 		out[i] = b.String()
 	}
 	return out
+}
+
+func TestReadmeTableHelpers(t *testing.T) {
+	assert.Equal(t, []string{"`a`", `x \| y`, ""}, splitTableRow("| `a` | x \\| y |  |"))
+	assert.Equal(t, "None", formatPermissions(nil, nil))
+	assert.Equal(t, "`a`, `b`", formatPermissions([]string{"a", "b"}, []string{"a", "b"}))
+	assert.Equal(t, "`a`; with writes enabled also `b`", formatPermissions([]string{"a", "b"}, []string{"a"}))
 }

@@ -40,6 +40,8 @@ var AlertRulesRead = mcpgrafana.MustTool(
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("alert.rules:read", "alert.rules.external:read", "folders:read"),
+	// Datasource-managed rules look up the datasource first.
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 var AlertRulesWrite = mcpgrafana.MustTool(

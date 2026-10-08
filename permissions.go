@@ -44,7 +44,7 @@ func RequiresPermissions(actions ...string) ToolOption {
 func ToolRequiredPermissions(t *mcp.Tool) ([]string, bool) {
 	switch v := t.Meta[RequiredPermissionsMetaKey].(type) {
 	case []string:
-		return v, true
+		return slices.Clone(v), true
 	case []any:
 		perms := make([]string, 0, len(v))
 		for _, p := range v {
