@@ -149,6 +149,7 @@ var GetAssertions = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access"),
 )
 
 func AddAssertsTools(s *mcp.Server) {

@@ -130,6 +130,8 @@ var GetPlugin = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Grafana denies an app plugin's settings without it.
+	mcpgrafana.RequiresPermissions("plugins.app:access"),
 )
 
 type InstallPluginParams struct {
@@ -261,6 +263,7 @@ var InstallPlugin = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions("plugins:install"),
 )
 
 // catalogPlugin mirrors the relevant fields from the Grafana plugin catalog list API.
@@ -431,6 +434,7 @@ var SearchPlugins = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions(), // grafana.com catalog
 )
 
 func AddPluginTools(s *mcp.Server, enableWrite bool) {

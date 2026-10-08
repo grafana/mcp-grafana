@@ -51,6 +51,7 @@ var UserInfoTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(),
 )
 
 func AddUserTools(s *mcp.Server) {

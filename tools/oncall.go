@@ -206,6 +206,7 @@ var ListOnCallSchedules = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-irm-app.schedules:read"),
 )
 
 // --- Shifts ---
@@ -258,6 +259,7 @@ var GetOnCallShift = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-irm-app.schedules:read"),
 )
 
 // --- Current On-Call Users ---
@@ -328,6 +330,9 @@ var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(
+		"plugins.app:access", "grafana-irm-app.schedules:read", "grafana-irm-app.user-settings:read",
+	),
 )
 
 // --- Teams ---
@@ -381,6 +386,7 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-irm-app.user-settings:read"),
 )
 
 // --- Users ---
@@ -453,6 +459,7 @@ var ListOnCallUsers = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-irm-app.user-settings:read"),
 )
 
 // --- Alert Groups ---
@@ -544,6 +551,7 @@ var ListAlertGroups = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-irm-app.alert-groups:read"),
 )
 
 type GetAlertGroupParams struct {
@@ -617,6 +625,7 @@ var GetAlertGroup = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-irm-app.alert-groups:read"),
 )
 
 type UpdateAlertGroupParams struct {
@@ -724,6 +733,9 @@ var UpdateAlertGroup = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(
+		"plugins.app:access", "grafana-irm-app.alert-groups:read", "grafana-irm-app.alert-groups:write",
+	),
 )
 
 func AddOnCallTools(s *mcp.Server, enableWriteTools bool) {

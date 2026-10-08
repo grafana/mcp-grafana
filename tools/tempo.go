@@ -704,7 +704,9 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
@@ -714,7 +716,9 @@ var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var GetTempoTraceTool = mcpgrafana.MustTool(
 	"get_tempo_trace",
@@ -725,7 +729,9 @@ var GetTempoTraceTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var DiffTempoTracesTool = mcpgrafana.MustTool(
 	"diff_tempo_traces",
@@ -735,7 +741,9 @@ var DiffTempoTracesTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_names",
@@ -745,7 +753,9 @@ var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_values",
@@ -755,7 +765,9 @@ var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
 	"get_tempo_traceql_docs",
@@ -766,6 +778,7 @@ var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // embedded docs
 )
 
 // AddTempoTools registers all Tempo tools on the MCP server. Tools call

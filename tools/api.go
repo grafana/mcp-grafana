@@ -211,6 +211,8 @@ var APIRequest = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Runs with whatever the caller holds; it needs no fixed action of its own.
+	mcpgrafana.RequiresPermissions(),
 )
 
 var APIRequestReadOnly = mcpgrafana.MustTool(
@@ -224,6 +226,8 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Runs with whatever the caller holds; it needs no fixed action of its own.
+	mcpgrafana.RequiresPermissions(),
 )
 
 var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
@@ -238,6 +242,8 @@ var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Runs with whatever the caller holds; it needs no fixed action of its own.
+	mcpgrafana.RequiresPermissions(),
 )
 
 func AddAPITools(s *mcp.Server, enableWriteTools bool, enableQueryTools bool) {

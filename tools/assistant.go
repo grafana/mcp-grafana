@@ -182,6 +182,7 @@ var AskAssistant = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("plugins.app:access"),
 )
 
 // AddAssistantTools registers the assistant tools with the MCP server. The

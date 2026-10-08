@@ -481,6 +481,10 @@ var GetPanelImage = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("dashboards:read"),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+	// explore renders /explore; provisioningPreview renders a repository preview.
+	mcpgrafana.RequiresPermissions("datasources:explore", "provisioning.repositories:read"),
 )
 
 func AddRenderingTools(s *mcp.Server) {
