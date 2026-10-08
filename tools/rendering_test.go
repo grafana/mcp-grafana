@@ -595,6 +595,34 @@ func TestBuildRenderURL(t *testing.T) {
 // org the image was rendered from. `?orgId=N` would persist an org switch onto
 // the viewer's user record via Grafana's OrgRedirect middleware, so a link that
 // cannot be shown to resolve correctly is dropped instead.
+func TestRenderLimits(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
+		assert.Equal(t, 60*time.Second, renderTimeout(GetPanelImageParams{}))
+		assert.Equal(t, 60*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(0)}))
+		assert.Equal(t, 30*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(30)}))
+		assert.Equal(t, 120*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(1 << 62)}))
+	})
+
+	t.Run("dimensions", func(t *testing.T) {
+		u, err := buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{
+			DashboardUID: "abc123",
+			Width:        intPtr(100000),
+			Height:       intPtr(100000),
+		})
+		require.NoError(t, err)
+		assert.Contains(t, u, "width=3000")
+		assert.Contains(t, u, "height=3000")
+
+		// height=-1 (full page) is passed through unchanged.
+		u, err = buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{
+			DashboardUID: "abc123",
+			Height:       intPtr(-1),
+		})
+		require.NoError(t, err)
+		assert.Contains(t, u, "height=-1")
+	})
+}
+
 func TestDeeplinkResolvesInRenderOrg(t *testing.T) {
 	// userOrg serves /api/user reporting the identity's stored org. That value is
 	// deliberately not request-scoped in Grafana, so it is what a browser session

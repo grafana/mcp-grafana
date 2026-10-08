@@ -65,13 +65,13 @@ func (StringOrSlice) JSONSchema() *jsonschema.Schema {
 type GetPanelImageParams struct {
 	DashboardUID string                   `json:"dashboardUid,omitempty" jsonschema:"description=The UID of a stored dashboard containing the panel. Required unless provisioningPreview is provided."`
 	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
-	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000. The image renderer raises values below its configured minimum viewport width (1000 by default)."`
-	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500 (1000 for explore). The image renderer raises values below its configured minimum viewport height (500 by default)."`
+	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000\\, capped at 3000. The image renderer raises values below its configured minimum viewport width (1000 by default)."`
+	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500 (1000 for explore)\\, capped at 3000. The image renderer raises values below its configured minimum viewport height (500 by default)."`
 	TimeRange    *RenderTimeRange         `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
 	Variables    map[string]StringOrSlice `json:"variables,omitempty" jsonschema:"description=Dashboard variables to apply. Values can be a single string or an array of strings for multi-value variables (e.g.\\, {\"var-datasource\": \"prometheus\"\\, \"var-instance\": [\"server1\"\\, \"server2\"]})"`
 	Theme        *string                  `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`
 	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 1"`
-	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60"`
+	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60\\, capped at 120"`
 	// ProvisioningPreview renders a dashboard from a provisioning repository
 	// branch that has not yet been merged or applied. Mutually exclusive with
 	// dashboardUid.
@@ -136,13 +136,9 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("failed to build HTTP transport: %w", err)
 	}
 
-	timeout := 60 * time.Second
-	if args.Timeout != nil && *args.Timeout > 0 {
-		timeout = time.Duration(*args.Timeout) * time.Second
-	}
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   timeout,
+		Timeout:   renderTimeout(args),
 	}
 
 	// Create request
@@ -207,6 +203,22 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		Content:           content,
 		StructuredContent: structured,
 	}, nil
+}
+
+// Upper bounds for caller-supplied render parameters. The dimension cap matches
+// the image renderer's default maximum viewport size.
+const (
+	defaultRenderTimeout = 60 * time.Second
+	maxRenderTimeoutSecs = 120
+	maxRenderDimension   = 3000
+)
+
+func renderTimeout(args GetPanelImageParams) time.Duration {
+	if args.Timeout == nil || *args.Timeout <= 0 {
+		return defaultRenderTimeout
+	}
+	// Clamp before converting so large values cannot overflow the Duration.
+	return time.Duration(min(*args.Timeout, maxRenderTimeoutSecs)) * time.Second
 }
 
 func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (string, error) {
@@ -311,10 +323,10 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 		height = 1000
 	}
 	if args.Width != nil {
-		width = *args.Width
+		width = min(*args.Width, maxRenderDimension)
 	}
 	if args.Height != nil {
-		height = *args.Height
+		height = min(*args.Height, maxRenderDimension)
 	}
 	params.Set("width", strconv.Itoa(width))
 	params.Set("height", strconv.Itoa(height))
