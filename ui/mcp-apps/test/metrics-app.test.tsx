@@ -14,14 +14,28 @@ describe('RenderMetricsApp', () => {
   it('offers the derived view and its alternatives, and lets the user switch', () => {
     render(<RenderMetricsApp result={result()} colorMode="light" />);
 
-    const picker = screen.getByRole('group', { name: 'Visualization' });
-    const stat = screen.getByRole('button', { name: 'Stat' });
-    expect(picker.contains(stat)).toBe(true);
-    expect(stat.getAttribute('aria-pressed')).toBe('true');
+    // One compact trigger showing the current view; the options stay hidden.
+    const trigger = screen.getByRole('button', { name: 'Stat' });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('listbox')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
-    expect(screen.getByRole('button', { name: 'Table' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(trigger);
+    const options = screen.getAllByRole('option').map((option) => option.textContent);
+    expect(options).toEqual(['Stat', 'Bar', 'Table']);
+    expect(screen.getByRole('option', { name: 'Stat' }).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByRole('option', { name: 'Table' }));
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Table' })).toBeTruthy();
     expect(screen.getByRole('table')).toBeTruthy();
+  });
+
+  it('closes the menu on Escape', () => {
+    render(<RenderMetricsApp result={result()} colorMode="light" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stat' }));
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
   });
 
   it('keeps the diagnostic line out of the default view', () => {

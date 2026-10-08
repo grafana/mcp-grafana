@@ -12,7 +12,31 @@ export const getRenderMetricsAppStyles = () => ({
     marginBottom: 8,
   }),
 
-  vizPicker: css({ display: 'flex', gap: 4, flexWrap: 'wrap' }),
+  picker: css({ position: 'relative' }),
+
+  pickerMenu: css({
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    right: 0,
+    zIndex: 2,
+    minWidth: 160,
+    // A chat panel can be very narrow; never overflow it.
+    maxWidth: 'calc(100vw - 12px)',
+    margin: 0,
+    padding: 4,
+    listStyle: 'none',
+    borderRadius: 6,
+    border: '1px solid var(--mcp-border)',
+    background: 'var(--mcp-background)',
+    boxShadow: '0 4px 16px rgb(0 0 0 / 12%)',
+  }),
+
+  /** A ghost Button, stretched to a full-width menu row. */
+  pickerOption: css({
+    width: '100%',
+    justifyContent: 'flex-start',
+    '&[aria-selected="true"]': { background: 'var(--mcp-accent)' },
+  }),
 
   /** The PromQL expression reads as code, not prose. */
   query: css({
