@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { axisDecimals, display, formatValue, inferUnit, resolveThresholdColor } from '../src/viz/format';
+import { axisDecimals, display, formatValue, inferBucketBoundUnit, inferUnit, resolveThresholdColor } from '../src/viz/format';
 import { isBoundedUnit, pickViz, type MetricsResult } from '../src/metrics/pickViz';
 import { thresholdBands } from '../src/viz/Bullet';
 import { deaccumulateBuckets, isHistogramBuckets } from '../src/viz/Heatmap';
@@ -50,10 +50,23 @@ describe('inferUnit', () => {
   it('reads Prometheus naming convention', () => {
     expect(inferUnit('node_cpu_seconds_total')).toBe('seconds');
     expect(inferUnit('go_memstats_alloc_bytes')).toBe('bytes');
-    expect(inferUnit('http_request_duration_seconds_bucket')).toBe('seconds');
     expect(inferUnit('process_cpu_ratio')).toBe('percentunit');
     expect(inferUnit('go_goroutines')).toBe('short');
     expect(inferUnit(undefined)).toBe('none');
+  });
+
+  it('never claims a rate: a named series is a raw selector, not rate() output', () => {
+    // A running count of requests, not requests per second.
+    expect(inferUnit('http_requests_total')).toBe('short');
+    expect(inferUnit('prometheus_http_requests_total')).toBe('short');
+  });
+
+  it('treats _count and _bucket values as counts of observations', () => {
+    expect(inferUnit('http_request_duration_seconds_count')).toBe('short');
+    expect(inferUnit('http_request_duration_seconds_bucket')).toBe('short');
+    // Only the bucket *bounds* are in the observed unit.
+    expect(inferBucketBoundUnit('http_request_duration_seconds_bucket')).toBe('seconds');
+    expect(inferUnit('http_request_duration_seconds_sum')).toBe('seconds');
   });
 });
 
@@ -230,6 +243,17 @@ describe('histogram buckets', () => {
     expect(isHistogramBuckets([bucket('0.1', [])])).toBe(false);
     expect(isHistogramBuckets([{ labels: { pod: 'a' }, points: [] }, { labels: { pod: 'b' }, points: [] }])).toBe(false);
     expect(isHistogramBuckets([bucket('0.1', []), { labels: {}, points: [] }])).toBe(false);
+  });
+
+  it('rejects buckets of several histograms interleaved, which cannot be de-accumulated', () => {
+    const perInstance = (le: string, instance: string) => ({ labels: { le, instance }, points: [] });
+    expect(
+      isHistogramBuckets([perInstance('0.1', 'a'), perInstance('+Inf', 'a'), perInstance('0.1', 'b'), perInstance('+Inf', 'b')])
+    ).toBe(false);
+    // A repeated bound is the same symptom.
+    expect(isHistogramBuckets([bucket('0.1', []), bucket('0.1', [])])).toBe(false);
+    // Shared labels besides `le` are fine.
+    expect(isHistogramBuckets([perInstance('0.1', 'a'), perInstance('+Inf', 'a')])).toBe(true);
   });
 
   it('turns cumulative counts into per-bucket counts, ordered by bound', () => {

@@ -137,25 +137,43 @@ export function formatValue(value: number, unit: Unit = 'none', decimals?: numbe
 }
 
 /**
- * Guess a unit from a Prometheus metric name.
+ * Guess the unit of a series' *values* from its metric name.
  *
  * `query_prometheus` returns no field config, so without this every metric
  * renders as a bare number. Prometheus naming convention (base unit as the
- * last suffix, `_total` for counters) makes this reliable enough to be a
- * better default than `none`, and it stays overridable.
+ * last suffix) makes this reliable enough to be a better default than `none`,
+ * and it stays overridable.
+ *
+ * The name is only present on raw selectors: `rate()`, `sum()` and most other
+ * functions drop `__name__`, so a named series is never a rate. That rules out
+ * per-second units here — `http_requests_total` is a running count, not req/s.
+ * Likewise `_count` and `_bucket` values count observations, whatever unit the
+ * observations themselves are in.
  */
 export function inferUnit(metricName: string | undefined): Unit {
   if (!metricName) return 'none';
-  // Strip counter/aggregation suffixes that sit after the base unit.
-  const name = metricName.toLowerCase().replace(/_(total|sum|count|bucket)$/, '');
+  const lower = metricName.toLowerCase();
+  if (/_(count|bucket)$/.test(lower)) return 'short';
+  // `_total` and `_sum` keep the base unit: cumulative seconds are still seconds.
+  return unitFromBaseName(lower.replace(/_(total|sum)$/, ''));
+}
+
+/**
+ * Unit of a histogram's bucket *bounds* (`le`), which are in the observed
+ * unit — `…_duration_seconds_bucket` has bounds in seconds.
+ */
+export function inferBucketBoundUnit(metricName: string | undefined): Unit {
+  if (!metricName) return 'none';
+  return unitFromBaseName(metricName.toLowerCase().replace(/_bucket$/, ''));
+}
+
+function unitFromBaseName(name: string): Unit {
   if (/_seconds?$/.test(name)) return 'seconds';
   if (/_milliseconds?$|_ms$/.test(name)) return 'milliseconds';
   if (/_bytes?$/.test(name)) return 'bytes';
   if (/_bits?$/.test(name)) return 'bits';
   if (/_ratio$/.test(name)) return 'percentunit';
   if (/_percent$/.test(name)) return 'percent';
-  if (/_(ops|operations)$/.test(name)) return 'ops';
-  if (/_requests?$/.test(name)) return 'reqps';
   return 'short';
 }
 

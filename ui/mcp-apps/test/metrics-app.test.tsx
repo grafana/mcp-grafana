@@ -120,4 +120,24 @@ describe('RenderMetricsApp', () => {
     expect(toggle.getAttribute('aria-pressed')).toBe('false');
     expect(screen.queryByText(/Drag across the chart/)).toBeNull();
   });
+
+  it('never presents the metric name as the query', () => {
+    render(<RenderMetricsApp result={result()} colorMode="light" />);
+    expect(screen.getByRole('heading').textContent).toBe('Query result');
+    expect(document.body.textContent).toContain('go_goroutines · 1 series · 1 point');
+  });
+
+  it('says when bars are left out instead of dropping them silently', () => {
+    const many = {
+      resultType: 'vector' as const,
+      warnings: [],
+      series: [
+        ...Array.from({ length: 30 }, (_, i) => ({ labels: { route: `/r${i}` }, points: [[1, i] as [number, number]] })),
+        { labels: { route: '/nan' }, points: [[1, Number.NaN] as [number, number]] },
+      ],
+    };
+    render(<RenderMetricsApp result={many} colorMode="light" />);
+    expect(document.body.textContent).toContain('Showing the top 25 of 30 series.');
+    expect(document.body.textContent).toContain('1 series with no numeric value is not plotted.');
+  });
 });

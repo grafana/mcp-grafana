@@ -68,8 +68,12 @@ export function parsePrometheusResult(payload: unknown): ParsedMetrics | undefin
   const { data, warnings = [], exploreUrl } = parsed.data;
   if (data === undefined) return { ...EMPTY, warnings, exploreUrl };
 
-  // Scalar: a bare [seconds, "value"] tuple.
+  // Scalar: a bare [seconds, "value"] tuple. A string result has the same
+  // shape; showing it as NaN would invent a value, so it renders as nothing.
   const scalar = samplePair.safeParse(data);
+  if (scalar.success && Number.isNaN(parsePrometheusNumber(scalar.data[1])) && scalar.data[1] !== 'NaN') {
+    return { ...EMPTY, resultType: 'string', warnings, exploreUrl };
+  }
   if (scalar.success) {
     return {
       resultType: 'scalar',

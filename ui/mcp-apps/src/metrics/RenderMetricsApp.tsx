@@ -12,7 +12,7 @@ import { RefreshCw, SquareDashedMousePointer } from 'lucide-react';
 import { getRenderMetricsAppStyles } from './RenderMetricsApp.styles';
 import { openInGrafanaAction } from '../grafanaLink';
 import { McpAppShell, type McpAppColorMode, type McpAppFeedback } from '../McpAppShell';
-import { inferUnit, type Threshold, type Unit } from '../viz/format';
+import { inferBucketBoundUnit, inferUnit, type Threshold, type Unit } from '../viz/format';
 import { BarChart } from '../viz/BarChart';
 import { Bullet, BulletGroup } from '../viz/Bullet';
 import { Heatmap } from '../viz/Heatmap';
@@ -91,11 +91,14 @@ export function RenderMetricsApp({
   const openInGrafana = openInGrafanaAction(exploreUrl ?? result.exploreUrl, onOpenInGrafana);
   const pointCount = result.series.reduce((total, s) => total + s.points.length, 0);
   // The empty state says this in the body; repeating it here reads as a stutter.
-  const description =
+  const counts =
     result.series.length === 0
       ? undefined
       : `${result.series.length} series · ${pointCount} point${pointCount === 1 ? '' : 's'}`;
-  const title = expr ?? metricName;
+  // Without the tool input the expression is unknown; the metric name is a
+  // fact about the result, not the query, so it goes in the description.
+  const description = !expr && metricName && counts ? `${metricName} · ${counts}` : counts;
+  const title = expr;
 
   return (
     <McpAppShell
@@ -206,7 +209,14 @@ export function RenderMetricsApp({
         );
       }
       case 'heatmap':
-        return <Heatmap series={result.series} unit={unit} colorMode={colorMode} />;
+        return (
+          <Heatmap
+            series={result.series}
+            unit={unit}
+            boundUnit={inferBucketBoundUnit(metricName)}
+            colorMode={colorMode}
+          />
+        );
       case 'table':
         return <Table series={result.series} unit={unit} />;
       case 'stat': {

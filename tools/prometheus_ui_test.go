@@ -73,7 +73,7 @@ func TestExploreURLForQueryCarriesTheQuery(t *testing.T) {
 
 	ranged := exploreURLForQuery(ctx, QueryPrometheusParams{
 		Expr: "node_load1", DatasourceUID: "prom-uid", QueryType: "range",
-		StartTime: "now-1h", EndTime: "now",
+		StartTime: "now-1h", EndTime: "now", StepSeconds: 60,
 	})
 	require.NotEmpty(t, ranged)
 	parsed, err := url.Parse(ranged)
@@ -87,6 +87,8 @@ func TestExploreURLForQueryCarriesTheQuery(t *testing.T) {
 	assert.Contains(t, panes, `"uid":"prom-uid"`)
 	assert.Contains(t, panes, `"range":true`)
 	assert.Contains(t, panes, `"from":"now-1h"`)
+	// The query's step, so Explore draws the same points as the app.
+	assert.Contains(t, panes, `"interval":"60s"`)
 
 	instant := exploreURLForQuery(ctx, QueryPrometheusParams{
 		Expr: "go_goroutines", DatasourceUID: "prom-uid", QueryType: "instant",

@@ -193,6 +193,11 @@ func exploreURLForQuery(ctx context.Context, args QueryPrometheusParams) string 
 		query["instant"] = true
 	} else {
 		query["range"] = true
+		// Explore otherwise picks its own step, and shows different points from
+		// the result the app drew. `interval` is the query's min step.
+		if args.StepSeconds > 0 {
+			query["interval"] = fmt.Sprintf("%ds", args.StepSeconds)
+		}
 	}
 	uid := args.DatasourceUID
 	params := GenerateDeeplinkParams{

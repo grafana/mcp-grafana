@@ -32,6 +32,14 @@ describe('parsePrometheusResult', () => {
     expect(parsed!.series.every((s) => s.points.length === 1)).toBe(true);
   });
 
+  it('renders a string result as nothing rather than a NaN value', () => {
+    const parsed = parsePrometheusResult({ data: [1760000000, 'hello'] });
+    expect(parsed!.resultType).toBe('string');
+    expect(parsed!.series).toEqual([]);
+    // A genuine NaN scalar is still a value.
+    expect(parsePrometheusResult({ data: [1760000000, 'NaN'] })!.resultType).toBe('scalar');
+  });
+
   it('reads a scalar as a bare [seconds, "value"] tuple', () => {
     const parsed = parsePrometheusResult(scalarResult);
     expect(parsed!.resultType).toBe('scalar');

@@ -13,7 +13,7 @@ export type BarChartProps = {
   thresholds?: Threshold[];
   colorMode?: McpAppColorMode;
   height?: number;
-  /** Cap on bars drawn; the rest are summarised by the caller. */
+  /** Cap on bars drawn; the footer says how many are left out. */
   limit?: number;
 };
 
@@ -30,11 +30,17 @@ export function BarChart({
   // Ranked descending. Horizontal bars because Prometheus series names are long
   // and would otherwise be unreadable rotated labels.
   const names = shortSeriesNames(series);
-  const ranked = series
+  const finite = series
     .map((s, i) => ({ name: names[i], value: latestValue(s) }))
     .filter((entry) => Number.isFinite(entry.value))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, limit);
+    .sort((a, b) => b.value - a.value);
+  const ranked = finite.slice(0, limit);
+  // NaN and ±Inf have no bar length; count them rather than drop them silently.
+  const notPlotted = series.length - finite.length;
+  const notes = [
+    finite.length > ranked.length ? `Showing the top ${ranked.length} of ${finite.length} series.` : '',
+    notPlotted ? `${notPlotted} series with no numeric value ${notPlotted === 1 ? 'is' : 'are'} not plotted.` : '',
+  ].filter(Boolean);
 
   const { containerRef } = useEChart(
     (colors) => ({
@@ -49,9 +55,8 @@ export function BarChart({
       grid: { left: 8, right: 56, top: 8, bottom: 8, containLabel: true },
       xAxis: {
         type: 'value',
-        // Tick labels drop the unit word — the bar labels already carry it, and
-        // repeating `req/s` on every tick makes them collide.
-        axisLabel: { formatter: (value: number) => formatValue(value, 'short').formatted },
+        // Same unit as the bar labels, so the axis and the values agree.
+        axisLabel: { formatter: (value: number) => formatValue(value, unit).formatted, hideOverlap: true },
       },
       yAxis: {
         type: 'category',
@@ -84,6 +89,9 @@ export function BarChart({
   );
 
   return (
-    <div ref={containerRef} className={styles.chart} style={{ '--viz-height': `${height}px` } as CSSProperties} />
+    <>
+      <div ref={containerRef} className={styles.chart} style={{ '--viz-height': `${height}px` } as CSSProperties} />
+      {notes.length > 0 && <div className={styles.tableFooter}>{notes.join(' ')} Use Table for every value.</div>}
+    </>
   );
 }

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 
 import { formatValue, type Unit } from './format';
 import { SEQUENTIAL_PALETTE } from './theme';
-import { parsePrometheusNumber, shortSeriesNames, type MetricSeries } from './types';
+import { parsePrometheusNumber, seriesName, shortSeriesNames, type MetricSeries } from './types';
 import type { McpAppColorMode } from '../McpAppShell';
 import { useEChart } from './useEChart';
 import { getVizStyles } from './Viz.styles';
@@ -17,20 +17,38 @@ import { getVizStyles } from './Viz.styles';
 
 export type HeatmapProps = {
   series: MetricSeries[];
+  /** Unit of the values. Histogram rows are counts whatever this says. */
   unit?: Unit;
+  /** Unit of histogram bucket bounds (`le`), e.g. seconds for a latency histogram. */
+  boundUnit?: Unit;
   decimals?: number;
   colorMode?: McpAppColorMode;
   height?: number;
-  /** Rows drawn before the rest are dropped, newest buckets first. */
+  /** Rows drawn; any beyond it are left out and the footer says how many. */
   maxRows?: number;
 };
 
-/** True when every series carries an `le` bound — a Prometheus histogram. */
+/**
+ * True when the series are the buckets of *one* Prometheus histogram: each has
+ * a numeric `le`, no bound repeats, and the series agree on every other label.
+ *
+ * Buckets split by another label (`…_bucket` per instance, without
+ * `sum by (le)`) are several histograms interleaved. De-accumulating those
+ * would subtract one instance's bucket from another's and invent counts.
+ */
 export function isHistogramBuckets(series: MetricSeries[]): boolean {
-  return (
-    series.length > 1 &&
-    series.every((s) => s.labels?.le !== undefined && !Number.isNaN(parsePrometheusNumber(s.labels.le)))
-  );
+  if (series.length < 2) return false;
+  const bounds = new Set<string>();
+  let shared: string | undefined;
+  for (const s of series) {
+    const { le, ...rest } = s.labels ?? {};
+    if (le === undefined || Number.isNaN(parsePrometheusNumber(le)) || bounds.has(le)) return false;
+    bounds.add(le);
+    const others = seriesName(rest);
+    if (shared === undefined) shared = others;
+    else if (others !== shared) return false;
+  }
+  return true;
 }
 
 /**
@@ -56,17 +74,30 @@ export function deaccumulateBuckets(series: MetricSeries[]): MetricSeries[] {
   });
 }
 
-/** `le="0.5"` reads as `≤ 500 ms` once the unit is applied. */
-function bucketLabel(le: string, unit: Unit): string {
-  const bound = parsePrometheusNumber(le);
-  // The catch-all bucket keeps Prometheus' own spelling rather than "≤ ∞".
-  if (!Number.isFinite(bound)) return '+Inf';
-  return `≤ ${formatValue(bound, unit).formatted}`;
+/**
+ * Labels for de-accumulated bucket rows, which are sorted by bound. The axis
+ * shows each row's upper bound, as Grafana's heatmap does; the tooltip names
+ * the range the row actually counts, `(previous, le]`.
+ */
+function bucketLabels(rows: MetricSeries[], unit: Unit): { axis: string[]; range: string[] } {
+  const bounds = rows.map((s) => parsePrometheusNumber(s.labels.le));
+  const show = (bound: number) => formatValue(bound, unit).formatted;
+  return {
+    // The catch-all bucket keeps Prometheus' own spelling rather than "∞".
+    axis: bounds.map((bound) => (Number.isFinite(bound) ? show(bound) : '+Inf')),
+    range: bounds.map((bound, index) => {
+      const previous = bounds[index - 1];
+      if (previous === undefined) return Number.isFinite(bound) ? `≤ ${show(bound)}` : 'all observations';
+      if (!Number.isFinite(bound)) return `> ${show(previous)}`;
+      return `${show(previous)} – ${show(bound)}`;
+    }),
+  };
 }
 
 export function Heatmap({
   series,
   unit = 'none',
+  boundUnit = 'none',
   decimals,
   colorMode = 'light',
   height = 280,
@@ -76,10 +107,11 @@ export function Heatmap({
   const buckets = isHistogramBuckets(series);
   // Histogram rows are ordered by bound and de-cumulated; anything else keeps
   // the order the datasource returned.
-  const rows = (buckets ? deaccumulateBuckets(series) : series).slice(0, maxRows);
-  const rowLabels = buckets
-    ? rows.map((s) => bucketLabel(s.labels.le, unit))
-    : shortSeriesNames(rows);
+  const allRows = buckets ? deaccumulateBuckets(series) : series;
+  const rows = allRows.slice(0, maxRows);
+  const labels = buckets ? bucketLabels(rows, boundUnit) : undefined;
+  const rowLabels = labels ? labels.axis : shortSeriesNames(rows);
+  const rowTooltips = labels ? labels.range : rowLabels;
   // A bucket count is a count, whatever the bucket bound is measured in.
   const valueUnit: Unit = buckets ? 'short' : unit;
 
@@ -115,7 +147,7 @@ export function Heatmap({
         formatter: (params: unknown) => {
           const { value } = params as { value: [number, number, number] };
           const [column, row, amount] = value;
-          return `${timeLabels[column]} · ${rowLabels[row]}<br/>${formatValue(amount, valueUnit, decimals).formatted}`;
+          return `${timeLabels[column]} · ${rowTooltips[row]}<br/>${formatValue(amount, valueUnit, decimals).formatted}`;
         },
       },
       grid: { left: 8, right: 8, top: 8, bottom: 48, containLabel: true },
@@ -162,7 +194,7 @@ export function Heatmap({
       ],
     }),
     colorMode,
-    [series, unit, decimals, maxRows, rowLabels.join('|')]
+    [series, unit, boundUnit, decimals, maxRows, rowLabels.join('|')]
   );
 
   if (!cells.length) {
@@ -170,6 +202,13 @@ export function Heatmap({
   }
 
   return (
-    <div ref={containerRef} className={styles.chart} style={{ '--viz-height': `${height}px` } as CSSProperties} />
+    <>
+      <div ref={containerRef} className={styles.chart} style={{ '--viz-height': `${height}px` } as CSSProperties} />
+      {allRows.length > rows.length && (
+        <div className={styles.tableFooter}>
+          Showing the first {rows.length} of {allRows.length} {buckets ? 'buckets' : 'series'}. Use Table for the rest.
+        </div>
+      )}
+    </>
   );
 }
