@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { parsePrometheusResult } from '../app/parsePrometheusResult';
 import { RenderMetricsApp } from '../src/metrics/RenderMetricsApp';
-import { vectorSingleUnbounded } from './metricsFixtures';
+import { matrixSingleSeries, vectorSingleUnbounded } from './metricsFixtures';
+
+// jsdom has no canvas or ResizeObserver; the chart itself is not under test here.
+vi.mock('../src/viz/useEChart', () => ({
+  useEChart: () => ({ containerRef: { current: null }, chartRef: { current: null } }),
+}));
 
 afterEach(cleanup);
 
@@ -70,5 +75,24 @@ describe('RenderMetricsApp', () => {
     );
     expect(screen.getByRole('alert').textContent).toContain('The refresh query failed.');
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
+  });
+
+  it('arms range selection from an icon button and explains what to do next', () => {
+    const timeseries = parsePrometheusResult(matrixSingleSeries)!;
+    render(<RenderMetricsApp result={timeseries} colorMode="light" onSelectRange={() => {}} />);
+
+    const toggle = screen.getByRole('button', { name: 'Ask about a time window' });
+    expect(toggle.textContent).toBe('');
+    expect(toggle.parentElement?.dataset.tooltip).toBe('Ask about a time window');
+    expect(screen.queryByText(/Drag across the chart/)).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(toggle.parentElement?.dataset.tooltip).toBe('Cancel selection');
+    expect(screen.getByRole('status').textContent).toContain('Drag across the chart to select a window');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByText(/Drag across the chart/)).toBeNull();
   });
 });

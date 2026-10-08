@@ -6,7 +6,7 @@
  * `app/MetricsApplication.tsx`.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SquareDashedMousePointer } from 'lucide-react';
 
 import { getRenderMetricsAppStyles } from './RenderMetricsApp.styles';
@@ -76,6 +76,17 @@ export function RenderMetricsApp({
   // Brushing is armed from the control row, so the chart carries no UI of its own.
   const [selecting, setSelecting] = useState(false);
   const canSelectRange = Boolean(onSelectRange) && kind === 'timeseries';
+  const armed = selecting && canSelectRange;
+
+  // Escape backs out of selection, the same way it dismisses the picker.
+  useEffect(() => {
+    if (!armed) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelecting(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [armed]);
 
   const openInGrafana = openInGrafanaAction(exploreUrl ?? result.exploreUrl, onOpenInGrafana);
   const pointCount = result.series.reduce((total, s) => total + s.points.length, 0);
@@ -107,14 +118,32 @@ export function RenderMetricsApp({
       <div className={styles.controls}>
         <VizPicker options={options} value={kind} onChange={setOverride} />
         {canSelectRange && (
-          <Button variant="secondary" size="xs" aria-pressed={selecting} onClick={() => setSelecting((armed) => !armed)}>
-            <SquareDashedMousePointer size={12} aria-hidden="true" />
-            {selecting ? 'Drag to select' : 'Ask about a window'}
-          </Button>
+          <span className={styles.tooltip} data-tooltip={armed ? 'Cancel selection' : 'Ask about a time window'}>
+            <Button
+              variant="secondary"
+              size="xs"
+              className={styles.iconButton}
+              aria-label="Ask about a time window"
+              aria-pressed={armed}
+              onClick={() => setSelecting((on) => !on)}
+            >
+              <SquareDashedMousePointer size={14} aria-hidden="true" />
+            </Button>
+          </span>
         )}
       </div>
 
-      {renderViz()}
+      {/* The icon-only toggle cannot say what to do next, so while selection is
+          armed the instruction sits on the chart, where the drag happens. An
+          overlay rather than a row, so arming it moves nothing. */}
+      <div className={styles.vizArea}>
+        {renderViz()}
+        {armed && (
+          <span className={styles.selectHint} role="status">
+            Drag across the chart to select a window · Esc to cancel
+          </span>
+        )}
+      </div>
 
       {result.warnings.map((warning) => (
         <div key={warning} className={styles.warning}>
@@ -142,7 +171,7 @@ export function RenderMetricsApp({
             series={result.series}
             unit={unit}
             colorMode={colorMode}
-            selecting={selecting}
+            selecting={armed}
             onSelectRange={
               onSelectRange &&
               ((from, to) => {
