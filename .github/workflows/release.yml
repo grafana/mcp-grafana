@@ -76,10 +76,18 @@ jobs:
       - name: Build MCP Bundle
         run: node scripts/build-mcpb.mjs
 
+      # Built after GoReleaser signed the checksums file, so it gets its own
+      # keyless signature bundle, verified the same way as the checksums file.
+      - name: Sign MCP Bundle
+        run: |
+          for f in dist/mcp-grafana_*.mcpb; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
+
       - name: Attach MCP Bundle to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/mcp-grafana_*.mcpb --clobber
+        run: gh release upload "$GITHUB_REF_NAME" dist/mcp-grafana_*.mcpb dist/mcp-grafana_*.mcpb.sigstore.json --clobber
 
   pypi:
     runs-on: ubuntu-latest
