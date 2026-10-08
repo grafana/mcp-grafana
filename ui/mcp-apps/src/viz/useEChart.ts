@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { echarts, registerEChartsFeatures, type EChartsOption } from './echartsSetup';
+import { echarts, type EChartsOption } from './echartsSetup';
 import { grafanaEChartsTheme, readThemeColors, type ThemeColors } from './theme'
 import type { McpAppColorMode } from '../McpAppShell';
 
@@ -27,10 +27,6 @@ export function useEChart(
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
-    // Must run before init: the registration cannot be a module side effect in
-    // this package — see echartsSetup.ts.
-    registerEChartsFeatures();
 
     const colors = readThemeColors(container, colorMode);
     const chart = echarts.init(container, grafanaEChartsTheme(colors), { renderer: 'canvas' });

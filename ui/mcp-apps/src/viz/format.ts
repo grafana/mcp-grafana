@@ -174,6 +174,34 @@ export function resolveThresholdColor(value: number, thresholds?: Threshold[]): 
   return color;
 }
 
+/**
+ * Decimals for value-axis labels when the axis is fitted to the data
+ * (`scale: true`). Auto-rounding keeps 3 places below 1, so a narrow range such
+ * as 0.066656–0.066674 would label every tick `0.067`. Returns enough places to
+ * tell ticks apart, or `undefined` when auto-rounding already does.
+ *
+ * Only unscaled units are handled: for scaled ones (bytes, seconds, ...) the
+ * places apply after scaling, which depends on each value's magnitude.
+ */
+export function axisDecimals(values: number[], unit: Unit = 'none'): number | undefined {
+  const multiplier = unit === 'percentunit' ? 100 : unit === 'none' || unit === 'percent' ? 1 : undefined;
+  if (multiplier === undefined) return undefined;
+
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const span = (max - min) * multiplier;
+  if (!(span > 0)) return undefined;
+
+  // ECharts picks roughly 5–10 ticks; size for the finer end.
+  const places = -Math.floor(Math.log10(span / 10));
+  return places > 3 ? Math.min(places, 12) : undefined;
+}
+
 /** `formatValue` plus threshold resolution — the display path for gauges and bars. */
 export function display(
   value: number,

@@ -59,11 +59,7 @@ engine. Both scale only against bounds a unit actually implies.
 histogram buckets, which it de-cumulates so each row shows its own count rather
 than a running total.
 
-ECharts features are registered by calling `registerEChartsFeatures()`, never by
-a top-level `echarts.use([...])`: this package declares
-`"sideEffects": ["**/*.css"]`, so a bundler prunes module-scope registration
-while keeping the import, and the failure appears only in a production bundle
-inside a host.
+ECharts features are registered once, in `src/viz/echartsSetup.ts`.
 
 ## Metrics app
 

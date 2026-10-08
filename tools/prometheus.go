@@ -245,15 +245,13 @@ func newMetricsAppResult(result *QueryPrometheusResult) (*mcp.CallToolResult, er
 
 // enrichMetricsView adds an interactive view without changing the raw tool result.
 //
-// Both signals are required: structured content carries the payload into the
-// iframe, and the resource URI on the *result* is what makes a host render the
-// app rather than visualizing the output itself.
+// Structured content carries the payload into the iframe; the tool definition's
+// _meta.ui.resourceUri is what tells the host to render the app.
 func enrichMetricsView(result *QueryPrometheusResult, bodyBytes int, raw *mcp.CallToolResult) {
 	if bodyBytes > maxMetricsViewBytes {
 		return
 	}
 	raw.StructuredContent = result
-	mcpgrafana.AttachUIResource(raw, mcpgrafana.MetricsViewerResourceURI)
 }
 
 var QueryPrometheus = mcpgrafana.MustTool(

@@ -23,9 +23,7 @@ func TestQueryPrometheusDeclaresMetricsApp(t *testing.T) {
 	assert.Equal(t, mcpgrafana.MetricsViewerResourceURI, ui["resourceUri"])
 }
 
-// The host must be able to find the payload whichever channel it reads, and the
-// result itself must name the app: the tool-level _meta only tells a host which
-// resource to fetch, not which result to attach it to.
+// The host must be able to find the payload whichever channel it reads.
 func TestMetricsAppResultCarriesEveryHostSignal(t *testing.T) {
 	result := &QueryPrometheusResult{
 		Data:       model.Vector{{Metric: model.Metric{"__name__": "up"}, Timestamp: 1760000000000, Value: 1}},
@@ -47,12 +45,6 @@ func TestMetricsAppResultCarriesEveryHostSignal(t *testing.T) {
 
 	// 2. The same payload as structuredContent.
 	assert.Equal(t, result, out.StructuredContent)
-
-	// 3. The app's resource URI on the result meta.
-	require.NotNil(t, out.Meta)
-	ui, ok := out.Meta["ui"].(map[string]any)
-	require.True(t, ok, "result should carry _meta.ui")
-	assert.Equal(t, mcpgrafana.MetricsViewerResourceURI, ui["resourceUri"])
 }
 
 // Past the view budget the tool keeps its text output and offers no interactive
@@ -70,7 +62,6 @@ func TestMetricsAppResultDropsTheViewWhenTooLarge(t *testing.T) {
 	require.Len(t, out.Content, 1, "the text output is always preserved")
 	assert.Greater(t, len(out.Content[0].(*mcp.TextContent).Text), maxMetricsViewBytes)
 	assert.Nil(t, out.StructuredContent, "no viewer data past the budget")
-	assert.Nil(t, out.Meta, "and no app to render it")
 }
 
 // The Explore link has to carry enough state for the query to reopen as it ran.

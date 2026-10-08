@@ -1,6 +1,6 @@
 import { useEffect, type CSSProperties } from 'react';
 
-import { formatValue, type Unit } from './format';
+import { axisDecimals, formatValue, type Unit } from './format';
 import { shortSeriesNames, type MetricSeries } from './types';
 import type { McpAppColorMode } from '../McpAppShell';
 import { useEChart } from './useEChart';
@@ -36,6 +36,7 @@ export function TimeSeriesChart({
   const styles = getVizStyles();
   // Legend and tooltip show only what distinguishes each series.
   const names = shortSeriesNames(series);
+  const yDecimals = decimals ?? axisDecimals(series.flatMap((s) => s.points.map(([, v]) => v)), unit);
 
   const { containerRef, chartRef } = useEChart(
     () => ({
@@ -50,9 +51,12 @@ export function TimeSeriesChart({
       // Narrow panels are the norm in a chat; drop labels rather than
       // overprint them.
       xAxis: { type: 'time', axisLabel: { hideOverlap: true } },
+      // Fit the axis to the data, as Grafana does, rather than always
+      // including zero; otherwise small variations draw as a flat line.
       yAxis: {
         type: 'value',
-        axisLabel: { formatter: (value: number) => formatValue(value, unit, decimals).formatted },
+        scale: true,
+        axisLabel: { formatter: (value: number) => formatValue(value, unit, yDecimals).formatted },
       },
       // Horizontal-only selection: the question is always "what happened
       // during this window", never "in this value band".
@@ -67,7 +71,7 @@ export function TimeSeriesChart({
       })),
     }),
     colorMode,
-    [series, unit, decimals, names.join('|'), Boolean(onSelectRange)]
+    [series, unit, decimals, yDecimals, names.join('|'), Boolean(onSelectRange)]
   );
 
   // Arm or disarm the brush cursor, and report the window once drawn.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { display, formatValue, inferUnit, resolveThresholdColor } from '../src/viz/format';
+import { axisDecimals, display, formatValue, inferUnit, resolveThresholdColor } from '../src/viz/format';
 import { isBoundedUnit, pickViz, type MetricsResult } from '../src/metrics/pickViz';
 import { thresholdBands } from '../src/viz/Bullet';
 import { deaccumulateBuckets, isHistogramBuckets } from '../src/viz/Heatmap';
@@ -370,5 +370,26 @@ describe('sparklinePath', () => {
         [1, Number.NaN],
       ])
     ).toBe('');
+  });
+});
+
+describe('axisDecimals', () => {
+  it('adds places when auto-rounding would label every tick the same', () => {
+    // A scrape-rate series varying only in the fifth decimal place.
+    expect(axisDecimals([0.066656, 0.066665, 0.066674])).toBe(6);
+  });
+
+  it('defers to auto-rounding for ordinary ranges', () => {
+    expect(axisDecimals([0, 0.5, 1])).toBeUndefined();
+    expect(axisDecimals([10, 250, 900])).toBeUndefined();
+  });
+
+  it('accounts for percentunit being shown multiplied by 100', () => {
+    expect(axisDecimals([0.5, 0.50003], 'percentunit')).toBe(4);
+  });
+
+  it('leaves flat series and scaled units alone', () => {
+    expect(axisDecimals([0.0667, 0.0667])).toBeUndefined();
+    expect(axisDecimals([1024, 1024.001], 'bytes')).toBeUndefined();
   });
 });

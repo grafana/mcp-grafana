@@ -71,14 +71,8 @@ the resulting HTML alongside source changes; CI checks bundle drift. The shell
 supports explicit light/dark modes, composable sections, host navigation,
 loading/error feedback and accessible recovery actions.
 
-Two constraints are easy to miss when adding an app:
+One constraint is easy to miss when adding an app:
 
-- **Register plugins from a function, not a module side effect.** `ui/mcp-apps`
-  declares `"sideEffects": ["**/*.css"]`, so a bundler may prune a top-level
-  registration call while keeping the import that looks like it is used. The
-  metrics app calls `registerEChartsFeatures()` before creating a chart for this
-  reason; a bare `echarts.use([...])` at module scope disappears from the
-  production bundle and the app fails only inside a host.
 - **Attach host handlers before React renders.** A host may finish the handshake
   and deliver `tool-input` and `tool-result` before the first commit, and it does
   not replay them. Registering `app.ontoolresult` inside an effect makes
