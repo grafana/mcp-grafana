@@ -230,7 +230,9 @@ func queryPrometheusForApp(ctx context.Context, args QueryPrometheusParams) (*mc
 
 // newMetricsAppResult builds the tool result: the JSON payload as a text block —
 // what the model reads, and what a host without MCP Apps support falls back to —
-// then the same payload as structured content for the app.
+// then, within the view budget, the same payload as structured content for the
+// app. The tool definition's _meta.ui.resourceUri is what tells the host to
+// render it.
 //
 // Separate from the query so the shape is testable without a Grafana.
 func newMetricsAppResult(result *QueryPrometheusResult) (*mcp.CallToolResult, error) {
@@ -239,19 +241,10 @@ func newMetricsAppResult(result *QueryPrometheusResult) (*mcp.CallToolResult, er
 		return nil, fmt.Errorf("failed to marshal Prometheus query result: %w", err)
 	}
 	raw := mcpgrafana.NewToolResultText(string(body))
-	enrichMetricsView(result, len(body), raw)
-	return raw, nil
-}
-
-// enrichMetricsView adds an interactive view without changing the raw tool result.
-//
-// Structured content carries the payload into the iframe; the tool definition's
-// _meta.ui.resourceUri is what tells the host to render the app.
-func enrichMetricsView(result *QueryPrometheusResult, bodyBytes int, raw *mcp.CallToolResult) {
-	if bodyBytes > maxMetricsViewBytes {
-		return
+	if len(body) <= maxMetricsViewBytes {
+		raw.StructuredContent = result
 	}
-	raw.StructuredContent = result
+	return raw, nil
 }
 
 var QueryPrometheus = mcpgrafana.MustTool(

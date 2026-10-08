@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { McpAppShell } from '../src/McpAppShell';
 import { RenderMetricsApp } from '../src/metrics/RenderMetricsApp';
 import '../styles.css';
+import { AppErrorBoundary } from './AppErrorBoundary';
 import type { MetricsHostState } from './metricsHostState';
 
 /**
@@ -19,17 +20,19 @@ export function MetricsApplication({ host }: { host: MetricsHostState }) {
 
   if (state.result) {
     return (
-      <RenderMetricsApp
-        result={state.result}
-        colorMode={state.colorMode}
-        expr={state.args?.expr}
-        channel={state.channel}
-        onOpenInGrafana={host.openInGrafana}
-        onSelectRange={host.askAboutRange}
-        onRefresh={canRefresh ? host.refresh : undefined}
-        refreshing={state.refreshing}
-        notice={state.notice}
-      />
+      // The charts are the part that can throw; without a boundary a crash is a blank panel.
+      <AppErrorBoundary label="Prometheus query" colorMode={state.colorMode}>
+        <RenderMetricsApp
+          result={state.result}
+          colorMode={state.colorMode}
+          expr={state.args?.expr}
+          onOpenInGrafana={host.openInGrafana}
+          onSelectRange={host.askAboutRange}
+          onRefresh={canRefresh ? host.refresh : undefined}
+          refreshing={state.refreshing}
+          notice={state.notice}
+        />
+      </AppErrorBoundary>
     );
   }
 

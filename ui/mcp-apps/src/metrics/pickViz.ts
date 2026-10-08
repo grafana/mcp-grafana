@@ -55,12 +55,6 @@ export function isBoundedUnit(unit: Unit | undefined): boolean {
 }
 
 /**
- * Choose the default viz for a response.
- *
- * `unit` decides only whether a gauge arc would be meaningful — pass
- * `inferUnit(commonMetricName(series))`.
- */
-/**
  * Series count past which overlaid lines stop being readable and a heatmap is
  * the better default. Chosen for a chat-width panel, where even a dozen lines
  * crowd; the time series view stays one click away.
@@ -72,6 +66,12 @@ function withTable(...kinds: VizKind[]): VizKind[] {
   return [...kinds, 'table'];
 }
 
+/**
+ * Choose the default viz for a response.
+ *
+ * `unit` decides only whether a bounded view (a bullet) is meaningful — pass
+ * `inferUnit(commonMetricName(series))`.
+ */
 export function pickViz(result: MetricsResult, unit?: Unit): VizChoice {
   const series = result.series ?? [];
   const seriesCount = series.length;

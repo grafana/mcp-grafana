@@ -6,11 +6,13 @@
  * `app/MetricsApplication.tsx`.
  */
 
-import { useState, type MouseEvent } from 'react';
+import { useState } from 'react';
 import { SquareDashedMousePointer } from 'lucide-react';
 
 import { getRenderMetricsAppStyles } from './RenderMetricsApp.styles';
-import { McpAppShell, type McpAppColorMode } from '../McpAppShell';
+import { Button } from '../design';
+import { openInGrafanaAction } from '../grafanaLink';
+import { McpAppShell, type McpAppColorMode, type McpAppFeedback } from '../McpAppShell';
 import { inferUnit, type Threshold, type Unit } from '../viz/format';
 import { BarChart } from '../viz/BarChart';
 import { Bullet, BulletGroup } from '../viz/Bullet';
@@ -43,22 +45,9 @@ export interface RenderMetricsAppProps {
   onRefresh?: () => void;
   refreshing?: boolean;
   /** Transient message about the last action, shown in the shell's feedback slot. */
-  notice?: string;
-  /** Which channel the host payload arrived on — shown in the diagnostic line. */
-  channel?: string;
+  notice?: McpAppFeedback;
   /** Shows the derived choice and its reason. Used by the preview harness. */
   debug?: boolean;
-}
-
-/** Only http(s) links reach the shell's header action. */
-function isSafeGrafanaUrl(value: string | undefined): value is string {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password;
-  } catch {
-    return false;
-  }
 }
 
 export function RenderMetricsApp({
@@ -73,7 +62,6 @@ export function RenderMetricsApp({
   onRefresh,
   refreshing = false,
   notice,
-  channel,
   debug = false,
 }: RenderMetricsAppProps) {
   const styles = getRenderMetricsAppStyles();
@@ -89,21 +77,7 @@ export function RenderMetricsApp({
   const [selecting, setSelecting] = useState(false);
   const canSelectRange = Boolean(onSelectRange) && kind === 'timeseries';
 
-  const grafanaUrl = exploreUrl ?? result.exploreUrl;
-  const safeGrafanaUrl = isSafeGrafanaUrl(grafanaUrl) ? grafanaUrl : undefined;
-  // The host owns navigation: hand it the URL rather than letting the anchor
-  // try, which a sandboxed iframe silently blocks.
-  const openInGrafana = safeGrafanaUrl
-    ? {
-        href: safeGrafanaUrl,
-        onClick: onOpenInGrafana
-          ? (event: MouseEvent<HTMLAnchorElement>) => {
-              event.preventDefault();
-              onOpenInGrafana({ url: safeGrafanaUrl });
-            }
-          : undefined,
-      }
-    : undefined;
+  const openInGrafana = openInGrafanaAction(exploreUrl ?? result.exploreUrl, onOpenInGrafana);
   const pointCount = result.series.reduce((total, s) => total + s.points.length, 0);
   // The empty state says this in the body; repeating it here reads as a stutter.
   const description =
@@ -128,20 +102,15 @@ export function RenderMetricsApp({
           ? { label: refreshing ? 'Refreshing…' : 'Refresh', onClick: onRefresh, pending: refreshing }
           : undefined
       }
-      feedback={notice ? { tone: 'info', message: notice } : undefined}
+      feedback={notice}
     >
       <div className={styles.controls}>
         <VizPicker options={options} value={kind} onChange={setOverride} />
         {canSelectRange && (
-          <button
-            type="button"
-            className={styles.controlButton}
-            aria-pressed={selecting}
-            onClick={() => setSelecting((armed) => !armed)}
-          >
-            <SquareDashedMousePointer size={14} aria-hidden="true" />
+          <Button variant="secondary" size="xs" aria-pressed={selecting} onClick={() => setSelecting((armed) => !armed)}>
+            <SquareDashedMousePointer size={12} aria-hidden="true" />
             {selecting ? 'Drag to select' : 'Ask about a window'}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -153,11 +122,9 @@ export function RenderMetricsApp({
         </div>
       ))}
 
-      {(debug || channel) && (
+      {debug && (
         <div className={styles.debug}>
-          {result.resultType} · {choice.kind} · unit={unit}
-          {channel ? ` · via ${channel}` : ''}
-          {debug ? ` · ${choice.reason}` : ''}
+          {result.resultType} · {choice.kind} · unit={unit} · {choice.reason}
         </div>
       )}
     </McpAppShell>
@@ -223,7 +190,6 @@ export function RenderMetricsApp({
                 unit={unit}
                 thresholds={thresholds}
                 sparkline={series.points.length > 1 ? series.points : undefined}
-                colorMode={colorMode}
                 colorIndex={index}
               />
             ))}

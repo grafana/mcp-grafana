@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractToolPayload, parsePrometheusResult, parseSampleValue } from '../app/parsePrometheusResult';
+import { extractToolPayload, parsePrometheusResult } from '../app/parsePrometheusResult';
 import { pickViz } from '../src/metrics/pickViz';
 import { shortSeriesNames } from '../src/viz/types';
 import {
@@ -53,10 +53,12 @@ describe('parsePrometheusResult', () => {
   });
 
   it('handles Prometheus special values, which arrive as strings', () => {
-    expect(parseSampleValue('1.25')).toBe(1.25);
-    expect(parseSampleValue('+Inf')).toBe(Number.POSITIVE_INFINITY);
-    expect(parseSampleValue('-Inf')).toBe(Number.NEGATIVE_INFINITY);
-    expect(parseSampleValue('NaN')).toBeNaN();
+    const valueOf = (raw: string) =>
+      parsePrometheusResult({ data: [{ metric: {}, value: [1760000000, raw] }] })!.series[0].points[0][1];
+    expect(valueOf('1.25')).toBe(1.25);
+    expect(valueOf('+Inf')).toBe(Number.POSITIVE_INFINITY);
+    expect(valueOf('-Inf')).toBe(Number.NEGATIVE_INFINITY);
+    expect(valueOf('NaN')).toBeNaN();
   });
 });
 
@@ -94,7 +96,10 @@ describe('parse → pick, end to end', () => {
 describe('extractToolPayload', () => {
   it('prefers structuredContent when the host provides it', () => {
     const payload = { data: [] };
-    expect(extractToolPayload({ structuredContent: payload, content: [] })).toBe(payload);
+    expect(extractToolPayload({ structuredContent: payload, content: [] })).toEqual({
+      payload,
+      channel: 'structuredContent',
+    });
   });
 
   it('falls back to JSON in a text block, for hosts that strip structuredContent', () => {
@@ -104,16 +109,18 @@ describe('extractToolPayload', () => {
         { type: 'text', text: JSON.stringify(vectorSingleUnbounded) },
       ],
     };
-    const payload = extractToolPayload(result);
+    const { payload, channel } = extractToolPayload(result);
+    expect(channel).toBe('text');
     expect(parsePrometheusResult(payload)?.series).toHaveLength(1);
   });
 
   it('ignores prose and unparseable blocks rather than throwing', () => {
-    expect(extractToolPayload({ content: [{ type: 'text', text: 'no payload here' }] })).toBeUndefined();
-    expect(extractToolPayload({ content: [{ type: 'text', text: '{ not json' }] })).toBeUndefined();
-    expect(extractToolPayload({ content: [{ type: 'image', text: undefined }] })).toBeUndefined();
-    expect(extractToolPayload(undefined)).toBeUndefined();
-    expect(extractToolPayload('nope')).toBeUndefined();
+    const none = { payload: undefined, channel: 'none' };
+    expect(extractToolPayload({ content: [{ type: 'text', text: 'no payload here' }] })).toEqual(none);
+    expect(extractToolPayload({ content: [{ type: 'text', text: '{ not json' }] })).toEqual(none);
+    expect(extractToolPayload({ content: [{ type: 'image', text: undefined }] })).toEqual(none);
+    expect(extractToolPayload(undefined)).toEqual(none);
+    expect(extractToolPayload('nope')).toEqual(none);
   });
 });
 

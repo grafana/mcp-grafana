@@ -5,7 +5,6 @@ import { seriesColor } from './theme';
 import { sparklinePath } from './sparkline';
 import type { MetricPoint } from './types';
 import { getVizStyles } from './Viz.styles';
-import type { McpAppColorMode } from '../McpAppShell';
 
 /**
  * Big-number stat with an optional sparkline.
@@ -17,8 +16,6 @@ import type { McpAppColorMode } from '../McpAppShell';
  * without inheriting the chart bundle.
  */
 
-export { sparklinePath };
-
 export type StatProps = {
   value: number;
   label?: string;
@@ -27,8 +24,6 @@ export type StatProps = {
   thresholds?: Threshold[];
   /** Optional recent history, drawn as a sparkline under the value. */
   sparkline?: MetricPoint[];
-  /** Accepted for API symmetry with the chart components; colours come from CSS. */
-  colorMode?: McpAppColorMode;
   /** Index into the series palette, used when no threshold colour applies. */
   colorIndex?: number;
   align?: 'left' | 'center';

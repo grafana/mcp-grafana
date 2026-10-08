@@ -202,7 +202,7 @@ export function axisDecimals(values: number[], unit: Unit = 'none'): number | un
   return places > 3 ? Math.min(places, 12) : undefined;
 }
 
-/** `formatValue` plus threshold resolution — the display path for gauges and bars. */
+/** `formatValue` plus threshold resolution — the display path for bullets, stats and bars. */
 export function display(
   value: number,
   opts: { unit?: Unit; decimals?: number; thresholds?: Threshold[] } = {}

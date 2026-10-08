@@ -1,8 +1,9 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
 
-import type { McpAppColorMode } from '../src/McpAppShell';
+import type { McpAppColorMode, McpAppFeedback } from '../src/McpAppShell';
 import type { ParsedMetrics } from '../src/metrics/pickViz';
-import { extractToolPayloadWithChannel, parsePrometheusResult, type PayloadChannel } from './parsePrometheusResult';
+import { applyHostContext } from './hostContext';
+import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 
 /**
  * Host state for the metrics app, owned outside React.
@@ -31,12 +32,11 @@ export type QueryArgs = {
 export type MetricsHostSnapshot = {
   result?: ParsedMetrics;
   args?: QueryArgs;
-  channel?: PayloadChannel;
   colorMode: McpAppColorMode;
   status: string;
   isError: boolean;
   /** Transient message about the last user-initiated action. */
-  notice?: string;
+  notice?: McpAppFeedback;
   refreshing: boolean;
 };
 
@@ -54,6 +54,8 @@ export type MetricsHostState = {
 
 const TOOL_NAME = 'query_prometheus';
 
+const error = (message: string): McpAppFeedback => ({ tone: 'error', message });
+
 export function createMetricsHostState(app: App): MetricsHostState {
   let snapshot: MetricsHostSnapshot = {
     colorMode: 'light',
@@ -70,11 +72,10 @@ export function createMetricsHostState(app: App): MetricsHostState {
 
   /** Parse a tool result onto the snapshot. Shared by the first render and refresh. */
   const applyResult = (response: unknown): boolean => {
-    const { payload, channel } = extractToolPayloadWithChannel(response);
+    const { payload, channel } = extractToolPayload(response);
 
     if (channel === 'none') {
       set({
-        channel,
         isError: true,
         status:
           'The host delivered a result with no readable payload (neither structuredContent nor a JSON text block).',
@@ -85,14 +86,13 @@ export function createMetricsHostState(app: App): MetricsHostState {
     const parsed = parsePrometheusResult(payload);
     if (!parsed) {
       set({
-        channel,
         isError: true,
         status: `Received a payload via ${channel}, but it did not parse as a Prometheus result.`,
       });
       return false;
     }
 
-    set({ channel, result: parsed, isError: false });
+    set({ result: parsed, isError: false });
     return true;
   };
 
@@ -118,12 +118,8 @@ export function createMetricsHostState(app: App): MetricsHostState {
   };
 
   app.onhostcontextchanged = (context) => {
-    if (context.theme === 'light' || context.theme === 'dark') set({ colorMode: context.theme });
-    if (context.safeAreaInsets) {
-      const { top, right, bottom, left } = context.safeAreaInsets;
-      document.body.style.padding = `${top}px ${right}px ${bottom}px ${left}px`;
-      document.body.style.boxSizing = 'border-box';
-    }
+    const colorMode = applyHostContext(context);
+    if (colorMode) set({ colorMode });
   };
 
   app.onteardown = async () => {
@@ -153,13 +149,13 @@ export function createMetricsHostState(app: App): MetricsHostState {
     try {
       const response = await app.callServerTool({ name: TOOL_NAME, arguments: { ...args } });
       if (response.isError) {
-        set({ notice: 'The refresh query failed. The chart still shows the previous result.' });
+        set({ notice: error('The refresh query failed. The chart still shows the previous result.') });
       } else if (!applyResult(response)) {
-        set({ notice: 'Refresh returned a result the app could not read.' });
+        set({ notice: error('Refresh returned a result the app could not read.') });
       }
     } catch (cause) {
       // A host may decline the call, or require an approval the user dismissed.
-      set({ notice: `Could not refresh: ${cause instanceof Error ? cause.message : String(cause)}` });
+      set({ notice: error(`Could not refresh: ${cause instanceof Error ? cause.message : String(cause)}`) });
     } finally {
       set({ refreshing: false });
     }
@@ -181,7 +177,7 @@ export function createMetricsHostState(app: App): MetricsHostState {
           },
         ],
       })
-      .catch(() => set({ notice: 'Could not send the selection to the agent.' }));
+      .catch(() => set({ notice: error('Could not send the selection to the agent.') }));
   };
 
   const openInGrafana = ({ url }: { url: string }) => {
@@ -189,9 +185,9 @@ export function createMetricsHostState(app: App): MetricsHostState {
     void app
       .openLink({ url })
       .then((response) => {
-        set({ notice: response.isError ? 'The host could not open Grafana. Try the link again.' : undefined });
+        set({ notice: response.isError ? error('The host could not open Grafana. Try the link again.') : undefined });
       })
-      .catch(() => set({ notice: 'Could not open Grafana. Try the link again.' }));
+      .catch(() => set({ notice: error('Could not open Grafana. Try the link again.') }));
   };
 
   return {

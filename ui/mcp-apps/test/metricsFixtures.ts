@@ -61,12 +61,12 @@ export const vectorMultiSeries = {
   ],
 };
 
-/** Instant query, one value, unbounded unit — stat, not gauge. */
+/** Instant query, one value, unbounded unit — stat, not bullet. */
 export const vectorSingleUnbounded = {
   data: [{ metric: { __name__: 'go_goroutines', job: 'grafana' }, value: [START, '1403'] }],
 };
 
-/** Instant query, one value, bounded unit — gauge is meaningful here. */
+/** Instant query, one value, bounded unit — bullet is meaningful here. */
 export const vectorSingleBounded = {
   data: [{ metric: { __name__: 'node_memory_utilisation_ratio', instance: '192.168.1.215:9100' }, value: [START, '0.87'] }],
 };

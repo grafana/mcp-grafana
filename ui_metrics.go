@@ -23,7 +23,7 @@ func RegisterMetricsAppResource(s *mcp.Server) {
 			URI:         MetricsViewerResourceURI,
 			Name:        "Grafana metrics",
 			Title:       "Grafana metrics",
-			Description: "Interactive chart for a PromQL query result: time series, ranked bars, gauge, or stat, chosen from the shape of the response",
+			Description: "Interactive chart for a PromQL query result: time series, heatmap, ranked bars, bullet, or stat, chosen from the shape of the response",
 			MIMEType:    appMIMEType,
 			Size:        int64(len(metricsViewerAppHTML)),
 		},

@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { formatValue, resolveThresholdColor, type Threshold, type Unit } from './format';
-import { shortSeriesNames, type MetricSeries } from './types';
+import { latestValue, shortSeriesNames, type MetricSeries } from './types';
 import type { McpAppColorMode } from '../McpAppShell';
 import { useEChart } from './useEChart';
 import { getVizStyles } from './Viz.styles';
@@ -17,12 +17,6 @@ export type BarChartProps = {
   limit?: number;
 };
 
-/** Last value of a series, or NaN when it has no points. */
-function latest(series: MetricSeries): number {
-  const point = series.points[series.points.length - 1];
-  return point ? point[1] : Number.NaN;
-}
-
 export function BarChart({
   series,
   unit = 'none',
@@ -37,7 +31,7 @@ export function BarChart({
   // and would otherwise be unreadable rotated labels.
   const names = shortSeriesNames(series);
   const ranked = series
-    .map((s, i) => ({ name: names[i], value: latest(s) }))
+    .map((s, i) => ({ name: names[i], value: latestValue(s) }))
     .filter((entry) => Number.isFinite(entry.value))
     .sort((a, b) => b.value - a.value)
     .slice(0, limit);

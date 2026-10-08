@@ -66,7 +66,7 @@ ECharts features are registered once, in `src/viz/echartsSetup.ts`.
 `query_prometheus` renders its own result. The visualization is derived from the
 response shape and the inferred unit rather than chosen by the model: a range
 query is a time series, an instant query over several series is ranked bars, and
-a single value is a stat — or a gauge when the unit bounds it. Alternatives that
+a single value is a stat — or a bullet when the unit bounds it. Alternatives that
 suit the same data appear as a toggle. Refresh re-runs the query through the
 host's MCP session, and selecting a window sends the agent a follow-up question.
 

@@ -44,21 +44,13 @@ const queryPrometheusResult = z.object({
   exploreUrl: z.string().optional(),
 });
 
-/**
- * Prometheus serialises special values as strings. `Number()` already handles
- * `"NaN"` and `"Infinity"`, but not Prometheus' `"+Inf"` / `"-Inf"` spellings.
- */
-export function parseSampleValue(raw: string): number {
-  return parsePrometheusNumber(raw);
-}
-
 /** Seconds (possibly fractional) → milliseconds, for `Date` and chart axes. */
 function toMillis(seconds: number): number {
   return Math.round(seconds * 1000);
 }
 
 function point([seconds, value]: [number, string]): MetricPoint {
-  return [toMillis(seconds), parseSampleValue(value)];
+  return [toMillis(seconds), parsePrometheusNumber(value)];
 }
 
 const EMPTY: ParsedMetrics = { resultType: 'vector', series: [], warnings: [] };
@@ -115,37 +107,23 @@ export function parsePrometheusResult(payload: unknown): ParsedMetrics | undefin
   return { ...EMPTY, warnings, exploreUrl };
 }
 
+export type PayloadChannel = 'structuredContent' | 'text' | 'none';
+
 /**
  * Pull the tool payload out of a result, whichever channel the host delivered.
  *
  * Hosts differ: `ui/panel-viewer` reads `content`, the trace app reads
- * `structuredContent`, and some hosts (Claude Desktop, as of mid-2026) strip
- * `structuredContent`, `_meta`, and resource blocks before the iframe sees
- * them, leaving only `text` blocks. Trying the structured channel first and
- * falling back to JSON in a text block works on both without the app needing to
- * know which host it is in.
+ * `structuredContent`, and some hosts strip `structuredContent`, `_meta`, and
+ * resource blocks before the iframe sees them, leaving only `text` blocks.
+ * Trying the structured channel first and falling back to JSON in a text block
+ * works on both without the app needing to know which host it is in.
+ *
+ * Also reports which channel carried the payload, so a render failure says
+ * *why* rather than looking identical to "still waiting".
  */
-export type PayloadChannel = 'structuredContent' | 'text' | 'none';
-
-export function extractToolPayload(response: unknown): unknown {
-  return extractToolPayloadWithChannel(response).payload;
-}
-
-/**
- * As `extractToolPayload`, but also reports which channel carried the payload.
- * The app surfaces this so a render failure says *why* rather than looking
- * identical to "still waiting".
- */
-export function extractToolPayloadWithChannel(response: unknown): {
-  payload: unknown;
-  channel: PayloadChannel;
-} {
-  const found = findPayload(response);
-  return found ?? { payload: undefined, channel: 'none' };
-}
-
-function findPayload(response: unknown): { payload: unknown; channel: PayloadChannel } | undefined {
-  if (!response || typeof response !== 'object') return undefined;
+export function extractToolPayload(response: unknown): { payload: unknown; channel: PayloadChannel } {
+  const none = { payload: undefined, channel: 'none' as const };
+  if (!response || typeof response !== 'object') return none;
   const result = response as {
     structuredContent?: unknown;
     content?: Array<{ type?: string; text?: string }>;
@@ -167,5 +145,5 @@ function findPayload(response: unknown): { payload: unknown; channel: PayloadCha
     }
   }
 
-  return undefined;
+  return none;
 }
