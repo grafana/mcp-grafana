@@ -111,7 +111,13 @@ export function parsePrometheusResult(payload: unknown): ParsedMetrics | undefin
   return { ...EMPTY, warnings, exploreUrl };
 }
 
-export type PayloadChannel = 'structuredContent' | 'text' | 'none';
+export type PayloadChannel = 'structuredContent' | 'text' | 'oversized' | 'none';
+
+/**
+ * The server's view budget (`maxMetricsViewBytes`): past it the tool sends no
+ * structuredContent, and the text fallback must not draw the result anyway.
+ */
+export const MAX_VIEW_BYTES = 1 << 20;
 
 /**
  * Pull the tool payload out of a result, whichever channel the host delivered.
@@ -142,6 +148,7 @@ export function extractToolPayload(response: unknown): { payload: unknown; chann
     const text = item.text.trim();
     // Cheap guard so we do not attempt JSON.parse on prose.
     if (!text.startsWith('{') && !text.startsWith('[')) continue;
+    if (new TextEncoder().encode(text).length > MAX_VIEW_BYTES) return { payload: undefined, channel: 'oversized' };
     try {
       return { payload: JSON.parse(text), channel: 'text' };
     } catch {

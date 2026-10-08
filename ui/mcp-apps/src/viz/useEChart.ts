@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { echarts, type EChartsOption } from './echartsSetup';
 import { grafanaEChartsTheme, readThemeColors, type ThemeColors } from './theme'
 import type { McpAppColorMode } from '../McpAppShell';
@@ -11,13 +11,17 @@ import type { McpAppColorMode } from '../McpAppShell';
  * each colour-mode change, so chrome and charts share one source. ECharts
  * cannot re-theme an existing instance, so a mode flip disposes and re-inits —
  * which is why `colorMode` is a dependency and the option is applied after.
+ *
+ * `containerRef` is a callback ref, so the chart also follows the container
+ * itself: a component that shows an empty state instead of the chart div, and
+ * later gets data, still gets a chart.
  */
 export function useEChart(
   buildOption: (colors: ThemeColors) => EChartsOption,
   colorMode: McpAppColorMode,
   deps: readonly unknown[] = []
 ) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [container, containerRef] = useState<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   // Keep the latest builder without making it a dependency — callers pass
   // inline closures, which would otherwise re-init on every render.
@@ -25,7 +29,6 @@ export function useEChart(
   builderRef.current = buildOption;
 
   useEffect(() => {
-    const container = containerRef.current;
     if (!container) return;
 
     const colors = readThemeColors(container, colorMode);
@@ -42,17 +45,16 @@ export function useEChart(
       chartRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorMode]);
+  }, [colorMode, container]);
 
   useEffect(() => {
     const chart = chartRef.current;
-    const container = containerRef.current;
     if (!chart || !container) return;
     const colors = readThemeColors(container, colorMode);
     // `notMerge` so removed series do not linger when the query changes.
     chart.setOption(builderRef.current(colors), { notMerge: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorMode, ...deps]);
+  }, [colorMode, container, ...deps]);
 
   return { containerRef, chartRef };
 }

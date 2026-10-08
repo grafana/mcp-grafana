@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractToolPayload, parsePrometheusResult } from '../app/parsePrometheusResult';
+import { extractToolPayload, MAX_VIEW_BYTES, parsePrometheusResult } from '../app/parsePrometheusResult';
 import { pickViz } from '../src/metrics/pickViz';
 import { shortSeriesNames } from '../src/viz/types';
 import {
@@ -120,6 +120,16 @@ describe('extractToolPayload', () => {
     const { payload, channel } = extractToolPayload(result);
     expect(channel).toBe('text');
     expect(parsePrometheusResult(payload)?.series).toHaveLength(1);
+  });
+
+  it('honours the server view budget on the text fallback', () => {
+    // Past the budget the server omits structuredContent; the text block still
+    // carries the JSON for the model, and must not be drawn anyway.
+    const huge = JSON.stringify({ data: [], padding: 'x'.repeat(MAX_VIEW_BYTES) });
+    expect(extractToolPayload({ content: [{ type: 'text', text: huge }] })).toEqual({
+      payload: undefined,
+      channel: 'oversized',
+    });
   });
 
   it('ignores prose and unparseable blocks rather than throwing', () => {

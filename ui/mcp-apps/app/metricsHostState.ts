@@ -74,6 +74,14 @@ export function createMetricsHostState(app: App): MetricsHostState {
   const applyResult = (response: unknown): boolean => {
     const { payload, channel } = extractToolPayload(response);
 
+    if (channel === 'oversized') {
+      set({
+        isError: true,
+        status: 'This result is too large for the interactive view. The data is in the tool output.',
+      });
+      return false;
+    }
+
     if (channel === 'none') {
       set({
         isError: true,

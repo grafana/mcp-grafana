@@ -74,6 +74,11 @@ export function deaccumulateBuckets(series: MetricSeries[]): MetricSeries[] {
   });
 }
 
+/** Escape text for ECharts' HTML tooltip. Row names come from label values. */
+function escapeHTML(text: string): string {
+  return text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
 /**
  * Labels for de-accumulated bucket rows, which are sorted by bound. The axis
  * shows each row's upper bound, as Grafana's heatmap does; the tooltip names
@@ -144,10 +149,13 @@ export function Heatmap({
         // Keep it inside the chart: the iframe clips anything past its edge.
         confine: true,
         position: 'top',
+        // ECharts inserts a formatter's string as HTML, and row names come from
+        // Prometheus label values, so every part is escaped.
         formatter: (params: unknown) => {
           const { value } = params as { value: [number, number, number] };
           const [column, row, amount] = value;
-          return `${timeLabels[column]} · ${rowTooltips[row]}<br/>${formatValue(amount, valueUnit, decimals).formatted}`;
+          const title = `${timeLabels[column]} · ${rowTooltips[row]}`;
+          return `${escapeHTML(title)}<br/>${escapeHTML(formatValue(amount, valueUnit, decimals).formatted)}`;
         },
       },
       grid: { left: 8, right: 8, top: 8, bottom: 48, containLabel: true },
