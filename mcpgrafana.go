@@ -571,7 +571,7 @@ func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // version is set at build time via ldflags:
 //
-//	-X github.com/grafana/mcp-grafana.version=v1.2.3
+//	-X github.com/grafana/mcp-grafana/v2.version=v1.2.3
 var version string
 
 // Version returns the version of the mcp-grafana binary.

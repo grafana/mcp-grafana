@@ -19,7 +19,7 @@ ARG TARGETOS
 ARG TARGETARCH
 # VERSION is injected by CI on tag builds; when empty, Version() falls back to build info.
 ARG VERSION=""
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -X github.com/grafana/mcp-grafana.version=${VERSION}" -o mcp-grafana ./cmd/mcp-grafana
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -X github.com/grafana/mcp-grafana/v2.version=${VERSION}" -o mcp-grafana ./cmd/mcp-grafana
 
 # Final stage
 FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3
