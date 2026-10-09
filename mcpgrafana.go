@@ -317,6 +317,11 @@ type GrafanaConfig struct {
 	// opaque RoundTripper.
 	SOCKS5ProxyURL string
 
+	// DisableInteractiveLearningHints stops tools from adding a pointer to
+	// Grafana Interactive Learning (the "My Learning" page) to results that
+	// show something is not set up or a dead end was hit.
+	DisableInteractiveLearningHints bool
+
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
