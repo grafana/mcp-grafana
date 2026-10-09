@@ -68,24 +68,46 @@ func (p ManageRoutingParams) toListContactPointsParams() ListContactPointsParams
 	}
 }
 
-func manageRouting(ctx context.Context, args ManageRoutingParams) (any, error) {
+// routingResult is the result of an alerting_manage_routing operation; the
+// field named after the operation is set.
+type routingResult struct {
+	NotificationPolicies *models.Route         `json:"notificationPolicies,omitempty"`
+	ContactPoints        []contactPointSummary `json:"contactPoints,omitzero"`
+	// ContactPointIntegrations holds every integration of the contact point
+	// named by get_contact_point.
+	ContactPointIntegrations []*models.EmbeddedContactPoint `json:"contactPointIntegrations,omitzero"`
+	TimeIntervals            []muteTimingSummary            `json:"timeIntervals,omitzero"`
+	TimeInterval             *models.MuteTimeInterval       `json:"timeInterval,omitempty"`
+}
+
+func manageRouting(ctx context.Context, args ManageRoutingParams) (*routingResult, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_manage_routing: %w", err)
 	}
 
+	var res routingResult
+	var err error
 	switch args.Operation {
 	case "get_notification_policies":
-		return getNotificationPolicies(ctx)
+		res.NotificationPolicies, err = getNotificationPolicies(ctx)
 	case "get_contact_points":
-		return listContactPoints(ctx, args.toListContactPointsParams())
+		res.ContactPoints, err = listContactPoints(ctx, args.toListContactPointsParams())
+		res.ContactPoints = nonNil(res.ContactPoints)
 	case "get_contact_point":
-		return getContactPointDetail(ctx, *args.ContactPointTitle)
+		res.ContactPointIntegrations, err = getContactPointDetail(ctx, *args.ContactPointTitle)
+		res.ContactPointIntegrations = nonNil(res.ContactPointIntegrations)
 	case "get_time_intervals":
-		return getTimeIntervals(ctx)
+		res.TimeIntervals, err = getTimeIntervals(ctx)
+		res.TimeIntervals = nonNil(res.TimeIntervals)
 	case "get_time_interval":
-		return getTimeInterval(ctx, *args.TimeIntervalName)
+		res.TimeInterval, err = getTimeInterval(ctx, *args.TimeIntervalName)
+	default:
+		return nil, fmt.Errorf("alerting_manage_routing: unknown operation %q", args.Operation)
 	}
-	return nil, fmt.Errorf("alerting_manage_routing: unknown operation %q", args.Operation)
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 // getNotificationPolicies retrieves the full notification policy tree.

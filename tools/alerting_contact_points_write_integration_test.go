@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
-	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -93,17 +92,19 @@ func TestCreateContactPointIntegration(t *testing.T) {
 				assert.Equal(t, args["uid"], created["uid"])
 			}
 
-			var listed []contactPointSummary
+			var listResult routingResult
 			call(t, "alerting_manage_routing", map[string]any{
 				"operation": "get_contact_points", "name": name,
-			}, &listed)
+			}, &listResult)
+			listed := listResult.ContactPoints
 			require.Len(t, listed, 1)
 			assert.Equal(t, created["uid"], listed[0].UID)
 
-			var details []*models.EmbeddedContactPoint
+			var detailResult routingResult
 			call(t, "alerting_manage_routing", map[string]any{
 				"operation": "get_contact_point", "contact_point_title": name,
-			}, &details)
+			}, &detailResult)
+			details := detailResult.ContactPointIntegrations
 			require.Len(t, details, 1)
 			assert.Equal(t, created["uid"], details[0].UID)
 			assert.True(t, details[0].DisableResolveMessage)

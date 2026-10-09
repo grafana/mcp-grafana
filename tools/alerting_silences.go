@@ -263,27 +263,58 @@ func derefSilenceStr(v *string) string {
 	return *v
 }
 
-// manageSilencesRead backs the read-only tool variant (list/get only).
-func manageSilencesRead(ctx context.Context, args ManageSilencesReadParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_silences_read: %w", err)
-	}
-
-	c, err := newAlertingClientFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("alerting_silences_read: %w", err)
-	}
-
-	switch args.Operation {
-	case "list":
-		return c.listSilences(ctx, buildSilenceFilters(args.RuleUID, args.Matchers))
-	case "get":
-		return c.getSilence(ctx, *args.SilenceID)
-	}
-	return nil, fmt.Errorf("alerting_silences_read: unknown operation %q", args.Operation)
+// silencesReadResult is the result of an alerting_silences_read operation:
+// silences for list, silence for get.
+type silencesReadResult struct {
+	Silences models.GettableSilences `json:"silences,omitzero"`
+	Silence  *models.GettableSilence `json:"silence,omitempty"`
 }
 
-func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (any, error) {
+// silencesWriteResult adds the write operations' results: the silence ID for
+// create and update, and for delete the ID with status "deleted".
+type silencesWriteResult struct {
+	silencesReadResult
+	SilenceID string `json:"silenceID,omitempty"`
+	Status    string `json:"status,omitempty"`
+}
+
+func (c *alertingClient) readSilences(ctx context.Context, operation string, ruleUID *string, matchers []SilenceMatcherParam, silenceID *string) (*silencesReadResult, error) {
+	switch operation {
+	case "list":
+		silences, err := c.listSilences(ctx, buildSilenceFilters(ruleUID, matchers))
+		if err != nil {
+			return nil, err
+		}
+		return &silencesReadResult{Silences: nonNil(silences)}, nil
+	case "get":
+		silence, err := c.getSilence(ctx, *silenceID)
+		if err != nil {
+			return nil, err
+		}
+		return &silencesReadResult{Silence: silence}, nil
+	}
+	return nil, fmt.Errorf("unknown operation %q", operation)
+}
+
+// manageSilencesRead backs the read-only tool variant (list/get only).
+func manageSilencesRead(ctx context.Context, args ManageSilencesReadParams) (*silencesReadResult, error) {
+	if err := args.validate(); err != nil {
+		return nil, fmt.Errorf("alerting_silences_read: %w", err)
+	}
+
+	c, err := newAlertingClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("alerting_silences_read: %w", err)
+	}
+
+	res, err := c.readSilences(ctx, args.Operation, args.RuleUID, args.Matchers, args.SilenceID)
+	if err != nil {
+		return nil, fmt.Errorf("alerting_silences_read: %w", err)
+	}
+	return res, nil
+}
+
+func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (*silencesWriteResult, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_silences_write: %w", err)
 	}
@@ -294,20 +325,27 @@ func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (an
 	}
 
 	switch args.Operation {
-	case "list":
-		return c.listSilences(ctx, buildSilenceFilters(args.RuleUID, args.Matchers))
-	case "get":
-		return c.getSilence(ctx, *args.SilenceID)
 	case "create", "update":
 		s, err := args.toPostableSilence()
 		if err != nil {
 			return nil, fmt.Errorf("alerting_silences_write: %w", err)
 		}
-		return c.createOrUpdateSilence(ctx, s)
+		created, err := c.createOrUpdateSilence(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return &silencesWriteResult{SilenceID: created.SilenceID}, nil
 	case "delete":
-		return c.deleteSilence(ctx, *args.SilenceID)
+		if err := c.deleteSilence(ctx, *args.SilenceID); err != nil {
+			return nil, err
+		}
+		return &silencesWriteResult{SilenceID: *args.SilenceID, Status: "deleted"}, nil
 	}
-	return nil, fmt.Errorf("alerting_silences_write: unknown operation %q", args.Operation)
+	res, err := c.readSilences(ctx, args.Operation, args.RuleUID, args.Matchers, args.SilenceID)
+	if err != nil {
+		return nil, fmt.Errorf("alerting_silences_write: %w", err)
+	}
+	return &silencesWriteResult{silencesReadResult: *res}, nil
 }
 
 // silenceRequest performs a JSON HTTP request against the Alertmanager silences
@@ -405,12 +443,12 @@ func (c *alertingClient) createOrUpdateSilence(ctx context.Context, s models.Pos
 	return &out, nil
 }
 
-func (c *alertingClient) deleteSilence(ctx context.Context, id string) (any, error) {
+func (c *alertingClient) deleteSilence(ctx context.Context, id string) error {
 	path := silencesBasePath + "/silence/" + url.PathEscape(id)
 	if err := c.silenceRequest(ctx, http.MethodDelete, path, nil, nil, nil); err != nil {
-		return nil, fmt.Errorf("failed to delete silence %q: %w", id, err)
+		return fmt.Errorf("failed to delete silence %q: %w", id, err)
 	}
-	return map[string]string{"status": "deleted", "silence_id": id}, nil
+	return nil
 }
 
 var AlertSilencesRead = mcpgrafana.MustTool(

@@ -596,7 +596,7 @@ func TestManageRules_ListRules(t *testing.T) {
 				},
 				Operation: "list",
 			},
-			expectedRules: nil,
+			expectedRules: []alertRuleSummary{},
 		},
 	}
 
@@ -610,7 +610,7 @@ func TestManageRules_ListRules(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			rules, ok := result.([]alertRuleSummary)
+			rules, ok := result.Rules, result != nil
 			require.True(t, ok)
 			require.Equal(t, tc.expectedRules, rules)
 		})
