@@ -84,6 +84,30 @@ func TestReadmeToolPermissions(t *testing.T) {
 		"`go test ./cmd/mcp-grafana -run TestReadmeToolPermissions -update-readme`")
 }
 
+// TestDocsToolTableListsRegisteredTools checks that the docs reference table
+// lists exactly the registered tools. Its columns are written by hand.
+func TestDocsToolTableListsRegisteredTools(t *testing.T) {
+	var registered []string
+	for name := range listAllCategoryTools(t, disabledTools{}) {
+		registered = append(registered, name)
+	}
+
+	raw, err := os.ReadFile("../../docs/sources/reference/mcp-tools-table.md")
+	require.NoError(t, err)
+	lines := strings.Split(string(raw), "\n")
+	start := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "| Tool ") })
+	require.NotEqual(t, -1, start, "docs tool table not found")
+	var documented []string
+	for _, line := range lines[start+2:] {
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		documented = append(documented, strings.Trim(splitTableRow(line)[0], "`"))
+	}
+
+	assert.ElementsMatch(t, registered, documented, "docs/sources/reference/mcp-tools-table.md is out of sync with the registered tools")
+}
+
 // splitTableRow splits a markdown table row into trimmed cells, leaving
 // escaped pipes (\|) inside their cell.
 func splitTableRow(line string) []string {
