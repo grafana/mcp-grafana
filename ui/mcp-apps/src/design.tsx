@@ -1,6 +1,8 @@
 import { css, cx } from '@emotion/css';
 import type { ButtonHTMLAttributes, CSSProperties, ReactElement, ReactNode } from 'react';
 
+import { isSafeUrl } from './sanitize';
+
 /** Public, local values for the standalone MCP resource. Semantic colors stay scoped to each app root. */
 export const getDesignTokens = () => ({
   primitives: {
@@ -65,11 +67,7 @@ export function Button({ variant = 'default', size = 'default', render, nativeBu
   if (render) {
     const { href, onClick } = render.props;
     // Keep links usable for relative Grafana paths, but reject executable URL schemes.
-    try {
-      if (!href?.trim() || !['http:', 'https:'].includes(new URL(href, 'https://grafana.invalid').protocol)) {
-        return null;
-      }
-    } catch {
+    if (!isSafeUrl(href, { allowRelative: true })) {
       return null;
     }
     return <a href={href} onClick={onClick} className={classNames} role={props.role}>{children}</a>;

@@ -1,6 +1,7 @@
 export { McpAppSection } from './McpAppSection';
 export type { McpAppSectionProps } from './McpAppSection';
 export { McpAppShell } from './McpAppShell';
+export { escapeHTML, isSafeUrl } from './sanitize';
 export type {
   McpAppAction,
   McpAppColorMode,
