@@ -48,7 +48,7 @@ const buttonClass = css({
 });
 const buttonVariants = {
   default: css({ background: 'var(--mcp-primary)', color: 'var(--mcp-primary-text)', '&:hover:not(:disabled):not([aria-disabled="true"])': { background: 'var(--mcp-primary-hover)' } }),
-  secondary: css({ background: 'var(--mcp-muted)', color: 'var(--mcp-foreground)', borderColor: 'var(--mcp-border)', '&:hover:not(:disabled):not([aria-disabled="true"])': { background: 'var(--mcp-accent)' } }),
+  secondary: css({ background: 'var(--mcp-muted)', color: 'var(--mcp-foreground)', borderColor: 'var(--mcp-border)', '&:hover:not(:disabled):not([aria-disabled="true"])': { background: 'var(--mcp-accent)' }, '&[aria-pressed="true"]': { background: 'var(--mcp-accent)', borderColor: 'var(--mcp-input-border)' } }),
   ghost: css({ background: 'transparent', color: 'var(--mcp-foreground)', '&:hover:not(:disabled):not([aria-disabled="true"])': { background: 'var(--mcp-muted)' } }),
 };
 const buttonSizes = { xs: css({ minHeight: 24, padding: '3px 8px', fontSize: 11 }), sm: css({ minHeight: 30, padding: '5px 10px', fontSize: 12 }), default: css({ minHeight: 36, padding: '8px 12px', fontSize: 14 }) };
