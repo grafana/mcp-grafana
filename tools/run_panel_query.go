@@ -171,7 +171,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
 
-	prepared, err := prepareDashboardQuery(ctx, db, panelData.Query,
+	prepared, err := prepareDashboardQuery(ctx, db, panelData.Query, panelData.RawTarget,
 		datasourceInfo{UID: panelData.DatasourceUID, Type: panelData.DatasourceType},
 		params.Variables, params.Start, params.End, params.DsUID, params.DsType)
 	if err != nil {
@@ -180,7 +180,8 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	if len(prepared.Warnings) > 0 {
 		return nil, fmt.Errorf("preparing panel query: %s", strings.Join(prepared.Warnings, "; "))
 	}
-	templateVariables := prepared.Variables
+	// Use the prepared copy so literal All values are not formatted again.
+	panelData.RawTarget = prepared.Target
 	datasourceUID, datasourceType := prepared.Datasource.UID, prepared.Datasource.Type
 	query := prepared.Query
 	params.Start, params.End = prepared.Start, prepared.End
@@ -196,20 +197,20 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "clickhouse":
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
-		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
+		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, nil)
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.BigQueryDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, sqldialect.BigQueryDatasourceType)
 	case "mysql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MySQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, sqldialect.MySQLDatasourceType)
 	case "mssql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MSSQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, sqldialect.MSSQLDatasourceType)
 	case "postgres":
 		// PostgreSQL exposes two datasource identifiers (grafana-postgresql-datasource
 		// and the legacy postgres); pass the resolved type through so the datasource
 		// object sent to Grafana matches what the panel actually declared.
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, datasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, datasourceType)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus, query_loki_logs, query_sql, query_cloudwatch, query_influxdb) directly", datasourceType)
 	}
@@ -317,15 +318,21 @@ func formatSQLStringVariable(values []string) string {
 }
 
 func substituteTemplateVariablesInMapWithValues(target map[string]interface{}, variables templateVariableValues) map[string]interface{} {
+	return substituteStringsInMap(target, func(value string) string {
+		return substituteTemplateVariableValues(value, variables)
+	})
+}
+
+func substituteStringsInMap(target map[string]interface{}, substitute func(string) string) map[string]interface{} {
 	result := make(map[string]interface{})
 	for k, v := range target {
 		switch val := v.(type) {
 		case string:
-			result[k] = substituteTemplateVariableValues(val, variables)
+			result[k] = substitute(val)
 		case map[string]interface{}:
-			result[k] = substituteTemplateVariablesInMapWithValues(val, variables)
+			result[k] = substituteStringsInMap(val, substitute)
 		case []interface{}:
-			result[k] = substituteTemplateVariablesInSliceWithValues(val, variables)
+			result[k] = substituteStringsInSlice(val, substitute)
 		default:
 			result[k] = v
 		}
@@ -333,16 +340,16 @@ func substituteTemplateVariablesInMapWithValues(target map[string]interface{}, v
 	return result
 }
 
-func substituteTemplateVariablesInSliceWithValues(slice []interface{}, variables templateVariableValues) []interface{} {
+func substituteStringsInSlice(slice []interface{}, substitute func(string) string) []interface{} {
 	result := make([]interface{}, len(slice))
 	for i, v := range slice {
 		switch val := v.(type) {
 		case string:
-			result[i] = substituteTemplateVariableValues(val, variables)
+			result[i] = substitute(val)
 		case map[string]interface{}:
-			result[i] = substituteTemplateVariablesInMapWithValues(val, variables)
+			result[i] = substituteStringsInMap(val, substitute)
 		case []interface{}:
-			result[i] = substituteTemplateVariablesInSliceWithValues(val, variables)
+			result[i] = substituteStringsInSlice(val, substitute)
 		default:
 			result[i] = v
 		}
