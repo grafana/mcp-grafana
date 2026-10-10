@@ -49,6 +49,35 @@ type preparedDashboardQuery struct {
 	End        string
 }
 
+type variableOptionQueryKey struct {
+	datasourceUID string
+	query         string
+	start         string
+	end           string
+}
+
+type variableOptionQueryResult struct {
+	values []string
+	err    error
+}
+
+// A cache belongs to one tool call and is shared by its sequential panel
+// preparations. Keep failures too, so each panel reports the same resolution
+// error without retrying the datasource within that call.
+type variableOptionsCache map[variableOptionQueryKey]variableOptionQueryResult
+
+func (cache variableOptionsCache) query(ctx context.Context, uid, query, start, end string) ([]string, error) {
+	key := variableOptionQueryKey{datasourceUID: uid, query: query, start: start, end: end}
+	if result, ok := cache[key]; ok {
+		return result.values, result.err
+	}
+	values, err := querySQLVariableOptions(ctx, uid, query, start, end)
+	if cache != nil {
+		cache[key] = variableOptionQueryResult{values: values, err: err}
+	}
+	return values, err
+}
+
 func dashboardQueryRange(start, end string) (time.Time, time.Time, error) {
 	if start == "" {
 		start = "now-1h"
@@ -73,7 +102,7 @@ func dashboardQueryRange(start, end string) (time.Time, time.Time, error) {
 
 // prepareDashboardQuery prepares frontend substitutions only. SQL plugin macros
 // such as $__timeFilter remain in the query sent to Grafana's backend.
-func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query string, target map[string]interface{}, source datasourceInfo, overrides map[string]string, start, end, overrideUID, overrideType string) (*preparedDashboardQuery, error) {
+func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query string, target map[string]interface{}, source datasourceInfo, overrides map[string]string, start, end, overrideUID, overrideType string, optionsCache variableOptionsCache) (*preparedDashboardQuery, error) {
 	from, to, err := dashboardQueryRange(start, end)
 	if err != nil {
 		return nil, err
@@ -155,7 +184,7 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			} else {
 				optionQuery = substituteTemplateVariableValues(optionQuery, prepared.Variables)
 				dsUID = substituteTemplateVariableValues(dsUID, prepared.Variables)
-				values, optionErr = querySQLVariableOptions(ctx, dsUID, optionQuery, prepared.Start, prepared.End)
+				values, optionErr = optionsCache.query(ctx, dsUID, optionQuery, prepared.Start, prepared.End)
 			}
 		} else {
 			for _, item := range safeArray(variable, "options") {
@@ -209,6 +238,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 	if rangeErr == nil {
 		args.Start, args.End = strconv.FormatInt(from.UnixMilli(), 10), strconv.FormatInt(to.UnixMilli(), 10)
 	}
+	optionsCache := make(variableOptionsCache)
 	for i := range queries {
 		if rangeErr != nil {
 			queries[i].ProcessedQuery = ""
@@ -217,7 +247,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 		}
 		q := &queries[i]
 		q.RequiredVariables = findVariablesInQuery(variableSearchText(*q), extractDashboardVariables(db), args.Variables)
-		prepared, err := prepareDashboardQuery(ctx, db, q.Query, q.Target, q.Datasource, args.Variables, args.Start, args.End, "", "")
+		prepared, err := prepareDashboardQuery(ctx, db, q.Query, q.Target, q.Datasource, args.Variables, args.Start, args.End, "", "", optionsCache)
 		if err != nil {
 			q.ProcessedQuery = ""
 			q.Warnings = []string{err.Error()}
