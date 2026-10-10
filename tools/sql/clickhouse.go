@@ -31,17 +31,19 @@ func (d *clickHouseDialect) ExtraQueryPayloadFields(_ QuerySQLParams) map[string
 	return nil
 }
 
+// ClickHouseIntervalSeconds is the interval used by ClickHouse SQL queries.
+// Dashboard preparation uses the same whole-second calculation as execution.
+func ClickHouseIntervalSeconds(from, to time.Time) int64 {
+	return max(1, (to.Unix()-from.Unix())/1000)
+}
+
 func (d *clickHouseDialect) SubstituteMacros(query string, from, to time.Time) string {
 	fromSeconds := from.Unix()
 	toSeconds := to.Unix()
 	fromMillis := from.UnixMilli()
 	toMillis := to.UnixMilli()
 
-	rangeSeconds := toSeconds - fromSeconds
-	intervalSeconds := rangeSeconds / 1000
-	if intervalSeconds < 1 {
-		intervalSeconds = 1
-	}
+	intervalSeconds := ClickHouseIntervalSeconds(from, to)
 
 	timeFilterRe := regexp.MustCompile(`\$__timeFilter\(([^)]+)\)`)
 	query = timeFilterRe.ReplaceAllStringFunc(query, func(match string) string {

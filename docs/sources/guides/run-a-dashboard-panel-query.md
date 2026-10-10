@@ -30,6 +30,26 @@ You point the assistant at a dashboard and panel; the assistant uses the serverâ
 
 Ask the assistant to run the query for a specific panel on a dashboard. Provide (or let the assistant look up) the dashboard UID and panel ID. You can specify a time range (for example, last 1 hour) and variable overrides so the query runs with the same logic as the panel but with your chosen parameters. The assistant calls the serverâ€™s run-panel-query tool and returns the result.
 
+## Inspect the prepared query
+
+Call `get_dashboard_panel_queries` with the same `variables`, `start`, and `end` as `run_panel_query`. Pass `variables: {}` to use saved selections. Both tools use the same preparation for classic v1 and schema v2 dashboards, including datasource variables and frontend time macros. Omitted time bounds default independently to `now-1h` and `now`. Use absolute bounds when comparing separate calls exactly.
+
+Prepared inspection requires `datasources:read` to resolve datasource variables or missing datasource types, including under `--disable-write` and `--disable-query`. Raw inspection without preparation only reads the dashboard.
+
+SQL `${variable:sqlstring}` preserves multiple selected values and escapes quotes. For a multi-value variable, an override can contain a JSON string array such as `"[\"east\",\"west\"]"` or a quoted SQL list such as `"'east','west'"`. Ordinary saved values are treated as data, including commas and quotes within a value.
+
+For an All selection, a custom `allValue` is used literally. Other saved selections use the variable's options. Query variables resolve All by querying their datasource with the requested time range. PostgreSQL, MySQL, MSSQL, and BigQuery option queries are supported, using the `__value` column when present or the first column otherwise. This requires datasource read/query permission and raw SQL query execution to be enabled. Under `--disable-query` or `--disable-write`, inspection remains available but warns when it cannot query options. `--enable-query` can opt back into raw SQL queries under `--disable-write`.
+
+Inspection preserves the raw `query` and `target` fields. Successful preparation adds `processedQuery` for expressions and `processedTarget` for visual query targets, with variables substituted. SQL variable option queries also retain their datasource-specific target fields, such as project, dataset, and location.
+
+Failed option queries produce actionable `warnings` and omit `processedQuery` and `processedTarget` during inspection. Execution reports a panel error without submitting the unresolved panel query. Supply explicit values or fix the variable query before retrying.
+
+CloudWatch alias dependencies follow the Grafana version and, on Grafana 9, the `cloudWatchDynamicLabels` setting. A label, including an empty string, takes precedence on modern Grafana. Grafana 9 with dynamic labels disabled still uses the alias. Preparation reuses cached frontend settings to distinguish these cases. If the settings are unavailable, it conservatively includes alias dependencies. Raw inspection also includes them because it does not read server settings.
+
+### Interpolation limits
+
+This is frontend preparation, not a complete implementation of every datasource plugin's interpolation. SQL plugin macros such as `$__timeFilter(column)` generally remain in the prepared query and are expanded by Grafana's backend with the supplied time bounds. ClickHouse uses the server's SQL dialect to expand its supported time filter macro during preparation. It also expands braced and unbraced frontend time macros while retaining the ClickHouse executor's interval calculation, in whole seconds. Dynamic option queries for other datasource types and variable regex filtering are unsupported and produce warnings for All selections. Existing formatter fallback behavior is retained. Native plugin-specific formatting and visual query builders can still require their datasource's own tools.
+
 ## Next steps
 
 - [Query metrics with Prometheus](../query-metrics-with-prometheus/) or [Query logs with Loki](../query-logs-with-loki/) to run custom PromQL or LogQL.

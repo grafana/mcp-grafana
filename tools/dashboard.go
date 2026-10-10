@@ -801,6 +801,8 @@ var UpdateDashboard = mcpgrafana.MustTool(
 )
 
 type DashboardPanelQueriesParams struct {
+	Start     string            `json:"start,omitempty" jsonschema:"description=Query start time (default now-1h). Used for variable option queries and time macros."`
+	End       string            `json:"end,omitempty" jsonschema:"description=Query end time (default now). Used for variable option queries and time macros."`
 	UID       string            `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 	PanelID   *int              `json:"panelId,omitempty" jsonschema:"description=Optional panel ID to filter to a specific panel"`
 	Variables map[string]string `json:"variables,omitempty" jsonschema:"description=Optional variable substitutions (e.g.\\, {\"job\": \"api-server\"})"`
@@ -820,9 +822,13 @@ type panelQuery struct {
 	// string expression to put in Query.
 	Target            map[string]interface{} `json:"target,omitempty"`
 	ProcessedQuery    string                 `json:"processedQuery,omitempty"`
+	ProcessedTarget   map[string]interface{} `json:"processedTarget,omitempty"`
+	Warnings          []string               `json:"warnings,omitempty"`
 	Datasource        datasourceInfo         `json:"datasource"`
 	RefID             string                 `json:"refId,omitempty"`
 	RequiredVariables []VariableInfo         `json:"requiredVariables,omitempty"`
+	// Retain expression targets for preparation without changing raw inspection output.
+	rawTarget map[string]interface{}
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
@@ -837,13 +843,13 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 	}
 
 	if res.IsV2 {
-		return getPanelQueriesV2(db, args)
-	}
-
-	// Determine if variable processing is needed
-	var dashboardVars map[string]VariableInfo
-	if args.Variables != nil {
-		dashboardVars = extractDashboardVariables(db)
+		rawArgs := args
+		rawArgs.Variables = nil
+		queries, err := getPanelQueriesV2(db, rawArgs)
+		if err != nil {
+			return nil, err
+		}
+		return prepareInspectedQueries(ctx, templatingV1FromV2(db), args, queries), nil
 	}
 
 	// Determine which panels to process
@@ -860,16 +866,16 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		queries := extractPanelQueries(panel, dashboardVars, args.Variables)
+		queries := extractPanelQueries(panel, nil, nil)
 		result = append(result, queries...)
 	}
 
-	return result, nil
+	return prepareInspectedQueries(ctx, db, args, result), nil
 }
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Optionally provide `variables` for template variable substitution, which populates `processedQuery` and `requiredVariables` fields. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.",
+	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to prepare queries with the selected variables and time range. SQL All selections may query variable options when server permissions allow it. Failed preparation returns `warnings` without `processedQuery` or `processedTarget`. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, processedTarget, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON, and `processedTarget` after preparation. They can be executed as panel queries but not as standalone expressions.",
 	GetDashboardPanelQueriesTool,
 	mcpgrafana.WithTitleAnnotation("Get dashboard panel queries"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -877,6 +883,7 @@ var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 // GetDashboardPropertyParams defines parameters for getting specific dashboard properties
@@ -1336,13 +1343,13 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 	}
 }
 
-func AddDashboardTools(s *mcp.Server, enableWriteTools bool) {
+func AddDashboardTools(s *mcp.Server, enableWriteTools bool, enableVariableQueries ...bool) {
 	GetDashboardByUID.Register(s)
 	ListDashboardVersions.Register(s)
 	if enableWriteTools {
 		UpdateDashboard.Register(s)
 	}
-	GetDashboardPanelQueries.Register(s)
+	registerDashboardQueryTool(s, GetDashboardPanelQueries, len(enableVariableQueries) > 0 && enableVariableQueries[0])
 	GetDashboardProperty.Register(s)
 	GetDashboardSummary.Register(s)
 }

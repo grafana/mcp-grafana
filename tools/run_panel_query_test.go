@@ -35,7 +35,9 @@ func substituteTemplateVariablesInMap(target map[string]interface{}, variables m
 }
 
 func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
-	return substituteTemplateVariablesInSliceWithValues(slice, testTemplateVariableValues(variables))
+	return substituteStringsInSlice(slice, func(value string) string {
+		return substituteTemplateVariables(value, variables)
+	})
 }
 
 func extractTemplateVariables(db map[string]interface{}) map[string]string {
@@ -756,49 +758,6 @@ func TestQueryTimeRange(t *testing.T) {
 
 	assert.Equal(t, "2024-01-01T00:00:00Z", tr.Start)
 	assert.Equal(t, "2024-01-01T01:00:00Z", tr.End)
-}
-
-func TestIsVariableReference(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"$datasource", true},
-		{"${datasource}", true},
-		{"[[datasource]]", true},
-		{"prometheus-uid", false},
-		{"", false},
-		{"abc$def", false}, // $ not at start
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := isVariableReference(tt.input)
-			assert.Equal(t, tt.want, got, "isVariableReference(%q)", tt.input)
-		})
-	}
-}
-
-func TestExtractVariableName(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"$datasource", "datasource"},
-		{"${datasource}", "datasource"},
-		{"[[datasource]]", "datasource"},
-		{"$ds", "ds"},
-		{"${ds}", "ds"},
-		{"[[ds]]", "ds"},
-		{"prometheus-uid", "prometheus-uid"}, // Not a variable, returns as-is
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := extractVariableName(tt.input)
-			assert.Equal(t, tt.want, got, "extractVariableName(%q)", tt.input)
-		})
-	}
 }
 
 func TestSubstituteGrafanaMacros(t *testing.T) {
