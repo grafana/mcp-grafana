@@ -153,6 +153,7 @@ func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[strin
 			Query:      rawQuery,
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
+			rawTarget:  safeObject(query, "spec"),
 		}
 
 		// As in v1, a target built in a visual editor has no string expression;

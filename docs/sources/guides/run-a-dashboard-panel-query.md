@@ -38,7 +38,9 @@ SQL `${variable:sqlstring}` preserves multiple selected values and escapes quote
 
 For an All selection, a custom `allValue` is used literally. Other saved selections use the variable's options. Query variables resolve All by querying their datasource with the requested time range. PostgreSQL, MySQL, MSSQL, and BigQuery option queries are supported, using the `__value` column when present or the first column otherwise. This requires datasource read/query permission and raw SQL query execution to be enabled. Under `--disable-query` or `--disable-write`, inspection remains available but warns when it cannot query options. `--enable-query` can opt back into raw SQL queries under `--disable-write`.
 
-Failed option queries produce actionable `warnings` and omit `processedQuery` during inspection. Execution reports a panel error without submitting the unresolved panel query. Supply explicit values or fix the variable query before retrying.
+Inspection preserves the raw `query` and `target` fields. Successful preparation adds `processedQuery` for expressions and `processedTarget` for visual query targets, with variables substituted. SQL variable option queries also retain their datasource-specific target fields, such as project, dataset, and location.
+
+Failed option queries produce actionable `warnings` and omit `processedQuery` and `processedTarget` during inspection. Execution reports a panel error without submitting the unresolved panel query. Supply explicit values or fix the variable query before retrying.
 
 ### Interpolation limits
 
