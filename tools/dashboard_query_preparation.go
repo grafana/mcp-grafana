@@ -192,7 +192,13 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			}
 			ds := safeObject(variable, "datasource")
 			dsUID := safeString(ds, "uid")
-			dependencies := findVariablesInQuery(optionQuery+" "+dsUID+" "+variableSearchText(panelQuery{Target: optionTarget}), nil, nil)
+			// Option queries only support raw SQL execution. Exclude inactive
+			// frontend state even when the saved datasource omits its type.
+			dependencyTarget := sqlQueryDependencyFields(optionTarget)
+			// These fields are replaced with raw/table settings at execution.
+			delete(dependencyTarget, "rawQuery")
+			delete(dependencyTarget, "format")
+			dependencies := findVariablesInQuery(dsUID+" "+variableSearchText(panelQuery{Query: optionQuery, Target: dependencyTarget}), nil, nil)
 			for _, dependency := range dependencies {
 				resolve(dependency.Name)
 			}
