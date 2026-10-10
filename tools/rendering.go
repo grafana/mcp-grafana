@@ -65,12 +65,12 @@ func (StringOrSlice) JSONSchema() *jsonschema.Schema {
 type GetPanelImageParams struct {
 	DashboardUID string                   `json:"dashboardUid,omitempty" jsonschema:"description=The UID of a stored dashboard containing the panel. Required unless provisioningPreview is provided."`
 	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
-	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000\\, capped at 3000. The image renderer raises values below its configured minimum viewport width (1000 by default)."`
-	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500 (1000 for explore)\\, capped at 3000. The image renderer raises values below its configured minimum viewport height (500 by default)."`
+	Width        *int                     `json:"width,omitempty" jsonschema:"description=Viewport width in CSS pixels. Defaults to 720 for a panel\\, 1200 for a full dashboard or 1000 for explore. Capped at 3000. The image renderer raises values below its configured minimum viewport width (1000 by default)."`
+	Height       *int                     `json:"height,omitempty" jsonschema:"description=Viewport height in CSS pixels. Defaults to 540 for a panel\\, 900 for a full dashboard or 1000 for explore. Capped at 3000. The image renderer raises values below its configured minimum viewport height (500 by default)."`
 	TimeRange    *RenderTimeRange         `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
 	Variables    map[string]StringOrSlice `json:"variables,omitempty" jsonschema:"description=Dashboard variables to apply. Values can be a single string or an array of strings for multi-value variables (e.g.\\, {\"var-datasource\": \"prometheus\"\\, \"var-instance\": [\"server1\"\\, \"server2\"]})"`
 	Theme        *string                  `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`
-	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 1"`
+	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 2 for panels and dashboards or 1 for explore."`
 	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60\\, capped at 120"`
 	// ProvisioningPreview renders a dashboard from a provisioning repository
 	// branch that has not yet been merged or applied. Mutually exclusive with
@@ -314,13 +314,14 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 			params.Set("panelId", strconv.Itoa(*args.PanelID))
 		}
 	}
-	// Set dimensions
-	width := 1000
-	height := 500
+	// Choose defaults for the view, then apply each caller override independently.
+	width, height, scale := 1200, 900, 2
 	if hasExplore {
 		// Explore shows its query editor above the graph and scrolls inside
 		// its own container (so height=-1 doesn't help); give it room.
-		height = 1000
+		width, height, scale = 1000, 1000, 1
+	} else if args.PanelID != nil {
+		width, height = 720, 540
 	}
 	if args.Width != nil {
 		width = min(*args.Width, maxRenderDimension)
@@ -332,7 +333,6 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 	params.Set("height", strconv.Itoa(height))
 
 	// Set scale
-	scale := 1
 	if args.Scale != nil && *args.Scale >= 1 && *args.Scale <= 3 {
 		scale = *args.Scale
 	}
