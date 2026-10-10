@@ -182,6 +182,21 @@ func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 	return result
 }
 
+// extractPanelDatasource keeps the UID and type from the same reference. A
+// target UID without a type must be looked up, not paired with the panel type.
+func extractPanelDatasource(panel, target map[string]interface{}) datasourceInfo {
+	ds := safeObject(target, "datasource")
+	panelDS := safeObject(panel, "datasource")
+	if safeString(ds, "uid") == "" {
+		ds = panelDS
+	}
+	info := datasourceInfo{UID: safeString(ds, "uid"), Type: safeString(ds, "type")}
+	if info.Type == "" && info.UID == safeString(panelDS, "uid") {
+		info.Type = safeString(panelDS, "type")
+	}
+	return info
+}
+
 // extractPanelQueries extracts all queries from a panel.
 // When dashboardVars is non-nil, performs variable analysis and substitution,
 // populating ProcessedQuery and RequiredVariables fields.
@@ -192,13 +207,6 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 	targets := safeArray(panel, "targets")
 	if targets == nil {
 		return queries
-	}
-
-	// Get panel-level datasource if set
-	var panelDs datasourceInfo
-	if dsField := safeObject(panel, "datasource"); dsField != nil {
-		panelDs.UID = safeString(dsField, "uid")
-		panelDs.Type = safeString(dsField, "type")
 	}
 
 	for _, t := range targets {
@@ -213,15 +221,7 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 		rawQuery := extractQueryExpression(target)
 
 		// Get datasource from target or fall back to panel level
-		dsInfo := panelDs
-		if targetDs := safeObject(target, "datasource"); targetDs != nil {
-			if uid := safeString(targetDs, "uid"); uid != "" {
-				dsInfo.UID = uid
-			}
-			if dsType := safeString(targetDs, "type"); dsType != "" {
-				dsInfo.Type = dsType
-			}
-		}
+		dsInfo := extractPanelDatasource(panel, target)
 
 		pq := panelQuery{
 			Title:      title,
@@ -446,12 +446,6 @@ func variableSearchText(pq panelQuery) string {
 		if pq.Query != "" {
 			fields = sqlQueryDependencyFields(target)
 		}
-	case "cloudwatch":
-		// CloudWatch ignores the deprecated alias when a label is supplied.
-		// Keep the raw target intact while excluding that unused dependency.
-		if _, hasLabel := fields["label"].(string); hasLabel {
-			delete(fields, "alias")
-		}
 	}
 	encoded, err := json.Marshal(fields)
 	if err != nil {
@@ -461,14 +455,14 @@ func variableSearchText(pq panelQuery) string {
 }
 
 // variableRegex matches Grafana template variable patterns
-// Matches: $varname, ${varname}, ${varname:option}, [[varname]]
-var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}|\$([a-zA-Z_][a-zA-Z0-9_]*)|\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
+// Matches: $varname, ${varname}, ${varname:option}, [[varname]], [[varname:option]]
+var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z0-9_]+)(?::[^}]*)?\}|\$([a-zA-Z0-9_]+)|\[\[([a-zA-Z0-9_]+)(?::[^\]]*)?\]\]`)
 
 // Pre-compiled regex patterns for substituteVariables
 var (
-	dollarBraceVarRegex   = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}`)
-	dollarBraceNameRegex  = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)`)
-	doubleBracketVarRegex = regexp.MustCompile(`\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
+	dollarBraceVarRegex   = regexp.MustCompile(`\$\{([a-zA-Z0-9_]+)(?::[^}]*)?\}`)
+	dollarBraceNameRegex  = regexp.MustCompile(`\$\{([a-zA-Z0-9_]+)`)
+	doubleBracketVarRegex = regexp.MustCompile(`\[\[([a-zA-Z0-9_]+)(?::[^\]]*)?\]\]`)
 )
 
 // findVariablesInQuery extracts all variable references from a query
@@ -556,9 +550,9 @@ func substituteVariables(query string, variables map[string]string) string {
 		result = replaceSimpleDollarVar(result, name, value)
 	}
 
-	// Replace [[varname]] patterns
+	// Replace [[varname:option]] and [[varname]] patterns
 	result = doubleBracketVarRegex.ReplaceAllStringFunc(result, func(match string) string {
-		name := match[2 : len(match)-2]
+		name := doubleBracketVarRegex.FindStringSubmatch(match)[1]
 		if val, ok := variables[name]; ok {
 			return val
 		}

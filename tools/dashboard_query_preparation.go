@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
@@ -18,6 +19,35 @@ import (
 )
 
 type variableQueriesKey struct{}
+
+type dashboardQuerySettingsKey struct{}
+
+// Cache advisory settings, including lookup failures, only for this tool call.
+// A later call can retry an unavailable endpoint without delaying every panel.
+type dashboardQuerySettings struct {
+	once          sync.Once
+	version       string
+	dynamicLabels bool
+	featuresKnown bool
+}
+
+func withDashboardQuerySettings(ctx context.Context) context.Context {
+	return context.WithValue(ctx, dashboardQuerySettingsKey{}, &dashboardQuerySettings{})
+}
+
+func cloudWatchDashboardSettings(ctx context.Context) *dashboardQuerySettings {
+	settings, _ := ctx.Value(dashboardQuerySettingsKey{}).(*dashboardQuerySettings)
+	if settings == nil {
+		settings = &dashboardQuerySettings{}
+	}
+	settings.once.Do(func() {
+		settings.version = mcpgrafana.GrafanaVersion(ctx)
+		if major, _, valid := parseMajorMinor(settings.version); valid && major < 10 {
+			settings.dynamicLabels, settings.featuresKnown = mcpgrafana.GrafanaFeatureEnabled(ctx, "cloudWatchDynamicLabels")
+		}
+	})
+	return settings
+}
 
 // Register a per-server handler, without changing the shared tool definition.
 // SQL option queries have the same permissions and side effects as raw SQL.
@@ -41,13 +71,14 @@ func registerDashboardQueryTool(s *mcp.Server, definition mcpgrafana.Tool, allow
 }
 
 type preparedDashboardQuery struct {
-	Query      string
-	Target     map[string]interface{}
-	Datasource datasourceInfo
-	Variables  templateVariableValues
-	Warnings   []string
-	Start      string
-	End        string
+	VariableSearchText string
+	Query              string
+	Target             map[string]interface{}
+	Datasource         datasourceInfo
+	Variables          templateVariableValues
+	Warnings           []string
+	Start              string
+	End                string
 }
 
 type variableOptionQueryKey struct {
@@ -140,12 +171,15 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 	}
 	resolved, resolving := make(map[string]bool), make(map[string]bool)
 	customAll := make(map[string]string)
-	interpolate := func(text string) string {
+	interpolateCustomAll := func(text string) string {
 		// Custom All values are literal Grafana expressions, not SQL string values.
 		for name, value := range customAll {
 			text = substituteVariables(text, map[string]string{name: value})
 		}
-		return substituteTemplateVariableValues(text, prepared.Variables)
+		return text
+	}
+	interpolate := func(text string) string {
+		return substituteTemplateVariableValues(interpolateCustomAll(text), prepared.Variables)
 	}
 	var resolve func(string)
 	resolve = func(name string) {
@@ -163,8 +197,8 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		resolving[name] = true
 		defer func() { delete(resolving, name); resolved[name] = true }()
 		selected := templateVariableCurrent(variable)["value"]
-		if override, ok := overrides[name]; ok {
-			selected = override
+		if _, ok := overrides[name]; ok {
+			selected = prepared.Variables[name]
 		}
 		all := selected == "$__all"
 		switch values := selected.(type) {
@@ -198,7 +232,21 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			// These fields are replaced with raw/table settings at execution.
 			delete(dependencyTarget, "rawQuery")
 			delete(dependencyTarget, "format")
-			dependencies := findVariablesInQuery(dsUID+" "+variableSearchText(panelQuery{Query: optionQuery, Target: dependencyTarget}), nil, nil)
+			// SQL may contain dollar amounts, dollar quoting, and plugin syntax.
+			// Only declared variables or explicit overrides are SQL dependencies.
+			// Keep datasource and other target fields strict, since they are not SQL.
+			for field, value := range dependencyTarget {
+				if text, ok := value.(string); ok && text == optionQuery {
+					delete(dependencyTarget, field)
+				}
+			}
+			dependencies := findVariablesInQuery(dsUID+" "+variableSearchText(panelQuery{Target: dependencyTarget}), nil, nil)
+			for _, dependency := range findVariablesInQuery(optionQuery, nil, nil) {
+				_, overridden := overrides[dependency.Name]
+				if definitions[dependency.Name] != nil || overridden {
+					dependencies = append(dependencies, dependency)
+				}
+			}
 			for _, dependency := range dependencies {
 				resolve(dependency.Name)
 			}
@@ -221,7 +269,8 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 					}
 				}
 				if optionErr == nil {
-					optionQuery = interpolate(optionQuery)
+					optionQuery = substituteGrafanaMacros(interpolateCustomAll(optionQuery), from, to)
+					optionQuery = substituteTemplateVariableValues(optionQuery, prepared.Variables)
 					dsUID = interpolate(dsUID)
 					optionTarget = substituteStringsInMap(optionTarget, interpolate)
 					values, optionErr = optionsCache.query(ctx, dsUID, optionQuery, optionTarget, prepared.Start, prepared.End)
@@ -259,11 +308,14 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		return nil, err
 	}
 	prepared.Datasource = source
-	searchText := variableSearchText(panelQuery{Query: query, Target: target, Datasource: source})
+	searchText := dashboardQueryVariableSearchText(ctx, panelQuery{Query: query, Target: target, Datasource: source})
+	prepared.VariableSearchText = searchText
 	for _, variable := range findVariablesInQuery(searchText, nil, nil) {
 		resolve(variable.Name)
 	}
-	prepared.Query = interpolate(query)
+	// Expand macros before inserting ordinary values, so macro-like data in
+	// selections or option results remains literal. Executors use this result.
+	prepared.Query = interpolateCustomAll(query)
 	if target != nil {
 		prepared.Target = substituteStringsInMap(target, interpolate)
 	}
@@ -271,15 +323,63 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 	case "prometheus", "loki", "postgres", "mysql", "mssql", "bigquery":
 		prepared.Query = substituteGrafanaMacros(prepared.Query, from, to)
 	case "clickhouse":
-		// Match the SQL executor's interval calculation instead of consuming
-		// ClickHouse macros with the generic frontend formatter.
+		// Expand frontend macros with the SQL executor's interval calculation.
+		// Preserve seconds exactly, including intervals longer than a minute.
+		interval := sqldialect.ClickHouseIntervalSeconds(from, to)
+		prepared.Query = substituteGrafanaMacrosWithInterval(prepared.Query, from, to, fmt.Sprintf("%ds", interval), interval*1000)
 		dialect, err := sqldialect.DialectFor(sqldialect.ClickHouseDatasourceType)
 		if err != nil {
 			return nil, err
 		}
 		prepared.Query = dialect.SubstituteMacros(prepared.Query, from, to)
 	}
+	prepared.Query = substituteTemplateVariableValues(prepared.Query, prepared.Variables)
 	return prepared, nil
+}
+
+// dashboardQueryVariableSearchText excludes an alias only when the backend is
+// known to ignore it. Raw inspection, which has no server settings, remains
+// conservative. Neither path modifies the target sent to the datasource.
+func dashboardQueryVariableSearchText(ctx context.Context, query panelQuery) string {
+	target := query.rawTarget
+	if target == nil {
+		target = query.Target
+	}
+	if normalizeDatasourceType(query.Datasource.Type) != "cloudwatch" ||
+		len(findVariablesInQuery(safeString(target, "alias"), nil, nil)) == 0 {
+		return variableSearchText(query)
+	}
+	label, present := target["label"]
+	if !present {
+		return variableSearchText(query)
+	}
+	settings := cloudWatchDashboardSettings(ctx)
+	version := settings.version
+	major, minor, valid := parseMajorMinor(version)
+	if !valid {
+		return variableSearchText(query)
+	}
+	_, ignoreAlias := label.(string)
+	if major < 10 {
+		if !settings.featuresKnown || !settings.dynamicLabels {
+			return variableSearchText(query)
+		}
+		// Grafana 9.0.0-9.0.2 used key presence for migration. From 9.0.3,
+		// a null label falls back to alias just like an absent label.
+		if major == 9 && minor == 0 {
+			parts := strings.SplitN(version, ".", 3)
+			if len(parts) == 3 {
+				if patch, ok := leadingInt(parts[2]); ok && patch < 3 {
+					ignoreAlias = true
+				}
+			}
+		}
+	}
+	if ignoreAlias {
+		query.rawTarget = maps.Clone(target)
+		delete(query.rawTarget, "alias")
+	}
+	return variableSearchText(query)
 }
 
 func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, args DashboardPanelQueriesParams, queries []panelQuery) []panelQuery {
@@ -292,6 +392,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 		args.Start, args.End = strconv.FormatInt(from.UnixMilli(), 10), strconv.FormatInt(to.UnixMilli(), 10)
 	}
 	optionsCache := make(variableOptionsCache)
+	ctx = withDashboardQuerySettings(ctx)
 	for i := range queries {
 		if rangeErr != nil {
 			queries[i].ProcessedQuery = ""
@@ -313,7 +414,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 			continue
 		}
 		q.Datasource = prepared.Datasource
-		q.RequiredVariables = findVariablesInQuery(variableSearchText(*q), extractDashboardVariables(db), args.Variables)
+		q.RequiredVariables = findVariablesInQuery(prepared.VariableSearchText, extractDashboardVariables(db), args.Variables)
 		q.ProcessedQuery = prepared.Query
 		if q.Target != nil {
 			q.ProcessedTarget = queryTargetFields(prepared.Target)

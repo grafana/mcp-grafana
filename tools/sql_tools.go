@@ -124,6 +124,12 @@ func fillDatasourceDefaults(ds *models.DataSource, catalog, database, region *st
 }
 
 func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQueryResult, error) {
+	return querySQLWithPreparedMacros(ctx, args, false)
+}
+
+// Dashboard preparation expands macros before inserting selected values. Avoid
+// expanding them again inside literal data while retaining normal query_sql behavior.
+func querySQLWithPreparedMacros(ctx context.Context, args sql.QuerySQLParams, macrosPrepared bool) (*sql.SQLQueryResult, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
 	if err != nil {
 		return nil, fmt.Errorf("looking up datasource: %w", err)
@@ -161,7 +167,9 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 	}
 
 	processedQuery := args.Query
-	processedQuery = dialect.SubstituteMacros(processedQuery, fromTime, toTime)
+	if !macrosPrepared {
+		processedQuery = dialect.SubstituteMacros(processedQuery, fromTime, toTime)
+	}
 	processedQuery = substituteVariables(processedQuery, args.Variables)
 	processedQuery = dialect.EnforceLimit(processedQuery, args.Limit)
 

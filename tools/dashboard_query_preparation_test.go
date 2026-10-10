@@ -20,154 +20,113 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func preparationFixture(v2 bool, variable map[string]interface{}, query string) map[string]interface{} {
-	ds := map[string]interface{}{"uid": "postgres-uid", "type": "grafana-postgresql-datasource"}
-	if !v2 {
-		return map[string]interface{}{
-			"templating": map[string]interface{}{"list": []interface{}{variable}},
-			"panels": []interface{}{map[string]interface{}{
-				"id": float64(1), "title": "Preparation", "datasource": ds,
-				"targets": []interface{}{map[string]interface{}{"refId": "A", "rawSql": query}},
-			}},
-		}
-	}
-	variableSpec := map[string]interface{}{}
-	for k, v := range variable {
-		variableSpec[k] = v
-	}
-	variableSpec["query"] = map[string]interface{}{
-		"kind": "DataQuery", "group": ds["type"], "datasource": map[string]interface{}{"name": ds["uid"]},
-		"spec": map[string]interface{}{"rawSql": variable["query"]},
-	}
-	kind := "QueryVariable"
-	if variable["type"] == "custom" {
-		kind = "CustomVariable"
-	}
-	return map[string]interface{}{
-		"variables": []interface{}{map[string]interface{}{"kind": kind, "spec": variableSpec}},
-		"elements": map[string]interface{}{"panel": map[string]interface{}{"kind": "Panel", "spec": map[string]interface{}{
-			"id": float64(1), "title": "Preparation",
-			"data": map[string]interface{}{"spec": map[string]interface{}{"queries": []interface{}{
-				map[string]interface{}{"spec": map[string]interface{}{"refId": "A", "query": map[string]interface{}{
-					"group": ds["type"], "datasource": map[string]interface{}{"name": ds["uid"]},
-					"spec": map[string]interface{}{"rawSql": query},
-				}}},
-			}}},
-		}}},
-	}
-}
-
-func inspectPreparationFixture(ctx context.Context, db map[string]interface{}, v2 bool, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	if v2 {
-		rawArgs := args
-		rawArgs.Variables = nil
-		queries, err := getPanelQueriesV2(db, rawArgs)
-		if err != nil {
-			return nil, err
-		}
-		return prepareInspectedQueries(ctx, templatingV1FromV2(db), args, queries), nil
-	}
-	queries := extractPanelQueries(collectAllPanels(db)[0], nil, nil)
-	return prepareInspectedQueries(ctx, db, args, queries), nil
-}
-
 func TestDashboardQueryPreparationParity(t *testing.T) {
-	for _, v2 := range []bool{false, true} {
-		for _, tc := range []struct {
-			name        string
-			current     interface{}
-			override    string
-			allValue    string
-			want        string
-			optionCalls int
-		}{
-			{name: "multi value", current: []interface{}{"O'Reilly", "east,west"}, want: "'O''Reilly','east,west'"},
-			{name: "quote inside value", current: "'quoted'", want: "'''quoted'''"},
-			{name: "quoted list override", current: "old", override: "'O''Reilly', 'east,west'", want: "'O''Reilly','east,west'"},
-			{name: "JSON list override", current: "old", override: `["O'Reilly","east,west"]`, want: "'O''Reilly','east,west'"},
-			{name: "All from SQL", current: []interface{}{"$__all"}, want: "'O''Reilly','east,west'", optionCalls: 2},
-			{name: "All override", current: "old", override: "$__all", want: "'O''Reilly','east,west'", optionCalls: 2},
-			{name: "custom All", current: "$__all", allValue: "'custom'", want: "'custom'"},
-		} {
-			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
-				var queries []string
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					if r.URL.Path == "/api/datasources/uid/postgres-uid" {
-						_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"grafana-postgresql-datasource"}`))
-						return
-					}
-					require.Equal(t, "/api/ds/query", r.URL.Path)
-					var payload map[string]interface{}
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-					query := safeArray(payload, "queries")[0].(map[string]interface{})
-					queries = append(queries, safeString(query, "rawSql"))
-					assert.Equal(t, "1704067200000", payload["from"])
-					assert.Equal(t, "1704070800000", payload["to"])
-					first, second := "O'Reilly", "east,west"
-					frames := data.Frames{data.NewFrame("", data.NewField("__text", nil, []string{"First", "Second", "Null"}), data.NewField("__value", nil, []*string{&first, &second, nil}))}
-					_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
-				}))
-				t.Cleanup(ts.Close)
-				ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
-				variable := map[string]interface{}{
-					"name": "choice", "type": "query", "multi": true, "includeAll": true, "allValue": tc.allValue,
-					"current": map[string]interface{}{"value": tc.current},
-					"query":   "SELECT option /* $__from $__to */", "datasource": map[string]interface{}{"uid": "postgres-uid"},
+	for _, variableReference := range []string{"${choice:sqlstring}", "[[choice:sqlstring]]"} {
+		t.Run(variableReference, func(t *testing.T) {
+			for _, v2 := range []bool{false, true} {
+				for _, tc := range []struct {
+					name        string
+					current     interface{}
+					override    string
+					allValue    string
+					want        string
+					optionCalls int
+				}{
+					{name: "multi value", current: []interface{}{"O'Reilly", "east,west"}, want: "'O''Reilly','east,west'"},
+					{name: "quote inside value", current: "'quoted'", want: "'''quoted'''"},
+					{name: "quoted list override", current: "old", override: "'O''Reilly', 'east,west'", want: "'O''Reilly','east,west'"},
+					{name: "JSON list override", current: "old", override: `["O'Reilly","east,west"]`, want: "'O''Reilly','east,west'"},
+					{name: "All from SQL", current: []interface{}{"$__all"}, want: "'O''Reilly','east,west'", optionCalls: 2},
+					{name: "All override", current: "old", override: "$__all", want: "'O''Reilly','east,west'", optionCalls: 2},
+					{name: "custom All", current: "$__all", allValue: "'custom'", want: "'custom'"},
+				} {
+					t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
+						var queries []string
+						ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							w.Header().Set("Content-Type", "application/json")
+							if r.URL.Path == "/api/datasources/uid/postgres-uid" {
+								_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"grafana-postgresql-datasource"}`))
+								return
+							}
+							require.Equal(t, "/api/ds/query", r.URL.Path)
+							var payload map[string]interface{}
+							require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+							query := safeArray(payload, "queries")[0].(map[string]interface{})
+							queries = append(queries, safeString(query, "rawSql"))
+							assert.Equal(t, "1704067200000", payload["from"])
+							assert.Equal(t, "1704070800000", payload["to"])
+							first, second := "O'Reilly", "east,west"
+							frames := data.Frames{data.NewFrame("", data.NewField("__text", nil, []string{"First", "Second", "Null"}), data.NewField("__value", nil, []*string{&first, &second, nil}))}
+							_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
+						}))
+						t.Cleanup(ts.Close)
+						ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
+						variable := map[string]interface{}{
+							"name": "choice", "type": "query", "multi": true, "includeAll": true, "allValue": tc.allValue,
+							"current": map[string]interface{}{"value": tc.current},
+							"query":   "SELECT option /* $__from $__to */", "datasource": map[string]interface{}{"uid": "postgres-uid"},
+						}
+						db := preparationFixture(v2, variable, "SELECT "+variableReference+" /* $__from $__to $__range_s $__interval */ WHERE $__timeFilter(ts)")
+						overrides := map[string]string{}
+						if tc.override != "" {
+							overrides["choice"] = tc.override
+						}
+						args := DashboardPanelQueriesParams{Variables: overrides, Start: "2024-01-01T00:00:00Z", End: "2024-01-01T01:00:00Z"}
+						inspected, err := inspectPreparationFixture(ctx, db, v2, args)
+						require.NoError(t, err)
+						require.Len(t, inspected, 1)
+						require.Empty(t, inspected[0].Warnings)
+						require.NotEmpty(t, inspected[0].RequiredVariables)
+						assert.Equal(t, "choice", inspected[0].RequiredVariables[0].Name)
+						result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1, Variables: overrides, Start: args.Start, End: args.End})
+						require.NoError(t, err)
+						want := "SELECT " + tc.want + " /* 1704067200000 1704070800000 3600 36s */ WHERE $__timeFilter(ts)"
+						assert.Equal(t, want, inspected[0].ProcessedQuery)
+						assert.Equal(t, want, result.Query)
+						assert.Equal(t, want, queries[len(queries)-1], "actual request must equal inspection")
+						assert.Equal(t, inspected[0].Datasource.UID, result.DatasourceUID)
+						assert.Equal(t, inspected[0].Datasource.Type, result.DatasourceType)
+						assert.Len(t, queries, tc.optionCalls+1)
+					})
 				}
-				db := preparationFixture(v2, variable, "SELECT ${choice:sqlstring} /* $__from $__to $__range_s $__interval */ WHERE $__timeFilter(ts)")
-				overrides := map[string]string{}
-				if tc.override != "" {
-					overrides["choice"] = tc.override
-				}
-				args := DashboardPanelQueriesParams{Variables: overrides, Start: "2024-01-01T00:00:00Z", End: "2024-01-01T01:00:00Z"}
-				inspected, err := inspectPreparationFixture(ctx, db, v2, args)
-				require.NoError(t, err)
-				require.Len(t, inspected, 1)
-				require.Empty(t, inspected[0].Warnings)
-				result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1, Variables: overrides, Start: args.Start, End: args.End})
-				require.NoError(t, err)
-				want := "SELECT " + tc.want + " /* 1704067200000 1704070800000 3600 36s */ WHERE $__timeFilter(ts)"
-				assert.Equal(t, want, inspected[0].ProcessedQuery)
-				assert.Equal(t, want, result.Query)
-				assert.Equal(t, want, queries[len(queries)-1], "actual request must equal inspection")
-				assert.Equal(t, inspected[0].Datasource.UID, result.DatasourceUID)
-				assert.Equal(t, inspected[0].Datasource.Type, result.DatasourceType)
-				assert.Len(t, queries, tc.optionCalls+1)
-			})
-		}
+			}
+		})
 	}
 }
 
 func TestDashboardVariableOptionFailures(t *testing.T) {
-	for _, allow := range []bool{false, true} {
-		t.Run(fmt.Sprintf("queriesAllowed=%t", allow), func(t *testing.T) {
-			calls := 0
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				if r.URL.Path == "/api/datasources/uid/postgres-uid" {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"grafana-postgresql-datasource"}`))
-					return
-				}
-				http.Error(w, "option query failed", http.StatusBadRequest)
-			}))
-			t.Cleanup(ts.Close)
-			ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, allow)
-			db := preparationFixture(false, map[string]interface{}{
-				"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
-				"query": "SELECT bad", "datasource": map[string]interface{}{"uid": "postgres-uid"},
-			}, "SELECT ${choice:sqlstring}")
-			inspected, err := inspectPreparationFixture(ctx, db, false, DashboardPanelQueriesParams{Variables: map[string]string{}})
-			require.NoError(t, err)
-			require.NotEmpty(t, inspected[0].Warnings)
-			assert.Empty(t, inspected[0].ProcessedQuery)
-			assert.Contains(t, strings.Join(inspected[0].Warnings, " "), "supply explicit values")
-			_, err = runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, PanelID: 1})
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "Could not resolve All")
-			if !allow {
-				assert.Zero(t, calls, "disabled option queries must perform no network requests")
+	for _, variableReference := range []string{"${choice:sqlstring}", "[[choice:sqlstring]]"} {
+		t.Run(variableReference, func(t *testing.T) {
+			for _, allow := range []bool{false, true} {
+				t.Run(fmt.Sprintf("queriesAllowed=%t", allow), func(t *testing.T) {
+					calls := 0
+					ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						calls++
+						if r.URL.Path == "/api/datasources/uid/postgres-uid" {
+							w.Header().Set("Content-Type", "application/json")
+							_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"grafana-postgresql-datasource"}`))
+							return
+						}
+						http.Error(w, "option query failed", http.StatusBadRequest)
+					}))
+					t.Cleanup(ts.Close)
+					ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, allow)
+					db := preparationFixture(false, map[string]interface{}{
+						"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
+						"query": "SELECT bad", "datasource": map[string]interface{}{"uid": "postgres-uid"},
+					}, "SELECT "+variableReference)
+					inspected, err := inspectPreparationFixture(ctx, db, false, DashboardPanelQueriesParams{Variables: map[string]string{}})
+					require.NoError(t, err)
+					require.NotEmpty(t, inspected[0].Warnings)
+					assert.Empty(t, inspected[0].ProcessedQuery)
+					assert.Contains(t, strings.Join(inspected[0].Warnings, " "), "supply explicit values")
+					_, err = runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, PanelID: 1})
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), "Could not resolve All")
+					if !allow {
+						assert.Zero(t, calls, "disabled option queries must perform no network requests")
+					}
+				})
 			}
 		})
 	}
@@ -223,32 +182,36 @@ func TestInspectDashboardSQLString(t *testing.T) {
 }
 
 func TestDashboardAllOptions(t *testing.T) {
-	for _, tc := range []struct {
-		name, kind, optionQuery, regex, warning string
-	}{
-		{name: "saved custom options", kind: "custom"},
-		{name: "cyclic dependency", kind: "query", optionQuery: "SELECT ${choice:sqlstring}", warning: "cyclic dependency"},
-		{name: "unsupported regex", kind: "query", optionQuery: "SELECT 1", regex: "/east/", warning: "regex filtering is not supported"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			variable := map[string]interface{}{
-				"name": "choice", "type": tc.kind, "query": tc.optionQuery, "regex": tc.regex,
-				"current": map[string]interface{}{"value": "$__all"},
-				"options": []interface{}{
-					map[string]interface{}{"value": "$__all"},
-					map[string]interface{}{"value": "east"},
-					map[string]interface{}{"value": "west"},
-				},
-			}
-			ctx := context.WithValue(t.Context(), variableQueriesKey{}, true)
-			db := preparationFixture(false, variable, "SELECT ${choice:sqlstring}")
-			prepared, err := prepareDashboardQuery(ctx, db, "SELECT ${choice:sqlstring}", nil, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, nil, "", "", "", "", nil)
-			require.NoError(t, err)
-			if tc.warning != "" {
-				assert.Contains(t, strings.Join(prepared.Warnings, " "), tc.warning)
-			} else {
-				assert.Empty(t, prepared.Warnings)
-				assert.Equal(t, "SELECT 'east','west'", prepared.Query)
+	for _, variableReference := range []string{"${choice:sqlstring}", "[[choice:sqlstring]]"} {
+		t.Run(variableReference, func(t *testing.T) {
+			for _, tc := range []struct {
+				name, kind, optionQuery, regex, warning string
+			}{
+				{name: "saved custom options", kind: "custom"},
+				{name: "cyclic dependency", kind: "query", optionQuery: "SELECT " + variableReference, warning: "cyclic dependency"},
+				{name: "unsupported regex", kind: "query", optionQuery: "SELECT 1", regex: "/east/", warning: "regex filtering is not supported"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					variable := map[string]interface{}{
+						"name": "choice", "type": tc.kind, "query": tc.optionQuery, "regex": tc.regex,
+						"current": map[string]interface{}{"value": "$__all"},
+						"options": []interface{}{
+							map[string]interface{}{"value": "$__all"},
+							map[string]interface{}{"value": "east"},
+							map[string]interface{}{"value": "west"},
+						},
+					}
+					ctx := context.WithValue(t.Context(), variableQueriesKey{}, true)
+					db := preparationFixture(false, variable, "SELECT "+variableReference)
+					prepared, err := prepareDashboardQuery(ctx, db, "SELECT "+variableReference, nil, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, nil, "", "", "", "", nil)
+					require.NoError(t, err)
+					if tc.warning != "" {
+						assert.Contains(t, strings.Join(prepared.Warnings, " "), tc.warning)
+					} else {
+						assert.Empty(t, prepared.Warnings)
+						assert.Equal(t, "SELECT 'east','west'", prepared.Query)
+					}
+				})
 			}
 		})
 	}
@@ -512,62 +475,66 @@ func TestDashboardAllOptionsSharedWithinCall(t *testing.T) {
 }
 
 func TestDashboardDependentOptionsUseCustomAll(t *testing.T) {
-	for _, v2 := range []bool{false, true} {
-		for _, tc := range []struct {
-			name, override, wantRegion string
-		}{
-			{name: "custom All is literal", wantRegion: "'east','west'"},
-			{name: "explicit value overrides All", override: "O'Reilly", wantRegion: "'O''Reilly'"},
-		} {
-			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
-				optionQuery := "SELECT option WHERE region IN (${region:sqlstring}) AND kind = ${kind:sqlstring}"
-				wantOptionQuery := "SELECT option WHERE region IN (" + tc.wantRegion + ") AND kind = 'O''Reilly'"
-				var sentQueries []string
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					if r.URL.Path == "/api/datasources/uid/postgres-uid" {
-						_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"postgres"}`))
-						return
-					}
-					require.Equal(t, "/api/ds/query", r.URL.Path)
-					var payload map[string]interface{}
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-					target := safeArray(payload, "queries")[0].(map[string]interface{})
-					sentQueries = append(sentQueries, safeString(target, "rawSql"))
-					frames := data.Frames{data.NewFrame("", data.NewField("__value", nil, []string{"selected"}))}
-					_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
-				}))
-				t.Cleanup(ts.Close)
-				db := preparationFixture(v2, map[string]interface{}{
-					"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
-					"query": optionQuery, "datasource": map[string]interface{}{"uid": "postgres-uid"},
-				}, "SELECT ${choice:sqlstring}")
-				for _, variable := range []map[string]interface{}{
-					{"name": "region", "type": "custom", "current": map[string]interface{}{"value": "$__all"}, "allValue": "'east','west'"},
-					{"name": "kind", "type": "custom", "current": map[string]interface{}{"value": "O'Reilly"}},
+	for _, variableReference := range []string{"${choice:sqlstring}", "[[choice:sqlstring]]"} {
+		t.Run(variableReference, func(t *testing.T) {
+			for _, v2 := range []bool{false, true} {
+				for _, tc := range []struct {
+					name, override, wantRegion string
+				}{
+					{name: "custom All is literal", wantRegion: "'east','west'"},
+					{name: "explicit value overrides All", override: "O'Reilly", wantRegion: "'O''Reilly'"},
 				} {
-					if v2 {
-						db["variables"] = append(safeArray(db, "variables"), map[string]interface{}{"kind": "CustomVariable", "spec": variable})
-					} else {
-						templating := safeObject(db, "templating")
-						templating["list"] = append(safeArray(templating, "list"), variable)
-					}
+					t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
+						optionQuery := "SELECT option WHERE region IN (" + strings.ReplaceAll(variableReference, "choice", "region") + ") AND kind = " + strings.ReplaceAll(variableReference, "choice", "kind")
+						wantOptionQuery := "SELECT option WHERE region IN (" + tc.wantRegion + ") AND kind = 'O''Reilly'"
+						var sentQueries []string
+						ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							w.Header().Set("Content-Type", "application/json")
+							if r.URL.Path == "/api/datasources/uid/postgres-uid" {
+								_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"postgres"}`))
+								return
+							}
+							require.Equal(t, "/api/ds/query", r.URL.Path)
+							var payload map[string]interface{}
+							require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+							target := safeArray(payload, "queries")[0].(map[string]interface{})
+							sentQueries = append(sentQueries, safeString(target, "rawSql"))
+							frames := data.Frames{data.NewFrame("", data.NewField("__value", nil, []string{"selected"}))}
+							_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
+						}))
+						t.Cleanup(ts.Close)
+						db := preparationFixture(v2, map[string]interface{}{
+							"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
+							"query": optionQuery, "datasource": map[string]interface{}{"uid": "postgres-uid"},
+						}, "SELECT "+variableReference)
+						for _, variable := range []map[string]interface{}{
+							{"name": "region", "type": "custom", "current": map[string]interface{}{"value": "$__all"}, "allValue": "'east','west'"},
+							{"name": "kind", "type": "custom", "current": map[string]interface{}{"value": "O'Reilly"}},
+						} {
+							if v2 {
+								db["variables"] = append(safeArray(db, "variables"), map[string]interface{}{"kind": "CustomVariable", "spec": variable})
+							} else {
+								templating := safeObject(db, "templating")
+								templating["list"] = append(safeArray(templating, "list"), variable)
+							}
+						}
+						overrides := map[string]string{}
+						if tc.override != "" {
+							overrides["region"] = tc.override
+						}
+						ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
+						inspected, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{Variables: overrides})
+						require.NoError(t, err)
+						require.Len(t, inspected, 1)
+						require.Empty(t, inspected[0].Warnings)
+						assert.Equal(t, "SELECT 'selected'", inspected[0].ProcessedQuery)
+						result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1, Variables: overrides})
+						require.NoError(t, err)
+						assert.Equal(t, inspected[0].ProcessedQuery, result.Query)
+						assert.Equal(t, []string{wantOptionQuery, wantOptionQuery, "SELECT 'selected'"}, sentQueries)
+					})
 				}
-				overrides := map[string]string{}
-				if tc.override != "" {
-					overrides["region"] = tc.override
-				}
-				ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
-				inspected, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{Variables: overrides})
-				require.NoError(t, err)
-				require.Len(t, inspected, 1)
-				require.Empty(t, inspected[0].Warnings)
-				assert.Equal(t, "SELECT 'selected'", inspected[0].ProcessedQuery)
-				result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1, Variables: overrides})
-				require.NoError(t, err)
-				assert.Equal(t, inspected[0].ProcessedQuery, result.Query)
-				assert.Equal(t, []string{wantOptionQuery, wantOptionQuery, "SELECT 'selected'"}, sentQueries)
-			})
-		}
+			}
+		})
 	}
 }

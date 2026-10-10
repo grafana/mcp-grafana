@@ -1132,8 +1132,9 @@ var frontendSettingsFlight singleflight.Group
 // sharedSettings holds the parts of /api/frontend/settings that do not depend
 // on the requesting org, and so can be cached per Grafana URL.
 type sharedSettings struct {
-	AppURL  string
-	Version string
+	AppURL         string
+	Version        string
+	FeatureToggles map[string]bool
 }
 
 // settingsResult pairs the fetched settings with the fetch error, if any.
@@ -1174,9 +1175,10 @@ func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, error) {
 			if cachedNS, nsOK := namespaceCache.Load(key); nsOK {
 				s := cachedShared.(sharedSettings)
 				return settingsResult{frontendSettings{
-					AppURL:    s.AppURL,
-					Namespace: cachedNS.(string),
-					Version:   s.Version,
+					AppURL:         s.AppURL,
+					Namespace:      cachedNS.(string),
+					Version:        s.Version,
+					FeatureToggles: s.FeatureToggles,
 				}, nil}, nil
 			}
 		}
@@ -1195,8 +1197,9 @@ func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, error) {
 		}
 
 		sharedSettingsCache.Store(cfg.URL, sharedSettings{
-			AppURL:  settings.AppURL,
-			Version: settings.Version,
+			AppURL:         settings.AppURL,
+			Version:        settings.Version,
+			FeatureToggles: settings.FeatureToggles,
 		})
 		// An absent namespace is not cached: unlike the version, there is a
 		// cheap org-derived fallback, and caching the miss would pin it.
@@ -1220,7 +1223,7 @@ func cachedSharedSettings(cfg *GrafanaConfig) (sharedSettings, bool) {
 
 	settings, err := loadFrontendSettings(cfg)
 	if err == nil {
-		return sharedSettings{AppURL: settings.AppURL, Version: settings.Version}, true
+		return sharedSettings{AppURL: settings.AppURL, Version: settings.Version, FeatureToggles: settings.FeatureToggles}, true
 	}
 
 	// This org's fetch failed, but these fields do not depend on the org, and
@@ -1245,6 +1248,8 @@ type frontendSettings struct {
 	// Version is the Grafana version reported by buildInfo.version
 	// (e.g. "12.1.0"). Empty if not reported.
 	Version string
+	// FeatureToggles reports enabled frontend features. Nil means unreported.
+	FeatureToggles map[string]bool
 }
 
 // doFetchFrontendSettings performs the actual HTTP request to fetch the
@@ -1295,9 +1300,10 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendS
 	}
 
 	var settings struct {
-		AppURL    string `json:"appUrl"`
-		Namespace string `json:"namespace"`
-		BuildInfo struct {
+		AppURL         string          `json:"appUrl"`
+		Namespace      string          `json:"namespace"`
+		FeatureToggles map[string]bool `json:"featureToggles"`
+		BuildInfo      struct {
 			Version string `json:"version"`
 		} `json:"buildInfo"`
 	}
@@ -1311,9 +1317,10 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendS
 		logger.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
 	}
 	return frontendSettings{
-		AppURL:    publicURL,
-		Namespace: settings.Namespace,
-		Version:   settings.BuildInfo.Version,
+		AppURL:         publicURL,
+		Namespace:      settings.Namespace,
+		Version:        settings.BuildInfo.Version,
+		FeatureToggles: settings.FeatureToggles,
 	}, nil
 }
 
@@ -1418,6 +1425,18 @@ func GrafanaVersion(ctx context.Context) string {
 		return ""
 	}
 	return settings.Version
+}
+
+// GrafanaFeatureEnabled reports a frontend feature toggle using the shared
+// settings cache. Grafana omits disabled toggles from the map. known is false
+// when settings cannot be fetched or do not report feature toggles at all.
+func GrafanaFeatureEnabled(ctx context.Context, name string) (enabled, known bool) {
+	cfg := GrafanaConfigFromContext(ctx)
+	settings, ok := cachedSharedSettings(&cfg)
+	if !ok || settings.FeatureToggles == nil {
+		return false, false
+	}
+	return settings.FeatureToggles[name], true
 }
 
 // GrafanaVersionIfKnown returns the Grafana version only when it is already

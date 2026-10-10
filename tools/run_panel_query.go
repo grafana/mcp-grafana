@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -116,6 +117,7 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 	results := make(map[int]*PanelQueryResult)
 	errs := make(map[int]string)
 	optionsCache := make(variableOptionsCache)
+	ctx = withDashboardQuerySettings(ctx)
 
 	// Execute each panel query
 	for _, panelID := range args.PanelIDs {
@@ -246,20 +248,39 @@ type templateVariableValues map[string][]string
 // formatters follow Grafana's formatting syntax; unknown formatters fall back
 // to Grafana's glob representation.
 func substituteTemplateVariableValues(query string, variables templateVariableValues) string {
-	for name, values := range variables {
-		variableRe := regexp.MustCompile(fmt.Sprintf(
-			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
-			regexp.QuoteMeta(name), regexp.QuoteMeta(name), regexp.QuoteMeta(name),
-		))
-		query = variableRe.ReplaceAllStringFunc(query, func(match string) string {
-			format, hasFormat := templateVariableFormat(match)
-			if !hasFormat {
-				return firstTemplateVariableValue(values)
-			}
-			return formatTemplateVariable(values, format)
-		})
+	if len(variables) == 0 {
+		return query
 	}
-	return query
+	// Keep support for every name accepted by the existing interpolator.
+	// Longest names win when one is a prefix of another.
+	names := make([]string, 0, len(variables))
+	for name := range variables {
+		names = append(names, name)
+	}
+	slices.SortFunc(names, func(a, b string) int { return len(b) - len(a) })
+	for i := range names {
+		names[i] = regexp.QuoteMeta(names[i])
+	}
+	namePattern := strings.Join(names, "|")
+	variableRe := regexp.MustCompile(fmt.Sprintf(
+		`\$\{(%s)(?::[^}]*)?\}|\[\[(%s)(?::[^\]]*)?\]\]|\$(%s)\b`,
+		namePattern, namePattern, namePattern,
+	))
+	// Match the original query once. Selected values are data and must not
+	// become additional variable references after they have been inserted.
+	return variableRe.ReplaceAllStringFunc(query, func(match string) string {
+		parts := variableRe.FindStringSubmatch(match)
+		name := parts[1] + parts[2] + parts[3]
+		values, ok := variables[name]
+		if !ok {
+			return match
+		}
+		format, hasFormat := templateVariableFormat(match)
+		if !hasFormat {
+			return firstTemplateVariableValue(values)
+		}
+		return formatTemplateVariable(values, format)
+	})
 }
 
 func templateVariableFormat(match string) (string, bool) {
@@ -389,18 +410,8 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 
 	// Extract datasource - prefer target-level (more specific) over panel-level.
 	// This handles "Mixed" datasource panels where each target specifies its own datasource.
-	if targetDS := safeObject(target, "datasource"); targetDS != nil {
-		info.DatasourceUID = safeString(targetDS, "uid")
-		info.DatasourceType = safeString(targetDS, "type")
-	}
-
-	// Fall back to panel-level datasource
-	if info.DatasourceUID == "" {
-		if dsField := safeObject(panel, "datasource"); dsField != nil {
-			info.DatasourceUID = safeString(dsField, "uid")
-			info.DatasourceType = safeString(dsField, "type")
-		}
-	}
+	datasource := extractPanelDatasource(panel, target)
+	info.DatasourceUID, info.DatasourceType = datasource.UID, datasource.Type
 
 	if info.DatasourceUID == "" {
 		return nil, fmt.Errorf("could not determine datasource for panel")
@@ -531,19 +542,6 @@ func firstTemplateVariableValues(values templateVariableValues) map[string]strin
 
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
 func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
-	// Parse time range for macro substitution
-	startTime, err := parseTime(start)
-	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
-	}
-	endTime, err := parseTime(end)
-	if err != nil {
-		return nil, fmt.Errorf("parsing end time: %w", err)
-	}
-
-	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
-	query = substituteGrafanaMacros(query, startTime, endTime)
-
 	return queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: datasourceUID,
 		Expr:          query,
@@ -566,9 +564,6 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
-	query = substituteGrafanaMacros(query, startTime, endTime)
-
 	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
 		LogQL:         query,
@@ -585,12 +580,12 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 }
 
 func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string) (*sqldialect.SQLQueryResult, error) {
-	return querySQLHandler(ctx, sqldialect.QuerySQLParams{
+	return querySQLWithPreparedMacros(ctx, sqldialect.QuerySQLParams{
 		DatasourceUID: datasourceUID,
 		Query:         query,
 		Start:         start,
 		End:           end,
-	})
+	}, true)
 }
 
 // executeCloudWatchPanelQuery runs a CloudWatch query using Grafana's /api/ds/query endpoint
@@ -673,7 +668,7 @@ func defaultSQLFormat(datasourceType string) interface{} {
 // executeSQLPanelQuery runs a panel query against a SQL datasource via Grafana's
 // /api/ds/query endpoint. Those datasources resolve SQL macros such as
 // $__timeFilter/$__timeFrom/$__timeGroup server-side in their backend plugin, so we
-// only substitute the frontend-only macros ($__interval, $__range, etc.) here. The
+// receive frontend macros already expanded by dashboard preparation. The
 // panel's raw target is preserved so datasource-specific fields (BigQuery's location,
 // project and dataset, for example) reach the backend; only rawSql, datasource, refId
 // and format are overridden.
@@ -692,14 +687,11 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Substitute Grafana frontend macros; leave SQL macros for the backend plugin.
-	processedQuery := substituteGrafanaMacros(query, startTime, endTime)
-
 	// Deep copy the raw target and substitute variables in its fields (e.g. location).
 	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
 
 	// Override the SQL with the fully-processed query and ensure required fields are set.
-	target["rawSql"] = processedQuery
+	target["rawSql"] = query
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
@@ -727,7 +719,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		Columns:        columns,
 		Rows:           rows,
 		RowCount:       len(rows),
-		ProcessedQuery: processedQuery,
+		ProcessedQuery: query,
 	}, nil
 }
 
@@ -749,6 +741,14 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
 // used across datasource types (Prometheus, Loki, etc.)
 func substituteGrafanaMacros(query string, start, end time.Time) string {
+	// Calculate interval based on time range / max data points (~100 points).
+	interval := max(end.Sub(start)/100, time.Second)
+	return substituteGrafanaMacrosWithInterval(query, start, end, formatPrometheusDuration(interval), interval.Milliseconds())
+}
+
+// substituteGrafanaMacrosWithInterval shares frontend macro expansion while
+// preserving each datasource's interval calculation and duration syntax.
+func substituteGrafanaMacrosWithInterval(query string, start, end time.Time, intervalStr string, intervalMs int64) string {
 	query = substituteEpochMacros(query, start, end)
 	duration := end.Sub(start)
 
@@ -769,19 +769,11 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
 	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
 
-	// Calculate interval based on time range / max data points (~100 points)
-	interval := duration / 100
-	if interval < time.Second {
-		interval = time.Second
-	}
-
 	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
-	intervalMs := int64(interval / time.Millisecond)
 	query = strings.ReplaceAll(query, "${__interval_ms}", fmt.Sprintf("%d", intervalMs))
 	query = strings.ReplaceAll(query, "$__interval_ms", fmt.Sprintf("%d", intervalMs))
 
 	// $__interval - duration string
-	intervalStr := formatPrometheusDuration(interval)
 	query = strings.ReplaceAll(query, "${__interval}", intervalStr)
 	query = strings.ReplaceAll(query, "$__interval", intervalStr)
 
