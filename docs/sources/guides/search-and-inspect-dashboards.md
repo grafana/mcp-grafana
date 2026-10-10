@@ -33,6 +33,8 @@ Ask the assistant to search for dashboards by title, folder, tag, or starred sta
 
 When you need an overview of a dashboard without the full JSON, ask for a **dashboard summary**. You get title, panel count, panel types, variables, and similar metadata. To see what each panel queries, ask for **panel queries**: the assistant uses the tool that returns panel title, query string, and datasource UID and type for every panel.
 
+To inspect the prepared query, provide `variables` (use `{}` for saved selections) and the same `start`/`end` as execution. Check `warnings` before using the result. See [Inspect the prepared query](../run-a-dashboard-panel-query/#inspect-the-prepared-query) for SQL All selections, permissions, and interpolation limits.
+
 ## Get specific properties with JSONPath
 
 When you only need certain parts of a dashboard (for example, one panel’s config), ask the assistant to use **get_dashboard_property** with a JSONPath expression (for example, `$.panels[0].title`). That fetches only the requested data and avoids loading the full dashboard.

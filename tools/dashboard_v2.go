@@ -376,7 +376,7 @@ func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
 		}
 
 		variable := map[string]interface{}{}
-		for _, key := range []string{"name", "current", "query"} {
+		for _, key := range []string{"name", "current", "query", "options", "allValue", "includeAll", "multi", "regex", "datasource"} {
 			if val, ok := vspec[key]; ok {
 				variable[key] = val
 			}
@@ -384,6 +384,15 @@ func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
 		// Only constant and textbox variables need their v1 type: their value
 		// falls back to `query` when no `current` is saved.
 		switch safeString(vk, "kind") {
+		case "QueryVariable":
+			variable["type"] = "query"
+			if query := safeObject(vspec, "query"); query != nil {
+				variable["query"] = safeObject(query, "spec")
+				ds := safeObject(query, "datasource")
+				variable["datasource"] = map[string]interface{}{"uid": safeString(ds, "name"), "type": safeString(query, "group")}
+			}
+		case "CustomVariable":
+			variable["type"] = "custom"
 		case "ConstantVariable":
 			variable["type"] = "constant"
 		case "TextVariable":
