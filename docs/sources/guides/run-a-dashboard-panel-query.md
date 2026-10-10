@@ -34,6 +34,8 @@ Ask the assistant to run the query for a specific panel on a dashboard. Provide 
 
 Call `get_dashboard_panel_queries` with the same `variables`, `start`, and `end` as `run_panel_query`. Pass `variables: {}` to use saved selections. Both tools use the same preparation for classic v1 and schema v2 dashboards, including datasource variables and frontend time macros. Omitted time bounds default independently to `now-1h` and `now`. Use absolute bounds when comparing separate calls exactly.
 
+Prepared inspection requires `datasources:read` to resolve datasource variables or missing datasource types, including under `--disable-write` and `--disable-query`. Raw inspection without preparation only reads the dashboard.
+
 SQL `${variable:sqlstring}` preserves multiple selected values and escapes quotes. For a multi-value variable, an override can contain a JSON string array such as `"[\"east\",\"west\"]"` or a quoted SQL list such as `"'east','west'"`. Ordinary saved values are treated as data, including commas and quotes within a value.
 
 For an All selection, a custom `allValue` is used literally. Other saved selections use the variable's options. Query variables resolve All by querying their datasource with the requested time range. PostgreSQL, MySQL, MSSQL, and BigQuery option queries are supported, using the `__value` column when present or the first column otherwise. This requires datasource read/query permission and raw SQL query execution to be enabled. Under `--disable-query` or `--disable-write`, inspection remains available but warns when it cannot query options. `--enable-query` can opt back into raw SQL queries under `--disable-write`.

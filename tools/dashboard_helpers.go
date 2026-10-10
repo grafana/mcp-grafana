@@ -410,8 +410,9 @@ func isEmptyTargetValue(val interface{}) bool {
 	}
 }
 
-// variableSearchText combines the expression and target fields so variables in
-// fields such as a SQL location or a CloudWatch dimension are included too.
+// variableSearchText scans the inputs consumed by the datasource executor.
+// SQL and CloudWatch consume target fields such as location and dimensions,
+// while expression-only executors must ignore dependencies in display metadata.
 // Datasource and refId metadata are handled separately from query fields.
 func variableSearchText(pq panelQuery) string {
 	target := pq.rawTarget
@@ -421,7 +422,30 @@ func variableSearchText(pq panelQuery) string {
 	if target == nil {
 		return pq.Query
 	}
-	encoded, err := json.Marshal(queryTargetFields(target))
+	switch normalizeDatasourceType(pq.Datasource.Type) {
+	case "prometheus", "loki", "clickhouse":
+		return pq.Query
+	case "influxdb":
+		if pq.Query != "" {
+			return pq.Query + " " + safeString(target, "queryType")
+		}
+	}
+	fields := queryTargetFields(target)
+	switch normalizeDatasourceType(pq.Datasource.Type) {
+	case "postgres", "mysql", "mssql":
+		// The built-in SQL backends execute rawSql. The sql object only
+		// preserves frontend builder state, even after switching to code mode.
+		if pq.Query != "" {
+			delete(fields, "sql")
+		}
+	case "cloudwatch":
+		// CloudWatch ignores the deprecated alias when a label is supplied.
+		// Keep the raw target intact while excluding that unused dependency.
+		if _, hasLabel := fields["label"].(string); hasLabel {
+			delete(fields, "alias")
+		}
+	}
+	encoded, err := json.Marshal(fields)
 	if err != nil {
 		return pq.Query
 	}

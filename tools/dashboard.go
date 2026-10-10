@@ -883,6 +883,7 @@ var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 // GetDashboardPropertyParams defines parameters for getting specific dashboard properties

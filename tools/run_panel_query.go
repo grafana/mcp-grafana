@@ -418,6 +418,24 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	return info, nil
 }
 
+// templateVariableCurrent preserves saved selections, including explicit empty
+// values, and falls back to the first saved option only when no selection exists.
+func templateVariableCurrent(variable map[string]interface{}) map[string]interface{} {
+	current := safeObject(variable, "current")
+	if _, set := current["value"]; set || safeString(current, "text") != "" {
+		return current
+	}
+	options := safeArray(variable, "options")
+	if len(options) > 0 {
+		if option, ok := options[0].(map[string]interface{}); ok {
+			if value, ok := option["value"].(string); ok && value != "" {
+				return map[string]interface{}{"value": value}
+			}
+		}
+	}
+	return current
+}
+
 // extractTemplateVariableValues extracts all selected values of each dashboard
 // template variable. Grafana stores multi-select values in current.value as an
 // array, and formatted interpolation needs to retain that array.
@@ -442,7 +460,7 @@ func extractTemplateVariableValues(db map[string]interface{}) templateVariableVa
 		}
 
 		// Get current value - can be in different formats
-		current := safeObject(variable, "current")
+		current := templateVariableCurrent(variable)
 		currentValueSet := false
 		if current != nil {
 			// Try "value" field first (can be string or array).
