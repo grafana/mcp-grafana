@@ -5,7 +5,6 @@ package tools
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 func intPtr(i int) *int {
@@ -177,6 +176,77 @@ func TestBuildRenderURL(t *testing.T) {
 				"scale=1",
 				"kiosk=true",
 			},
+		},
+		{
+			name:    "Explore render uses explore path with pane state",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{
+					DatasourceUID: "prom-uid",
+					Queries:       []map[string]interface{}{{"refId": "A", "expr": "up"}},
+				},
+				TimeRange: &RenderTimeRange{From: "now-1h", To: "now"},
+				Variables: map[string]StringOrSlice{"var-x": {"ignored"}},
+			},
+			contains: []string{
+				"http://localhost:3000/render/explore?",
+				"schemaVersion=1",
+				"panes=",
+				"prom-uid",
+				"kiosk=true",
+				"forcePollingMode=true",
+				"height=1000",
+			},
+			notContains: []string{
+				"/render/d",
+				"var-x",
+				"from=now-1h",
+			},
+		},
+		{
+			name:    "Explore render passes custom dimensions",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{DatasourceUID: "prom-uid"},
+				Width:   intPtr(400),
+				Height:  intPtr(200),
+				Scale:   intPtr(2),
+			},
+			contains: []string{
+				"http://localhost:3000/render/explore?",
+				"width=400",
+				"height=200",
+				"scale=2",
+			},
+			notContains: []string{
+				"height=1000",
+			},
+		},
+		{
+			name:    "Explore requires datasourceUid",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Explore rejects panelId",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{DatasourceUID: "prom-uid"},
+				PanelID: intPtr(1),
+			},
+			expectError: true,
+		},
+		{
+			name:    "Explore and dashboardUid are mutually exclusive",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				Explore:      &RenderExplore{DatasourceUID: "prom-uid"},
+			},
+			expectError: true,
 		},
 		{
 			name:    "Panel render with custom dimensions uses d-solo path",
@@ -525,6 +595,34 @@ func TestBuildRenderURL(t *testing.T) {
 // org the image was rendered from. `?orgId=N` would persist an org switch onto
 // the viewer's user record via Grafana's OrgRedirect middleware, so a link that
 // cannot be shown to resolve correctly is dropped instead.
+func TestRenderLimits(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
+		assert.Equal(t, 60*time.Second, renderTimeout(GetPanelImageParams{}))
+		assert.Equal(t, 60*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(0)}))
+		assert.Equal(t, 30*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(30)}))
+		assert.Equal(t, 120*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(1 << 62)}))
+	})
+
+	t.Run("dimensions", func(t *testing.T) {
+		u, err := buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{
+			DashboardUID: "abc123",
+			Width:        intPtr(100000),
+			Height:       intPtr(100000),
+		})
+		require.NoError(t, err)
+		assert.Contains(t, u, "width=3000")
+		assert.Contains(t, u, "height=3000")
+
+		// height=-1 (full page) is passed through unchanged.
+		u, err = buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{
+			DashboardUID: "abc123",
+			Height:       intPtr(-1),
+		})
+		require.NoError(t, err)
+		assert.Contains(t, u, "height=-1")
+	})
+}
+
 func TestDeeplinkResolvesInRenderOrg(t *testing.T) {
 	// userOrg serves /api/user reporting the identity's stored org. That value is
 	// deliberately not request-scoped in Grafana, so it is what a browser session
@@ -628,18 +726,18 @@ func TestGetPanelImage(t *testing.T) {
 		require.Len(t, result.Content, 2)
 
 		// Check image content
-		imageContent, ok := result.Content[0].(mcp.ImageContent)
+		imageContent, ok := result.Content[0].(*mcp.ImageContent)
 		require.True(t, ok, "first content item should be ImageContent")
 		assert.Equal(t, "image/png", imageContent.MIMEType)
-		decoded, err := base64.StdEncoding.DecodeString(imageContent.Data)
-		require.NoError(t, err)
+		decoded := imageContent.Data
 		assert.Equal(t, testPNGData, decoded)
 
 		// Check deeplink content
-		textContent, ok := result.Content[1].(mcp.TextContent)
+		textContent, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok, "second content item should be TextContent")
 		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
 		assertDeeplinkMeta(t, textContent)
+		assert.Equal(t, map[string]any{"deeplink": server.URL + "/d/test-dash"}, result.StructuredContent)
 	})
 
 	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
@@ -669,7 +767,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.Content, 2)
 
-		textContent, ok := result.Content[1].(mcp.TextContent)
+		textContent, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, server.URL+"/d/test-dash?viewPanel=5", textContent.Text)
 		assertDeeplinkMeta(t, textContent)
@@ -696,7 +794,7 @@ func TestGetPanelImage(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Content, 2)
 
-			text, ok := result.Content[1].(mcp.TextContent)
+			text, ok := result.Content[1].(*mcp.TextContent)
 			require.True(t, ok)
 			assert.Equal(t,
 				server.URL+"/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
@@ -718,7 +816,7 @@ func TestGetPanelImage(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Content, 2)
 
-			text, ok := result.Content[1].(mcp.TextContent)
+			text, ok := result.Content[1].(*mcp.TextContent)
 			require.True(t, ok)
 			parsed, err := url.Parse(text.Text)
 			require.NoError(t, err)
@@ -752,7 +850,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, publicURL+"/d/test-dash", text.Text)
 		assertDeeplinkMeta(t, text)
@@ -779,7 +877,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -816,7 +914,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -845,7 +943,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -1135,30 +1233,38 @@ func TestGetPanelImageOrgIDOmitDeeplink(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
-	image, ok := result.Content[0].(mcp.ImageContent)
+	image, ok := result.Content[0].(*mcp.ImageContent)
 	require.True(t, ok, "only content item should be ImageContent")
-	decoded, err := base64.StdEncoding.DecodeString(image.Data)
-	require.NoError(t, err)
+	decoded := image.Data
 	assert.Equal(t, testPNGData, decoded)
 }
 
 func TestGetPanelImageToolMeta(t *testing.T) {
 	tool := GetPanelImage.Tool
 	require.NotNil(t, tool.Meta, "get_panel_image should have _meta for MCP Apps")
-	require.NotNil(t, tool.Meta.AdditionalFields)
+	require.NotNil(t, tool.Meta)
 
-	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	ui, ok := tool.Meta["ui"].(map[string]any)
 	require.True(t, ok, "expected _meta.ui to be a map")
 	assert.Equal(t, mcpgrafana.PanelViewerResourceURI, ui["resourceUri"])
 }
 
 // assertDeeplinkMeta checks the `_meta.ui.kind = "deeplink"` marker the
 // panel viewer uses to detect the deeplink content item.
-func assertDeeplinkMeta(t *testing.T, c mcp.TextContent) {
+func assertDeeplinkMeta(t *testing.T, c *mcp.TextContent) {
 	t.Helper()
 	require.NotNil(t, c.Meta)
-	require.NotNil(t, c.Meta.AdditionalFields)
-	ui, ok := c.Meta.AdditionalFields["ui"].(map[string]any)
-	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta.AdditionalFields["ui"])
+	ui, ok := c.Meta["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta["ui"])
 	assert.Equal(t, mcpgrafana.UIContentKindDeeplink, ui["kind"])
+}
+
+func TestBuildDashboardDeeplinkExplore(t *testing.T) {
+	link, err := buildDashboardDeeplink("http://grafana.example/", GetPanelImageParams{
+		Explore:   &RenderExplore{DatasourceUID: "prom-uid"},
+		TimeRange: &RenderTimeRange{From: "now-1h", To: "now"},
+	})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(link, "http://grafana.example/explore?"), link)
+	assert.Contains(t, link, "panes=")
 }

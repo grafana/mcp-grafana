@@ -305,3 +305,91 @@ func extractVariableSummaryV2(vk map[string]interface{}) VariableSummary {
 	}
 	return summary
 }
+
+// extractPanelInfoV2 is extractPanelInfo for a v2 panel spec. A v2 query keeps
+// its plugin-specific fields in query.spec, its refId on the PanelQuery and its
+// datasource in query.datasource.name, so RawTarget is a copy of the body plus
+// the refId and datasource the panel query executors read.
+func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
+	info := &panelInfo{
+		ID:    safeInt(panel, "id"),
+		Title: safeString(panel, "title"),
+	}
+
+	var queries []interface{}
+	if data := safeObject(panel, "data"); data != nil {
+		if dataSpec := safeObject(data, "spec"); dataSpec != nil {
+			queries = safeArray(dataSpec, "queries")
+		}
+	}
+	if len(queries) == 0 {
+		return nil, fmt.Errorf("panel has no query targets")
+	}
+	if queryIndex < 0 || queryIndex >= len(queries) {
+		return nil, fmt.Errorf("queryIndex %d out of range (panel has %d queries, valid range: 0-%d)", queryIndex, len(queries), len(queries)-1)
+	}
+
+	pq, _ := queries[queryIndex].(map[string]interface{})
+	pqSpec := safeObject(pq, "spec")
+	query := safeObject(pqSpec, "query")
+	if query == nil {
+		return nil, fmt.Errorf("invalid target format")
+	}
+
+	info.DatasourceType = safeString(query, "group")
+	if ref := safeObject(query, "datasource"); ref != nil {
+		info.DatasourceUID = safeString(ref, "name")
+	}
+	if info.DatasourceUID == "" {
+		return nil, fmt.Errorf("could not determine datasource for panel")
+	}
+
+	target := map[string]interface{}{}
+	for k, v := range safeObject(query, "spec") {
+		target[k] = v
+	}
+	target["refId"] = safeString(pqSpec, "refId")
+	target["datasource"] = map[string]interface{}{"uid": info.DatasourceUID, "type": info.DatasourceType}
+	info.RawTarget = target
+
+	// CloudWatch panels use structured targets rather than string expressions
+	info.Query = extractQueryExpression(target)
+	if info.Query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
+		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
+	}
+
+	return info, nil
+}
+
+// templatingV1FromV2 converts a v2 dashboard's variables to the v1
+// `templating.list` shape that run_panel_query reads.
+func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
+	list := []interface{}{}
+	for _, v := range safeArray(spec, "variables") {
+		vk, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		vspec := safeObject(vk, "spec")
+		if vspec == nil {
+			continue
+		}
+
+		variable := map[string]interface{}{}
+		for _, key := range []string{"name", "current", "query"} {
+			if val, ok := vspec[key]; ok {
+				variable[key] = val
+			}
+		}
+		// Only constant and textbox variables need their v1 type: their value
+		// falls back to `query` when no `current` is saved.
+		switch safeString(vk, "kind") {
+		case "ConstantVariable":
+			variable["type"] = "constant"
+		case "TextVariable":
+			variable["type"] = "textbox"
+		}
+		list = append(list, variable)
+	}
+	return map[string]interface{}{"templating": map[string]interface{}{"list": list}}
+}

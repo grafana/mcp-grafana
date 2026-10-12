@@ -37,7 +37,7 @@ type QueryRunner interface {
 
 // QuerySQLParams are the parameters for the query_sql tool.
 type QuerySQLParams struct {
-	DatasourceUID              string            `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource. Use list_datasources to find available UIDs."`
+	DatasourceUID              string            `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource."`
 	Query                      string            `json:"query" jsonschema:"required,description=Raw SQL query. Supports datasource-specific macros such as $__timeFilter(column)\\, $__from/$__to\\, $__interval\\, and ${varname} for variable substitution."`
 	Start                      string            `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: 1 hour ago."`
 	End                        string            `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now."`

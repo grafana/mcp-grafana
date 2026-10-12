@@ -3,6 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -106,7 +109,7 @@ func formatRFC3339OrEmpty(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(time.RFC3339)
+	return t.Format(time.RFC3339Nano)
 }
 
 func (b *lokiNativeBackend) ListLabelNames(ctx context.Context, matcher string, start, end time.Time) ([]string, error) {
@@ -147,6 +150,32 @@ func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*
 	entries, err := parseLokiQueryResponse(response)
 	if err != nil {
 		return nil, err
+	}
+	// Loki groups results by stream, so flattening does not preserve global time order.
+	// Sort before queryLokiLogs trims the page to the requested limit.
+	if response.Data.ResultType == "streams" {
+		type timedEntry struct {
+			log       LogEntry
+			timestamp int64
+		}
+		ordered := make([]timedEntry, len(entries))
+		for i, entry := range entries {
+			timestamp, err := strconv.ParseInt(entry.Timestamp, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid Loki stream timestamp %q: %w", entry.Timestamp, err)
+			}
+			ordered[i] = timedEntry{log: entry, timestamp: timestamp}
+		}
+		forward := strings.EqualFold(p.Direction, "forward")
+		sort.SliceStable(ordered, func(i, j int) bool {
+			if forward {
+				return ordered[i].timestamp < ordered[j].timestamp
+			}
+			return ordered[i].timestamp > ordered[j].timestamp
+		})
+		for i, entry := range ordered {
+			entries[i] = entry.log
+		}
 	}
 
 	var linesScanned *int

@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,7 @@ import (
 	"github.com/go-openapi/runtime/client"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -28,6 +29,20 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// newCallToolRequest builds a *mcp.CallToolRequest for tests, marshaling args to json.RawMessage.
+func newCallToolRequest(name string, args map[string]any) *mcp.CallToolRequest {
+	argBytes, err := json.Marshal(args)
+	if err != nil {
+		panic(err)
+	}
+	return &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      name,
+			Arguments: argBytes,
+		},
+	}
+}
 
 func TestExtractIncidentClientFromEnv(t *testing.T) {
 	t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/")
@@ -428,14 +443,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "test_tool",
-				Arguments: map[string]interface{}{
-					"message": "world",
-				},
-			},
-		}
+		request := newCallToolRequest("test_tool", map[string]any{
+			"message": "world",
+		})
 
 		// Execute the tool
 		result, err := tool.Handler(ctx, request)
@@ -481,14 +491,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request that will cause failure
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "failing_tool",
-				Arguments: map[string]interface{}{
-					"shouldFail": true,
-				},
-			},
-		}
+		request := newCallToolRequest("failing_tool", map[string]any{
+			"shouldFail": true,
+		})
 
 		// Execute the tool (should fail)
 		result, err := tool.Handler(ctx, request)
@@ -538,14 +543,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "context_prop_tool",
-				Arguments: map[string]interface{}{
-					"message": "test",
-				},
-			},
-		}
+		request := newCallToolRequest("context_prop_tool", map[string]any{
+			"message": "test",
+		})
 
 		// Execute the tool (should always create spans for context propagation)
 		result, err := tool.Handler(ctx, request)
@@ -584,14 +584,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request with potentially sensitive data
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "sensitive_tool",
-				Arguments: map[string]interface{}{
-					"sensitiveData": "user@example.com",
-				},
-			},
-		}
+		request := newCallToolRequest("sensitive_tool", map[string]any{
+			"sensitiveData": "user@example.com",
+		})
 
 		// Execute the tool (arguments should NOT be logged by default)
 		result, err := tool.Handler(ctx, request)
@@ -640,14 +635,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request
-		request := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "debug_tool",
-				Arguments: map[string]interface{}{
-					"safeData": "debug-value",
-				},
-			},
-		}
+		request := newCallToolRequest("debug_tool", map[string]any{
+			"safeData": "debug-value",
+		})
 
 		// Execute the tool (arguments SHOULD be logged when flag enabled)
 		result, err := tool.Handler(ctx, request)
@@ -763,29 +753,26 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 func TestExtractTraceContext(t *testing.T) {
 	t.Run("no meta returns original context", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
 		result := extractTraceContext(ctx, request)
 		assert.Equal(t, ctx, result)
 	})
 
 	t.Run("empty meta returns original context", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
-		request.Params.Meta = &mcp.Meta{}
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
+		request.Params.Meta = mcp.Meta{}
 		result := extractTraceContext(ctx, request)
 		assert.Equal(t, ctx, result)
 	})
 
 	t.Run("valid traceparent extracts span context", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
-		request.Params.Meta = &mcp.Meta{
-			AdditionalFields: map[string]any{
-				"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-			},
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
+		request.Params.Meta = mcp.Meta{
+			"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 		}
 		result := extractTraceContext(ctx, request)
-		// Should have extracted a span context
 		sc := trace.SpanContextFromContext(result)
 		assert.True(t, sc.IsValid())
 		assert.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", sc.TraceID().String())
@@ -794,11 +781,9 @@ func TestExtractTraceContext(t *testing.T) {
 
 	t.Run("invalid traceparent returns context unchanged", func(t *testing.T) {
 		ctx := context.Background()
-		request := mcp.CallToolRequest{}
-		request.Params.Meta = &mcp.Meta{
-			AdditionalFields: map[string]any{
-				"traceparent": "not-a-valid-traceparent",
-			},
+		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
+		request.Params.Meta = mcp.Meta{
+			"traceparent": "not-a-valid-traceparent",
 		}
 		result := extractTraceContext(ctx, request)
 		sc := trace.SpanContextFromContext(result)
@@ -1051,6 +1036,24 @@ func TestBuildTransport(t *testing.T) {
 		assert.Empty(t, capturedReq.Header.Get("User-Agent"))
 	})
 
+	t.Run("custom UserAgent in config overrides default", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{UserAgent: "mcp-grafana-cloud/1.0"}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "mcp-grafana-cloud/1.0", capturedReq.Header.Get("User-Agent"))
+	})
+
 	t.Run("auth takes precedence over extra headers for same key", func(t *testing.T) {
 		var capturedReq *http.Request
 		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
@@ -1182,6 +1185,10 @@ func TestDebugLoggingRedactsSensitiveHeaders(t *testing.T) {
 		APIKey: "glsa_supersecrettoken1234",
 		Debug:  true,
 		Logger: logger,
+		ExtraHeaders: map[string]string{
+			"X-Grafana-Service-Account-Token": "glsa_forwarded_secret_1234",
+			"X-Grafana-Api-Key":               "legacy_forwarded_secret_1234",
+		},
 	}
 	transport, err := BuildTransport(cfg, mock, WithoutOtel())
 	require.NoError(t, err)
@@ -1192,10 +1199,14 @@ func TestDebugLoggingRedactsSensitiveHeaders(t *testing.T) {
 
 	// The actual request to the server must still carry the real token.
 	assert.Equal(t, "Bearer glsa_supersecrettoken1234", capturedReq.Header.Get("Authorization"))
+	assert.Equal(t, "glsa_forwarded_secret_1234", capturedReq.Header.Get("X-Grafana-Service-Account-Token"))
+	assert.Equal(t, "legacy_forwarded_secret_1234", capturedReq.Header.Get("X-Grafana-Api-Key"))
 
 	// The debug log output must NOT contain the full token.
 	logOutput := buf.String()
 	assert.NotContains(t, logOutput, "glsa_supersecrettoken1234")
+	assert.NotContains(t, logOutput, "glsa_forwarded_secret_1234")
+	assert.NotContains(t, logOutput, "legacy_forwarded_secret_1234")
 	// But it should contain the redacted version.
 	assert.Contains(t, logOutput, "Bear***1234")
 }
@@ -2076,6 +2087,28 @@ func TestFrontendSettingsSharedByAllConsumers(t *testing.T) {
 		"public URL, version and namespace must share one frontend-settings fetch")
 }
 
+// TestNewGrafanaClientTrimsTrailingSlashFromConfiguredURL guards against a
+// regression where a configured Grafana URL with a trailing slash (e.g.
+// "https://foo.grafana.net/") produced a double-slashed request path
+// ("//api/frontend/settings"). NewGrafanaClient trims it up front so every
+// path built from the URL -- the OpenAPI client's base path and the
+// frontend-settings fetch alike -- stays well-formed.
+func TestNewGrafanaClientTrimsTrailingSlashFromConfiguredURL(t *testing.T) {
+	t.Cleanup(clearFrontendSettingsCaches)
+
+	var gotPath string
+	ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"appUrl": "https://public.grafana.example.com", "buildInfo": {"version": "12.1.0"}}`))
+	})
+
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+	gc := NewGrafanaClient(ctx, ts.URL+"/", "test-key", nil)
+	assert.Equal(t, "/api/frontend/settings", gotPath)
+	assert.Equal(t, "https://public.grafana.example.com", gc.PublicURL)
+}
+
 // TestNamespaceIsNotSharedAcrossOrgs guards the reason the namespace keeps its
 // own org-keyed cache: Grafana computes it for the requesting org, so serving it
 // from the URL-keyed cache would hand one org another org's namespace.
@@ -2747,5 +2780,39 @@ func TestDefaultOrgWarningSuppressedWithDynamicMultiOrg(t *testing.T) {
 		ctx, req := newRequestCtx(slog.New(slog.NewTextHandler(&buf, nil)))
 		extractGrafanaClientCached(cache)(ctx, req)
 		assert.NotContains(t, buf.String(), "using default org")
+	})
+}
+
+func TestEnvIgnoresUnsubstitutedMCPBPlaceholders(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	t.Run("blank token field falls back to basic auth", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://localhost:3000")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "${user_config.service_account_token}")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_USERNAME", "admin")
+		t.Setenv("GRAFANA_PASSWORD", "secret")
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Empty(t, apiKey)
+		auth := userAndPassFromEnv()
+		require.NotNil(t, auth)
+		password, _ := auth.Password()
+		assert.Equal(t, "admin", auth.Username())
+		assert.Equal(t, "secret", password)
+	})
+
+	t.Run("blank username and password fields disable basic auth", func(t *testing.T) {
+		t.Setenv("GRAFANA_USERNAME", "${user_config.username}")
+		t.Setenv("GRAFANA_PASSWORD", "${user_config.password}")
+
+		assert.Nil(t, userAndPassFromEnv())
+	})
+
+	t.Run("blank org id field is ignored", func(t *testing.T) {
+		t.Setenv("GRAFANA_ORG_ID", "${user_config.org_id}")
+
+		assert.Equal(t, int64(0), orgIdFromEnv(logger))
 	})
 }

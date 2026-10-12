@@ -9,9 +9,8 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
@@ -57,11 +56,12 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 	"list_prometheus_metric_metadata",
 	"List Prometheus metric metadata. Returns metadata about metrics currently scraped from targets. Note: This endpoint is experimental.",
 	listPrometheusMetricMetadata,
-	mcp.WithTitleAnnotation("List Prometheus metric metadata"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Prometheus metric metadata"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type QueryPrometheusParams struct {
@@ -179,14 +179,17 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now'\\, 'now-1h'.",
+	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
 	queryPrometheusWithHints,
-	mcp.WithTitleAnnotation("Query Prometheus metrics"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Prometheus metrics"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
+
+const maxPrometheusMetricNames = 10_000
 
 type ListPrometheusMetricNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
@@ -199,19 +202,29 @@ type ListPrometheusMetricNamesParams struct {
 }
 
 func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) ([]string, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
-	if err != nil {
-		return nil, fmt.Errorf("getting backend: %w", err)
-	}
-
 	limit := args.Limit
 	if limit == 0 {
 		limit = 10
 	}
-
 	page := args.Page
 	if page == 0 {
 		page = 1
+	}
+	if limit < 1 || page < 1 {
+		return nil, fmt.Errorf("limit and page must be positive")
+	}
+	// Prometheus has no offset parameter, so later pages require fetching earlier names too.
+	if page > maxPrometheusMetricNames/limit {
+		return nil, fmt.Errorf("page * limit must not exceed %d; reduce page or limit", maxPrometheusMetricNames)
+	}
+
+	var re *regexp.Regexp
+	if args.Regex != "" {
+		var err error
+		re, err = regexp.Compile(args.Regex)
+		if err != nil {
+			return nil, fmt.Errorf("compiling regex: %w", err)
+		}
 	}
 
 	startTime, err := parseStartTime(args.StartRFC3339)
@@ -223,51 +236,33 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Get all metric names via the backend
-	allNames, err := backend.LabelValues(ctx, "__name__", nil, startTime, endTime)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
+	if err != nil {
+		return nil, fmt.Errorf("getting backend: %w", err)
+	}
+	end := page * limit
+	matches, err := backend.MetricNames(ctx, re, end, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
 
-	// Filter by regex if provided
-	var matches []string
-	if args.Regex != "" {
-		re, err := regexp.Compile(args.Regex)
-		if err != nil {
-			return nil, fmt.Errorf("compiling regex: %w", err)
-		}
-		for _, val := range allNames {
-			if re.MatchString(val) {
-				matches = append(matches, val)
-			}
-		}
-	} else {
-		matches = allNames
-	}
-
-	// Apply pagination
-	start := (page - 1) * limit
-	end := start + limit
+	start := end - limit
 	if start >= len(matches) {
-		matches = []string{}
-	} else if end > len(matches) {
-		matches = matches[start:]
-	} else {
-		matches = matches[start:end]
+		return []string{}, nil
 	}
-
-	return matches, nil
+	return matches[start:min(end, len(matches))], nil
 }
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Retrieves all metric names and filters them using the provided regex. Supports pagination and an optional time range to restrict results to metrics active within that window.",
+	"Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Filters metric names using the provided regex. Supports pagination (page * limit must not exceed 10000) and an optional time range to restrict results to metrics active within that window. Cloud Monitoring ignores the time range.",
 	listPrometheusMetricNames,
-	mcp.WithTitleAnnotation("List Prometheus metric names"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Prometheus metric names"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type LabelMatcher struct {
@@ -368,11 +363,12 @@ var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	"list_prometheus_label_names",
 	"List label names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Allows filtering by series selectors and time range.",
 	listPrometheusLabelNames,
-	mcp.WithTitleAnnotation("List Prometheus label names"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Prometheus label names"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type ListPrometheusLabelValuesParams struct {
@@ -425,13 +421,14 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 
 var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"list_prometheus_label_values",
-	"Use after list_prometheus_metric_names to find label values for filtering queries. Gets the values for a specific label name in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Allows filtering by series selectors and time range.",
+	"Gets the values for a specific label name in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Allows filtering by series selectors and time range.",
 	listPrometheusLabelValues,
-	mcp.WithTitleAnnotation("List Prometheus label values"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Prometheus label values"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // PrometheusHistogramResult wraps histogram query results with debugging info
@@ -577,29 +574,30 @@ func isPrometheusResultEmptyOrNaN(v model.Value) bool {
 // QueryPrometheusHistogram is a tool for querying histogram percentiles
 var QueryPrometheusHistogram = mcpgrafana.MustTool(
 	"query_prometheus_histogram",
-	`Query Prometheus histogram percentiles. DISCOVER FIRST: Use list_prometheus_metric_names with regex='.*_bucket$' to find histograms.
+	`Query Prometheus histogram percentiles from classic histogram '_bucket' series.
 
 Generates histogram_quantile PromQL. Example: metric='http_duration', percentile=95, labels='job="api"'
 
 Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 	queryPrometheusHistogram,
-	mcp.WithTitleAnnotation("Query Prometheus histogram percentile"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Prometheus histogram percentile"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddPrometheusTools registers the Prometheus tools on the MCP server. The
 // tools that execute PromQL are registered only when enableQueryTools is true;
 // the metadata tools stay available either way.
-func AddPrometheusTools(mcp *server.MCPServer, enableQueryTools bool) {
-	ListPrometheusMetricMetadata.Register(mcp)
+func AddPrometheusTools(s *mcp.Server, enableQueryTools bool) {
+	ListPrometheusMetricMetadata.Register(s)
 	if enableQueryTools {
-		QueryPrometheus.Register(mcp)
-		QueryPrometheusHistogram.Register(mcp)
+		QueryPrometheus.Register(s)
+		QueryPrometheusHistogram.Register(s)
 	}
-	ListPrometheusMetricNames.Register(mcp)
-	ListPrometheusLabelNames.Register(mcp)
-	ListPrometheusLabelValues.Register(mcp)
+	ListPrometheusMetricNames.Register(s)
+	ListPrometheusLabelNames.Register(s)
+	ListPrometheusLabelValues.Register(s)
 }

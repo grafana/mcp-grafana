@@ -1,4 +1,9 @@
-import { App } from "@modelcontextprotocol/ext-apps";
+import {
+  App,
+  applyHostFonts,
+  applyHostStyleVariables,
+  type McpUiHostContext,
+} from "@modelcontextprotocol/ext-apps";
 
 const statusEl = document.getElementById("status")!;
 const containerEl = document.getElementById("image-container")!;
@@ -57,6 +62,7 @@ app.ontoolresult = (result: any) => {
 
   statusEl.style.display = "none";
 
+  let deeplink: string | undefined;
   for (const item of content) {
     if (item.type === "image" && item.data) {
       const img = document.createElement("img");
@@ -64,20 +70,33 @@ app.ontoolresult = (result: any) => {
       img.alt = "Grafana panel";
       containerEl.appendChild(img);
     }
-    if (isDeeplinkItem(item)) {
-      const url = safeHttpUrl(item.text as string);
-      if (!url) continue;
-      const a = document.createElement("a");
-      a.href = url;
-      a.textContent = "Open in Grafana";
-      a.addEventListener("click", (e) => {
-        e.preventDefault();
-        app.openLink({ url });
-      });
-      deeplinkEl.appendChild(a);
-      deeplinkEl.style.display = "block";
-    }
+    if (isDeeplinkItem(item)) deeplink = item.text;
+  }
+
+  // Prefer structuredContent: some hosts (e.g. Claude) don't forward
+  // content items' _meta, so the tagged item above may never match.
+  const sc = result.structuredContent?.deeplink;
+  if (typeof sc === "string") deeplink = sc;
+
+  const url = deeplink && safeHttpUrl(deeplink);
+  if (url) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.textContent = "Open in Grafana";
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      app.openLink({ url });
+    });
+    deeplinkEl.appendChild(a);
+    deeplinkEl.style.display = "block";
   }
 };
 
-app.connect();
+// Use the host's fonts (e.g. Claude's) so the link matches the chat.
+const applyHostStyles = (ctx?: McpUiHostContext) => {
+  if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+  if (ctx?.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
+};
+app.onhostcontextchanged = applyHostStyles;
+
+app.connect().then(() => applyHostStyles(app.getHostContext()));

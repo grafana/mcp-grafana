@@ -16,8 +16,9 @@ async def test_elasticsearch_query_logs(
     mcp_transport: str,
 ):
     prompt = (
-        "Can you query the Elasticsearch datasource for the last 10 log entries "
-        "from the 'test-logs-2024' index? Show me the log messages and their severity levels."
+        "Find the Elasticsearch datasource if needed, then query its last 10 log entries "
+        "from the 'test-logs-2024' index. Show the log messages and their severity levels. "
+        "Use the available tools instead of asking me for a datasource UID."
     )
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt

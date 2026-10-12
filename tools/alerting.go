@@ -1,12 +1,9 @@
 package tools
 
 import (
-	"fmt"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 const (
@@ -14,62 +11,64 @@ const (
 	DefaultListContactPointsLimit = 100
 )
 
-const manageAlertRulesDescriptionFmt = `%s
+const alertRulesReadDescription = `List and inspect Grafana alert rules with filtering capabilities.
 
 When to use:
 - Understanding why an alert is or isn't firing
 - Auditing alert rule configuration (queries, conditions, labels, notification settings)
 - Finding alert rules by state, folder, group, or name
-%s
-When NOT to use:
-- Checking how alerts are routed to receivers (use alerting_manage_routing)%s`
+- Comparing rule versions to see what changed
 
-func manageAlertRulesDescription(readOnly bool) string {
-	if readOnly {
-		return fmt.Sprintf(manageAlertRulesDescriptionFmt,
-			"List and inspect Grafana alert rules with filtering capabilities.",
-			"- Comparing rule versions to see what changed\n",
-			"\n- Modifying or creating alert rules (read-only tool)",
-		)
-	}
-	return fmt.Sprintf(manageAlertRulesDescriptionFmt,
-		"Manage Grafana alert rules with full CRUD capabilities and filtering.",
-		"- Creating, updating, or deleting alert rules\n- Comparing rule versions to see what changed\n",
-		"",
-	)
-}
+Read-only: does not create, update, or delete rules, and does not show notification routing.`
 
-var ManageRulesRead = mcpgrafana.MustTool(
-	"alerting_manage_rules",
-	manageAlertRulesDescription(true),
+const alertRulesWriteDescription = `Create, update, and delete Grafana alert rules.
+
+When to use:
+- Creating, updating, or deleting alert rules
+
+Operation 'update' replaces the whole rule: it takes all required fields, not only the changed ones.
+
+Does not list or inspect rules, and does not manage notification routing.`
+
+var AlertRulesRead = mcpgrafana.MustTool(
+	"alerting_rules_read",
+	alertRulesReadDescription,
 	manageRulesRead,
-	mcp.WithTitleAnnotation("Manage alert rules"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Read alert rules"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("alert.rules:read", "alert.rules.external:read", "folders:read"),
+	// Datasource-managed rules look up the datasource first.
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
-var ManageRulesReadWrite = mcpgrafana.MustTool(
-	"alerting_manage_rules",
-	manageAlertRulesDescription(false),
+var AlertRulesWrite = mcpgrafana.MustTool(
+	"alerting_rules_write",
+	alertRulesWriteDescription,
 	manageRulesReadWrite,
-	mcp.WithTitleAnnotation("Manage alert rules"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Write alert rules"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(
+		"alert.rules:read", "alert.rules:create", "alert.rules:write", "alert.rules:delete",
+		"alert.provisioning.provenance:write", "folders:read",
+	),
 )
 
-func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddAlertingTools(s *mcp.Server, enableWriteTools bool) {
+	AlertRulesRead.Register(s)
 	if enableWriteTools {
-		ManageRulesReadWrite.Register(mcp)
-	} else {
-		ManageRulesRead.Register(mcp)
+		AlertRulesWrite.Register(s)
 	}
-	ManageRouting.Register(mcp)
+	ManageRouting.Register(s)
 	if enableWriteTools {
-		ManageSilencesReadWrite.Register(mcp)
-	} else {
-		ManageSilencesRead.Register(mcp)
+		AlertRoutingWrite.Register(s)
+	}
+	AlertSilencesRead.Register(s)
+	if enableWriteTools {
+		AlertSilencesWrite.Register(s)
 	}
 }

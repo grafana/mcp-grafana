@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // GetQueryExamplesParams defines the parameters for the get_query_examples tool.
@@ -289,16 +288,17 @@ func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQuery
 // GetQueryExamples is the MCP tool that provides example queries for each datasource type.
 var GetQueryExamples = mcpgrafana.MustTool(
 	"get_query_examples",
-	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), CloudWatch (metric configurations), and InfluxDB (Flux and InfluxQL). Use this to understand query syntax and common patterns for each datasource. TIP: Use list_datasources to find datasource UIDs, or get_datasource if you know the exact name.",
+	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), CloudWatch (metric configurations), and InfluxDB (Flux and InfluxQL). Use this to understand query syntax and common patterns for each datasource.",
 	getQueryExamples,
-	mcp.WithTitleAnnotation("Get query examples"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get query examples"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
 
 // AddExamplesTools registers all example-related tools to the MCP server.
-func AddExamplesTools(mcp *server.MCPServer) {
-	GetQueryExamples.Register(mcp)
+func AddExamplesTools(s *mcp.Server) {
+	GetQueryExamples.Register(s)
 }

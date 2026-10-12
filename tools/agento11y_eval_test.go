@@ -11,8 +11,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/server"
-
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1154,26 +1153,35 @@ type agento11yAdvertisedTool struct {
 func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agento11yAdvertisedTool {
 	t.Helper()
 
-	srv := server.NewMCPServer("test", "0")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	AddAgento11yTools(srv, enableWriteTools)
 
-	response := srv.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	raw, err := json.Marshal(response)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() { _ = srv.Run(context.Background(), serverTransport) }()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(context.Background(), clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	listResult, err := session.ListTools(context.Background(), nil)
 	require.NoError(t, err)
 
-	var listed struct {
-		Result struct {
-			Tools []struct {
-				Name        string          `json:"name"`
-				Description string          `json:"description"`
-				InputSchema json.RawMessage `json:"inputSchema"`
-			} `json:"tools"`
-		} `json:"result"`
+	type toolEntry struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		InputSchema json.RawMessage `json:"inputSchema"`
 	}
-	require.NoError(t, json.Unmarshal(raw, &listed))
+	var listed struct{ Tools []toolEntry }
+	for _, tool := range listResult.Tools {
+		raw, err := json.Marshal(tool)
+		require.NoError(t, err)
+		var entry toolEntry
+		require.NoError(t, json.Unmarshal(raw, &entry))
+		listed.Tools = append(listed.Tools, entry)
+	}
 
 	tools := map[string]agento11yAdvertisedTool{}
-	for _, tool := range listed.Result.Tools {
+	for _, tool := range listed.Tools {
 		switch tool.Name {
 		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections", "agento11y_manage_experiments", "agento11y_manage_test_suites", "agento11y_manage_agents":
 		default:

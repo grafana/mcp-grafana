@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,6 +35,7 @@ func TestDatasourcesTools(t *testing.T) {
 		assert.True(t, uids["opensearch"], "opensearch datasource should be provisioned")
 		assert.True(t, uids["influxdb-flux"], "influxdb-flux datasource should be provisioned")
 		assert.True(t, uids["influxdb-influxql"], "influxdb-influxql datasource should be provisioned")
+		assert.True(t, uids["googlecloud-logging"], "googlecloud-logging datasource should be provisioned")
 	})
 
 	t.Run("list datasources for type", func(t *testing.T) {
@@ -126,7 +127,7 @@ func TestCreateDatasourceTools(t *testing.T) {
 		assert.False(t, toolResult.IsError)
 
 		require.Len(t, toolResult.Content, 2)
-		text, ok := toolResult.Content[0].(mcp.TextContent)
+		text, ok := toolResult.Content[0].(*mcp.TextContent)
 		require.True(t, ok)
 
 		var result CreateDatasourceResult
@@ -137,7 +138,7 @@ func TestCreateDatasourceTools(t *testing.T) {
 		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
 		assert.Contains(t, result.NextSteps, configPageURL)
 
-		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		link, ok := toolResult.Content[1].(*mcp.ResourceLink)
 		require.True(t, ok)
 		assert.Equal(t, configPageURL, link.URI)
 		assert.Equal(t, result.Name, link.Name)
@@ -162,7 +163,7 @@ func TestCreateDatasourceTools(t *testing.T) {
 		assert.False(t, toolResult.IsError)
 
 		require.Len(t, toolResult.Content, 2)
-		text, ok := toolResult.Content[0].(mcp.TextContent)
+		text, ok := toolResult.Content[0].(*mcp.TextContent)
 		require.True(t, ok)
 
 		var result CreateDatasourceResult
@@ -173,7 +174,7 @@ func TestCreateDatasourceTools(t *testing.T) {
 		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
 		assert.Contains(t, result.NextSteps, configPageURL)
 
-		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		link, ok := toolResult.Content[1].(*mcp.ResourceLink)
 		require.True(t, ok)
 		assert.Equal(t, configPageURL, link.URI)
 		assert.Equal(t, result.Name, link.Name)
@@ -264,7 +265,7 @@ func TestUpdateDatasourceTool(t *testing.T) {
 		t.Helper()
 		require.NotNil(t, res)
 		require.Len(t, res.Content, 1)
-		text, ok := res.Content[0].(mcp.TextContent)
+		text, ok := res.Content[0].(*mcp.TextContent)
 		require.True(t, ok)
 		var r UpdateDatasourceResult
 		require.NoError(t, json.Unmarshal([]byte(text.Text), &r))
@@ -275,7 +276,7 @@ func TestUpdateDatasourceTool(t *testing.T) {
 		res, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID})
 		require.NoError(t, err)
 		require.Len(t, res.Content, 1)
-		text, ok := res.Content[0].(mcp.TextContent)
+		text, ok := res.Content[0].(*mcp.TextContent)
 		require.True(t, ok)
 		var guidance map[string]any
 		require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))

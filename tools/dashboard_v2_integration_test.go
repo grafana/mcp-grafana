@@ -8,12 +8,14 @@
 package tools
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // minimalV2DashboardJSON returns a minimal dashboard schema v2 body (top-level
@@ -137,6 +139,20 @@ func TestDashboardV2(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, summary.PanelCount)
 		assert.Equal(t, "Up (patched)", summary.Panels[0].Title)
+	})
+
+	t.Run("full v1 body over v2 is rejected and dashboard stays v2", func(t *testing.T) {
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: map[string]interface{}{"uid": uid, "title": "Flattened", "panels": []interface{}{}},
+			Overwrite: true,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be replaced with a classic v1")
+
+		res, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		assert.True(t, res.IsV2, "dashboard must remain v2")
+		assert.Equal(t, "MCP V2 Integration", safeString(res.Dashboard.(map[string]interface{}), "title"))
 	})
 }
 
@@ -263,4 +279,43 @@ func TestDashboardLegacyFallback(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "Legacy Patched", spec["title"])
 	})
+}
+
+// TestDashboardV2DescriptionSkeleton saves the v2 skeletons quoted in the
+// update_dashboard description, so they can't drift from what Grafana accepts.
+func TestDashboardV2DescriptionSkeleton(t *testing.T) {
+	ctx := newTestContext()
+	desc := UpdateDashboard.Tool.Description
+	between := func(start, end string) string {
+		_, rest, ok := strings.Cut(desc, start)
+		require.True(t, ok, "description should contain %q", start)
+		s, _, ok := strings.Cut(rest, end)
+		require.True(t, ok, "description should contain %q", end)
+		return s
+	}
+	grid := strings.ReplaceAll(between("Minimal v2 body: ", ". For tabs"), "<ds uid>", "prometheus")
+	gridLayout := between(`"layout":`, "}}]}}") + "}}]}}"
+	tabsLayout := strings.ReplaceAll(between("layout is ", "}}]}}.")+"}}]}}", "<GridLayout>", gridLayout)
+
+	for name, layout := range map[string]string{"grid": "", "tabs": tabsLayout} {
+		t.Run(name, func(t *testing.T) {
+			var body map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(grid), &body))
+			if layout != "" {
+				var l map[string]interface{}
+				require.NoError(t, json.Unmarshal([]byte(layout), &l))
+				body["layout"] = l
+			}
+			uid := "mcp-v2-skeleton-" + name
+			body["uid"] = uid
+			_, err := updateDashboard(ctx, UpdateDashboardParams{Dashboard: body, Overwrite: true})
+			require.NoError(t, err)
+
+			res, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
+			require.NoError(t, err)
+			assert.True(t, res.IsV2)
+			spec := res.Dashboard.(map[string]interface{})
+			assert.Equal(t, body["layout"].(map[string]interface{})["kind"], spec["layout"].(map[string]interface{})["kind"])
+		})
+	}
 }

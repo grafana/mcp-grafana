@@ -7,12 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // Helper function to create string pointers
@@ -248,6 +249,36 @@ func TestGenerateDeeplink(t *testing.T) {
 		result, err := generateDeeplink(ctxWithPublicURL, params)
 		require.NoError(t, err)
 		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+	})
+
+	t.Run("Trailing slash on base URL does not produce double slash", func(t *testing.T) {
+		// Embedders (e.g. the hosted Cloud MCP server) set PublicURL directly
+		// from a stack URL that may end in "/".
+		withPublic := mcpgrafana.WithGrafanaClient(
+			mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://internal:3000"}),
+			&mcpgrafana.GrafanaClient{PublicURL: "https://example.grafana.net/"},
+		)
+		withConfig := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "https://example.grafana.net/"})
+
+		for name, ctx := range map[string]context.Context{"public URL": withPublic, "config URL": withConfig} {
+			t.Run(name, func(t *testing.T) {
+				panelID := 1
+				result, err := generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType: "panel",
+					DashboardUID: stringPtr("abc123"),
+					PanelID:      &panelID,
+				})
+				require.NoError(t, err)
+				assert.Equal(t, "https://example.grafana.net/d/abc123?viewPanel=1", result)
+
+				result, err = generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType:  "explore",
+					DatasourceUID: stringPtr("ds1"),
+				})
+				require.NoError(t, err)
+				assert.True(t, strings.HasPrefix(result, "https://example.grafana.net/explore?"), result)
+			})
+		}
 	})
 
 	t.Run("Falls back to config URL when public URL is empty", func(t *testing.T) {
@@ -591,9 +622,28 @@ func TestShortenURL(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "missing url field")
 	})
+
+	t.Run("Strips sub-path prefix so /goto does not double it", func(t *testing.T) {
+		var capturedPath string
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			capturedPath = body["path"]
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"uid":"sub123","url":"https://grafana.example.com/grafana/goto/sub123"}`))
+		}))
+
+		ctx := newShortenTestContext(ts.URL, "https://grafana.example.com/grafana", "")
+
+		result, err := shortenURL(ctx, "https://grafana.example.com/grafana/d/dash1?from=now-3h&to=now")
+		require.NoError(t, err)
+		assert.Equal(t, "d/dash1?from=now-3h&to=now", capturedPath)
+		assert.Equal(t, "https://grafana.example.com/grafana/goto/sub123", result)
+	})
 }
 
-func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
+func TestGenerateDeeplink_Shorten(t *testing.T) {
 	t.Run("Returns shortened URL when shortening succeeds", func(t *testing.T) {
 		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, http.MethodPost, r.Method)
@@ -613,7 +663,7 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 		assert.Equal(t, "https://grafana.example.com/goto/abc123", result)
 	})
 
-	t.Run("Falls back to long URL when shortening fails", func(t *testing.T) {
+	t.Run("Returns error with long URL when shortening fails", func(t *testing.T) {
 		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -627,8 +677,11 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 			DashboardUID: stringPtr("abc123"),
 			Shorten:      true,
 		})
-		require.NoError(t, err)
-		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+		require.Error(t, err)
+		assert.Empty(t, result)
+		assert.Contains(t, err.Error(), "failed to shorten deeplink")
+		assert.Contains(t, err.Error(), "https://grafana.example.com/d/abc123")
+		assert.Contains(t, err.Error(), "status 403")
 	})
 
 	t.Run("Read-only mode ignores shorten and returns long URL", func(t *testing.T) {

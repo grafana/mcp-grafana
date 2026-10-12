@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/grafana/incident-go"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

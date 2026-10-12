@@ -11,10 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 type GetPluginParams struct {
@@ -124,18 +123,20 @@ func getPlugin(ctx context.Context, args GetPluginParams) (*GetPluginResult, err
 
 var GetPlugin = mcpgrafana.MustTool(
 	"get_plugin",
-	"Check whether a Grafana plugin is installed and retrieve its details (name, version, type, enabled status). Returns installed=false when the plugin is not found. Use install_plugin when a plugin is not installed to install plugin after confirming this action with the user.",
+	"Check whether a Grafana plugin is installed and retrieve its details (name, version, type, enabled status). Returns installed=false when the plugin is not found.",
 	getPlugin,
-	mcp.WithTitleAnnotation("Get plugin"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get plugin"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Grafana denies an app plugin's settings without it.
+	mcpgrafana.RequiresPermissions("plugins.app:access"),
 )
 
 type InstallPluginParams struct {
 	PluginID string `json:"pluginId" jsonschema:"required,description=The plugin ID to install (e.g. 'grafana-image-renderer'\\, 'grafana-piechart-panel')"`
-	Version  string `json:"version,omitempty" jsonschema:"description=The exact version to install. Must be confirmed with the user before calling — if unknown\\, omit this field to look up the latest version first."`
+	Version  string `json:"version,omitempty" jsonschema:"description=The exact version to install. When omitted\\, the tool returns the latest available version without installing."`
 }
 
 type InstallPluginResult struct {
@@ -225,22 +226,44 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 		return nil, fmt.Errorf("install plugin: unexpected status %d: %s", status, body)
 	}
 
+	// The install response carries no plugin metadata, so look the type up to
+	// tailor the follow-up. If the lookup fails, omit the suggestion.
+	suggestion := ""
+	if plugin, err := getPlugin(ctx, GetPluginParams{PluginID: pluginID}); err == nil {
+		suggestion = pluginInstallSuggestion(plugin.Type)
+	}
+
 	return &InstallPluginResult{
 		PluginID:   pluginID,
 		Message:    "Plugin installed successfully. Grafana may need to be restarted for the plugin to become active.",
-		Suggestion: "Configure a new data source for the plugin.", // For now keeping this static to a single suggestion, down the line we may end up with a list
+		Suggestion: suggestion,
 	}, nil
+}
+
+// pluginInstallSuggestion returns the natural next step after installing a
+// plugin of the given type, or "" for unknown types.
+func pluginInstallSuggestion(pluginType string) string {
+	switch pluginType {
+	case "datasource":
+		return "Configure a new data source for the plugin."
+	case "panel":
+		return "Add a panel using this visualization to a dashboard."
+	case "app":
+		return "Enable and configure the app plugin."
+	}
+	return ""
 }
 
 var InstallPlugin = mcpgrafana.MustTool(
 	"install_plugin",
-	"Install a Grafana plugin by its plugin ID. If the version is not already confirmed with the user, omit it — the tool will look up the latest version and return it for confirmation before installing.",
+	"Install a Grafana plugin by its plugin ID. When version is omitted, the tool looks up the latest version and returns it without installing; supplying a version installs that version.",
 	installPlugin,
-	mcp.WithTitleAnnotation("Install plugin"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.WithTitleAnnotation("Install plugin"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions("plugins:install"),
 )
 
 // catalogPlugin mirrors the relevant fields from the Grafana plugin catalog list API.
@@ -402,20 +425,19 @@ func searchPlugins(ctx context.Context, args SearchPluginsParams) (*SearchPlugin
 
 var SearchPlugins = mcpgrafana.MustTool(
 	"search_plugin_information",
-	"Search the Grafana plugin catalog by keyword to discover available plugins before installing or getting plugin details on a specific instance. "+
-		"Returns results sorted by trust: official Grafana Labs plugins first, then commercial partner plugins, then community plugins. "+
-		"Use this tool when a user describes a plugin by purpose or partial name (e.g. 'azure monitoring', 'loki', 'database') — "+
-		"it returns the exact pluginId to pass to get_plugin or install_plugin. "+
+	"Search the Grafana plugin catalog by keyword, purpose, or partial name (e.g. 'azure monitoring', 'loki', 'database'). "+
+		"Returns results sorted by trust: official Grafana Labs plugins first, then commercial partner plugins, then community plugins, each with its exact pluginId. "+
 		"Results include warnings for enterprise-only or Angular-based plugins.",
 	searchPlugins,
-	mcp.WithTitleAnnotation("Search plugins"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.WithTitleAnnotation("Search plugins"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions(), // grafana.com catalog
 )
 
-func AddPluginTools(s *server.MCPServer, enableWrite bool) {
+func AddPluginTools(s *mcp.Server, enableWrite bool) {
 	SearchPlugins.Register(s)
 	GetPlugin.Register(s)
 	if enableWrite {

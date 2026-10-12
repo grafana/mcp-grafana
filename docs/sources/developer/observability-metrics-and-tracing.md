@@ -59,13 +59,30 @@ For `tools/call`, `mcp_server_operation_duration_seconds` can carry up to three 
 
 | Label | Source | Notes |
 |-------|--------|-------|
-| `mcp_tool_operation` | the tool's `operation` argument | Multiplexer tools only (e.g. `alerting_manage_rules`); one of the tool's declared operations, else `other`. |
+| `mcp_tool_operation` | the tool's `operation` argument | Multiplexer tools only (e.g. `alerting_rules_write`); one of the tool's declared operations, else `other`. |
 | `mcp_tool_resource_type` | the tool's `type` argument | e.g. the datasource plugin type on `create_datasource`; a plugin type the server ships a schema for, else `other`. |
 | `mcp_tool_phase` | the tool's result `_meta` | Phase of a multi-call flow (e.g. `create_datasource` schema guidance vs. actual creation). |
 
 Arguments are raw client input, so the two argument-derived labels are allowlisted by tool **and** by value: unlisted tools emit neither, and unlisted values collapse into one `other` bucket, giving each label a fixed maximum series count. Tool validation alone would not bound them — a rejected `operation` is still instrumented, and `create_datasource`'s `type` is free text that succeeds for unknown values. `mcp_tool_phase` is exempt: the tool sets it on its own result, and tools must keep that value set small.
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
+
+### Metric-name discovery
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_metric_names_response_size_bytes` | Native histogram | Bytes consumed from complete successful discovery HTTP responses, after HTTP decompression |
+| `mcp_metric_names_count` | Native histogram | Number of metric names decoded successfully before local filtering and pagination |
+
+These metrics help us understand the responses we get from prometheus-type backends when discovering available metric names. The metrics only measure the sizes of successful responses. The bounded `backend` label distinguishes `prometheus` (including compatible backends) from `cloud_monitoring`. Unlike the prometheus backend, Cloud Monitoring measures the full descriptor response, which contain more than just names, so comparing response byte sizes between the two backends is not meaningful.
+
+For example, the p95 response size over the last hour is:
+
+```promql
+histogram_quantile(0.95, sum by (backend) (rate(mcp_metric_names_response_size_bytes[1h])))
+```
+
+These metrics use Native Histograms, so the scraper must also support native histograms.
 
 ### Loki cost guardrail metrics
 

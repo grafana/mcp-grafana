@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -171,6 +171,24 @@ func TestVictoriaLogsBackend_QueryLogs_ForwardReversesOrder(t *testing.T) {
 	require.Len(t, res.Entries, 3)
 	assert.Equal(t, "oldest", res.Entries[0].Line)
 	assert.Equal(t, "newest", res.Entries[2].Line)
+}
+
+func TestVictoriaLogsBackend_QueryLogs_PreservesNanosecondBounds(t *testing.T) {
+	fake := newFakeVLServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "")
+	})
+	b := newTestVLBackend(t, fake.server)
+
+	start := time.Date(2026, 5, 10, 12, 0, 0, 1, time.UTC)
+	end := time.Date(2026, 5, 10, 12, 0, 1, 999999999, time.UTC)
+	_, err := b.QueryLogs(context.Background(), lokiQueryParams{
+		Query: "*",
+		Start: start,
+		End:   end,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "2026-05-10T12:00:00.000000001Z", fake.lastForm.Get("start"))
+	assert.Equal(t, "2026-05-10T12:00:01.999999999Z", fake.lastForm.Get("end"))
 }
 
 func TestVictoriaLogsBackend_QueryLogs_InstantCollapsesWindow(t *testing.T) {

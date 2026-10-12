@@ -20,6 +20,10 @@ type Example struct {
 }
 ```
 
+## Stray escapes outside struct tags
+
+The escape only means something inside a `jsonschema` struct tag. In an ordinary string literal, such as a tool description passed to `MustTool`, `\\,` produces a literal backslash that is sent to the model verbatim, which wastes tokens and adds noise. The linter also reports string literals outside struct tags (in non-test files) whose value contains `\,`; use a plain comma there instead. These are not auto-fixed.
+
 ## Usage
 
 You can use this linter by running:

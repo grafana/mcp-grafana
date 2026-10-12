@@ -71,6 +71,14 @@ func TestParseStartTime(t *testing.T) {
 				assert.Equal(t, expected, result)
 			},
 		},
+		{
+			name:  "RFC3339 with nanoseconds keeps full precision",
+			input: "2024-01-15T10:00:00.123456789Z",
+			checkFunc: func(t *testing.T, result time.Time) {
+				expected := time.Date(2024, 1, 15, 10, 0, 0, 123456789, time.UTC)
+				assert.Equal(t, expected, result)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,6 +130,14 @@ func TestParseEndTime(t *testing.T) {
 			input: "2024-01-15T10:00:00Z",
 			checkFunc: func(t *testing.T, result time.Time) {
 				expected := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+				assert.Equal(t, expected, result)
+			},
+		},
+		{
+			name:  "RFC3339 with nanoseconds keeps full precision",
+			input: "2024-01-15T10:00:00.123456789Z",
+			checkFunc: func(t *testing.T, result time.Time) {
+				expected := time.Date(2024, 1, 15, 10, 0, 0, 123456789, time.UTC)
 				assert.Equal(t, expected, result)
 			},
 		},

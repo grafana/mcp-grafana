@@ -679,15 +679,15 @@ func TestAgento11yTestSuiteRoutesAvoidTheStandaloneVersion(t *testing.T) {
 func TestAgento11yManageTestSuitesToolContract(t *testing.T) {
 	read := ManageAgento11yTestSuitesRead.Tool
 	require.NotNil(t, read.Annotations.ReadOnlyHint)
-	assert.True(t, *read.Annotations.ReadOnlyHint)
+	assert.True(t, read.Annotations.ReadOnlyHint)
 	require.NotNil(t, read.Annotations.IdempotentHint)
-	assert.True(t, *read.Annotations.IdempotentHint)
+	assert.True(t, read.Annotations.IdempotentHint)
 	require.NotNil(t, read.Annotations.DestructiveHint)
 	assert.False(t, *read.Annotations.DestructiveHint)
 
 	write := ManageAgento11yTestSuitesReadWrite.Tool
 	require.NotNil(t, write.Annotations.ReadOnlyHint)
-	assert.False(t, *write.Annotations.ReadOnlyHint, "the write variant deletes test cases and freezes versions")
+	assert.False(t, write.Annotations.ReadOnlyHint, "the write variant deletes test cases and freezes versions")
 	require.NotNil(t, write.Annotations.DestructiveHint)
 	assert.True(t, *write.Annotations.DestructiveHint)
 

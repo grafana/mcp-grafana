@@ -2,20 +2,18 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
 
 // listAllTools registers every tool category on a fresh server (with write
 // tools enabled or disabled) and returns the tools exactly as a client would
 // see them from tools/list.
-func listAllTools(t *testing.T, disableWrite bool) []mcp.Tool {
+func listAllTools(t *testing.T, disableWrite bool) []*mcp.Tool {
 	t.Helper()
 
 	dt := disabledTools{write: disableWrite}
@@ -25,31 +23,26 @@ func listAllTools(t *testing.T, disableWrite bool) []mcp.Tool {
 	}
 	dt.enabledTools = strings.Join(categories, ",")
 
-	srv := server.NewMCPServer("test", "0")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	dt.processTools(srv)
 
-	response := srv.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	raw, err := json.Marshal(response)
-	require.NoError(t, err)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() { _ = srv.Run(context.Background(), serverTransport) }()
 
-	var parsed struct {
-		Result mcp.ListToolsResult `json:"result"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &parsed))
-	require.Nil(t, parsed.Error, "tools/list returned an error")
-	require.NotEmpty(t, parsed.Result.Tools)
-	return parsed.Result.Tools
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	session, err := client.Connect(context.Background(), clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	result, err := session.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Tools)
+	return result.Tools
 }
 
 // TestAllToolsDeclareAnnotationHints asserts that every tool exposed by the
 // server explicitly sets the three MCP tool annotations readOnlyHint,
-// destructiveHint and openWorldHint. Directory listings (e.g. the OpenAI
-// plugin directory) fail closed on any omission, so a tool missing any of the
-// three would silently delist the hosted server. See
-// https://github.com/grafana/mcp-grafana/issues/1009.
+// destructiveHint and openWorldHint.
 func TestAllToolsDeclareAnnotationHints(t *testing.T) {
 	for _, disableWrite := range []bool{false, true} {
 		name := "write-enabled"
@@ -60,10 +53,17 @@ func TestAllToolsDeclareAnnotationHints(t *testing.T) {
 			var violations []string
 			for _, tool := range listAllTools(t, disableWrite) {
 				ann := tool.Annotations
-				var missing []string
-				if ann.ReadOnlyHint == nil {
-					missing = append(missing, "readOnlyHint")
+				if ann == nil {
+					violations = append(violations, fmt.Sprintf("%s: missing annotations", tool.Name))
+					continue
 				}
+				var missing []string
+				// go-sdk limitation: ReadOnlyHint and IdempotentHint are bool,
+				// so zero-value false is indistinguishable from "not set".
+				// We rely on the ann != nil check above (every tool must call
+				// at least one With*Annotation) and the conflict check below
+				// to catch mis-labelled tools. DestructiveHint and OpenWorldHint
+				// are *bool, so nil detection still works for those.
 				if ann.DestructiveHint == nil {
 					missing = append(missing, "destructiveHint")
 				}
@@ -74,10 +74,7 @@ func TestAllToolsDeclareAnnotationHints(t *testing.T) {
 					violations = append(violations, fmt.Sprintf("%s: missing %s", tool.Name, strings.Join(missing, ", ")))
 					continue
 				}
-				// destructiveHint is only meaningful for write tools; a
-				// read-only tool claiming to be destructive indicates a
-				// mislabelled annotation on one side or the other.
-				if *ann.ReadOnlyHint && *ann.DestructiveHint {
+				if ann.ReadOnlyHint && *ann.DestructiveHint {
 					violations = append(violations, fmt.Sprintf("%s: readOnlyHint=true conflicts with destructiveHint=true", tool.Name))
 				}
 			}

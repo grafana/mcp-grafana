@@ -343,10 +343,10 @@ func TestPrometheusQueries(t *testing.T) {
 		assert.True(t, firstSampleTime <= afterQuery.Add(buffer).Add(-oneHour),
 			"First timestamp should be before or equal to the time after the query minus one hour (with 5s buffer)")
 
-		// Check that the end timestamp is is within the expected range
+		// Range samples are step-aligned, so the last sample can precede the end by up to one step.
 		lastSampleTime := matrix[0].Values[len(matrix[0].Values)-1].Timestamp
-		assert.True(t, lastSampleTime >= beforeQuery,
-			"Last timestamp should be after or equal to the time before the query")
+		assert.True(t, lastSampleTime >= beforeQuery.Add(-time.Minute),
+			"Last timestamp should be no more than one query step before the time before the query")
 		assert.True(t, lastSampleTime <= afterQuery.Add(buffer),
 			"Last timestamp should be before or equal to the time after the query (with 5s buffer)")
 

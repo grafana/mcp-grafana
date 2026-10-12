@@ -28,9 +28,8 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 - `-t` / `--transport`: Transport type (`stdio`, `sse`, or `streamable-http`). Default: `stdio`.
 - `--address`: Host and port for the SSE or streamable-http server. Default: `localhost:8000`.
-- `--base-path`: Base path for the SSE or streamable-http server.
-- `--endpoint-path`: HTTP path for the streamable-http MCP endpoint. Default: `/mcp`.
-- `--session-idle-timeout-minutes`: Idle timeout for streamable-http sessions, in minutes. Sessions with no activity for this duration are automatically reaped. Set to `0` to disable. Default: `30`.
+- `--base-path`: Base path for the SSE or streamable-http server. With `--base-path /my-base`, SSE is at `/my-base/sse` and streamable-http at `/my-base/mcp`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers and always stay at the server root, never under this prefix.
+- `--endpoint-path`: HTTP path for the streamable-http MCP endpoint, appended to `--base-path`. Default: `/mcp`.
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
 ## Configure HTTP transport security
@@ -66,6 +65,25 @@ Bearer authentication only protects the token in transit if the connection is en
 
 When caller authentication is enabled, the `Authorization` header is reserved for the caller token and is stripped after validation, so it is never forwarded to Grafana. Setting `--server-auth-token` together with `GRAFANA_FORWARD_HEADERS=Authorization` is contradictory and the server refuses to start; remove `Authorization` from `GRAFANA_FORWARD_HEADERS`, or unset the caller token to run in proxy-forwarding mode.
 
+## Select a Grafana URL per request
+
+{{< admonition type="warning" >}}
+URL overrides let MCP callers select outbound HTTP(S) destinations. An allowlist limits URLs but does not authenticate callers, bind tokens to targets, or enforce network egress policy.
+
+Deploy behind an authenticating proxy that authorizes each caller's target, removes client-supplied `X-Grafana-URL` and Grafana token headers, and supplies the approved URL with its matching token. Restrict outbound access to approved destinations with a network policy, firewall, or egress proxy. These controls matter even with an allowlist.
+
+Without a URL allowlist, a fake request token can cause requests to any reachable HTTP(S) service, including internal and metadata services.
+{{< /admonition >}}
+
+On the streamable-http transport, callers can select a Grafana instance for each request. This is disabled by default.
+
+- `--allow-grafana-url-override`: Enable selection through `X-Grafana-URL`. Falls back to `GRAFANA_ALLOW_URL_OVERRIDE` when the flag is not set.
+- `--allowed-grafana-urls`: Optional comma-separated list of exact Grafana base URLs that callers may select. Falls back to `GRAFANA_ALLOWED_URLS` when the flag is not set. It requires the enable switch; an explicitly empty flag clears an inherited list.
+
+For a large fleet selected by a proxy, `GRAFANA_ALLOW_URL_OVERRIDE=true` enables selection without listing every instance in `GRAFANA_ALLOWED_URLS`. The deployment controls in the warning above still apply. The proxy must send both `X-Grafana-URL: <target base URL>` and `X-Grafana-Service-Account-Token: <token for that target>` on each MCP request. The deprecated `X-Grafana-API-Key` header also works. The server uses the token from that request and does not send its environment Grafana credentials to a selected target. If caller authentication is configured, the `Authorization` header carries the separate MCP caller token.
+
+Without `--allowed-grafana-urls`, the server logs a security error at startup. Outbound Grafana requests are pinned to the selected base URL, including across redirects. Selection does not work over SSE, which does not pass per-request headers to tool calls; a selected URL there is used without the caller's token, so the calls fail.
+
 ## Configure debug and logging
 
 - `--debug`: Enable debug mode for detailed HTTP request and response logging to and from the Grafana API.
@@ -77,13 +95,21 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--metrics-address`: Optional separate listen address for metrics (for example, `:9090`). If empty, metrics are served on the main HTTP server.
 - `--healthz-address`: Optional separate listen address for `/healthz` (for example, `:8080`). If empty, `/healthz` is served on the main HTTP server. If this matches `--metrics-address`, both routes share one extra listener. The side listener is not wrapped by Host/Origin validation, so Kubernetes probes can reach it while `--address` stays on loopback.
 
+## Configure anonymous usage statistics
+
+- `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` to print the report that would be sent to stderr and send nothing. Overrides the `GRAFANA_USAGE_STATS` environment variable. Default: `enabled`.
+
+`GRAFANA_USAGE_STATS_ENDPOINT` changes where reports are sent.
+
+Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the full list of fields, what is never sent, and how to read the data.
+
 ## Configure tool categories
 
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
-  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,docs`
+  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` are accepted and map to `sql`.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `cloudlogging`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -101,18 +127,18 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--disable-folder`: Disable folder tools.
 - `--disable-oncall`: Disable OnCall tools.
 - `--disable-asserts`: Disable Asserts tools.
-- `--disable-sift`: Disable Sift tools.
 - `--disable-admin`: Disable admin tools.
 - `--disable-pyroscope`: Disable Pyroscope tools.
 - `--disable-navigation`: Disable navigation (deeplink) tools.
 - `--disable-rendering`: Disable rendering tools (panel or dashboard image export).
 - `--disable-snapshot`: Disable snapshot tools.
 - `--disable-cloudwatch`: Disable CloudWatch tools.
+- `--disable-cloudlogging`: Disable Google Cloud Logging tools.
 - `--disable-examples`: Disable query examples tools.
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
-- `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
+- `--disable-tempo`: Disable Tempo tracing tools.
 - `--disable-provisioning`: Disable provisioning tools.
 - `--disable-agento11y`: Disable Agent Observability tools.
 - `--disable-assistant`: Disable Grafana Assistant tools.
@@ -143,10 +169,11 @@ The following tools are not registered when the flag is set:
 - SQL datasources: `query_sql`, `query_influxdb`
 - Graphite: `query_graphite`, `query_graphite_density`
 - CloudWatch: `query_cloudwatch`
+- Google Cloud Logging: `query_cloud_logging`
 - Pyroscope: `query_pyroscope`
 - Panels: `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, and `list_cloudwatch_metrics` remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and `list_cloud_logging_projects` remain available.
 
 The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but doesn't police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
@@ -174,10 +201,9 @@ Enforcement applies only to the Loki query tools. Other tools can reach Loki log
 
 - `--disable-api`: `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 - `--disable-rendering`: `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-- `--disable-sift`: Sift investigations analyze Loki logs server-side across all streams.
 - `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too.
 
-The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Loki datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
+The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Loki datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Tempo tools expose only traces, not Loki logs, so they are not a bypass. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
 {{< /admonition >}}
 
 ## Run in read-only mode
@@ -202,7 +228,9 @@ When enabled, the following writes are disabled:
 
 **Alerting tools**
 
-- `alerting_manage_rules` (create, update, delete)
+- `alerting_rules_write` (create, update, delete)
+- `alerting_silences_write` (create, update, delete)
+- `alerting_routing_write` (create_contact_point)
 
 **OnCall tools**
 
@@ -213,11 +241,6 @@ When enabled, the following writes are disabled:
 - `create_annotation`
 - `update_annotation`
 - `delete_annotation`
-
-**Sift tools**
-
-- `find_error_pattern_logs` (creates investigations)
-- `find_slow_requests` (creates investigations)
 
 **Snapshot tools**
 
@@ -233,6 +256,10 @@ When enabled, the following writes are disabled:
 - `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
 Read operations (queries, lists, searches) stay available.
+
+## Configure Grafana HTTP redirects
+
+Outbound Grafana clients block redirects to a different scheme, host, or port by default. Use `--allow-cross-origin-redirects` or set `GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS=true` to allow them. The flag takes precedence over the environment variable. Allowing these redirects can send Grafana credentials to the redirect target. Request-selected Grafana URLs remain pinned to their selected target.
 
 ## Configure client TLS for Grafana
 

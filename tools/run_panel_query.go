@@ -7,10 +7,9 @@ import (
 	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	sqldialect "github.com/grafana/mcp-grafana/tools/sql"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
 )
 
@@ -18,7 +17,7 @@ import (
 type RunPanelQueryParams struct {
 	DashboardUID   string            `json:"dashboardUid" jsonschema:"required,description=Dashboard UID"`
 	PanelIDs       []int             `json:"panelIds" jsonschema:"required,description=Panel IDs to execute (one or more)"`
-	QueryIndex     *int              `json:"queryIndex,omitempty" jsonschema:"description=Index of the query to execute per panel (0-based\\, defaults to 0). Use get_dashboard_panel_queries to see all queries."`
+	QueryIndex     *int              `json:"queryIndex,omitempty" jsonschema:"description=Index of the query to execute per panel (0-based\\, defaults to 0)."`
 	Start          string            `json:"start" jsonschema:"description=Override start time (e.g. 'now-1h'\\, RFC3339\\, Unix ms)"`
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
@@ -54,6 +53,7 @@ type RunPanelQueryResult struct {
 // singlePanelQueryParams holds the parameters for running a single panel query.
 type singlePanelQueryParams struct {
 	DB         map[string]interface{}
+	IsV2       bool
 	PanelID    int
 	QueryIndex int
 	Start      string
@@ -112,6 +112,7 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 	for _, panelID := range args.PanelIDs {
 		result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{
 			DB:         db,
+			IsV2:       dashboard.IsV2,
 			PanelID:    panelID,
 			QueryIndex: queryIndex,
 			Start:      start,
@@ -140,14 +141,25 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 
 // runSinglePanelQuery executes a single panel's query within a dashboard
 func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*PanelQueryResult, error) {
-	// Find the panel by ID
-	panel, err := findPanelByID(params.DB, params.PanelID)
-	if err != nil {
-		return nil, fmt.Errorf("finding panel: %w", err)
+	// Find the panel by ID and extract its query and datasource info. The rest
+	// of this function reads v1 variables, so a v2 dashboard's are converted.
+	db := params.DB
+	var panelData *panelInfo
+	var err error
+	if params.IsV2 {
+		panel, findErr := findPanelByIDV2(params.DB, params.PanelID)
+		if findErr != nil {
+			return nil, fmt.Errorf("finding panel: %w", findErr)
+		}
+		panelData, err = extractPanelInfoV2(panel, params.QueryIndex)
+		db = templatingV1FromV2(params.DB)
+	} else {
+		panel, findErr := findPanelByID(params.DB, params.PanelID)
+		if findErr != nil {
+			return nil, fmt.Errorf("finding panel: %w", findErr)
+		}
+		panelData, err = extractPanelInfo(panel, params.QueryIndex)
 	}
-
-	// Extract query and datasource info from the panel
-	panelData, err := extractPanelInfo(panel, params.QueryIndex)
 	if err != nil {
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
@@ -155,7 +167,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// Extract template variables from the dashboard. Keep both the first value
 	// (used for datasource references) and the complete value list (used for
 	// formatted query interpolation).
-	templateVariables := extractTemplateVariableValues(params.DB)
+	templateVariables := extractTemplateVariableValues(db)
 	vars := firstTemplateVariableValues(templateVariables)
 
 	// Apply variable overrides from user
@@ -250,7 +262,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		// object sent to Grafana matches what the panel actually declared.
 		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, datasourceType)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_sql\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus, query_loki_logs, query_sql, query_cloudwatch, query_influxdb) directly", datasourceType)
 	}
 
 	if err != nil {
@@ -991,20 +1003,22 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, InfluxDB\\, BigQuery\\, MSSQL\\, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval), and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
-	mcp.WithTitleAnnotation("Run panel query"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Run panel query"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddRunPanelQueryTools registers run panel query tools with the MCP server.
 // Every tool in this category executes a query, so nothing is registered when
 // enableQueryTools is false.
-func AddRunPanelQueryTools(mcp *server.MCPServer, enableQueryTools bool) {
+func AddRunPanelQueryTools(s *mcp.Server, enableQueryTools bool) {
 	if enableQueryTools {
-		RunPanelQuery.Register(mcp)
+		RunPanelQuery.Register(s)
 	}
 }

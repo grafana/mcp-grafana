@@ -13,7 +13,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,7 +83,7 @@ func TestCreateAnnotation_GraphiteFormat_Minimal(t *testing.T) {
 		var body models.PostGraphiteAnnotationsCmd
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		assert.Equal(t, "deploy", body.What)
-		assert.Equal(t, int64(1710000000000), body.When)
+		assert.Equal(t, int64(1710000000), body.When, "graphite endpoint takes epoch seconds")
 		assert.Nil(t, body.Tags)
 		assert.Empty(t, body.Data)
 
@@ -112,7 +112,7 @@ func TestCreateAnnotation_GraphiteFormat_WithTagsAndData(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 
 		assert.Equal(t, "incident", body["what"])
-		assert.Equal(t, float64(1720000000000), body["when"])
+		assert.Equal(t, float64(1720000000), body["when"])
 		assert.ElementsMatch(t, []interface{}{"sev1", "network"}, body["tags"].([]interface{}))
 		assert.Equal(t, "context", body["data"])
 
@@ -300,7 +300,7 @@ func TestGetAnnotationTags_UsesCorrectQueryParams(t *testing.T) {
 
 	ctx := mockCtxWithClient(server)
 	tag := "error"
-	limit := "50"
+	limit := int64(50)
 
 	_, err := getAnnotationTags(ctx, GetAnnotationTagsInput{
 		Tag:   &tag,

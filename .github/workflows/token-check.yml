@@ -14,6 +14,10 @@ jobs:
   analyze:
     name: Analyze token usage
     runs-on: ubuntu-latest
+    # Keep both the base and PR servers from sending usage reports. An env var
+    # rather than --usage-stats, because a v1 base binary rejects that flag.
+    env:
+      GRAFANA_USAGE_STATS: disabled
     # No pull-requests: write, and no PR comment. GitHub gives fork pull requests
     # a read-only token regardless of what a workflow asks for, so the action's
     # commenting could never work for external contributors — which is precisely
@@ -24,36 +28,48 @@ jobs:
       contents: read # to check out the repository
       id-token: write # to authenticate to Vault via OIDC for the Anthropic API key
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
       - name: Build server
         run: make build
 
-      - name: Download baseline
-        id: download-baseline
-        uses: dawidd6/action-download-artifact@09d0677378d50fef230b7cd4c0dea6dfe8883938
+      # The baseline is the PR's own base commit, built and counted in this job,
+      # so every PR is compared against exactly the branch it merges into.
+      - name: Check out base
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          branch: main
-          name: token-baseline
-          path: baseline
-          workflow: token-baseline.yml
-          if_no_artifact_found: warn
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Build base server
+        working-directory: base
+        run: make build
 
       - name: Get secrets
         id: get-secrets
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: grafana/shared-workflows/actions/get-vault-secrets@3b321a9af994a0b7d8caa3130f3cd9b5cc08fd7a # get-vault-secrets/v2.0.2
+        uses: grafana/shared-workflows/actions/get-vault-secrets@2f1ddaf3ce1aa677356243d0dd584be33cfa35e3 # get-vault-secrets/v2.1
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
             ANTHROPIC_API_KEY=anthropic:api-key
+
+      - name: Count base tokens
+        uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
+        with:
+          command: ./base/dist/mcp-grafana
+          # Same key (or lack of one) as the analysis below, so both sides are
+          # counted by the same provider.
+          anthropic-api-key: ${{ steps.get-secrets.outputs.secrets && fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY || '' }}
+          output: base-tokens.json
 
       - name: Analyze tokens
         id: analyze
@@ -69,7 +85,7 @@ jobs:
           # The action falls back to tiktoken, which is accurate enough to review
           # a tool's cost against the 5% threshold.
           anthropic-api-key: ${{ steps.get-secrets.outputs.secrets && fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY || '' }}
-          baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
+          baseline: base-tokens.json
           threshold-percent: "5"
           # Commenting is deliberately off; see the note on permissions above.
           comment: false

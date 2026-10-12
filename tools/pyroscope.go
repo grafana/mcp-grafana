@@ -15,23 +15,22 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	"github.com/grafana/pyroscope/api/gen/proto/go/querier/v1/querierv1connect"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // AddPyroscopeTools registers the Pyroscope tools on the MCP server.
 // query_pyroscope is registered only when enableQueryTools is true; the
 // label and profile-type listing tools stay available either way.
-func AddPyroscopeTools(mcp *server.MCPServer, enableQueryTools bool) {
-	ListPyroscopeLabelNames.Register(mcp)
-	ListPyroscopeLabelValues.Register(mcp)
-	ListPyroscopeProfileTypes.Register(mcp)
+func AddPyroscopeTools(s *mcp.Server, enableQueryTools bool) {
+	ListPyroscopeLabelNames.Register(s)
+	ListPyroscopeLabelValues.Register(s)
+	ListPyroscopeProfileTypes.Register(s)
 	if enableQueryTools {
-		QueryPyroscope.Register(mcp)
+		QueryPyroscope.Register(s)
 	}
 }
 
@@ -46,11 +45,12 @@ var ListPyroscopeLabelNames = mcpgrafana.MustTool(
 	"list_pyroscope_label_names",
 	listPyroscopeLabelNamesToolPrompt,
 	listPyroscopeLabelNames,
-	mcp.WithTitleAnnotation("List Pyroscope label names"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Pyroscope label names"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type ListPyroscopeLabelNamesParams struct {
@@ -93,7 +93,7 @@ func listPyroscopeLabelNames(ctx context.Context, args ListPyroscopeLabelNamesPa
 		return nil, fmt.Errorf("failed to call Pyroscope API: %w", err)
 	}
 
-	return res.Msg.Names, nil
+	return nonNilStrings(res.Msg.Names), nil
 }
 
 const listPyroscopeLabelValuesToolPrompt = `
@@ -107,11 +107,12 @@ var ListPyroscopeLabelValues = mcpgrafana.MustTool(
 	"list_pyroscope_label_values",
 	listPyroscopeLabelValuesToolPrompt,
 	listPyroscopeLabelValues,
-	mcp.WithTitleAnnotation("List Pyroscope label values"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Pyroscope label values"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type ListPyroscopeLabelValuesParams struct {
@@ -161,7 +162,16 @@ func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValues
 		return nil, fmt.Errorf("failed to call Pyroscope API: %w", err)
 	}
 
-	return res.Msg.Names, nil
+	return nonNilStrings(res.Msg.Names), nil
+}
+
+// nonNilStrings returns s, or an empty slice if s is nil, so that an empty
+// result serialises as [] rather than null.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 const listPyroscopeProfileTypesToolPrompt = `
@@ -175,11 +185,12 @@ var ListPyroscopeProfileTypes = mcpgrafana.MustTool(
 	"list_pyroscope_profile_types",
 	listPyroscopeProfileTypesToolPrompt,
 	listPyroscopeProfileTypes,
-	mcp.WithTitleAnnotation("List Pyroscope profile types"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Pyroscope profile types"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type ListPyroscopeProfileTypesParams struct {
@@ -630,16 +641,17 @@ var QueryPyroscope = mcpgrafana.MustTool(
 	"query_pyroscope",
 	queryPyroscopeToolPrompt,
 	queryPyroscope,
-	mcp.WithTitleAnnotation("Query Pyroscope"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Pyroscope"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type QueryPyroscopeParams struct {
 	DataSourceUID string   `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
-	ProfileType   string   `json:"profile_type" jsonschema:"required,description=The profile type\\, use list_pyroscope_profile_types to discover available types"`
+	ProfileType   string   `json:"profile_type" jsonschema:"required,description=The profile type (e.g. process_cpu:cpu:nanoseconds:cpu:nanoseconds)"`
 	QueryType     string   `json:"query_type,omitempty" jsonschema:"description=Query type: \"profile\" (flamegraph)\\, \"metrics\" (time-series)\\, or \"both\" (default). Use \"both\" for complete analysis"`
 	Format        string   `json:"format,omitempty" jsonschema:"description=Profile output format: \"table\" (default) for a per-function flat/cum table\\, or \"dot\" for a call graph in Graphviz DOT format"`
 	Matchers      string   `json:"matchers,omitempty" jsonschema:"description=Prometheus style matchers (defaults to: {})"`

@@ -11,10 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 type GenerateDeeplinkParams struct {
@@ -26,7 +25,7 @@ type GenerateDeeplinkParams struct {
 	Queries             []map[string]interface{}     `json:"queries,omitempty" jsonschema:"description=List of query objects for explore links (e.g. [{\"refId\":\"A\"\\,\"expr\":\"up\"}])"`
 	QueryParams         map[string]string            `json:"queryParams,omitempty" jsonschema:"description=Additional URL query parameters (for dashboard/panel types)"`
 	TimeRange           *TimeRange                   `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
-	Shorten             bool                         `json:"shorten,omitempty" jsonschema:"description=If true\\, try to shorten the generated URL to /goto/<uid>. If shortening fails\\, return the original deeplink."`
+	Shorten             bool                         `json:"shorten,omitempty" jsonschema:"description=If true\\, try to shorten the generated URL to /goto/<uid>. If shortening fails\\, an error containing the full deeplink is returned."`
 }
 
 // DeeplinkProvisioningPreview identifies a not-yet-applied dashboard inside a
@@ -34,7 +33,7 @@ type GenerateDeeplinkParams struct {
 // that file; pullRequestUrl is read by the preview banner to surface the
 // upstream PR.
 type DeeplinkProvisioningPreview struct {
-	Repo           string `json:"repo" jsonschema:"required,description=Provisioning repository slug. List repositories via list_provisioning_repositories if unknown."`
+	Repo           string `json:"repo" jsonschema:"required,description=Provisioning repository slug (the repository name)."`
 	Path           string `json:"path" jsonschema:"required,description=Path to the dashboard file within the repository\\, relative to its root."`
 	Ref            string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA. Defaults to the repository's main branch when omitted."`
 	PullRequestURL string `json:"pullRequestUrl,omitempty" jsonschema:"description=Upstream pull request URL to surface in Grafana's preview banner."`
@@ -62,7 +61,7 @@ func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 	// falling back to the configured URL if the client is not available or has no public URL.
 	var baseURL string
 	if gc := mcpgrafana.GrafanaClientFromContext(ctx); gc != nil && gc.PublicURL != "" {
-		baseURL = gc.PublicURL
+		baseURL = strings.TrimRight(gc.PublicURL, "/")
 	} else {
 		config := mcpgrafana.GrafanaConfigFromContext(ctx)
 		baseURL = config.URL
@@ -178,12 +177,10 @@ func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, 
 
 	shortURL, err := shortenURL(ctx, deeplink)
 	if err != nil {
-		// Compatibility-first behavior: never fail deeplink generation when
-		// short-url creation is unavailable; return the long URL instead.
-		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
-			"failed to shorten generated deeplink; returning full URL",
-			"error", err)
-		return deeplink, nil
+		// Fail visibly: silently returning the long URL hides that the
+		// caller did not get what it asked for. The error carries the full
+		// deeplink so it is still usable.
+		return "", fmt.Errorf("failed to shorten deeplink (full URL: %s): %w", deeplink, err)
 	}
 
 	return shortURL, nil
@@ -214,12 +211,21 @@ func shortenURL(ctx context.Context, longURL string) (string, error) {
 	if !strings.HasPrefix(path, "/") {
 		return "", fmt.Errorf("url must include an absolute path")
 	}
-	// Grafana's /api/short-urls endpoint rejects absolute paths
-	// (messageId "shorturl.absolute-path") and requires the path to be
-	// relative, so strip the leading slash before submitting.
-	path = strings.TrimPrefix(path, "/")
 
-	// /api/short-urls rejects absolute paths, so strip the leading slash.
+	// When Grafana is served from a sub-path (e.g. root_url includes
+	// "/grafana"), the deeplink URL contains that prefix. Grafana's /goto
+	// redirect prepends the sub-path itself, so we must strip it here to
+	// avoid doubling (e.g. "/grafana/grafana/d/…" → 404).
+	publicParsed, err := url.Parse(publicBaseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid public base url: %w", err)
+	}
+	if basePath := strings.TrimRight(publicParsed.Path, "/"); basePath != "" {
+		path = strings.TrimPrefix(path, basePath)
+	}
+
+	// Grafana's /api/short-urls endpoint rejects absolute paths
+	// (messageId "shorturl.absolute-path"), so strip the leading slash.
 	relativePath := strings.TrimPrefix(path, "/")
 
 	payload, err := json.Marshal(map[string]string{"path": relativePath})
@@ -307,32 +313,34 @@ func normalizeShortURLWithPublicBase(rawShortURL, publicBaseURL string) (string,
 
 var GenerateDeeplink = mcpgrafana.MustTool(
 	"generate_deeplink",
-	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to also attempt a /goto/<uid> short URL; if shortening fails, the full deeplink is returned.",
+	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to return a /goto/<uid> short URL instead; if shortening fails, an error containing the full deeplink is returned.",
 	generateDeeplink,
-	mcp.WithTitleAnnotation("Generate navigation deeplink"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Generate navigation deeplink"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // short URLs need no RBAC action
 )
 
 var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
 	"generate_deeplink",
 	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). In read-only mode, shorten=true is accepted but ignored and the full deeplink is returned.",
 	generateDeeplinkReadOnly,
-	mcp.WithTitleAnnotation("Generate navigation deeplink"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Generate navigation deeplink"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // short URLs need no RBAC action
 )
 
-func AddNavigationTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddNavigationTools(s *mcp.Server, enableWriteTools bool) {
 	if enableWriteTools {
-		GenerateDeeplink.Register(mcp)
+		GenerateDeeplink.Register(s)
 		return
 	}
-	GenerateDeeplinkReadOnly.Register(mcp)
+	GenerateDeeplinkReadOnly.Register(s)
 }
 
 // buildDashboardTargetURL returns the dashboard or provisioning-preview URL
