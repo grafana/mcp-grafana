@@ -371,7 +371,7 @@ func TestAlertingClient_GetDatasourceRules(t *testing.T) {
 		{name: "defaults", want: url.Values{"group_limit": {"20"}, "exclude_alerts": {"true"}}},
 		{name: "alerting filter and group", opts: &GetRulesOpts{
 			FolderUID: "folder", RuleGroup: "group", RuleType: "alerting", RuleName: "cpu", States: []string{"firing"}, RuleLimit: 10,
-		}, want: url.Values{"group_limit": {"20"}, "exclude_alerts": {"true"}, "type": {"alert"}, "rule_group[]": {"group"}}},
+		}, want: url.Values{"group_limit": {"20"}, "exclude_alerts": {"true"}, "type": {"alert"}, "rule_group[]": {"group"}, "rule_group": {"group"}}},
 		{name: "recording filter and continuation", opts: &GetRulesOpts{RuleType: "recording"}, nextToken: "opaque+/=token",
 			want: url.Values{"group_limit": {"20"}, "exclude_alerts": {"true"}, "type": {"record"}, "group_next_token": {"opaque+/=token"}}},
 	}

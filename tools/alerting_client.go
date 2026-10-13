@@ -283,6 +283,8 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 		// it cannot be forwarded as the exact-match rule_name[] filter.
 		if opts.RuleGroup != "" {
 			params.Set("rule_group[]", opts.RuleGroup)
+			// Loki and older Mimir versions use the unbracketed spelling.
+			params.Set("rule_group", opts.RuleGroup)
 		}
 		switch opts.RuleType {
 		case "alerting":
