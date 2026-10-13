@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
@@ -94,6 +95,30 @@ func TestExploreURLForQueryCarriesTheQuery(t *testing.T) {
 		Expr: "go_goroutines", DatasourceUID: "prom-uid", QueryType: "instant",
 	})
 	assert.Contains(t, instant, "instant%22%3Atrue")
+}
+
+// Instant queries ignore startTime, but Explore needs both ends of a range.
+func TestExploreTimeRangeForInstantQueries(t *testing.T) {
+	assert.Nil(t, exploreTimeRangeForQuery(QueryPrometheusParams{QueryType: "instant"}))
+	// startTime is ignored, as it is by the query itself.
+	assert.Equal(t, &TimeRange{From: "2026-01-02T02:00:00Z", To: "2026-01-02T03:00:00Z"},
+		exploreTimeRangeForQuery(QueryPrometheusParams{
+			QueryType: "instant", StartTime: "now-6h", EndTime: "2026-01-02T03:00:00Z",
+		}))
+
+	for _, end := range []string{"now", "now-5m"} {
+		got := exploreTimeRangeForQuery(QueryPrometheusParams{QueryType: "instant", EndTime: end})
+		require.NotNil(t, got, end)
+		from, err := time.Parse(time.RFC3339, got.From)
+		require.NoError(t, err, end)
+		to, err := time.Parse(time.RFC3339, got.To)
+		require.NoError(t, err, end)
+		assert.Equal(t, instantExploreWindow, to.Sub(from), end)
+	}
+
+	// Range queries keep the bounds they ran with.
+	assert.Equal(t, &TimeRange{From: "now-1h", To: "now"},
+		exploreTimeRangeForQuery(QueryPrometheusParams{QueryType: "range", StartTime: "now-1h", EndTime: "now"}))
 }
 
 // Without a resolvable public URL there is no link to offer, and an empty

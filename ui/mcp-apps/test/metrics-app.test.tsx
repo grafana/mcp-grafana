@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { parsePrometheusResult } from '../app/parsePrometheusResult';
 import { RenderMetricsApp } from '../src/metrics/RenderMetricsApp';
+import { Table } from '../src/viz/Table';
 import { matrixSingleSeries, vectorSingleUnbounded } from './metricsFixtures';
 
 // jsdom has no canvas or ResizeObserver; the chart itself is not under test here.
@@ -139,5 +140,25 @@ describe('RenderMetricsApp', () => {
     render(<RenderMetricsApp result={many} colorMode="light" />);
     expect(document.body.textContent).toContain('Showing the top 25 of 30 series.');
     expect(document.body.textContent).toContain('1 series with no numeric value is not plotted.');
+  });
+
+  it('falls back to the derived view when a new result does not offer the picked one', () => {
+    const { rerender } = render(<RenderMetricsApp result={result()} colorMode="light" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stat' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Bar' }));
+    expect(screen.getByRole('button', { name: 'Bar' })).toBeTruthy();
+
+    rerender(<RenderMetricsApp result={parsePrometheusResult(matrixSingleSeries)!} colorMode="light" />);
+    expect(screen.getByRole('button', { name: 'Time series' })).toBeTruthy();
+  });
+});
+
+describe('Table', () => {
+  it('keeps the latest timestamps when it truncates a range', () => {
+    const points = Array.from({ length: 10 }, (_, i) => [i * 1000, i] as [number, number]);
+    render(<Table series={[{ labels: { job: 'a' }, points }]} maxRows={3} />);
+    const values = screen.getAllByRole('cell').map((cell) => cell.textContent);
+    expect(values).toEqual(['7', '8', '9']);
+    expect(document.body.textContent).toContain('Showing the latest 3 of 10 timestamps.');
   });
 });

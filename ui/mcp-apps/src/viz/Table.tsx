@@ -54,7 +54,8 @@ export function Table({ series, unit = 'none', decimals, maxRows = 100 }: TableP
     // Series normally share a step, so the union of timestamps is the row set.
     const stamps = [...new Set(series.flatMap((s) => s.points.map(([at]) => at)))].sort((a, b) => a - b);
     const byStamp = series.map((s) => new Map(s.points));
-    const shown = stamps.slice(0, maxRows);
+    // Truncate from the start: the latest points are the ones a reader came for.
+    const shown = stamps.slice(Math.max(0, stamps.length - maxRows));
 
     return (
       <div className={styles.tableScroll}>
@@ -89,7 +90,7 @@ export function Table({ series, unit = 'none', decimals, maxRows = 100 }: TableP
         </table>
         {stamps.length > shown.length && (
           <div className={styles.tableFooter}>
-            Showing the first {shown.length} of {stamps.length} timestamps.
+            Showing the latest {shown.length} of {stamps.length} timestamps.
           </div>
         )}
       </div>

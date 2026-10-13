@@ -38,6 +38,12 @@ export type MetricsHostSnapshot = {
   /** Transient message about the last user-initiated action. */
   notice?: McpAppFeedback;
   refreshing: boolean;
+  /**
+   * Bumped on each tool input, result and cancellation from the host, never on
+   * refresh. Keys the view, so state the user set up for one response does not
+   * carry into the next, and marks an in-flight refresh as superseded.
+   */
+  generation: number;
 };
 
 export type MetricsHostState = {
@@ -53,15 +59,17 @@ export type MetricsHostState = {
 };
 
 const TOOL_NAME = 'query_prometheus';
+const WAITING = 'Waiting for query results…';
 
 const error = (message: string): McpAppFeedback => ({ tone: 'error', message });
 
 export function createMetricsHostState(app: App): MetricsHostState {
   let snapshot: MetricsHostSnapshot = {
     colorMode: 'light',
-    status: 'Waiting for query results…',
+    status: WAITING,
     isError: false,
     refreshing: false,
+    generation: 0,
   };
   const listeners = new Set<() => void>();
 
@@ -70,12 +78,16 @@ export function createMetricsHostState(app: App): MetricsHostState {
     for (const listener of listeners) listener();
   };
 
-  /** Parse a tool result onto the snapshot. Shared by the first render and refresh. */
-  const applyResult = (response: unknown): boolean => {
+  /**
+   * Parse a tool result onto the snapshot. Shared by the first render and refresh.
+   * `patch` rides along in the same update, so listeners see one change.
+   */
+  const applyResult = (response: unknown, patch: Partial<MetricsHostSnapshot> = {}): boolean => {
     const { payload, channel } = extractToolPayload(response);
 
     if (channel === 'oversized') {
       set({
+        ...patch,
         isError: true,
         status: 'This result is too large for the interactive view. The data is in the tool output.',
       });
@@ -84,6 +96,7 @@ export function createMetricsHostState(app: App): MetricsHostState {
 
     if (channel === 'none') {
       set({
+        ...patch,
         isError: true,
         status:
           'The host delivered a result with no readable payload (neither structuredContent nor a JSON text block).',
@@ -94,35 +107,48 @@ export function createMetricsHostState(app: App): MetricsHostState {
     const parsed = parsePrometheusResult(payload);
     if (!parsed) {
       set({
+        ...patch,
         isError: true,
         status: `Received a payload via ${channel}, but it did not parse as a Prometheus result.`,
       });
       return false;
     }
 
-    set({ result: parsed, isError: false });
+    set({ ...patch, result: parsed, isError: false });
     return true;
   };
 
+  /** A new tool call from the host supersedes any refresh still in flight. */
+  const nextCall = (): Partial<MetricsHostSnapshot> => ({
+    generation: snapshot.generation + 1,
+    notice: undefined,
+    refreshing: false,
+  });
+
   app.ontoolinput = (params) => {
     const incoming = (params as { arguments?: QueryArgs } | undefined)?.arguments;
-    if (incoming && typeof incoming === 'object') set({ args: incoming });
+    if (!incoming || typeof incoming !== 'object') return;
+    // The previous chart is not this query's; keeping it would title old data
+    // with the new expression until the result arrives.
+    set({ ...nextCall(), args: incoming, result: undefined, isError: false, status: WAITING });
   };
 
   app.ontoolresult = (response) => {
     if (response.isError) {
       set({
+        ...nextCall(),
         result: undefined,
         isError: true,
         status: 'The query failed. Check the expression and datasource access, then run query_prometheus again.',
       });
       return;
     }
-    if (!applyResult(response)) set({ result: undefined });
+    // An unreadable result replaces the previous chart rather than sitting under it.
+    applyResult(response, { ...nextCall(), result: undefined });
   };
 
   app.ontoolcancelled = () => {
-    set({ result: undefined, isError: true, status: 'The query was cancelled.' });
+    set({ ...nextCall(), result: undefined, isError: true, status: 'The query was cancelled.' });
   };
 
   app.onhostcontextchanged = (context) => {
@@ -153,19 +179,24 @@ export function createMetricsHostState(app: App): MetricsHostState {
   const refresh = async () => {
     const args = snapshot.args;
     if (!args?.expr || !args.datasourceUid) return;
+    const generation = snapshot.generation;
+    // Once the host has delivered a newer call, this refresh's outcome is stale.
+    const superseded = () => snapshot.generation !== generation;
     set({ refreshing: true, notice: undefined });
     try {
       const response = await app.callServerTool({ name: TOOL_NAME, arguments: { ...args } });
+      if (superseded()) return;
       if (response.isError) {
         set({ notice: error('The refresh query failed. The chart still shows the previous result.') });
       } else if (!applyResult(response)) {
         set({ notice: error('Refresh returned a result the app could not read.') });
       }
     } catch (cause) {
+      if (superseded()) return;
       // A host may decline the call, or require an approval the user dismissed.
       set({ notice: error(`Could not refresh: ${cause instanceof Error ? cause.message : String(cause)}`) });
     } finally {
-      set({ refreshing: false });
+      if (!superseded()) set({ refreshing: false });
     }
   };
 

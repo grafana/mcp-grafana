@@ -23,6 +23,7 @@ export function MetricsApplication({ host }: { host: MetricsHostState }) {
       // The charts are the part that can throw; without a boundary a crash is a blank panel.
       <AppErrorBoundary label="Prometheus query" colorMode={state.colorMode}>
         <RenderMetricsApp
+          key={state.generation}
           result={state.result}
           colorMode={state.colorMode}
           expr={state.args?.expr}

@@ -204,9 +204,7 @@ func exploreURLForQuery(ctx context.Context, args QueryPrometheusParams) string 
 		ResourceType:  "explore",
 		DatasourceUID: &uid,
 		Queries:       []map[string]any{query},
-	}
-	if args.StartTime != "" || args.EndTime != "" {
-		params.TimeRange = &TimeRange{From: args.StartTime, To: args.EndTime}
+		TimeRange:     exploreTimeRangeForQuery(args),
 	}
 	url, err := generateDeeplinkReadOnly(ctx, params)
 	if err != nil {
@@ -215,6 +213,35 @@ func exploreURLForQuery(ctx context.Context, args QueryPrometheusParams) string 
 		return ""
 	}
 	return url
+}
+
+// instantExploreWindow is how far back an instant query's Explore link starts.
+// Explore needs a complete range, and an instant query only has its end; an
+// hour matches Explore's own default.
+const instantExploreWindow = time.Hour
+
+// exploreTimeRangeForQuery returns the Explore time range for a query, or nil
+// when it ran over the default range. Instant queries ignore startTime, so
+// their range ends at the instant evaluated, in absolute time on both ends: a
+// relative end would drift away from the start computed here.
+func exploreTimeRangeForQuery(args QueryPrometheusParams) *TimeRange {
+	if args.QueryType != "instant" {
+		if args.StartTime == "" && args.EndTime == "" {
+			return nil
+		}
+		return &TimeRange{From: args.StartTime, To: args.EndTime}
+	}
+	if args.EndTime == "" {
+		return nil
+	}
+	end, err := parseTime(args.EndTime)
+	if err != nil {
+		return nil
+	}
+	return &TimeRange{
+		From: end.Add(-instantExploreWindow).UTC().Format(time.RFC3339),
+		To:   end.UTC().Format(time.RFC3339),
+	}
 }
 
 // maxMetricsViewBytes bounds the payload handed to the metrics app, matching the

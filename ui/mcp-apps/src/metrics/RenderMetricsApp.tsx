@@ -71,8 +71,10 @@ export function RenderMetricsApp({
   // The derived default is the initial state. The user may switch; nothing the
   // model sent influences it.
   const [override, setOverride] = useState<VizKind | undefined>();
-  const kind = override ?? choice.kind;
   const options: VizKind[] = [choice.kind, ...choice.alternatives];
+  // A refresh can change the result's shape; a view it no longer offers falls
+  // back to the derived default rather than drawing data it was not picked for.
+  const kind = override && options.includes(override) ? override : choice.kind;
   // Brushing is armed from the control row, so the chart carries no UI of its own.
   const [selecting, setSelecting] = useState(false);
   const canSelectRange = Boolean(onSelectRange) && kind === 'timeseries';
