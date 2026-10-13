@@ -258,14 +258,40 @@ type alert struct {
 	Value       string        `json:"value"`
 }
 
-// GetDatasourceRules queries a datasource's Prometheus ruler API
-func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID string, opts *GetRulesOpts) (*v1.RulesResult, error) {
+const datasourceRulesGroupLimit = 20
+
+type datasourceRulesPage struct {
+	v1.RulesResult
+	NextToken string `json:"groupNextToken,omitempty"`
+}
+
+// GetDatasourceRules queries one page of a datasource's Prometheus rules API.
+func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID string, opts *GetRulesOpts, nextToken string) (*datasourceRulesPage, error) {
 	// use the Grafana unified endpoint - maybe we need to use the datasource proxy endpoint in the future as this
 	// is an api for internal use
 	path := fmt.Sprintf("/api/prometheus/%s/api/v1/rules", datasourceUID)
-	var params url.Values
+	params := url.Values{
+		"group_limit":    {strconv.Itoa(datasourceRulesGroupLimit)},
+		"exclude_alerts": {"true"}, // Rule summaries do not use alert instances.
+	}
+	if nextToken != "" {
+		params.Set("group_next_token", nextToken)
+	}
 	if opts != nil {
-		params = opts.queryValues()
+		// Datasource APIs use Prometheus parameters, not the Grafana-managed
+		// rules parameters in queryValues. RuleName is a substring search, so
+		// it cannot be forwarded as the exact-match rule_name[] filter.
+		if opts.RuleGroup != "" {
+			params.Set("rule_group[]", opts.RuleGroup)
+			// Loki and older Mimir versions use the unbracketed spelling.
+			params.Set("rule_group", opts.RuleGroup)
+		}
+		switch opts.RuleType {
+		case "alerting":
+			params.Set("type", "alert")
+		case "recording":
+			params.Set("type", "record")
+		}
 	}
 	resp, err := c.makeRequest(ctx, path, params)
 	if err != nil {
@@ -276,11 +302,16 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 	}()
 
 	var response struct {
-		Status string         `json:"status"`
-		Data   v1.RulesResult `json:"data"`
+		Status string              `json:"status"`
+		Data   datasourceRulesPage `json:"data"`
 	}
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&response); err != nil {
+	// A single group can be large, and older backends can ignore pagination.
+	// Bound the decompressed body before the JSON decoder allocates for it.
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read datasource rules response: %w", err)
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to decode datasource rules response: %w", err)
 	}
 
