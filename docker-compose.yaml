@@ -60,7 +60,8 @@ services:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      # This image is Alpine-based and has no curl; busybox wget is what's available.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
       interval: 5s
       timeout: 3s
       retries: 20
