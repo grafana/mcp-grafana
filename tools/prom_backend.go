@@ -119,6 +119,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
 	}
 
+	rt = &prometheusResponseLimitTransport{underlying: rt}
 	c, err := api.NewClient(api.Config{
 		Address:      url,
 		RoundTripper: &prometheusMetricNamesTransport{underlying: rt},

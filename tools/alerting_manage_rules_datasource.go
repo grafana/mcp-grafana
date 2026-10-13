@@ -10,6 +10,9 @@ import (
 )
 
 func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesOpts, labelSelectors []Selector) ([]alertRuleSummary, error) {
+	// Bound the entire scan, rather than giving every page a fresh timeout.
+	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+	defer cancel()
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
 	if err != nil {
 		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
@@ -24,39 +27,44 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 		return nil, fmt.Errorf("creating alerting client: %w", err)
 	}
 
-	rulesResp, err := client.GetDatasourceRules(ctx, dsUID, opts)
-	if err != nil {
-		return nil, fmt.Errorf("querying datasource %s rules: %w", dsUID, err)
+	limit := DefaultListAlertRulesLimit
+	if opts != nil && opts.RuleLimit > 0 {
+		limit = min(opts.RuleLimit, maxRulesLimit)
 	}
-
-	summaries := convertPrometheusRulesToSummary(rulesResp)
-
-	// The Grafana datasource endpoint proxies to upstream Prometheus/Mimir, which
-	// uses a different rule_type parameter name and value set. Filter client-side
-	// so callers get consistent behavior regardless of whether the proxy honors it.
-	if opts != nil && opts.RuleType != "" {
-		summaries = filterSummaryByRuleType(summaries, opts.RuleType)
-	}
-
-	// The upstream Prometheus/Mimir ruler API does not support the search.rule_name
-	// parameter at all, so it is silently ignored by the proxy. Filter client-side
-	// so callers get consistent behavior across both list paths.
-	if opts != nil && opts.RuleName != "" {
-		summaries = filterSummaryByRuleName(summaries, opts.RuleName)
-	}
-
-	if len(labelSelectors) > 0 {
-		summaries, err = filterSummaryByLabels(summaries, labelSelectors)
+	var summaries []alertRuleSummary
+	nextToken := ""
+	seenTokens := make(map[string]struct{})
+	for {
+		rulesResp, err := client.GetDatasourceRules(ctx, dsUID, opts, nextToken)
 		if err != nil {
-			return nil, fmt.Errorf("filtering rules: %w", err)
+			return nil, fmt.Errorf("querying datasource %s rules: %w", dsUID, err)
 		}
+		page := convertPrometheusRulesToSummary(&rulesResp.RulesResult)
+		// Keep local filtering for backends that ignore type, and preserve
+		// substring name matching and the existing label selector semantics.
+		if opts != nil && opts.RuleType != "" {
+			page = filterSummaryByRuleType(page, opts.RuleType)
+		}
+		if opts != nil && opts.RuleName != "" {
+			page = filterSummaryByRuleName(page, opts.RuleName)
+		}
+		if len(labelSelectors) > 0 {
+			page, err = filterSummaryByLabels(page, labelSelectors)
+			if err != nil {
+				return nil, fmt.Errorf("filtering rules: %w", err)
+			}
+		}
+		remaining := limit - len(summaries)
+		summaries = append(summaries, page[:min(len(page), remaining)]...)
+		if len(summaries) == limit || rulesResp.NextToken == "" {
+			return summaries, nil
+		}
+		if _, seen := seenTokens[rulesResp.NextToken]; seen {
+			return nil, fmt.Errorf("datasource %s rules API repeated a pagination token", dsUID)
+		}
+		seenTokens[rulesResp.NextToken] = struct{}{}
+		nextToken = rulesResp.NextToken
 	}
-
-	if opts != nil {
-		summaries = applyRuleLimit(summaries, opts.RuleLimit)
-	}
-
-	return summaries, nil
 }
 
 func isRulerDatasource(dsType string) bool {
