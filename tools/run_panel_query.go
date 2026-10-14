@@ -53,15 +53,16 @@ type RunPanelQueryResult struct {
 
 // singlePanelQueryParams holds the parameters for running a single panel query.
 type singlePanelQueryParams struct {
-	DB         map[string]interface{}
-	IsV2       bool
-	PanelID    int
-	QueryIndex int
-	Start      string
-	End        string
-	Variables  map[string]string
-	DsUID      string
-	DsType     string
+	DB           map[string]interface{}
+	IsV2         bool
+	PanelID      int
+	QueryIndex   int
+	Start        string
+	End          string
+	Variables    map[string]string
+	DsUID        string
+	DsType       string
+	OptionsCache variableOptionsCache
 }
 
 // panelInfo contains extracted information about a panel
@@ -114,19 +115,21 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 
 	results := make(map[int]*PanelQueryResult)
 	errs := make(map[int]string)
+	optionsCache := make(variableOptionsCache)
 
 	// Execute each panel query
 	for _, panelID := range args.PanelIDs {
 		result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{
-			DB:         db,
-			IsV2:       dashboard.IsV2,
-			PanelID:    panelID,
-			QueryIndex: queryIndex,
-			Start:      preparedStart,
-			End:        preparedEnd,
-			Variables:  args.Variables,
-			DsUID:      args.DatasourceUID,
-			DsType:     args.DatasourceType,
+			DB:           db,
+			IsV2:         dashboard.IsV2,
+			PanelID:      panelID,
+			QueryIndex:   queryIndex,
+			Start:        preparedStart,
+			End:          preparedEnd,
+			Variables:    args.Variables,
+			DsUID:        args.DatasourceUID,
+			DsType:       args.DatasourceType,
+			OptionsCache: optionsCache,
 		})
 		if err != nil {
 			errs[panelID] = err.Error()
@@ -173,7 +176,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 	prepared, err := prepareDashboardQuery(ctx, db, panelData.Query, panelData.RawTarget,
 		datasourceInfo{UID: panelData.DatasourceUID, Type: panelData.DatasourceType},
-		params.Variables, params.Start, params.End, params.DsUID, params.DsType)
+		params.Variables, params.Start, params.End, params.DsUID, params.DsType, params.OptionsCache)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,7 +242,7 @@ func TestDashboardAllOptions(t *testing.T) {
 			}
 			ctx := context.WithValue(t.Context(), variableQueriesKey{}, true)
 			db := preparationFixture(false, variable, "SELECT ${choice:sqlstring}")
-			prepared, err := prepareDashboardQuery(ctx, db, "SELECT ${choice:sqlstring}", nil, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, nil, "", "", "", "")
+			prepared, err := prepareDashboardQuery(ctx, db, "SELECT ${choice:sqlstring}", nil, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, nil, "", "", "", "", nil)
 			require.NoError(t, err)
 			if tc.warning != "" {
 				assert.Contains(t, strings.Join(prepared.Warnings, " "), tc.warning)
@@ -385,6 +387,118 @@ func TestDashboardRejectsEmptySQLOptions(t *testing.T) {
 				assert.Equal(t, 2, optionCalls)
 				assert.Zero(t, panelCalls, "an unresolved All must not submit the panel query")
 			})
+		}
+	}
+}
+
+func TestDashboardAllOptionsSharedWithinCall(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		for _, inspect := range []bool{false, true} {
+			for _, failFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("v2=%t/inspect=%t/failFirst=%t", v2, inspect, failFirst), func(t *testing.T) {
+					db := preparationFixture(v2, map[string]interface{}{
+						"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
+						"query": "SELECT options", "datasource": map[string]interface{}{"uid": "postgres-uid"},
+					}, "SELECT ${choice:sqlstring}")
+					if v2 {
+						elements := safeObject(db, "elements")
+						second := maps.Clone(safeObject(elements, "panel"))
+						spec := maps.Clone(safeObject(second, "spec"))
+						spec["id"] = float64(2)
+						second["spec"] = spec
+						elements["second"] = second
+					} else {
+						panels := safeArray(db, "panels")
+						second := maps.Clone(panels[0].(map[string]interface{}))
+						second["id"] = float64(2)
+						db["panels"] = append(panels, second)
+					}
+					optionCalls, panelCalls := 0, 0
+					ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						if v2 && serveDashboardDiscovery(w, r, "v1beta1", "v2beta1") {
+							return
+						}
+						switch {
+						case r.URL.Path == "/api/dashboards/uid/test":
+							_ = json.NewEncoder(w).Encode(map[string]interface{}{"dashboard": db, "meta": map[string]interface{}{}})
+							return
+						case strings.Contains(r.URL.Path, "/v1beta1/"):
+							_ = json.NewEncoder(w).Encode(map[string]interface{}{
+								"status": map[string]interface{}{"conversion": map[string]interface{}{"storedVersion": "v2beta1"}},
+							})
+							return
+						case strings.Contains(r.URL.Path, "/v2beta1/"):
+							_ = json.NewEncoder(w).Encode(map[string]interface{}{"apiVersion": "dashboard.grafana.app/v2beta1", "spec": db})
+							return
+						case r.URL.Path == "/api/datasources/uid/postgres-uid":
+							_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"postgres"}`))
+							return
+						}
+						require.Equal(t, "/api/ds/query", r.URL.Path)
+						var payload map[string]interface{}
+						require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+						target := safeArray(payload, "queries")[0].(map[string]interface{})
+						if safeString(target, "rawSql") == "SELECT options" {
+							optionCalls++
+							if failFirst && optionCalls == 1 {
+								http.Error(w, "option query failed", http.StatusBadRequest)
+								return
+							}
+						} else {
+							panelCalls++
+							assert.Equal(t, fmt.Sprintf("SELECT 'value-%d'", optionCalls), safeString(target, "rawSql"))
+						}
+						frames := data.Frames{data.NewFrame("", data.NewField("__value", nil, []string{fmt.Sprintf("value-%d", optionCalls)}))}
+						_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
+					}))
+					t.Cleanup(ts.Close)
+					ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
+					if v2 {
+						ctx = mcpgrafana.WithKubernetesClient(ctx, &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()})
+					}
+					for call := 1; call <= 2; call++ {
+						failed := failFirst && call == 1
+						if inspect {
+							queries, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+								UID: "test", Variables: map[string]string{}, Start: "1704067200000", End: "1704070800000",
+							})
+							require.NoError(t, err)
+							require.Len(t, queries, 2)
+							for _, query := range queries {
+								if failed {
+									assert.Contains(t, strings.Join(query.Warnings, " "), "option query failed")
+									assert.Empty(t, query.ProcessedQuery)
+								} else {
+									assert.Empty(t, query.Warnings)
+									assert.Equal(t, fmt.Sprintf("SELECT 'value-%d'", call), query.ProcessedQuery)
+								}
+							}
+							assert.Zero(t, panelCalls)
+						} else {
+							result, err := runPanelQuery(ctx, RunPanelQueryParams{
+								DashboardUID: "test", PanelIDs: []int{1, 2}, Start: "1704067200000", End: "1704070800000",
+							})
+							require.NoError(t, err)
+							if failed {
+								require.Len(t, result.Errors, 2)
+								assert.Equal(t, result.Errors[1], result.Errors[2])
+								assert.Empty(t, result.Results)
+								assert.Zero(t, panelCalls)
+							} else {
+								assert.Empty(t, result.Errors)
+								require.Len(t, result.Results, 2)
+								for _, panel := range result.Results {
+									assert.Equal(t, fmt.Sprintf("SELECT 'value-%d'", call), panel.Query)
+								}
+								assert.Equal(t, 2, panelCalls)
+							}
+							panelCalls = 0
+						}
+						assert.Equal(t, call, optionCalls, "one option query per tool call, including failures")
+					}
+				})
+			}
 		}
 	}
 }
