@@ -171,9 +171,9 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			contains: []string{
 				"http://localhost:3000/render/d/abc123",
-				"width=1000",
-				"height=500",
-				"scale=1",
+				"width=1200",
+				"height=900",
+				"scale=2",
 				"kiosk=true",
 			},
 		},
@@ -591,6 +591,83 @@ func TestBuildRenderURL(t *testing.T) {
 	}
 }
 
+func TestBuildRenderURLDimensions(t *testing.T) {
+	contexts := []struct {
+		name          string
+		args          GetPanelImageParams
+		width, height int
+		scale         int
+	}{
+		{
+			name:  "panel",
+			args:  GetPanelImageParams{DashboardUID: "abc123", PanelID: intPtr(1)},
+			width: 720, height: 540, scale: 2,
+		},
+		{
+			name:  "dashboard",
+			args:  GetPanelImageParams{DashboardUID: "abc123"},
+			width: 1200, height: 900, scale: 2,
+		},
+		{
+			name: "preview panel",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{Repo: "repo", Path: "dashboard.json"},
+				PanelID:             intPtr(1),
+			},
+			width: 720, height: 540, scale: 2,
+		},
+		{
+			name: "preview dashboard",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{Repo: "repo", Path: "dashboard.json"},
+			},
+			width: 1200, height: 900, scale: 2,
+		},
+		{
+			name:  "explore",
+			args:  GetPanelImageParams{Explore: &RenderExplore{DatasourceUID: "prom-uid"}},
+			width: 1000, height: 1000, scale: 1,
+		},
+	}
+	for _, tc := range contexts {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, override := range []struct {
+				name                 string
+				width, height, scale *int
+			}{
+				{name: "defaults"},
+				{name: "width only", width: intPtr(800)},
+				{name: "height only", height: intPtr(600)},
+				{name: "scale only", scale: intPtr(3)},
+				{name: "all", width: intPtr(800), height: intPtr(600), scale: intPtr(1)},
+				{name: "full page", height: intPtr(-1)},
+			} {
+				t.Run(override.name, func(t *testing.T) {
+					args := tc.args
+					args.Width, args.Height, args.Scale = override.width, override.height, override.scale
+					width, height, scale := tc.width, tc.height, tc.scale
+					if override.width != nil {
+						width = *override.width
+					}
+					if override.height != nil {
+						height = *override.height
+					}
+					if override.scale != nil {
+						scale = *override.scale
+					}
+					renderURL, err := buildRenderURL("http://localhost:3000", 0, args)
+					require.NoError(t, err)
+					parsed, err := url.Parse(renderURL)
+					require.NoError(t, err)
+					assert.Equal(t, strconv.Itoa(width), parsed.Query().Get("width"))
+					assert.Equal(t, strconv.Itoa(height), parsed.Query().Get("height"))
+					assert.Equal(t, strconv.Itoa(scale), parsed.Query().Get("scale"))
+				})
+			}
+		})
+	}
+}
+
 // The deeplink carries no org, so it is only emitted when it would open in the
 // org the image was rendered from. `?orgId=N` would persist an org switch onto
 // the viewer's user record via Grafana's OrgRedirect middleware, so a link that
@@ -702,8 +779,9 @@ func TestGetPanelImage(t *testing.T) {
 	t.Run("Successful image render", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Contains(t, r.URL.Path, "/render/d/test-dash")
-			assert.Equal(t, "1000", r.URL.Query().Get("width"))
-			assert.Equal(t, "500", r.URL.Query().Get("height"))
+			assert.Equal(t, "1200", r.URL.Query().Get("width"))
+			assert.Equal(t, "900", r.URL.Query().Get("height"))
+			assert.Equal(t, "2", r.URL.Query().Get("scale"))
 
 			w.Header().Set("Content-Type", "image/png")
 			w.WriteHeader(http.StatusOK)
