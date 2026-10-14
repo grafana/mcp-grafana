@@ -843,9 +843,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 	}
 
 	if res.IsV2 {
-		rawArgs := args
-		rawArgs.Variables = nil
-		queries, err := getPanelQueriesV2(db, rawArgs)
+		queries, err := getPanelQueriesV2(db, args.PanelID)
 		if err != nil {
 			return nil, err
 		}
@@ -866,7 +864,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 		result = append(result, queries...)
 	}
 
@@ -875,7 +873,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to prepare queries with the selected variables and time range. SQL All selections may query variable options when server permissions allow it. Failed preparation returns `warnings` without `processedQuery` or `processedTarget`. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, processedTarget, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON, and `processedTarget` after preparation. They can be executed as panel queries but not as standalone expressions.",
+	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to prepare queries with the selected variables and time range. SQL All selections may query variable options when server permissions allow it. Failed preparation returns `warnings` without `processedQuery` or `processedTarget`. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, processedTarget, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON, and `processedTarget` after preparation. CloudWatch metric-search targets can be executed as panel queries. Other visual query builders may require datasource-specific tools.",
 	GetDashboardPanelQueriesTool,
 	mcpgrafana.WithTitleAnnotation("Get dashboard panel queries"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

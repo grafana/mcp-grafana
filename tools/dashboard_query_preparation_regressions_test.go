@@ -287,7 +287,7 @@ func TestDashboardRawDatasourceTypeFallback(t *testing.T) {
 			"id": 1, "datasource": map[string]interface{}{"uid": "same", "type": "prometheus"},
 			"targets": []interface{}{map[string]interface{}{"expr": "up", "datasource": map[string]interface{}{"uid": targetUID}}},
 		}
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 		require.Len(t, queries, 1)
 		assert.Equal(t, datasourceInfo{UID: targetUID}, queries[0].Datasource)
 		info, err := extractPanelInfo(panel, 0)

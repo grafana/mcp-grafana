@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -190,6 +191,12 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	datasourceUID, datasourceType := prepared.Datasource.UID, prepared.Datasource.Type
 	query := prepared.Query
 	params.Start, params.End = prepared.Start, prepared.End
+	// Extraction cannot decide whether a structured target needs an expression
+	// before resolving a UID-only reference, variable, or datasource override.
+	// CloudWatch consumes the target itself. Other executors still require text.
+	if query == "" && normalizeDatasourceType(datasourceType) != "cloudwatch" {
+		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
+	}
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -202,20 +209,20 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "clickhouse":
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
-		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, nil)
+		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End)
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, sqldialect.BigQueryDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, sqldialect.BigQueryDatasourceType)
 	case "mysql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, sqldialect.MySQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, sqldialect.MySQLDatasourceType)
 	case "mssql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, sqldialect.MSSQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, sqldialect.MSSQLDatasourceType)
 	case "postgres":
 		// PostgreSQL exposes two datasource identifiers (grafana-postgresql-datasource
 		// and the legacy postgres); pass the resolved type through so the datasource
 		// object sent to Grafana matches what the panel actually declared.
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, nil, datasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, datasourceType)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus, query_loki_logs, query_sql, query_cloudwatch, query_influxdb) directly", datasourceType)
 	}
@@ -255,7 +262,12 @@ func substituteTemplateVariableValues(query string, variables templateVariableVa
 	// Longest names win when one is a prefix of another.
 	names := make([]string, 0, len(variables))
 	for name := range variables {
-		names = append(names, name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return query
 	}
 	slices.SortFunc(names, func(a, b string) int { return len(b) - len(a) })
 	for i := range names {
@@ -268,19 +280,30 @@ func substituteTemplateVariableValues(query string, variables templateVariableVa
 	))
 	// Match the original query once. Selected values are data and must not
 	// become additional variable references after they have been inserted.
-	return variableRe.ReplaceAllStringFunc(query, func(match string) string {
-		parts := variableRe.FindStringSubmatch(match)
-		name := parts[1] + parts[2] + parts[3]
-		values, ok := variables[name]
-		if !ok {
-			return match
+	var result strings.Builder
+	last := 0
+	for _, match := range variableRe.FindAllStringSubmatchIndex(query, -1) {
+		name := ""
+		for i := 2; i < len(match); i += 2 {
+			if match[i] >= 0 {
+				name = query[match[i]:match[i+1]]
+				break
+			}
 		}
-		format, hasFormat := templateVariableFormat(match)
-		if !hasFormat {
-			return firstTemplateVariableValue(values)
+		// Use capture indices from the original query. Re-matching a token
+		// alone can lose its word boundary when an override name ends in
+		// punctuation, even though it matched correctly in the full query.
+		result.WriteString(query[last:match[0]])
+		format, hasFormat := templateVariableFormat(query[match[0]:match[1]])
+		if hasFormat {
+			result.WriteString(formatTemplateVariable(variables[name], format))
+		} else {
+			result.WriteString(firstTemplateVariableValue(variables[name]))
 		}
-		return formatTemplateVariable(values, format)
-	})
+		last = match[1]
+	}
+	result.WriteString(query[last:])
+	return result.String()
 }
 
 func templateVariableFormat(match string) (string, bool) {
@@ -339,12 +362,6 @@ func formatSQLStringVariable(values []string) string {
 		formatted[i] = "'" + value + "'"
 	}
 	return strings.Join(formatted, ",")
-}
-
-func substituteTemplateVariablesInMapWithValues(target map[string]interface{}, variables templateVariableValues) map[string]interface{} {
-	return substituteStringsInMap(target, func(value string) string {
-		return substituteTemplateVariableValues(value, variables)
-	})
 }
 
 func substituteStringsInMap(target map[string]interface{}, substitute func(string) string) map[string]interface{} {
@@ -420,8 +437,9 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	// Try to get query expression - different datasources use different field names
 	query := extractQueryExpression(target)
 
-	// CloudWatch panels use structured targets rather than string expressions
-	if query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
+	// Preserve structured targets until preparation resolves their effective
+	// datasource. The executor validates whether that type requires text.
+	if query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" && !targetDescribesQuery(target) {
 		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
 	}
 	info.Query = query
@@ -589,7 +607,7 @@ func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, en
 }
 
 // executeCloudWatchPanelQuery runs a CloudWatch query using Grafana's /api/ds/query endpoint
-func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, error) {
+func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string) (interface{}, error) {
 	if panelData.RawTarget == nil {
 		return nil, fmt.Errorf("CloudWatch panel target not available")
 	}
@@ -611,8 +629,9 @@ func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, pane
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Deep copy and substitute variables in target fields
-	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
+	// Preparation owns nested substitutions. Copy only the top-level fields
+	// this executor replaces, preserving the prepared target for its caller.
+	target := maps.Clone(panelData.RawTarget)
 
 	// Ensure datasource is set correctly
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": "cloudwatch"}
@@ -672,7 +691,7 @@ func defaultSQLFormat(datasourceType string) interface{} {
 // panel's raw target is preserved so datasource-specific fields (BigQuery's location,
 // project and dataset, for example) reach the backend; only rawSql, datasource, refId
 // and format are overridden.
-func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables templateVariableValues, datasourceType string) (*sqldialect.SQLQueryResult, error) {
+func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, datasourceType string) (*sqldialect.SQLQueryResult, error) {
 	if panelData == nil || panelData.RawTarget == nil {
 		return nil, fmt.Errorf("SQL panel target not available")
 	}
@@ -687,8 +706,9 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Deep copy the raw target and substitute variables in its fields (e.g. location).
-	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
+	// Preparation owns nested substitutions. This executor only replaces
+	// top-level transport fields, so a shallow copy preserves the input.
+	target := maps.Clone(panelData.RawTarget)
 
 	// Override the SQL with the fully-processed query and ensure required fields are set.
 	target["rawSql"] = query

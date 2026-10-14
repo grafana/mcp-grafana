@@ -44,7 +44,7 @@ Inspection preserves the raw `query` and `target` fields. Successful preparation
 
 Failed option queries produce actionable `warnings` and omit `processedQuery` and `processedTarget` during inspection. Execution reports a panel error without submitting the unresolved panel query. Supply explicit values or fix the variable query before retrying.
 
-CloudWatch alias dependencies follow the Grafana version and, on Grafana 9, the `cloudWatchDynamicLabels` setting. A label, including an empty string, takes precedence on modern Grafana. Grafana 9 with dynamic labels disabled still uses the alias. Preparation reuses cached frontend settings to distinguish these cases. If the settings are unavailable, it conservatively includes alias dependencies. Raw inspection also includes them because it does not read server settings.
+CloudWatch alias dependencies follow the Grafana version and, on Grafana 9, the `cloudWatchDynamicLabels` setting. A label, including an empty string, takes precedence on modern Grafana. Grafana 9 with dynamic labels disabled retains legacy alias handling, while a present label can still be consumed by the backend. Preparation reuses cached frontend settings to distinguish these cases. If the settings are unavailable, it conservatively includes alias dependencies. Raw inspection also includes them because it does not read server settings.
 
 ### Interpolation limits
 

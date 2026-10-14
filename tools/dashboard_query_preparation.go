@@ -180,6 +180,13 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 	interpolate := func(text string) string {
 		return substituteTemplateVariableValues(interpolateCustomAll(text), prepared.Variables)
 	}
+	datasourceValues := func() map[string]string {
+		values := firstTemplateVariableValues(prepared.Variables)
+		for name, value := range customAll {
+			values[name] = substituteTemplateVariableValues(value, prepared.Variables)
+		}
+		return values
+	}
 	var resolve func(string)
 	resolve = func(name string) {
 		if resolved[name] {
@@ -243,11 +250,6 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			// SQL may contain dollar amounts, dollar quoting, and plugin syntax.
 			// Only declared variables or explicit overrides are SQL dependencies.
 			// Keep datasource and other target fields strict, since they are not SQL.
-			for field, value := range dependencyTarget {
-				if text, ok := value.(string); ok && text == optionQuery {
-					delete(dependencyTarget, field)
-				}
-			}
 			datasourceTemplate := ""
 			if isDatasourceVariableReference(dsUID) {
 				datasourceTemplate = dsUID
@@ -284,11 +286,7 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 					optionQuery = substituteGrafanaMacros(interpolateCustomAll(optionQuery), from, to)
 					optionQuery = substituteTemplateVariableValues(optionQuery, prepared.Variables)
 					if isDatasourceVariableReference(dsUID) {
-						datasourceValues := firstTemplateVariableValues(prepared.Variables)
-						for name, value := range customAll {
-							datasourceValues[name] = substituteTemplateVariableValues(value, prepared.Variables)
-						}
-						dsUID = substituteLiteralVariables(dsUID, datasourceValues)
+						dsUID = substituteLiteralVariables(dsUID, datasourceValues())
 					}
 					optionTarget = substituteStringsInMap(optionTarget, interpolate)
 					values, optionErr = optionsCache.query(ctx, dsUID, optionQuery, optionTarget, prepared.Start, prepared.End)
@@ -317,11 +315,7 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			resolve(variable.Name)
 		}
 	}
-	datasourceVariables := firstTemplateVariableValues(prepared.Variables)
-	for name, value := range customAll {
-		datasourceVariables[name] = substituteTemplateVariableValues(value, prepared.Variables)
-	}
-	source, err = resolvePanelDatasource(ctx, source, datasourceVariables, overrideUID, overrideType)
+	source, err = resolvePanelDatasource(ctx, source, datasourceValues(), overrideUID, overrideType)
 	if err != nil {
 		return nil, err
 	}
@@ -462,11 +456,6 @@ func dashboardQueryRequiredVariables(query panelQuery, searchText string, db map
 		target = query.Target
 	}
 	strictTarget := sqlQueryDependencyFields(target)
-	for field, value := range strictTarget {
-		if text, ok := value.(string); ok && text == query.Query {
-			delete(strictTarget, field)
-		}
-	}
 	strictNames := make(map[string]bool)
 	datasourceTemplate := ""
 	if isDatasourceVariableReference(query.Datasource.UID) {
@@ -551,7 +540,7 @@ func querySQLVariableOptions(ctx context.Context, uid, query string, target map[
 	}
 	optionTarget["rawQuery"] = true
 	optionTarget["format"] = defaultSQLFormat(ds.Type)
-	result, err := executeSQLPanelQuery(ctx, uid, &panelInfo{RawTarget: optionTarget}, query, start, end, nil, ds.Type)
+	result, err := executeSQLPanelQuery(ctx, uid, &panelInfo{RawTarget: optionTarget}, query, start, end, ds.Type)
 	if err != nil {
 		return nil, err
 	}

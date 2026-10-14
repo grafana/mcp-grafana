@@ -82,15 +82,11 @@ func findPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]inter
 }
 
 // getPanelQueriesV2 implements get_dashboard_panel_queries for v2 dashboards.
-func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	var dashboardVars map[string]VariableInfo
-	if args.Variables != nil {
-		dashboardVars = extractDashboardVariablesV2(spec)
-	}
+func getPanelQueriesV2(spec map[string]interface{}, panelID *int) ([]panelQuery, error) {
 
 	var panels []map[string]interface{}
-	if args.PanelID != nil {
-		panel, err := findPanelByIDV2(spec, *args.PanelID)
+	if panelID != nil {
+		panel, err := findPanelByIDV2(spec, *panelID)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +97,7 @@ func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesPa
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		result = append(result, extractPanelQueriesV2(panel, dashboardVars, args.Variables)...)
+		result = append(result, extractPanelQueriesV2(panel)...)
 	}
 	return result, nil
 }
@@ -110,7 +106,7 @@ func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesPa
 // string is read from the free-form per-query body (query.spec), reusing the
 // same field-probe as v1; the datasource type is the query `group` and the uid
 // is `datasource.name`.
-func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
@@ -166,74 +162,10 @@ func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[strin
 			result.Target = queryTargetFields(body)
 		}
 
-		if dashboardVars != nil {
-			result.RequiredVariables = findVariablesInQuery(variableSearchText(result), dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			result.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			result.Datasource = dsInfo
-		}
-
 		queries = append(queries, result)
 	}
 
 	return queries
-}
-
-// extractDashboardVariablesV2 extracts variable definitions from a v2
-// dashboard's `variables` array.
-func extractDashboardVariablesV2(spec map[string]interface{}) map[string]VariableInfo {
-	variables := make(map[string]VariableInfo)
-
-	for _, v := range safeArray(spec, "variables") {
-		vk, ok := v.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		vspec := safeObject(vk, "spec")
-		if vspec == nil {
-			continue
-		}
-		name := safeString(vspec, "name")
-		if name == "" {
-			continue
-		}
-
-		info := VariableInfo{Name: name}
-
-		if current := safeObject(vspec, "current"); current != nil {
-			if val, ok := current["value"]; ok {
-				switch t := val.(type) {
-				case string:
-					info.CurrentValue = t
-				case []interface{}:
-					strs := make([]string, 0, len(t))
-					for _, item := range t {
-						if s, ok := item.(string); ok {
-							strs = append(strs, s)
-						}
-					}
-					info.CurrentValue = strings.Join(strs, ",")
-				}
-			}
-		}
-
-		// Default value: first option, or the query for constant variables.
-		if options := safeArray(vspec, "options"); len(options) > 0 {
-			if first, ok := options[0].(map[string]interface{}); ok {
-				if val, ok := first["value"].(string); ok {
-					info.DefaultValue = val
-				}
-			}
-		}
-		if info.DefaultValue == "" && strings.TrimSuffix(safeString(vk, "kind"), "Variable") == "Constant" {
-			info.DefaultValue = safeString(vspec, "query")
-		}
-
-		variables[name] = info
-	}
-
-	return variables
 }
 
 // dashboardSummaryV2 implements get_dashboard_summary for v2 dashboards.
@@ -353,9 +285,10 @@ func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInf
 	target["datasource"] = map[string]interface{}{"uid": info.DatasourceUID, "type": info.DatasourceType}
 	info.RawTarget = target
 
-	// CloudWatch panels use structured targets rather than string expressions
+	// Preserve structured targets until preparation resolves their effective
+	// datasource. The executor validates whether that type requires text.
 	info.Query = extractQueryExpression(target)
-	if info.Query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
+	if info.Query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" && !targetDescribesQuery(target) {
 		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
 	}
 

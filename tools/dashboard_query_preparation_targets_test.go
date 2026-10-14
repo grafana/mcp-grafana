@@ -115,6 +115,48 @@ func TestDashboardOptionTargetUnresolvedDependencies(t *testing.T) {
 	}
 }
 
+func TestDashboardOptionQueryIgnoresInactiveSQLAliases(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		t.Run(fmt.Sprint(v2), func(t *testing.T) {
+			optionTarget := map[string]interface{}{"rawSql": "SELECT 'east'", "target": "$unused"}
+			db := preparationFixture(v2, map[string]interface{}{
+				"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
+				"query": optionTarget, "datasource": map[string]interface{}{"uid": "postgres-uid"},
+			}, "SELECT ${choice:sqlstring}")
+			if v2 {
+				spec := safeObject(safeArray(db, "variables")[0].(map[string]interface{}), "spec")
+				safeObject(spec, "query")["spec"] = optionTarget
+			}
+			appendCustomAllFixtureVariable(db, v2, map[string]interface{}{
+				"name": "unused", "type": "custom", "current": map[string]interface{}{"value": "$__all"},
+			})
+			calls := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/datasources/uid/postgres-uid" {
+					_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"postgres"}`))
+					return
+				}
+				require.Equal(t, "/api/ds/query", r.URL.Path)
+				var payload map[string]interface{}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+				assert.Equal(t, "SELECT 'east'", safeArray(payload, "queries")[0].(map[string]interface{})["rawSql"])
+				calls++
+				frames := data.Frames{data.NewFrame("", data.NewField("__value", nil, []string{"east"}))}
+				_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: frames}}})
+			}))
+			t.Cleanup(ts.Close)
+			ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
+			queries, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{Variables: map[string]string{}})
+			require.NoError(t, err)
+			require.Len(t, queries, 1)
+			require.Empty(t, queries[0].Warnings)
+			assert.Equal(t, "SELECT 'east'", queries[0].ProcessedQuery)
+			assert.Equal(t, 1, calls)
+		})
+	}
+}
+
 func TestDashboardCustomAllDatasource(t *testing.T) {
 	for _, v2 := range []bool{false, true} {
 		for _, kind := range []string{"custom", "datasource"} {

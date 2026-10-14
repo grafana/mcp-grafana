@@ -26,12 +26,30 @@ func testTemplateVariableValues(variables map[string]string) templateVariableVal
 	return result
 }
 
+func TestTemplateVariableUnusualOverrideNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, query, want string
+		variables         templateVariableValues
+	}{
+		{"empty", "SELECT '$100'", "SELECT '$100'", templateVariableValues{"": {"ignored"}}},
+		{"empty with valid", "SELECT '$100', ${choice:sqlstring}", "SELECT '$100', 'east'", templateVariableValues{"": {"ignored"}, "choice": {"east"}}},
+		{"boundary after punctuation", "SELECT $x-y", "SELECT valuey", templateVariableValues{"x-": {"value"}}},
+		{"braced punctuation", "SELECT ${x-:sqlstring}", "SELECT 'value'", templateVariableValues{"x-": {"value"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, substituteTemplateVariableValues(tc.query, tc.variables))
+		})
+	}
+}
+
 func substituteTemplateVariables(query string, variables map[string]string) string {
 	return substituteTemplateVariableValues(query, testTemplateVariableValues(variables))
 }
 
 func substituteTemplateVariablesInMap(target map[string]interface{}, variables map[string]string) map[string]interface{} {
-	return substituteTemplateVariablesInMapWithValues(target, testTemplateVariableValues(variables))
+	return substituteStringsInMap(target, func(value string) string {
+		return substituteTemplateVariables(value, variables)
+	})
 }
 
 func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
@@ -1329,15 +1347,15 @@ func TestExtractPanelInfo_BigQuery(t *testing.T) {
 
 func TestExecuteSQLPanelQuery_NilTarget(t *testing.T) {
 	// A missing raw target should produce a clear error rather than panicking.
-	_, err := executeSQLPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.BigQueryDatasourceType)
+	_, err := executeSQLPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", sql.BigQueryDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 
-	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.MSSQLDatasourceType)
+	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", sql.MSSQLDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 
-	_, err = executeSQLPanelQuery(t.Context(), "postgres-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.PostgresDatasourceType)
+	_, err = executeSQLPanelQuery(t.Context(), "postgres-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", sql.PostgresDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 }

@@ -195,9 +195,8 @@ func extractPanelDatasource(panel, target map[string]interface{}) datasourceInfo
 }
 
 // extractPanelQueries extracts all queries from a panel.
-// When dashboardVars is non-nil, performs variable analysis and substitution,
-// populating ProcessedQuery and RequiredVariables fields.
-func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+// Preparation is handled separately by prepareInspectedQueries.
+func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
@@ -236,18 +235,6 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 				continue
 			}
 			pq.Target = queryTargetFields(target)
-		}
-
-		// Only do variable processing when dashboardVars is provided
-		if dashboardVars != nil {
-			// A structured target has nothing runnable to substitute into, but it
-			// can still reference variables (a CloudWatch dimension of
-			// "$instance", say), so report those as required too.
-			pq.RequiredVariables = findVariablesInQuery(variableSearchText(pq), dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			pq.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			pq.Datasource = dsInfo
 		}
 
 		queries = append(queries, pq)
@@ -394,8 +381,11 @@ func queryTargetFields(target map[string]interface{}) map[string]interface{} {
 // SQL backends. Preserve execution fields such as format and connectionArgs.
 func sqlQueryDependencyFields(target map[string]interface{}) map[string]interface{} {
 	fields := queryTargetFields(target)
-	delete(fields, "sql")
-	delete(fields, "legendFormat")
+	// The executor writes the selected expression into rawSql. Other saved
+	// expression aliases are inactive, even when they contain variables.
+	for _, field := range []string{"expr", "query", "expression", "rawSql", "rawSQL", "target", "sql", "legendFormat"} {
+		delete(fields, field)
+	}
 	return fields
 }
 
@@ -502,27 +492,6 @@ func findVariablesInQuery(query string, dashboardVars map[string]VariableInfo, o
 	}
 
 	return variables
-}
-
-// buildEffectiveVariables combines dashboard variables with user overrides
-func buildEffectiveVariables(dashboardVars map[string]VariableInfo, overrides map[string]string) map[string]string {
-	effective := make(map[string]string)
-
-	// Start with dashboard variable current values
-	for name, varInfo := range dashboardVars {
-		if varInfo.CurrentValue != "" {
-			effective[name] = varInfo.CurrentValue
-		} else if varInfo.DefaultValue != "" {
-			effective[name] = varInfo.DefaultValue
-		}
-	}
-
-	// Apply overrides
-	for name, value := range overrides {
-		effective[name] = value
-	}
-
-	return effective
 }
 
 // substituteLiteralVariables inserts literal values into the original template

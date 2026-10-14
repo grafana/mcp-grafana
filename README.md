@@ -422,6 +422,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `install_plugin`                    | Plugins                   | Install a plugin                                                                                                                                              | `plugins:install`                                                                                                                                                                                        | N/A                                                 |
 | `grafana_api_request`               | API                       | Call a Grafana HTTP API endpoint                                                                                                                              | None                                                                                                                                                                                                     | Depends on the endpoint                             |
 
+For `get_dashboard_panel_queries`, the additional query permission applies when SQL variable-option queries are enabled, including explicit raw SQL opt-ins under `--disable-write`. Raw inspection without preparation only fetches the dashboard.
+
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
 The `get_tempo_trace` tool displays an interactive trace viewer in compatible MCP hosts whenever Tempo query tools are enabled. Its existing text output remains available. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.

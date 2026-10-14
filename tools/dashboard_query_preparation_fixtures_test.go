@@ -43,15 +43,13 @@ func preparationFixture(v2 bool, variable map[string]interface{}, query string) 
 
 func inspectPreparationFixture(ctx context.Context, db map[string]interface{}, v2 bool, args DashboardPanelQueriesParams) ([]panelQuery, error) {
 	if v2 {
-		rawArgs := args
-		rawArgs.Variables = nil
-		queries, err := getPanelQueriesV2(db, rawArgs)
+		queries, err := getPanelQueriesV2(db, args.PanelID)
 		if err != nil {
 			return nil, err
 		}
 		return prepareInspectedQueries(ctx, templatingV1FromV2(db), args, queries), nil
 	}
-	queries := extractPanelQueries(collectAllPanels(db)[0], nil, nil)
+	queries := extractPanelQueries(collectAllPanels(db)[0])
 	return prepareInspectedQueries(ctx, db, args, queries), nil
 }
 
