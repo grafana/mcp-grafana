@@ -35,7 +35,9 @@ func substituteTemplateVariablesInMap(target map[string]interface{}, variables m
 }
 
 func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
-	return substituteTemplateVariablesInSliceWithValues(slice, testTemplateVariableValues(variables))
+	return substituteStringsInSlice(slice, func(value string) string {
+		return substituteTemplateVariables(value, variables)
+	})
 }
 
 func extractTemplateVariables(db map[string]interface{}) map[string]string {

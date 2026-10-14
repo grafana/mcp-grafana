@@ -240,7 +240,7 @@ func TestDashboardAllOptions(t *testing.T) {
 			}
 			ctx := context.WithValue(t.Context(), variableQueriesKey{}, true)
 			db := preparationFixture(false, variable, "SELECT ${choice:sqlstring}")
-			prepared, err := prepareDashboardQuery(ctx, db, "SELECT ${choice:sqlstring}", datasourceInfo{UID: "postgres-uid", Type: "postgres"}, nil, "", "", "", "")
+			prepared, err := prepareDashboardQuery(ctx, db, "SELECT ${choice:sqlstring}", nil, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, nil, "", "", "", "")
 			require.NoError(t, err)
 			if tc.warning != "" {
 				assert.Contains(t, strings.Join(prepared.Warnings, " "), tc.warning)
@@ -249,5 +249,142 @@ func TestDashboardAllOptions(t *testing.T) {
 				assert.Equal(t, "SELECT 'east','west'", prepared.Query)
 			}
 		})
+	}
+}
+
+func TestDashboardStructuredTargetAll(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, kind, allValue, want string
+			allowQueries, wantWarning  bool
+		}{
+			{name: "saved options", kind: "custom", want: "{east,west}"},
+			{name: "custom All", kind: "custom", allValue: "*", want: "*"},
+			{name: "SQL options", kind: "query", allowQueries: true, want: "{east,west}"},
+			{name: "disabled SQL options", kind: "query", wantWarning: true},
+		} {
+			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
+				optionCalls, panelCalls := 0, 0
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.URL.Path == "/api/datasources/uid/postgres-uid" {
+						_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"postgres"}`))
+						return
+					}
+					require.Equal(t, "/api/ds/query", r.URL.Path)
+					var payload map[string]interface{}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+					target := safeArray(payload, "queries")[0].(map[string]interface{})
+					if safeString(target, "rawSql") == "SELECT options" {
+						optionCalls++
+						frames := data.Frames{data.NewFrame("", data.NewField("__value", nil, []string{"east", "west"}))}
+						_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
+						return
+					}
+					panelCalls++
+					assert.Equal(t, []interface{}{tc.want}, safeObject(target, "dimensions")["ClusterName"])
+					assert.Equal(t, "cloudwatch-uid", safeObject(target, "datasource")["uid"])
+					_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{}})
+				}))
+				t.Cleanup(ts.Close)
+				variable := map[string]interface{}{
+					"name": "choice", "type": tc.kind, "multi": true, "allValue": tc.allValue,
+					"current": map[string]interface{}{"value": "$__all"},
+					"query":   "SELECT options", "datasource": map[string]interface{}{"uid": "postgres-uid"},
+					"options": []interface{}{
+						map[string]interface{}{"value": "$__all"},
+						map[string]interface{}{"value": "east"},
+						map[string]interface{}{"value": "west"},
+					},
+				}
+				db := preparationFixture(v2, variable, "")
+				target := map[string]interface{}{
+					"namespace": "AWS/ECS", "metricName": "CPUUtilization", "region": "us-east-1",
+					"dimensions": map[string]interface{}{"ClusterName": []interface{}{"${choice:glob}"}},
+				}
+				if v2 {
+					panel := collectAllPanelsV2(db)[0]
+					pq := safeArray(safeObject(safeObject(panel, "data"), "spec"), "queries")[0].(map[string]interface{})
+					query := safeObject(safeObject(pq, "spec"), "query")
+					query["spec"] = target
+					query["group"] = "cloudwatch"
+					query["datasource"] = map[string]interface{}{"name": "cloudwatch-uid"}
+				} else {
+					panel := collectAllPanels(db)[0]
+					panel["targets"] = []interface{}{target}
+					panel["datasource"] = map[string]interface{}{"uid": "cloudwatch-uid", "type": "cloudwatch"}
+				}
+				ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, tc.allowQueries)
+				inspected, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{Variables: map[string]string{}})
+				require.NoError(t, err)
+				require.Len(t, inspected, 1)
+				assert.Empty(t, inspected[0].Query)
+				_, err = runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1})
+				if tc.wantWarning {
+					assert.Contains(t, strings.Join(inspected[0].Warnings, " "), "variable option queries are disabled")
+					require.ErrorContains(t, err, "variable option queries are disabled")
+					assert.Zero(t, panelCalls)
+				} else {
+					assert.Empty(t, inspected[0].Warnings)
+					require.NoError(t, err)
+					assert.Equal(t, 1, panelCalls)
+				}
+				if tc.allowQueries {
+					assert.Equal(t, 2, optionCalls, "inspection and execution each resolve the target dependency")
+				} else {
+					assert.Zero(t, optionCalls)
+				}
+				assert.Equal(t, []interface{}{"${choice:glob}"}, safeObject(target, "dimensions")["ClusterName"], "preparation must not mutate the dashboard")
+			})
+		}
+	}
+}
+
+func TestDashboardRejectsEmptySQLOptions(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		for _, tc := range []struct {
+			name   string
+			values []*string
+		}{
+			{name: "no rows", values: []*string{}},
+			{name: "all null rows", values: []*string{nil, nil}},
+		} {
+			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
+				optionCalls, panelCalls := 0, 0
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.URL.Path == "/api/datasources/uid/postgres-uid" {
+						_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"postgres"}`))
+						return
+					}
+					require.Equal(t, "/api/ds/query", r.URL.Path)
+					var payload map[string]interface{}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+					target := safeArray(payload, "queries")[0].(map[string]interface{})
+					if safeString(target, "rawSql") == "SELECT options" {
+						optionCalls++
+					} else {
+						panelCalls++
+					}
+					frames := data.Frames{data.NewFrame("", data.NewField("__value", nil, tc.values))}
+					_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
+				}))
+				t.Cleanup(ts.Close)
+				ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
+				db := preparationFixture(v2, map[string]interface{}{
+					"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
+					"query": "SELECT options", "datasource": map[string]interface{}{"uid": "postgres-uid"},
+				}, "SELECT ${choice:sqlstring}")
+				inspected, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{Variables: map[string]string{}})
+				require.NoError(t, err)
+				require.Len(t, inspected, 1)
+				assert.Empty(t, inspected[0].ProcessedQuery)
+				assert.Contains(t, strings.Join(inspected[0].Warnings, " "), "option query returned no usable values")
+				_, err = runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1})
+				require.ErrorContains(t, err, "option query returned no usable values")
+				assert.Equal(t, 2, optionCalls)
+				assert.Zero(t, panelCalls, "an unresolved All must not submit the panel query")
+			})
+		}
 	}
 }

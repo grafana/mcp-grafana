@@ -41,6 +41,7 @@ func registerDashboardQueryTool(s *mcp.Server, definition mcpgrafana.Tool, allow
 
 type preparedDashboardQuery struct {
 	Query      string
+	Target     map[string]interface{}
 	Datasource datasourceInfo
 	Variables  templateVariableValues
 	Warnings   []string
@@ -72,7 +73,7 @@ func dashboardQueryRange(start, end string) (time.Time, time.Time, error) {
 
 // prepareDashboardQuery prepares frontend substitutions only. SQL plugin macros
 // such as $__timeFilter remain in the query sent to Grafana's backend.
-func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query string, source datasourceInfo, overrides map[string]string, start, end, overrideUID, overrideType string) (*preparedDashboardQuery, error) {
+func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query string, target map[string]interface{}, source datasourceInfo, overrides map[string]string, start, end, overrideUID, overrideType string) (*preparedDashboardQuery, error) {
 	from, to, err := dashboardQueryRange(start, end)
 	if err != nil {
 		return nil, err
@@ -172,7 +173,8 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		}
 		prepared.Variables[name] = values
 	}
-	for _, variable := range findVariablesInQuery(query+" "+source.UID, nil, nil) {
+	searchText := query + " " + source.UID + " " + variableSearchText(panelQuery{Target: target})
+	for _, variable := range findVariablesInQuery(searchText, nil, nil) {
 		resolve(variable.Name)
 	}
 	source, err = resolvePanelDatasource(ctx, source, firstTemplateVariableValues(prepared.Variables), overrideUID, overrideType)
@@ -180,11 +182,17 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		return nil, err
 	}
 	prepared.Datasource = source
-	// Custom All values are literal Grafana expressions, not SQL string values.
-	for name, value := range customAll {
-		query = substituteVariables(query, map[string]string{name: value})
+	interpolate := func(text string) string {
+		// Custom All values are literal Grafana expressions, not SQL string values.
+		for name, value := range customAll {
+			text = substituteVariables(text, map[string]string{name: value})
+		}
+		return substituteTemplateVariableValues(text, prepared.Variables)
 	}
-	prepared.Query = substituteTemplateVariableValues(query, prepared.Variables)
+	prepared.Query = interpolate(query)
+	if target != nil {
+		prepared.Target = substituteStringsInMap(target, interpolate)
+	}
 	switch normalizeDatasourceType(source.Type) {
 	case "prometheus", "loki", "postgres", "mysql", "mssql", "bigquery", "clickhouse":
 		prepared.Query = substituteGrafanaMacros(prepared.Query, from, to)
@@ -209,7 +217,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 		}
 		q := &queries[i]
 		q.RequiredVariables = findVariablesInQuery(variableSearchText(*q), extractDashboardVariables(db), args.Variables)
-		prepared, err := prepareDashboardQuery(ctx, db, q.Query, q.Datasource, args.Variables, args.Start, args.End, "", "")
+		prepared, err := prepareDashboardQuery(ctx, db, q.Query, q.Target, q.Datasource, args.Variables, args.Start, args.End, "", "")
 		if err != nil {
 			q.ProcessedQuery = ""
 			q.Warnings = []string{err.Error()}
@@ -313,6 +321,9 @@ func querySQLVariableOptions(ctx context.Context, uid, query, start, end string)
 			values = append(values, text)
 			seen[text] = true
 		}
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("option query returned no usable values")
 	}
 	return values, nil
 }
