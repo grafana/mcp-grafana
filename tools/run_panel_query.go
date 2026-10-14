@@ -804,25 +804,6 @@ func formatPrometheusDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh%dm", hours, mins)
 }
 
-// isVariableReference checks if a string is a Grafana variable reference
-func isVariableReference(s string) bool {
-	return strings.HasPrefix(s, "$") || strings.HasPrefix(s, "[[")
-}
-
-// extractVariableName extracts the variable name from different reference formats
-func extractVariableName(s string) string {
-	if strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") {
-		return s[2 : len(s)-1]
-	}
-	if strings.HasPrefix(s, "[[") && strings.HasSuffix(s, "]]") {
-		return s[2 : len(s)-2]
-	}
-	if strings.HasPrefix(s, "$") {
-		return strings.TrimPrefix(s, "$")
-	}
-	return s
-}
-
 // getAvailableDatasourceUIDs returns UIDs of datasources matching the given type
 func getAvailableDatasourceUIDs(ctx context.Context, dsType string) []string {
 	result, err := listDatasources(ctx, ListDatasourcesParams{Type: dsType})

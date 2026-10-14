@@ -393,6 +393,15 @@ func queryTargetFields(target map[string]interface{}) map[string]interface{} {
 	return fields
 }
 
+// sqlQueryDependencyFields excludes frontend state ignored by the supported
+// SQL backends. Preserve execution fields such as format and connectionArgs.
+func sqlQueryDependencyFields(target map[string]interface{}) map[string]interface{} {
+	fields := queryTargetFields(target)
+	delete(fields, "sql")
+	delete(fields, "legendFormat")
+	return fields
+}
+
 // isEmptyTargetValue reports whether a target field is set but carries no
 // information, which query editors leave behind routinely.
 func isEmptyTargetValue(val interface{}) bool {
@@ -432,11 +441,10 @@ func variableSearchText(pq panelQuery) string {
 	}
 	fields := queryTargetFields(target)
 	switch normalizeDatasourceType(pq.Datasource.Type) {
-	case "postgres", "mysql", "mssql":
-		// The built-in SQL backends execute rawSql. The sql object only
-		// preserves frontend builder state, even after switching to code mode.
+	case "postgres", "mysql", "mssql", "bigquery":
+		// SQL backends execute rawSql without using saved builder or legend state.
 		if pq.Query != "" {
-			delete(fields, "sql")
+			fields = sqlQueryDependencyFields(target)
 		}
 	case "cloudwatch":
 		// CloudWatch ignores the deprecated alias when a label is supplied.
