@@ -317,17 +317,25 @@ func TestDashboardStructuredTargetAll(t *testing.T) {
 					panel["datasource"] = map[string]interface{}{"uid": "cloudwatch-uid", "type": "cloudwatch"}
 				}
 				ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, tc.allowQueries)
+				raw, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{})
+				require.NoError(t, err)
+				require.Len(t, raw, 1)
+				assert.Nil(t, raw[0].ProcessedTarget, "raw-only inspection does not prepare a target")
+				assert.Zero(t, optionCalls)
 				inspected, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{Variables: map[string]string{}})
 				require.NoError(t, err)
 				require.Len(t, inspected, 1)
 				assert.Empty(t, inspected[0].Query)
+				assert.Equal(t, []interface{}{"${choice:glob}"}, safeObject(inspected[0].Target, "dimensions")["ClusterName"], "inspection preserves the raw target")
 				_, err = runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1})
 				if tc.wantWarning {
+					assert.Nil(t, inspected[0].ProcessedTarget)
 					assert.Contains(t, strings.Join(inspected[0].Warnings, " "), "variable option queries are disabled")
 					require.ErrorContains(t, err, "variable option queries are disabled")
 					assert.Zero(t, panelCalls)
 				} else {
 					assert.Empty(t, inspected[0].Warnings)
+					assert.Equal(t, []interface{}{tc.want}, safeObject(inspected[0].ProcessedTarget, "dimensions")["ClusterName"], "inspection exposes the same prepared dimensions as execution")
 					require.NoError(t, err)
 					assert.Equal(t, 1, panelCalls)
 				}
