@@ -502,3 +502,64 @@ func TestDashboardAllOptionsSharedWithinCall(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardDependentOptionsUseCustomAll(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, override, wantRegion string
+		}{
+			{name: "custom All is literal", wantRegion: "'east','west'"},
+			{name: "explicit value overrides All", override: "O'Reilly", wantRegion: "'O''Reilly'"},
+		} {
+			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
+				optionQuery := "SELECT option WHERE region IN (${region:sqlstring}) AND kind = ${kind:sqlstring}"
+				wantOptionQuery := "SELECT option WHERE region IN (" + tc.wantRegion + ") AND kind = 'O''Reilly'"
+				var sentQueries []string
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.URL.Path == "/api/datasources/uid/postgres-uid" {
+						_, _ = w.Write([]byte(`{"uid":"postgres-uid","type":"postgres"}`))
+						return
+					}
+					require.Equal(t, "/api/ds/query", r.URL.Path)
+					var payload map[string]interface{}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+					target := safeArray(payload, "queries")[0].(map[string]interface{})
+					sentQueries = append(sentQueries, safeString(target, "rawSql"))
+					frames := data.Frames{data.NewFrame("", data.NewField("__value", nil, []string{"selected"}))}
+					_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}}})
+				}))
+				t.Cleanup(ts.Close)
+				db := preparationFixture(v2, map[string]interface{}{
+					"name": "choice", "type": "query", "current": map[string]interface{}{"value": "$__all"},
+					"query": optionQuery, "datasource": map[string]interface{}{"uid": "postgres-uid"},
+				}, "SELECT ${choice:sqlstring}")
+				for _, variable := range []map[string]interface{}{
+					{"name": "region", "type": "custom", "current": map[string]interface{}{"value": "$__all"}, "allValue": "'east','west'"},
+					{"name": "kind", "type": "custom", "current": map[string]interface{}{"value": "O'Reilly"}},
+				} {
+					if v2 {
+						db["variables"] = append(safeArray(db, "variables"), map[string]interface{}{"kind": "CustomVariable", "spec": variable})
+					} else {
+						templating := safeObject(db, "templating")
+						templating["list"] = append(safeArray(templating, "list"), variable)
+					}
+				}
+				overrides := map[string]string{}
+				if tc.override != "" {
+					overrides["region"] = tc.override
+				}
+				ctx := context.WithValue(enforceTestCtx(ts, false), variableQueriesKey{}, true)
+				inspected, err := inspectPreparationFixture(ctx, db, v2, DashboardPanelQueriesParams{Variables: overrides})
+				require.NoError(t, err)
+				require.Len(t, inspected, 1)
+				require.Empty(t, inspected[0].Warnings)
+				assert.Equal(t, "SELECT 'selected'", inspected[0].ProcessedQuery)
+				result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1, Variables: overrides})
+				require.NoError(t, err)
+				assert.Equal(t, inspected[0].ProcessedQuery, result.Query)
+				assert.Equal(t, []string{wantOptionQuery, wantOptionQuery, "SELECT 'selected'"}, sentQueries)
+			})
+		}
+	}
+}

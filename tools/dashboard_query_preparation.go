@@ -128,6 +128,13 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 	}
 	resolved, resolving := make(map[string]bool), make(map[string]bool)
 	customAll := make(map[string]string)
+	interpolate := func(text string) string {
+		// Custom All values are literal Grafana expressions, not SQL string values.
+		for name, value := range customAll {
+			text = substituteVariables(text, map[string]string{name: value})
+		}
+		return substituteTemplateVariableValues(text, prepared.Variables)
+	}
 	var resolve func(string)
 	resolve = func(name string) {
 		if resolved[name] {
@@ -182,8 +189,8 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			} else if len(prepared.Warnings) > 0 {
 				optionErr = fmt.Errorf("a dependent variable could not be resolved")
 			} else {
-				optionQuery = substituteTemplateVariableValues(optionQuery, prepared.Variables)
-				dsUID = substituteTemplateVariableValues(dsUID, prepared.Variables)
+				optionQuery = interpolate(optionQuery)
+				dsUID = interpolate(dsUID)
 				values, optionErr = optionsCache.query(ctx, dsUID, optionQuery, prepared.Start, prepared.End)
 			}
 		} else {
@@ -211,13 +218,6 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		return nil, err
 	}
 	prepared.Datasource = source
-	interpolate := func(text string) string {
-		// Custom All values are literal Grafana expressions, not SQL string values.
-		for name, value := range customAll {
-			text = substituteVariables(text, map[string]string{name: value})
-		}
-		return substituteTemplateVariableValues(text, prepared.Variables)
-	}
 	prepared.Query = interpolate(query)
 	if target != nil {
 		prepared.Target = substituteStringsInMap(target, interpolate)
