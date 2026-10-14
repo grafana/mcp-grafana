@@ -110,10 +110,7 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 // getPrometheusCauses returns possible causes for empty Prometheus results
 func getPrometheusCauses(ctx HintContext) []string {
 	causes := []string{
-		"The metric may not exist in this Prometheus instance",
-		"The label selectors may not match any time series",
-		"The time range may be outside when the metric was being scraped",
-		"The scrape target may be down or not configured",
+		"The metric, labels, or time range may not match available series",
 	}
 
 	// Add query-specific causes
@@ -130,10 +127,7 @@ func getPrometheusCauses(ctx HintContext) []string {
 // getPrometheusActions returns suggested actions for empty Prometheus results
 func getPrometheusActions(ctx HintContext) []string {
 	actions := []string{
-		"Use list_prometheus_metric_names to verify the metric exists",
-		"Use list_prometheus_label_values to check available label values",
-		"Try expanding the time range to see if data exists in a different period",
-		"Verify the scrape configuration and target health in Prometheus",
+		"Use list_prometheus_metric_names and list_prometheus_label_values to check metrics and labels. Try expanding the time range",
 	}
 
 	// Add query-specific actions
@@ -147,10 +141,7 @@ func getPrometheusActions(ctx HintContext) []string {
 // getLokiCauses returns possible causes for empty Loki results
 func getLokiCauses(ctx HintContext) []string {
 	causes := []string{
-		"The stream selector labels may not match any log streams",
-		"No logs were ingested during the specified time range",
-		"The filter expression may be too restrictive",
-		"The label values in the selector may be misspelled or incorrect",
+		"The stream selector or time range may not match available logs",
 	}
 
 	// Add query-specific causes
@@ -168,10 +159,7 @@ func getLokiCauses(ctx HintContext) []string {
 // getLokiActions returns suggested actions for empty Loki results
 func getLokiActions(ctx HintContext) []string {
 	actions := []string{
-		"Use list_loki_label_names to verify available labels",
-		"Use list_loki_label_values to check values for specific labels",
-		"Use query_loki_stats to check if logs exist for the stream selector",
-		"Try expanding the time range to see if logs exist in a different period",
+		"Use list_loki_label_names and list_loki_label_values to check labels, then query_loki_stats to check the stream selector. Try expanding the time range",
 	}
 
 	// Add query-specific actions
