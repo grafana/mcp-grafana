@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -79,6 +80,9 @@ type QueryPrometheusResult struct {
 	Data     model.Value       `json:"data"`
 	Hints    *EmptyResultHints `json:"hints,omitempty"`
 	Warnings []string          `json:"warnings,omitempty"`
+	// ExploreURL opens this query in Grafana Explore. Populated best-effort from
+	// the instance's public URL; omitted when it cannot be resolved.
+	ExploreURL string `json:"exploreUrl,omitempty"`
 }
 
 func parseTime(timeStr string) (time.Time, error) {
@@ -177,10 +181,109 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 	return response, nil
 }
 
+// exploreURLForQuery builds an Explore deeplink for a PromQL query, reusing the
+// navigation tool's generator so the URL state matches the target Grafana
+// version (`panes` on 10.2+, legacy `left` below that).
+func exploreURLForQuery(ctx context.Context, args QueryPrometheusParams) string {
+	if args.DatasourceUID == "" || args.Expr == "" {
+		return ""
+	}
+	query := map[string]any{"refId": "A", "expr": args.Expr}
+	if args.QueryType == "instant" {
+		query["instant"] = true
+	} else {
+		query["range"] = true
+		// Explore otherwise picks its own step, and shows different points from
+		// the result the app drew. `interval` is the query's min step.
+		if args.StepSeconds > 0 {
+			query["interval"] = fmt.Sprintf("%ds", args.StepSeconds)
+		}
+	}
+	uid := args.DatasourceUID
+	params := GenerateDeeplinkParams{
+		ResourceType:  "explore",
+		DatasourceUID: &uid,
+		Queries:       []map[string]any{query},
+		TimeRange:     exploreTimeRangeForQuery(args),
+	}
+	url, err := generateDeeplinkReadOnly(ctx, params)
+	if err != nil {
+		// A missing public URL is normal on some deployments; the app simply
+		// omits its "Open in Grafana" action.
+		return ""
+	}
+	return url
+}
+
+// instantExploreWindow is how far back an instant query's Explore link starts.
+// Explore needs a complete range, and an instant query only has its end; an
+// hour matches Explore's own default.
+const instantExploreWindow = time.Hour
+
+// exploreTimeRangeForQuery returns the Explore time range for a query, or nil
+// when it ran over the default range. Instant queries ignore startTime, so
+// their range ends at the instant evaluated, in absolute time on both ends: a
+// relative end would drift away from the start computed here.
+func exploreTimeRangeForQuery(args QueryPrometheusParams) *TimeRange {
+	if args.QueryType != "instant" {
+		if args.StartTime == "" && args.EndTime == "" {
+			return nil
+		}
+		return &TimeRange{From: args.StartTime, To: args.EndTime}
+	}
+	if args.EndTime == "" {
+		return nil
+	}
+	end, err := parseTime(args.EndTime)
+	if err != nil {
+		return nil
+	}
+	return &TimeRange{
+		From: end.Add(-instantExploreWindow).UTC().Format(time.RFC3339),
+		To:   end.UTC().Format(time.RFC3339),
+	}
+}
+
+// maxMetricsViewBytes bounds the payload handed to the metrics app, matching the
+// trace viewer's budget. Past it the tool keeps its text output and no
+// interactive view, rather than handing a host something it cannot render.
+const maxMetricsViewBytes = 1 << 20
+
+// queryPrometheusForApp runs the query and returns the normal text result,
+// enriched with an interactive view when one is possible.
+func queryPrometheusForApp(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
+	result, err := queryPrometheusWithHints(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	result.ExploreURL = exploreURLForQuery(ctx, args)
+	return newMetricsAppResult(result)
+}
+
+// newMetricsAppResult builds the tool result: the JSON payload as a text block —
+// what the model reads, and what a host without MCP Apps support falls back to —
+// then, within the view budget, the same payload as structured content for the
+// app. The tool definition's _meta.ui.resourceUri is what tells the host to
+// render it.
+//
+// Separate from the query so the shape is testable without a Grafana.
+func newMetricsAppResult(result *QueryPrometheusResult) (*mcp.CallToolResult, error) {
+	body, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Prometheus query result: %w", err)
+	}
+	raw := mcpgrafana.NewToolResultText(string(body))
+	if len(body) <= maxMetricsViewBytes {
+		raw.StructuredContent = result
+	}
+	return raw, nil
+}
+
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
 	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
-	queryPrometheusWithHints,
+	queryPrometheusForApp,
+	mcpgrafana.WithUIResource(mcpgrafana.MetricsViewerResourceURI),
 	mcpgrafana.WithTitleAnnotation("Query Prometheus metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),

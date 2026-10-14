@@ -1,6 +1,7 @@
-import type { MouseEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
+import { openInGrafanaAction } from '../grafanaLink';
 import { McpAppShell, type McpAppColorMode, type McpAppFeedback } from '../McpAppShell';
 import { getTraceSummary, TraceViewer } from './TraceViewer';
 import type { TraceViewResult, TraceNavigationTarget } from './types';
@@ -13,32 +14,12 @@ export interface RenderTraceAppProps {
   feedback?: McpAppFeedback;
 }
 
-function isSafeGrafanaUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password;
-  } catch {
-    return false;
-  }
-}
-
 export function RenderTraceApp({ result, colorMode, onOpenInGrafana, share, feedback }: RenderTraceAppProps) {
   const summary = useMemo(() => getTraceSummary(result), [result]);
   const requestedFocusMissing = Boolean(
     result.focusSpanId && !result.spans.some((span) => span.id === result.focusSpanId)
   );
-  const safeGrafanaUrl = isSafeGrafanaUrl(result.grafanaUrl) ? result.grafanaUrl : undefined;
-  const openInGrafana = safeGrafanaUrl
-    ? {
-        href: result.grafanaUrl,
-        onClick: onOpenInGrafana
-          ? (event: MouseEvent<HTMLAnchorElement>) => {
-              event.preventDefault();
-              onOpenInGrafana({ url: safeGrafanaUrl });
-            }
-          : undefined,
-      }
-    : undefined;
+  const openInGrafana = openInGrafanaAction(result.grafanaUrl, onOpenInGrafana);
 
   return (
     <McpAppShell
