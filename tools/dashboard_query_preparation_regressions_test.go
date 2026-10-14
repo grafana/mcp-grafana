@@ -289,14 +289,10 @@ func TestDashboardRawDatasourceTypeFallback(t *testing.T) {
 		}
 		queries := extractPanelQueries(panel, nil, nil)
 		require.Len(t, queries, 1)
-		wantType := ""
-		if targetUID == "same" {
-			wantType = "prometheus"
-		}
-		assert.Equal(t, datasourceInfo{UID: targetUID, Type: wantType}, queries[0].Datasource)
+		assert.Equal(t, datasourceInfo{UID: targetUID}, queries[0].Datasource)
 		info, err := extractPanelInfo(panel, 0)
 		require.NoError(t, err)
-		assert.Equal(t, wantType, info.DatasourceType)
+		assert.Empty(t, info.DatasourceType, "a target UID must resolve its own missing type")
 	}
 }
 

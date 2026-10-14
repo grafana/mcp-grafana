@@ -191,9 +191,6 @@ func extractPanelDatasource(panel, target map[string]interface{}) datasourceInfo
 		ds = panelDS
 	}
 	info := datasourceInfo{UID: safeString(ds, "uid"), Type: safeString(ds, "type")}
-	if info.Type == "" && info.UID == safeString(panelDS, "uid") {
-		info.Type = safeString(panelDS, "type")
-	}
 	return info
 }
 
@@ -526,6 +523,18 @@ func buildEffectiveVariables(dashboardVars map[string]VariableInfo, overrides ma
 	}
 
 	return effective
+}
+
+// substituteLiteralVariables inserts literal values into the original template
+// once, without interpreting variable-like text inside a selected value.
+func substituteLiteralVariables(text string, variables map[string]string) string {
+	return variableRegex.ReplaceAllStringFunc(text, func(reference string) string {
+		parts := variableRegex.FindStringSubmatch(reference)
+		if value, ok := variables[parts[1]+parts[2]+parts[3]]; ok {
+			return value
+		}
+		return reference
+	})
 }
 
 // substituteVariables replaces template variables in a query with their values

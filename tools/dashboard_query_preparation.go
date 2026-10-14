@@ -173,10 +173,9 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 	customAll := make(map[string]string)
 	interpolateCustomAll := func(text string) string {
 		// Custom All values are literal Grafana expressions, not SQL string values.
-		for name, value := range customAll {
-			text = substituteVariables(text, map[string]string{name: value})
-		}
-		return text
+		// Their dependencies are resolved before storage. Match the original
+		// template once so substitution never depends on map iteration order.
+		return substituteLiteralVariables(text, customAll)
 	}
 	interpolate := func(text string) string {
 		return substituteTemplateVariableValues(interpolateCustomAll(text), prepared.Variables)
@@ -212,7 +211,16 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		}
 		delete(prepared.Variables, name)
 		if value := safeString(variable, "allValue"); value != "" {
-			customAll[name] = value
+			// Custom All expressions can themselves reference selected All
+			// variables, including variables absent from the panel template.
+			// Reuse the dependency resolver so cycles block query execution.
+			for _, dependency := range findVariablesInQuery(value, nil, nil) {
+				_, overridden := overrides[dependency.Name]
+				if definitions[dependency.Name] != nil || overridden {
+					resolve(dependency.Name)
+				}
+			}
+			customAll[name] = interpolateCustomAll(value)
 			return
 		}
 		var values []string
@@ -240,7 +248,11 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 					delete(dependencyTarget, field)
 				}
 			}
-			dependencies := findVariablesInQuery(dsUID+" "+variableSearchText(panelQuery{Target: dependencyTarget}), nil, nil)
+			datasourceTemplate := ""
+			if isDatasourceVariableReference(dsUID) {
+				datasourceTemplate = dsUID
+			}
+			dependencies := findVariablesInQuery(datasourceTemplate+" "+variableSearchText(panelQuery{Target: dependencyTarget}), nil, nil)
 			for _, dependency := range findVariablesInQuery(optionQuery, nil, nil) {
 				_, overridden := overrides[dependency.Name]
 				if definitions[dependency.Name] != nil || overridden {
@@ -271,7 +283,13 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 				if optionErr == nil {
 					optionQuery = substituteGrafanaMacros(interpolateCustomAll(optionQuery), from, to)
 					optionQuery = substituteTemplateVariableValues(optionQuery, prepared.Variables)
-					dsUID = interpolate(dsUID)
+					if isDatasourceVariableReference(dsUID) {
+						datasourceValues := firstTemplateVariableValues(prepared.Variables)
+						for name, value := range customAll {
+							datasourceValues[name] = substituteTemplateVariableValues(value, prepared.Variables)
+						}
+						dsUID = substituteLiteralVariables(dsUID, datasourceValues)
+					}
 					optionTarget = substituteStringsInMap(optionTarget, interpolate)
 					values, optionErr = optionsCache.query(ctx, dsUID, optionQuery, optionTarget, prepared.Start, prepared.End)
 				}
@@ -294,15 +312,15 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 	}
 	// Resolve the effective datasource first so dependency discovery follows the
 	// executor that will consume the query, including explicit overrides.
-	datasourceUID := source.UID
-	if overrideUID != "" {
-		datasourceUID = overrideUID
-	}
-	for _, variable := range findVariablesInQuery(datasourceUID, nil, nil) {
-		resolve(variable.Name)
+	if overrideUID == "" && isDatasourceVariableReference(source.UID) {
+		for _, variable := range findVariablesInQuery(source.UID, nil, nil) {
+			resolve(variable.Name)
+		}
 	}
 	datasourceVariables := firstTemplateVariableValues(prepared.Variables)
-	maps.Copy(datasourceVariables, customAll)
+	for name, value := range customAll {
+		datasourceVariables[name] = substituteTemplateVariableValues(value, prepared.Variables)
+	}
 	source, err = resolvePanelDatasource(ctx, source, datasourceVariables, overrideUID, overrideType)
 	if err != nil {
 		return nil, err
@@ -401,7 +419,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 			continue
 		}
 		q := &queries[i]
-		q.RequiredVariables = findVariablesInQuery(variableSearchText(*q), extractDashboardVariables(db), args.Variables)
+		q.RequiredVariables = dashboardQueryRequiredVariables(*q, variableSearchText(*q), db, args.Variables)
 		target := q.rawTarget
 		if target == nil {
 			target = q.Target
@@ -414,7 +432,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 			continue
 		}
 		q.Datasource = prepared.Datasource
-		q.RequiredVariables = findVariablesInQuery(prepared.VariableSearchText, extractDashboardVariables(db), args.Variables)
+		q.RequiredVariables = dashboardQueryRequiredVariables(*q, prepared.VariableSearchText, db, args.Variables)
 		q.ProcessedQuery = prepared.Query
 		if q.Target != nil {
 			q.ProcessedTarget = queryTargetFields(prepared.Target)
@@ -426,6 +444,49 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 		}
 	}
 	return queries
+}
+
+// SQL strings can contain dollar amounts such as '$100'. Numeric variable
+// references are meaningful when declared or overridden, or used in strict
+// datasource/target fields, but an undeclared SQL amount is not a dependency.
+func dashboardQueryRequiredVariables(query panelQuery, searchText string, db map[string]interface{}, overrides map[string]string) []VariableInfo {
+	definitions := extractDashboardVariables(db)
+	variables := findVariablesInQuery(searchText, definitions, overrides)
+	switch normalizeDatasourceType(query.Datasource.Type) {
+	case "postgres", "mysql", "mssql", "bigquery", "clickhouse":
+	default:
+		return variables
+	}
+	target := query.rawTarget
+	if target == nil {
+		target = query.Target
+	}
+	strictTarget := sqlQueryDependencyFields(target)
+	for field, value := range strictTarget {
+		if text, ok := value.(string); ok && text == query.Query {
+			delete(strictTarget, field)
+		}
+	}
+	strictNames := make(map[string]bool)
+	datasourceTemplate := ""
+	if isDatasourceVariableReference(query.Datasource.UID) {
+		datasourceTemplate = query.Datasource.UID
+	}
+	for _, variable := range findVariablesInQuery(datasourceTemplate+" "+variableSearchText(panelQuery{Target: strictTarget}), nil, nil) {
+		strictNames[variable.Name] = true
+	}
+	// Braced/bracketed tokens explicitly name a template variable, even if
+	// the dashboard forgot its definition. Keep those visible to callers.
+	explicitMatches := append(dollarBraceVarRegex.FindAllStringSubmatch(query.Query, -1), doubleBracketVarRegex.FindAllStringSubmatch(query.Query, -1)...)
+	for _, match := range explicitMatches {
+		strictNames[match[1]] = true
+	}
+	return slices.DeleteFunc(variables, func(variable VariableInfo) bool {
+		_, declared := definitions[variable.Name]
+		_, overridden := overrides[variable.Name]
+		numeric := strings.Trim(variable.Name, "0123456789") == ""
+		return numeric && !declared && !overridden && !strictNames[variable.Name]
+	})
 }
 
 // Multi-value overrides can be a JSON string array or a SQL-quoted list. Decode

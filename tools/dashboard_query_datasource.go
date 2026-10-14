@@ -3,7 +3,14 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 )
+
+// Preserve legacy literal UIDs with an embedded dollar sign. Datasource
+// templates start with a Grafana reference, as in the original executor.
+func isDatasourceVariableReference(uid string) bool {
+	return strings.HasPrefix(uid, "$") || strings.HasPrefix(uid, "[[")
+}
 
 // resolvePanelDatasource preserves execution safeguards for both query paths.
 func resolvePanelDatasource(ctx context.Context, source datasourceInfo, vars map[string]string, overrideUID, overrideType string) (datasourceInfo, error) {
@@ -17,16 +24,16 @@ func resolvePanelDatasource(ctx context.Context, source datasourceInfo, vars map
 		if overrideType != "" {
 			datasourceType = overrideType
 		}
-	} else if references := findVariablesInQuery(datasourceUID, nil, nil); len(references) > 0 {
+	} else if references := findVariablesInQuery(datasourceUID, nil, nil); isDatasourceVariableReference(datasourceUID) && len(references) > 0 {
 		// Use the same reference syntax as inspection, including ${name:raw}
-		// and references embedded in a UID. Overrides remain literal UIDs.
+		// while preserving literal legacy UIDs and explicit overrides.
 		for _, reference := range references {
 			if _, ok := vars[reference.Name]; !ok {
 				availableDS := getAvailableDatasourceUIDs(ctx, source.Type)
 				return datasourceInfo{}, fmt.Errorf("datasource variable '%s' not found. Hint: Use 'datasourceUid' and 'datasourceType' to override. Available %s datasources: %v", datasourceUID, source.Type, availableDS)
 			}
 		}
-		datasourceUID = substituteVariables(datasourceUID, vars)
+		datasourceUID = substituteLiteralVariables(datasourceUID, vars)
 		// Reset type so it gets looked up from the resolved datasource.
 		datasourceType = ""
 	}
