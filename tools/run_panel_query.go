@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +90,12 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 		end = "now"
 	}
 
+	from, to, err := dashboardQueryRange(start, end)
+	if err != nil {
+		return nil, err
+	}
+	preparedStart, preparedEnd := strconv.FormatInt(from.UnixMilli(), 10), strconv.FormatInt(to.UnixMilli(), 10)
+
 	// Fetch the dashboard once
 	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.DashboardUID})
 	if err != nil {
@@ -115,8 +122,8 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 			IsV2:       dashboard.IsV2,
 			PanelID:    panelID,
 			QueryIndex: queryIndex,
-			Start:      start,
-			End:        end,
+			Start:      preparedStart,
+			End:        preparedEnd,
 			Variables:  args.Variables,
 			DsUID:      args.DatasourceUID,
 			DsType:     args.DatasourceType,
@@ -164,77 +171,19 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
 
-	// Extract template variables from the dashboard. Keep both the first value
-	// (used for datasource references) and the complete value list (used for
-	// formatted query interpolation).
-	templateVariables := extractTemplateVariableValues(db)
-	vars := firstTemplateVariableValues(templateVariables)
-
-	// Apply variable overrides from user
-	for name, value := range params.Variables {
-		vars[name] = value
-		templateVariables[name] = []string{value}
+	prepared, err := prepareDashboardQuery(ctx, db, panelData.Query,
+		datasourceInfo{UID: panelData.DatasourceUID, Type: panelData.DatasourceType},
+		params.Variables, params.Start, params.End, params.DsUID, params.DsType)
+	if err != nil {
+		return nil, err
 	}
-
-	// Resolve datasource UID and type
-	datasourceUID := panelData.DatasourceUID
-	datasourceType := panelData.DatasourceType
-
-	// Apply explicit datasource overrides (highest priority)
-	if params.DsUID != "" {
-		datasourceUID = params.DsUID
-		if params.DsType != "" {
-			datasourceType = params.DsType
-		}
-	} else if isVariableReference(datasourceUID) {
-		// Resolve variable reference only if no explicit override
-		varName := extractVariableName(datasourceUID)
-		if resolvedUID, ok := vars[varName]; ok {
-			datasourceUID = resolvedUID
-			// Reset type so it gets looked up from the resolved datasource
-			datasourceType = ""
-		} else {
-			availableDS := getAvailableDatasourceUIDs(ctx, panelData.DatasourceType)
-			return nil, fmt.Errorf("datasource variable '%s' not found. Hint: Use 'datasourceUid' and 'datasourceType' to override. Available %s datasources: %v", datasourceUID, panelData.DatasourceType, availableDS)
-		}
+	if len(prepared.Warnings) > 0 {
+		return nil, fmt.Errorf("preparing panel query: %s", strings.Join(prepared.Warnings, "; "))
 	}
-
-	// Resolve the datasource type authoritatively from its UID whenever the
-	// caller overrode the datasource, or when we don't yet have a type. The
-	// datasource's real type — not a caller-supplied one — decides which
-	// executor runs, because the executors are not equivalent: a Loki
-	// datasource routed on a SQL/CloudWatch type would run through
-	// executeSQLPanelQuery / executeCloudWatchPanelQuery, which query
-	// /api/ds/query directly and so bypass the Loki label-matcher enforcement
-	// that is applied only in the native Loki backend (loki_backend.go /
-	// loki_enforce.go). A type declared in the panel JSON (no override) is
-	// trusted as-is: it comes from the dashboard, not the caller.
-	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
-		ds, lookupErr := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
-		switch {
-		case lookupErr == nil:
-			// The datasource's real type wins over any caller-supplied type.
-			datasourceType = ds.Type
-		case datasourceType == "":
-			// Cannot resolve the type and the caller gave nothing to fall back
-			// on.
-			availableDS := getAvailableDatasourceUIDs(ctx, "")
-			return nil, fmt.Errorf("could not resolve datasource '%s' (%v) and no datasourceType was provided. Hint: provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, lookupErr, availableDS)
-		case len(enforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "loki":
-			// The datasource is unreadable, so the caller-supplied type is
-			// unverified. With Loki label-matcher enforcement active, refuse
-			// rather than route a possibly-Loki datasource onto the
-			// /api/ds/query path, which bypasses enforcement. Fails closed,
-			// mirroring the VictoriaLogs guard in lokiBackendForDatasource.
-			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Loki label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Loki via query_loki_logs, or supply an accessible datasource", datasourceUID)
-		default:
-			// Unreadable datasource, but the caller supplied a fallback type and
-			// enforcement (if any) is satisfied; keep the caller-supplied type.
-		}
-	}
-
-	// Substitute variables in the query
-	query := substituteTemplateVariableValues(panelData.Query, templateVariables)
+	templateVariables := prepared.Variables
+	datasourceUID, datasourceType := prepared.Datasource.UID, prepared.Datasource.Type
+	query := prepared.Query
+	params.Start, params.End = prepared.Start, prepared.End
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -772,6 +721,7 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
 // used across datasource types (Prometheus, Loki, etc.)
 func substituteGrafanaMacros(query string, start, end time.Time) string {
+	query = substituteEpochMacros(query, start, end)
 	duration := end.Sub(start)
 
 	// Substitute $__range_ms and $__range_s BEFORE $__range to avoid partial replacement
@@ -1017,8 +967,8 @@ var RunPanelQuery = mcpgrafana.MustTool(
 // AddRunPanelQueryTools registers run panel query tools with the MCP server.
 // Every tool in this category executes a query, so nothing is registered when
 // enableQueryTools is false.
-func AddRunPanelQueryTools(s *mcp.Server, enableQueryTools bool) {
+func AddRunPanelQueryTools(s *mcp.Server, enableQueryTools bool, enableVariableQueries ...bool) {
 	if enableQueryTools {
-		RunPanelQuery.Register(s)
+		registerDashboardQueryTool(s, RunPanelQuery, len(enableVariableQueries) > 0 && enableVariableQueries[0])
 	}
 }

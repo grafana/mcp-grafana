@@ -1411,6 +1411,33 @@ func TestProcessTools_EnableQueryIsAliasForEnableWriteTools(t *testing.T) {
 	assert.Equal(t, viaEnableQuery, viaWriteTools)
 }
 
+func TestProcessTools_DashboardVariableQueryGates(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		disabled     disabledTools
+		allowOptions bool
+	}{
+		{name: "default", allowOptions: true},
+		{name: "disable query", disabled: disabledTools{query: true}},
+		{name: "disable write", disabled: disabledTools{write: true}},
+		{name: "enable query", disabled: disabledTools{write: true, enableQuery: true}, allowOptions: true},
+		{name: "SQL override", disabled: disabledTools{write: true, writeToolOverrides: "query_sql"}, allowOptions: true},
+		{name: "InfluxDB override must not enable SQL", disabled: disabledTools{write: true, writeToolOverrides: "query_influxdb"}},
+		{name: "disable query wins", disabled: disabledTools{write: true, query: true, enableQuery: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := listAllCategoryTools(t, tc.disabled)
+			inspection := tools["get_dashboard_panel_queries"]
+			require.NotNil(t, inspection, "raw inspection remains available")
+			assert.Equal(t, !tc.allowOptions, inspection.Annotations.ReadOnlyHint)
+			assert.Equal(t, tc.allowOptions, *inspection.Annotations.DestructiveHint)
+			permissions, ok := mcpgrafana.ToolRequiredPermissions(inspection)
+			require.True(t, ok)
+			assert.Equal(t, tc.allowOptions, slices.Contains(permissions, "datasources:query"))
+		})
+	}
+}
+
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
