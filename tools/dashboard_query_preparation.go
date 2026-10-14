@@ -13,6 +13,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -91,11 +92,17 @@ func dashboardQueryRange(start, end string) (time.Time, time.Time, error) {
 		end = "now"
 	}
 	r := gtime.TimeRange{From: start, To: end, Now: time.Now()}
-	from, err := r.ParseFrom()
+	from, err := time.Parse(time.RFC3339Nano, start)
+	if err != nil {
+		from, err = r.ParseFrom()
+	}
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("parsing start time: %w", err)
 	}
-	to, err := r.ParseTo()
+	to, err := time.Parse(time.RFC3339Nano, end)
+	if err != nil {
+		to, err = r.ParseTo()
+	}
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -155,7 +162,7 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		}
 		resolving[name] = true
 		defer func() { delete(resolving, name); resolved[name] = true }()
-		selected := safeObject(variable, "current")["value"]
+		selected := templateVariableCurrent(variable)["value"]
 		if override, ok := overrides[name]; ok {
 			selected = override
 		}
@@ -178,17 +185,15 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		var optionErr error
 		if safeString(variable, "type") == "query" {
 			optionQuery := safeString(variable, "query")
-			optionTarget := map[string]interface{}{"rawQuery": true}
+			optionTarget := map[string]interface{}{}
 			if object := safeObject(variable, "query"); object != nil {
 				optionQuery = extractQueryExpression(object)
 				optionTarget = maps.Clone(object)
-				if _, ok := optionTarget["rawQuery"]; !ok {
-					optionTarget["rawQuery"] = true
-				}
 			}
 			ds := safeObject(variable, "datasource")
 			dsUID := safeString(ds, "uid")
-			for _, dependency := range findVariablesInQuery(optionQuery+" "+dsUID+" "+variableSearchText(panelQuery{Target: optionTarget}), nil, nil) {
+			dependencies := findVariablesInQuery(optionQuery+" "+dsUID+" "+variableSearchText(panelQuery{Target: optionTarget}), nil, nil)
+			for _, dependency := range dependencies {
 				resolve(dependency.Name)
 			}
 			allow, _ := ctx.Value(variableQueriesKey{}).(bool)
@@ -199,10 +204,22 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			} else if len(prepared.Warnings) > 0 {
 				optionErr = fmt.Errorf("a dependent variable could not be resolved")
 			} else {
-				optionQuery = interpolate(optionQuery)
-				dsUID = interpolate(dsUID)
-				optionTarget = substituteStringsInMap(optionTarget, interpolate)
-				values, optionErr = optionsCache.query(ctx, dsUID, optionQuery, optionTarget, prepared.Start, prepared.End)
+				// Validate the original template, before selected values can insert
+				// literal dollar signs that are data rather than variable references.
+				for _, dependency := range dependencies {
+					_, hasValues := prepared.Variables[dependency.Name]
+					_, hasAll := customAll[dependency.Name]
+					if !strings.HasPrefix(dependency.Name, "__") && !hasValues && !hasAll {
+						optionErr = fmt.Errorf("option query still contains variable %q", dependency.Name)
+						break
+					}
+				}
+				if optionErr == nil {
+					optionQuery = interpolate(optionQuery)
+					dsUID = interpolate(dsUID)
+					optionTarget = substituteStringsInMap(optionTarget, interpolate)
+					values, optionErr = optionsCache.query(ctx, dsUID, optionQuery, optionTarget, prepared.Start, prepared.End)
+				}
 			}
 		} else {
 			for _, item := range safeArray(variable, "options") {
@@ -220,14 +237,13 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		}
 		prepared.Variables[name] = values
 	}
-	// Only the effective datasource is a dependency. Query fields may still use
-	// the original variable, so keep scanning those even when it is overridden.
+	// Resolve the effective datasource first so dependency discovery follows the
+	// executor that will consume the query, including explicit overrides.
 	datasourceUID := source.UID
 	if overrideUID != "" {
 		datasourceUID = overrideUID
 	}
-	searchText := query + " " + datasourceUID + " " + variableSearchText(panelQuery{Target: target})
-	for _, variable := range findVariablesInQuery(searchText, nil, nil) {
+	for _, variable := range findVariablesInQuery(datasourceUID, nil, nil) {
 		resolve(variable.Name)
 	}
 	datasourceVariables := firstTemplateVariableValues(prepared.Variables)
@@ -237,13 +253,25 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 		return nil, err
 	}
 	prepared.Datasource = source
+	searchText := variableSearchText(panelQuery{Query: query, Target: target, Datasource: source})
+	for _, variable := range findVariablesInQuery(searchText, nil, nil) {
+		resolve(variable.Name)
+	}
 	prepared.Query = interpolate(query)
 	if target != nil {
 		prepared.Target = substituteStringsInMap(target, interpolate)
 	}
 	switch normalizeDatasourceType(source.Type) {
-	case "prometheus", "loki", "postgres", "mysql", "mssql", "bigquery", "clickhouse":
+	case "prometheus", "loki", "postgres", "mysql", "mssql", "bigquery":
 		prepared.Query = substituteGrafanaMacros(prepared.Query, from, to)
+	case "clickhouse":
+		// Match the SQL executor's interval calculation instead of consuming
+		// ClickHouse macros with the generic frontend formatter.
+		dialect, err := sqldialect.DialectFor(sqldialect.ClickHouseDatasourceType)
+		if err != nil {
+			return nil, err
+		}
+		prepared.Query = dialect.SubstituteMacros(prepared.Query, from, to)
 	}
 	return prepared, nil
 }
@@ -279,6 +307,7 @@ func prepareInspectedQueries(ctx context.Context, db map[string]interface{}, arg
 			continue
 		}
 		q.Datasource = prepared.Datasource
+		q.RequiredVariables = findVariablesInQuery(variableSearchText(*q), extractDashboardVariables(db), args.Variables)
 		q.ProcessedQuery = prepared.Query
 		if q.Target != nil {
 			q.ProcessedTarget = queryTargetFields(prepared.Target)
@@ -337,12 +366,6 @@ func querySQLVariableOptions(ctx context.Context, uid, query string, target map[
 	if uid == "" || query == "" {
 		return nil, fmt.Errorf("a SQL variable datasource UID and query are required")
 	}
-	// Built-in macros are resolved by the shared frontend helper or SQL plugin.
-	for _, variable := range findVariablesInQuery(query+" "+variableSearchText(panelQuery{Target: target}), nil, nil) {
-		if !strings.HasPrefix(variable.Name, "__") {
-			return nil, fmt.Errorf("option query still contains variable %q", variable.Name)
-		}
-	}
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
@@ -352,7 +375,15 @@ func querySQLVariableOptions(ctx context.Context, uid, query string, target map[
 	default:
 		return nil, fmt.Errorf("option queries for datasource type %q are not supported", ds.Type)
 	}
-	result, err := executeSQLPanelQuery(ctx, uid, &panelInfo{RawTarget: target}, query, start, end, nil, ds.Type)
+	// Option values always come from raw SQL table results, regardless of the
+	// saved editor settings. Preserve other fields without changing the saved target.
+	optionTarget := maps.Clone(target)
+	if optionTarget == nil {
+		optionTarget = make(map[string]interface{})
+	}
+	optionTarget["rawQuery"] = true
+	optionTarget["format"] = defaultSQLFormat(ds.Type)
+	result, err := executeSQLPanelQuery(ctx, uid, &panelInfo{RawTarget: optionTarget}, query, start, end, nil, ds.Type)
 	if err != nil {
 		return nil, err
 	}

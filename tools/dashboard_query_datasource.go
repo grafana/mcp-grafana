@@ -17,17 +17,18 @@ func resolvePanelDatasource(ctx context.Context, source datasourceInfo, vars map
 		if overrideType != "" {
 			datasourceType = overrideType
 		}
-	} else if isVariableReference(datasourceUID) {
-		// Resolve variable reference only if no explicit override
-		varName := extractVariableName(datasourceUID)
-		if resolvedUID, ok := vars[varName]; ok {
-			datasourceUID = resolvedUID
-			// Reset type so it gets looked up from the resolved datasource
-			datasourceType = ""
-		} else {
-			availableDS := getAvailableDatasourceUIDs(ctx, source.Type)
-			return datasourceInfo{}, fmt.Errorf("datasource variable '%s' not found. Hint: Use 'datasourceUid' and 'datasourceType' to override. Available %s datasources: %v", datasourceUID, source.Type, availableDS)
+	} else if references := findVariablesInQuery(datasourceUID, nil, nil); len(references) > 0 {
+		// Use the same reference syntax as inspection, including ${name:raw}
+		// and references embedded in a UID. Overrides remain literal UIDs.
+		for _, reference := range references {
+			if _, ok := vars[reference.Name]; !ok {
+				availableDS := getAvailableDatasourceUIDs(ctx, source.Type)
+				return datasourceInfo{}, fmt.Errorf("datasource variable '%s' not found. Hint: Use 'datasourceUid' and 'datasourceType' to override. Available %s datasources: %v", datasourceUID, source.Type, availableDS)
+			}
 		}
+		datasourceUID = substituteVariables(datasourceUID, vars)
+		// Reset type so it gets looked up from the resolved datasource.
+		datasourceType = ""
 	}
 
 	// Resolve the datasource type authoritatively from its UID whenever the
