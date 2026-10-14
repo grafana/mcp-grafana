@@ -180,15 +180,6 @@ func TestDashboardCustomAllDatasource(t *testing.T) {
 	}
 }
 
-func preparationPanelTarget(db map[string]interface{}, v2 bool) map[string]interface{} {
-	if !v2 {
-		return safeArray(collectAllPanels(db)[0], "targets")[0].(map[string]interface{})
-	}
-	panel := collectAllPanelsV2(db)[0]
-	pq := safeArray(safeObject(safeObject(panel, "data"), "spec"), "queries")[0].(map[string]interface{})
-	return safeObject(safeObject(safeObject(pq, "spec"), "query"), "spec")
-}
-
 func TestDashboardDatasourceOverrideSkipsUnusedAll(t *testing.T) {
 	for _, v2 := range []bool{false, true} {
 		for _, usage := range []string{"datasource only", "expression", "target field"} {

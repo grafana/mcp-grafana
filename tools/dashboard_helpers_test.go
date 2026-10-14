@@ -318,6 +318,16 @@ func TestSubstituteVariables(t *testing.T) {
 			expected: "up{job=\"api-server\"}",
 		},
 		{
+			name:     "double bracket with option inserts literal value",
+			query:    "SELECT [[job:sqlstring]]",
+			expected: "SELECT api-server",
+		},
+		{
+			name:     "unknown formatted double bracket unchanged",
+			query:    "SELECT [[unknown:sqlstring]]",
+			expected: "SELECT [[unknown:sqlstring]]",
+		},
+		{
 			name:     "multiple variables",
 			query:    "up{job=\"$job\", instance=\"$instance\"}",
 			expected: "up{job=\"api-server\", instance=\"localhost:9090\"}",
@@ -408,6 +418,13 @@ func TestFindVariablesInQuery(t *testing.T) {
 		vars := findVariablesInQuery("up{job=\"$job\", label=\"$job\"}", dashboardVars, nil)
 
 		require.Len(t, vars, 1)
+	})
+
+	t.Run("deduplicates formatted bracket and mixed syntax variables", func(t *testing.T) {
+		vars := findVariablesInQuery("[[job:sqlstring]] ${job:raw} $job [[job]]", dashboardVars, map[string]string{"job": "override"})
+		require.Len(t, vars, 1)
+		assert.Equal(t, "job", vars[0].Name)
+		assert.Equal(t, "override", vars[0].CurrentValue)
 	})
 }
 

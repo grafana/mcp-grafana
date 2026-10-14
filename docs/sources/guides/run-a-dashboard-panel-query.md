@@ -44,9 +44,11 @@ Inspection preserves the raw `query` and `target` fields. Successful preparation
 
 Failed option queries produce actionable `warnings` and omit `processedQuery` and `processedTarget` during inspection. Execution reports a panel error without submitting the unresolved panel query. Supply explicit values or fix the variable query before retrying.
 
+CloudWatch alias dependencies follow the Grafana version and, on Grafana 9, the `cloudWatchDynamicLabels` setting. A label, including an empty string, takes precedence on modern Grafana. Grafana 9 with dynamic labels disabled still uses the alias. Preparation reuses cached frontend settings to distinguish these cases. If the settings are unavailable, it conservatively includes alias dependencies. Raw inspection also includes them because it does not read server settings.
+
 ### Interpolation limits
 
-This is frontend preparation, not a complete implementation of every datasource plugin's interpolation. SQL plugin macros such as `$__timeFilter(column)` remain in the prepared query and are expanded by Grafana's backend with the supplied time bounds. Dynamic option queries for other datasource types and variable regex filtering are unsupported and produce warnings for All selections. Existing formatter fallback behavior is retained. Native plugin-specific formatting and visual query builders can still require their datasource's own tools.
+This is frontend preparation, not a complete implementation of every datasource plugin's interpolation. SQL plugin macros such as `$__timeFilter(column)` generally remain in the prepared query and are expanded by Grafana's backend with the supplied time bounds. ClickHouse uses the server's SQL dialect to expand its supported time filter macro during preparation. It also expands braced and unbraced frontend time macros while retaining the ClickHouse executor's interval calculation, in whole seconds. Dynamic option queries for other datasource types and variable regex filtering are unsupported and produce warnings for All selections. Existing formatter fallback behavior is retained. Native plugin-specific formatting and visual query builders can still require their datasource's own tools.
 
 ## Next steps
 
