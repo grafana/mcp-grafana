@@ -193,8 +193,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	params.Start, params.End = prepared.Start, prepared.End
 	// Extraction cannot decide whether a structured target needs an expression
 	// before resolving a UID-only reference, variable, or datasource override.
-	// CloudWatch consumes the target itself. Other executors still require text.
-	if query == "" && normalizeDatasourceType(datasourceType) != "cloudwatch" {
+	// CloudWatch consumes the target itself. Other executors require extracted
+	// source text, which may legitimately become empty during interpolation.
+	if panelData.Query == "" && normalizeDatasourceType(datasourceType) != "cloudwatch" {
 		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
 	}
 

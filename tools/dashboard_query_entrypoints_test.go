@@ -449,6 +449,78 @@ func TestDashboardExpressionRequiredAfterTypeLookup(t *testing.T) {
 	}
 }
 
+func TestDashboardEmptyInterpolatedExpressionPublicParity(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		for _, dsType := range []string{"postgres", "prometheus"} {
+			for _, override := range []bool{false, true} {
+				t.Run(fmt.Sprintf("v2=%t/%s/override=%t", v2, dsType, override), func(t *testing.T) {
+					current := ""
+					variables := map[string]string{}
+					if override {
+						current = "saved expression"
+						variables["choice"] = ""
+					}
+					const source = "${choice:raw}"
+					db := preparationFixture(v2, map[string]interface{}{
+						"name": "choice", "type": "custom", "current": map[string]interface{}{"value": current},
+					}, source)
+					setPreparationDatasource(db, v2, "actual-uid", dsType)
+					target := preparationPanelTarget(db, v2)
+					field := "rawSql"
+					if dsType == "prometheus" {
+						delete(target, field)
+						field = "expr"
+						target[field] = source
+					}
+					queries := 0
+					ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						if servePreparationDashboard(w, r, db, v2) {
+							return
+						}
+						switch {
+						case r.URL.Path == "/api/datasources/uid/actual-uid":
+							_ = json.NewEncoder(w).Encode(map[string]interface{}{"uid": "actual-uid", "type": dsType})
+						case dsType == "postgres" && r.URL.Path == "/api/ds/query":
+							var payload map[string]interface{}
+							require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+							assert.Equal(t, "", safeArray(payload, "queries")[0].(map[string]interface{})["rawSql"])
+							queries++
+							_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: data.Frames{}}}})
+						case dsType == "prometheus" && strings.HasSuffix(r.URL.Path, "/api/v1/query_range"):
+							require.NoError(t, r.ParseForm())
+							assert.Equal(t, []string{""}, r.Form["query"])
+							queries++
+							_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`))
+						default:
+							t.Errorf("unexpected request %s", r.URL.Path)
+							http.NotFound(w, r)
+						}
+					}))
+					t.Cleanup(ts.Close)
+					ctx := enforceTestCtx(ts, false)
+					if v2 {
+						ctx = mcpgrafana.WithKubernetesClient(ctx, &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()})
+					}
+					inspected, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{UID: "test", Variables: variables})
+					require.NoError(t, err)
+					require.Len(t, inspected, 1)
+					require.Empty(t, inspected[0].Warnings)
+					assert.Equal(t, source, inspected[0].Query)
+					assert.Empty(t, inspected[0].ProcessedQuery)
+					result, err := runPanelQuery(ctx, RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1}, Variables: variables})
+					require.NoError(t, err)
+					require.Empty(t, result.Errors)
+					require.Contains(t, result.Results, 1)
+					assert.Empty(t, result.Results[1].Query)
+					assert.Equal(t, 1, queries, "an extracted expression remains executable after interpolating to empty")
+					assert.Equal(t, source, target[field], "the saved expression remains unchanged")
+				})
+			}
+		}
+	}
+}
+
 func TestDashboardUIDOnlyPublicLokiEnforcement(t *testing.T) {
 	db := panelWithType("loki", "postgres")
 	target := preparationPanelTarget(db, false)
@@ -481,4 +553,74 @@ func TestDashboardUIDOnlyPublicLokiEnforcement(t *testing.T) {
 	assert.Equal(t, 1, proxyCalls)
 	assert.Contains(t, submitted, `agent_safe="true"`)
 	assert.Contains(t, submitted, `app="secret"`)
+}
+
+func TestDashboardCustomAllMissingSelectionPublicParity(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, want string
+			selected   bool
+			current    interface{}
+			options    []interface{}
+			overrides  map[string]string
+		}{
+			{name: "missing selection"},
+			{name: "explicit empty", selected: true, current: "", want: "SELECT ''"},
+			{name: "explicit null", selected: true, want: "SELECT "},
+			{name: "explicit empty array", selected: true, current: []interface{}{}, want: "SELECT "},
+			{name: "saved default", options: []interface{}{map[string]interface{}{"value": "east"}}, want: "SELECT 'east'"},
+			{name: "empty override", overrides: map[string]string{"inner": ""}, want: "SELECT ''"},
+		} {
+			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
+				db := preparationFixture(v2, map[string]interface{}{
+					"name": "outer", "type": "custom", "current": map[string]interface{}{"value": "$__all"}, "allValue": "${inner:sqlstring}",
+				}, "SELECT ${outer}")
+				inner := map[string]interface{}{"name": "inner", "type": "custom", "options": tc.options}
+				if tc.selected {
+					inner["current"] = map[string]interface{}{"value": tc.current}
+				}
+				appendCustomAllFixtureVariable(db, v2, inner)
+				queries := 0
+				ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if servePreparationDashboard(w, r, db, v2) {
+						return
+					}
+					require.Equal(t, "/api/ds/query", r.URL.Path)
+					var payload map[string]interface{}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+					assert.Equal(t, tc.want, safeArray(payload, "queries")[0].(map[string]interface{})["rawSql"])
+					queries++
+					_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: data.Frames{}}}})
+				}))
+				t.Cleanup(ts.Close)
+				ctx := enforceTestCtx(ts, false)
+				if v2 {
+					ctx = mcpgrafana.WithKubernetesClient(ctx, &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()})
+				}
+				overrides := tc.overrides
+				if overrides == nil {
+					overrides = map[string]string{}
+				}
+				inspected, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{UID: "test", Variables: overrides})
+				require.NoError(t, err)
+				require.Len(t, inspected, 1)
+				result, err := runPanelQuery(ctx, RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1}, Variables: overrides})
+				require.NoError(t, err)
+				if tc.name == "missing selection" {
+					assert.Contains(t, strings.Join(inspected[0].Warnings, " "), `"inner"`)
+					assert.Contains(t, result.Errors[1], `"inner"`)
+					assert.Empty(t, inspected[0].ProcessedQuery)
+					assert.Empty(t, result.Results)
+					assert.Zero(t, queries, "unresolved Custom All dependencies must not reach the datasource")
+				} else {
+					require.Empty(t, inspected[0].Warnings)
+					require.Empty(t, result.Errors)
+					assert.Equal(t, tc.want, inspected[0].ProcessedQuery)
+					assert.Equal(t, tc.want, result.Results[1].Query)
+					assert.Equal(t, 1, queries)
+				}
+			})
+		}
+	}
 }

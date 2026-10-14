@@ -224,7 +224,13 @@ func prepareDashboardQuery(ctx context.Context, db map[string]interface{}, query
 			for _, dependency := range findVariablesInQuery(value, nil, nil) {
 				_, overridden := overrides[dependency.Name]
 				if definitions[dependency.Name] != nil || overridden {
+					warnings := len(prepared.Warnings)
 					resolve(dependency.Name)
+					_, hasValues := prepared.Variables[dependency.Name]
+					_, hasAll := customAll[dependency.Name]
+					if !hasValues && !hasAll && !strings.HasPrefix(dependency.Name, "__") && len(prepared.Warnings) == warnings {
+						prepared.Warnings = append(prepared.Warnings, fmt.Sprintf("Could not resolve Custom All for variable %q: dependent variable %q has no saved value. Supply an explicit variable value.", name, dependency.Name))
+					}
 				}
 			}
 			customAll[name] = interpolateCustomAll(value)
