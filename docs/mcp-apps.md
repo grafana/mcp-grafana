@@ -27,6 +27,8 @@ Add other categories to the comma-separated list as needed. `--disable-query` or
 
 Both tools preserve their existing text output and add viewer data when the response can be converted. Tempo’s LLM response format can change, so viewer conversion is best effort. Unsupported or partial responses retain their text output without an interactive view. Existing response-size limits still apply. Normalized viewer data is limited to 1 MiB; larger traces and wider query results retain their text output without an interactive view, rather than truncating data. Viewer data is optional structured content alongside the existing text output. Hosts without MCP Apps support can use the text output.
 
+A result also carries `_meta.ui.resourceUri`, set with `mcpgrafana.AttachUIResource`. `WithUIResource` on the tool definition tells a host which resource to fetch; naming the app on the result is what makes a host render it rather than visualizing the output itself. A tool that wants its own view needs both.
+
 Tools use the configured Grafana connection and caller identity. Credentials
 stay on the server. Apps are self-contained HTML with no external connection or
 resource domains; trace sharing requests host-controlled clipboard permission.
