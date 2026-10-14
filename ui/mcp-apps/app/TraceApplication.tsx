@@ -6,6 +6,7 @@ import { McpAppShell, type McpAppColorMode } from '../src/McpAppShell';
 import { RenderTraceApp } from '../src/trace/RenderTraceApp';
 import type { TraceViewResult } from '../src/trace/types';
 import '../styles.css';
+import { applyHostContext } from './hostContext';
 import { parseTraceResult } from './parseTraceResult';
 
 export function TraceApplication({ app }: { app: App }) {
@@ -39,13 +40,9 @@ export function TraceApplication({ app }: { app: App }) {
       setError('Trace loading was cancelled.');
     };
     app.onhostcontextchanged = (context) => {
-      if (context.theme) {
-        setColorMode(context.theme);
-      }
-      if (context.safeAreaInsets) {
-        const { top, right, bottom, left } = context.safeAreaInsets;
-        document.body.style.padding = `${top}px ${right}px ${bottom}px ${left}px`;
-        document.body.style.boxSizing = 'border-box';
+      const theme = applyHostContext(context);
+      if (theme) {
+        setColorMode(theme);
       }
     };
     app.onteardown = async () => {
