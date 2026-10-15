@@ -1411,6 +1411,19 @@ func TestProcessTools_EnableQueryIsAliasForEnableWriteTools(t *testing.T) {
 	assert.Equal(t, viaEnableQuery, viaWriteTools)
 }
 
+func TestProcessTools_EnableWriteToolsRestoresWritableDeeplink(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "generate_deeplink"})
+	require.Contains(t, listed, "generate_deeplink")
+	assert.False(t, listed["generate_deeplink"].Annotations.ReadOnlyHint, "--enable-write-tools=generate_deeplink should register the shortening variant")
+	assert.NotContains(t, listed, "update_dashboard", "the override must not re-enable other write tools")
+}
+
+func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{write: true})
+	require.Contains(t, listed, "generate_deeplink")
+	assert.True(t, listed["generate_deeplink"].Annotations.ReadOnlyHint, "--disable-write should register the read-only variant")
+}
+
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
