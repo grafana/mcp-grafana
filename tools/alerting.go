@@ -28,6 +28,9 @@ When to use:
 
 Operation 'update' replaces the whole rule: it takes all required fields, not only the changed ones.
 
+Creation defaults to Grafana-managed, even when queries use an external datasource.
+Only use managed_by='datasource' when explicitly requested: creates a Mimir/Cortex or Loki rule using namespace, rule_group, title and expression. datasource_uid is optional if exactly one compatible datasource exists. Ambiguity returns candidates for selection. Never falls back to Grafana-managed creation.
+
 Does not list or inspect rules, and does not manage notification routing.`
 
 var AlertRulesRead = mcpgrafana.MustTool(
@@ -55,6 +58,7 @@ var AlertRulesWrite = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions(
 		"alert.rules:read", "alert.rules:create", "alert.rules:write", "alert.rules:delete",
 		"alert.provisioning.provenance:write", "folders:read",
+		"datasources:read", "alert.rules.external:read", "alert.rules.external:write",
 	),
 )
 

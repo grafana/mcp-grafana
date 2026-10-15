@@ -626,18 +626,22 @@ func (p ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
 // ManageRulesReadWriteParams is the param struct for alerting_rules_write.
 type ManageRulesReadWriteParams struct {
 	listFilterParams
+	ManagedBy          string `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Defaults to Grafana-managed. Use datasource only when explicitly requested. Other mutations remain Grafana-only."`
+	Namespace          string `json:"namespace,omitempty" jsonschema:"description=Namespace for datasource-managed creation. Required with managed_by=datasource."`
+	Expression         string `json:"expression,omitempty" jsonschema:"description=PromQL or LogQL expression for datasource-managed creation."`
+	EvaluationInterval string `json:"evaluation_interval,omitempty" jsonschema:"description=Interval for a new datasource rule group (default 1m). Must match an existing group's interval if supplied."`
 
 	Operation                   string            `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,enum=create,enum=update,enum=delete,description=The operation to perform: 'list'\\, 'get'\\, 'versions'\\, 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, first use 'get' to retrieve its full configuration\\, then 'update' with all required fields plus your changes."`
 	RuleUID                     string            `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get'\\, 'versions'\\, 'update'\\, 'delete'; optional for 'create')"`
-	DatasourceUID               *string           `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules (for 'list' operation)"`
+	DatasourceUID               *string           `json:"datasource_uid,omitempty" jsonschema:"description=Datasource UID for list or explicit managed_by=datasource creation. For creation omit to select the sole compatible datasource. Ambiguity returns candidates for selection."`
 	Title                       string            `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create'\\, 'update')"`
 	RuleGroup                   string            `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
-	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For 'create'/'update': the folder to store the rule in (required)."`
-	Condition                   string            `json:"condition,omitempty" jsonschema:"description=The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
-	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Array of alert query objects (required for 'create'/'update'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
-	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m' (required for 'create'\\, 'update')"`
+	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For Grafana-managed 'create'/'update': required destination folder."`
+	Condition                   string            `json:"condition,omitempty" jsonschema:"description=Grafana-managed only. The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
+	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Grafana-managed only. Array of alert query objects (required for 'create'/'update'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
+	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=Grafana-managed only. State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=Grafana-managed only. State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires. Optional for datasource-managed rules (default 0s)\\, e.g. '5m' (required for 'create'\\, 'update')"`
 	KeepFiringFor               string            `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    bool              `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
 	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string)."`
@@ -645,11 +649,14 @@ type ManageRulesReadWriteParams struct {
 	MissingSeriesEvalsToResolve int64             `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
-	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=The organization ID (required for 'create'\\, 'update')"`
+	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=Grafana-managed organization ID (required for 'create'\\, 'update')"`
 	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
 }
 
 func (p ManageRulesReadWriteParams) validate() error {
+	if err := p.validateCreationTarget(); err != nil {
+		return err
+	}
 	switch p.Operation {
 	case "list":
 		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
@@ -665,6 +672,9 @@ func (p ManageRulesReadWriteParams) validate() error {
 		}
 		return nil
 	case "create":
+		if p.ManagedBy == "datasource" {
+			return p.validateDatasourceRule()
+		}
 		cp, err := p.toCreateParams()
 		if err != nil {
 			return err
