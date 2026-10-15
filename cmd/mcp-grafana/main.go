@@ -387,7 +387,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
 		{tools.AddAdminTools, dt.admin, "admin"},
 		{func(s *mcp.Server) { tools.AddPyroscopeTools(s, enableQueryTools) }, dt.pyroscope, "pyroscope"},
-		{func(s *mcp.Server) { tools.AddNavigationTools(s, enableWriteTools) }, dt.navigation, "navigation"},
+		{func(s *mcp.Server) { tools.AddNavigationTools(s, dt.writeToolEnabled("generate_deeplink")) }, dt.navigation, "navigation"},
 		{func(s *mcp.Server) { tools.AddTempoTools(s, enableQueryTools) }, dt.tempo, "tempo"},
 		{func(s *mcp.Server) { tools.AddAnnotationTools(s, enableWriteTools) }, dt.annotations, "annotations"},
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
