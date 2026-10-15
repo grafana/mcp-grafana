@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"math"
 	"net/http"
@@ -474,4 +475,67 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errMsg)
 		})
 	}
+}
+
+func TestSelectorUnmarshalJSON(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected Selector
+	}{
+		{
+			name:  "selector string",
+			input: `"{job=\"api\", env!=\"dev\"}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "job", Type: "=", Value: "api"},
+				{Name: "env", Type: "!=", Value: "dev"},
+			}},
+		},
+		{
+			name:     "selector string without braces",
+			input:    `"job=\"api\""`,
+			expected: Selector{Filters: []LabelMatcher{{Name: "job", Type: "=", Value: "api"}}},
+		},
+		{
+			name:  "selector string with regex matchers",
+			input: `"{job=~\"api.*\", env!~\"dev|test\"}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "job", Type: "=~", Value: "api.*"},
+				{Name: "env", Type: "!~", Value: "dev|test"},
+			}},
+		},
+		{
+			name:     "filters object",
+			input:    `{"filters":[{"name":"job","value":"api","type":"="}]}`,
+			expected: Selector{Filters: []LabelMatcher{{Name: "job", Type: "=", Value: "api"}}},
+		},
+		{
+			name:     "null",
+			input:    `null`,
+			expected: Selector{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var selector Selector
+			require.NoError(t, json.Unmarshal([]byte(tc.input), &selector))
+			assert.Equal(t, tc.expected, selector)
+		})
+	}
+
+	t.Run("invalid selector string", func(t *testing.T) {
+		var selector Selector
+		err := json.Unmarshal([]byte(`"not a selector{"`), &selector)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid label selector")
+	})
+
+	t.Run("label values params with selector strings", func(t *testing.T) {
+		var params ListPrometheusLabelValuesParams
+		err := json.Unmarshal([]byte(`{"datasourceUid":"prometheus","labelName":"job","matches":["{job=\"api\"}"]}`), &params)
+		require.NoError(t, err)
+		require.Len(t, params.Matches, 1)
+		assert.Equal(t, `{job='api'}`, params.Matches[0].String())
+	})
 }

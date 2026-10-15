@@ -378,6 +378,26 @@ type Selector struct {
 	Filters []LabelMatcher `json:"filters"`
 }
 
+// UnmarshalJSON also accepts a Prometheus selector string such as '{job="api"}',
+// the form LLM callers commonly send instead of the filters object.
+func (s *Selector) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var selector string
+		if err := json.Unmarshal(data, &selector); err != nil {
+			return err
+		}
+		parsed, err := parseSelectorStrings([]string{selector})
+		if err != nil {
+			return err
+		}
+		*s = parsed[0]
+		return nil
+	}
+
+	type plainSelector Selector
+	return json.Unmarshal(data, (*plainSelector)(s))
+}
+
 func (s Selector) String() string {
 	b := strings.Builder{}
 	b.WriteRune('{')
