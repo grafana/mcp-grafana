@@ -122,6 +122,10 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 // queryPrometheusWithWarnings is like queryPrometheus but also returns any
 // warnings the datasource reported, such as partial responses from Thanos.
 func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, error) {
+	if strings.TrimSpace(args.EndTime) == "" {
+		return nil, nil, fmt.Errorf("endTime is required")
+	}
+
 	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting backend: %w", err)

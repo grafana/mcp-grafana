@@ -475,3 +475,16 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryPrometheusRequiresEndTime(t *testing.T) {
+	for _, endTime := range []string{"", "  "} {
+		_, err := queryPrometheusWithHints(context.Background(), QueryPrometheusParams{
+			DatasourceUID: "prometheus",
+			Expr:          "up",
+			EndTime:       endTime,
+			QueryType:     "instant",
+		})
+		require.Error(t, err)
+		assert.Equal(t, "endTime is required", err.Error())
+	}
+}
