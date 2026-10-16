@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"testing"
 
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,4 +127,59 @@ func TestQueryLokiLogsPreservesNanosecondBounds(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "1705312800000000004", query.Get("time"))
+}
+
+func TestQueryLokiLogsCapsLineBytes(t *testing.T) {
+	server, _ := lokiQueryStub(`{"status":"success","data":{"resultType":"streams","encodingFlags":["categorize-labels"],"result":[
+		{"stream":{"app":"a"},"values":[
+			["1000000002","abcdéfgh",{"parsed":{"message":"0123456789"},"structuredMetadata":{"traceID":"t1"}}],
+			["1000000001","ok",{}]
+		]}
+	]}}`)
+	defer server.Close()
+
+	for _, tc := range []struct {
+		name          string
+		serverDefault int
+		requested     int
+		format        string
+		line          string
+		message       string
+		cut           int
+	}{
+		{name: "no cap", line: "abcdéfgh", message: "0123456789"},
+		{name: "cut lands inside a rune", requested: 5, line: "abcd", message: "01234", cut: 5 + 5},
+		{name: "server default", serverDefault: 6, line: "abcdé", message: "012345", cut: 3 + 4},
+		{name: "call overrides server default", serverDefault: 2, requested: 8, line: "abcdéfg", message: "01234567", cut: 1 + 2},
+		{name: "compact format", requested: 5, format: "compact", line: "abcd", message: "01234", cut: 5 + 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := mcpgrafana.WithGrafanaConfig(enforceTestCtx(server, false), mcpgrafana.GrafanaConfig{
+				URL: server.URL, MaxLokiLineBytes: tc.serverDefault,
+			})
+
+			result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+				DatasourceUID: "loki", LogQL: `{app="a"}`, Limit: 10, MaxLineBytes: tc.requested, Format: tc.format,
+			})
+			require.NoError(t, err)
+
+			if tc.format == "compact" {
+				require.Len(t, result.Streams, 1)
+				lines := result.Streams[0].Lines
+				require.Len(t, lines, 2)
+				assert.Equal(t, tc.line, lines[0].Line)
+				assert.Equal(t, tc.message, lines[0].Parsed["message"])
+				assert.Equal(t, tc.cut, lines[0].TruncatedBytes)
+				assert.Zero(t, lines[1].TruncatedBytes)
+				return
+			}
+			require.Len(t, result.Data, 2)
+			assert.Equal(t, tc.line, result.Data[0].Line)
+			assert.Equal(t, tc.message, result.Data[0].Parsed["message"])
+			assert.Equal(t, "t1", result.Data[0].StructuredMetadata["traceID"])
+			assert.Equal(t, tc.cut, result.Data[0].TruncatedBytes)
+			assert.Equal(t, "ok", result.Data[1].Line)
+			assert.Zero(t, result.Data[1].TruncatedBytes)
+		})
+	}
 }
