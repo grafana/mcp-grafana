@@ -103,7 +103,7 @@ func TestExecuteInfinityPanelQuery(t *testing.T) {
 
 func TestExecuteInfinityPanelQuery_FrontendParserRejected(t *testing.T) {
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://127.0.0.1:1"})
-	for _, parser := range []string{"", "simple", "frontend"} {
+	for _, parser := range []string{"", "simple", "frontend", "uql", "groq"} {
 		info, err := extractPanelInfo(infinityPanel(parser), 0)
 		require.NoError(t, err)
 		_, err = executeInfinityPanelQuery(ctx, "netbox-infinity", info, "now-1h", "now", nil)
@@ -115,4 +115,41 @@ func TestExecuteInfinityPanelQuery_FrontendParserRejected(t *testing.T) {
 func TestExecuteInfinityPanelQuery_NilTarget(t *testing.T) {
 	_, err := executeInfinityPanelQuery(context.Background(), "netbox-infinity", &panelInfo{}, "now-1h", "now", nil)
 	require.Error(t, err)
+}
+
+func TestExtractPanelInfoV2_Infinity(t *testing.T) {
+	panel := map[string]interface{}{
+		"id":    9,
+		"title": "NetBox VMs (v2)",
+		"data": map[string]interface{}{
+			"spec": map[string]interface{}{
+				"queries": []interface{}{
+					map[string]interface{}{
+						"spec": map[string]interface{}{
+							"refId": "A",
+							"query": map[string]interface{}{
+								"group":      InfinityDatasourceType,
+								"datasource": map[string]interface{}{"name": "netbox-infinity"},
+								"spec": map[string]interface{}{
+									"type":          "json",
+									"source":        "url",
+									"parser":        "backend",
+									"url":           "/api/virtualization/virtual-machines/?limit=100",
+									"root_selector": "results",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	info, err := extractPanelInfoV2(panel, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "netbox-infinity", info.DatasourceUID)
+	assert.Equal(t, InfinityDatasourceType, info.DatasourceType)
+	assert.Empty(t, info.Query)
+	require.NotNil(t, info.RawTarget)
+	assert.Equal(t, "backend", info.RawTarget["parser"])
+	assert.Equal(t, "A", info.RawTarget["refId"])
 }

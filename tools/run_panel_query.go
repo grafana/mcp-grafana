@@ -671,9 +671,10 @@ func usesStructuredTarget(datasourceType string) bool {
 }
 
 // infinityBackendParsers are the Infinity parsers that run inside the plugin backend, so the
-// query can be executed through /api/ds/query. The default "simple" parser (and the legacy
-// "frontend" one) parse the response in the browser; Grafana's API returns nothing usable for them.
-var infinityBackendParsers = map[string]bool{"backend": true, "uql": true, "groq": true, "jq-backend": true}
+// query can be executed through /api/ds/query (the plugin's isBackendQuery: "backend" and
+// "jq-backend"). The default "simple" parser and the UQL and GROQ parsers transform the response
+// in the browser; Grafana's API would return it untransformed.
+var infinityBackendParsers = map[string]bool{"backend": true, "jq-backend": true}
 
 // executeInfinityPanelQuery runs an Infinity panel target through Grafana's /api/ds/query
 // endpoint. The target is sent as saved (URL, root_selector, parser, headers, ...) with
@@ -688,7 +689,7 @@ func executeInfinityPanelQuery(ctx context.Context, datasourceUID string, panelD
 		if parser == "" {
 			parser = "simple"
 		}
-		return nil, fmt.Errorf("Infinity panel uses the %q parser, which runs in the browser; only backend parsers (backend, uql, groq, jq-backend) can be executed through the API. Change the query's parser in the panel", parser)
+		return nil, fmt.Errorf("Infinity panel uses the %q parser, which runs in the browser; only the backend and jq-backend parsers can be executed through the API. Change the query's parser in the panel", parser)
 	}
 
 	startTime, err := parseTime(start)

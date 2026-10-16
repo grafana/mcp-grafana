@@ -352,9 +352,9 @@ func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInf
 	target["datasource"] = map[string]interface{}{"uid": info.DatasourceUID, "type": info.DatasourceType}
 	info.RawTarget = target
 
-	// CloudWatch panels use structured targets rather than string expressions
+	// CloudWatch and Infinity panels use structured targets rather than string expressions
 	info.Query = extractQueryExpression(target)
-	if info.Query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
+	if info.Query == "" && !usesStructuredTarget(info.DatasourceType) {
 		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
 	}
 
