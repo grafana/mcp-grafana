@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -484,6 +485,7 @@ type QueryLokiLogsParams struct {
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries."`
+	MaxLineBytes  int    `json:"maxLineBytes,omitempty" jsonschema:"description=Optionally\\, cut each log line and each parsed or structured metadata value to this many bytes; cut entries report truncatedBytes. 0 uses the server default."`
 }
 
 // QueryMetadata provides context about the query results for AI agents
@@ -525,6 +527,7 @@ type CompactLine struct {
 	Line               string            `json:"line"`
 	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"`
 	Parsed             map[string]string `json:"parsed,omitempty"`
+	TruncatedBytes     int               `json:"truncatedBytes,omitempty"`
 }
 
 // LogEntry represents a single log entry or metric sample with metadata.
@@ -539,6 +542,7 @@ type LogEntry struct {
 	Labels             map[string]string `json:"labels"`                       // Stream / index labels
 	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"` // Structured metadata labels (Loki >= 3.0)
 	Parsed             map[string]string `json:"parsed,omitempty"`             // Parser-extracted labels (Loki >= 3.0)
+	TruncatedBytes     int               `json:"truncatedBytes,omitempty"`
 }
 
 // enforceLogLimit ensures a log limit value is within acceptable bounds
@@ -759,6 +763,7 @@ func compactLogEntries(entries []LogEntry) []CompactStream {
 				Line:               e.Line,
 				StructuredMetadata: varyingOnly(e.StructuredMetadata, constMeta),
 				Parsed:             varyingOnly(e.Parsed, constParsed),
+				TruncatedBytes:     e.TruncatedBytes,
 			})
 		}
 		streams = append(streams, CompactStream{
@@ -831,6 +836,48 @@ func varyingOnly(entry, constant map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+func lineByteCap(ctx context.Context, requested int) int {
+	if requested > 0 {
+		return requested
+	}
+	return mcpgrafana.GrafanaConfigFromContext(ctx).MaxLokiLineBytes
+}
+
+func truncateLogEntries(entries []LogEntry, maxBytes int) {
+	if maxBytes <= 0 {
+		return
+	}
+	for i := range entries {
+		e := &entries[i]
+		var cut int
+		e.Line, cut = truncateUTF8(e.Line, maxBytes)
+		e.TruncatedBytes += cut
+		e.TruncatedBytes += truncateValues(e.Parsed, maxBytes)
+		e.TruncatedBytes += truncateValues(e.StructuredMetadata, maxBytes)
+	}
+}
+
+func truncateValues(m map[string]string, maxBytes int) int {
+	total := 0
+	for k, v := range m {
+		var cut int
+		m[k], cut = truncateUTF8(v, maxBytes)
+		total += cut
+	}
+	return total
+}
+
+func truncateUTF8(s string, maxBytes int) (string, int) {
+	if len(s) <= maxBytes {
+		return s, 0
+	}
+	n := maxBytes
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n], len(s) - n
 }
 
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLogsResult, error) {
@@ -910,6 +957,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		if truncated {
 			entries = entries[:limit]
 		}
+		truncateLogEntries(entries, lineByteCap(ctx, args.MaxLineBytes))
 	}
 
 	out := &QueryLokiLogsResult{

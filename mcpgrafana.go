@@ -321,6 +321,8 @@ type GrafanaConfig struct {
 	// from Loki queries.
 	MaxLokiLogLimit int
 
+	MaxLokiLineBytes int
+
 	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs.
 	// One of LokiGuardrailOff (default), LokiGuardrailShadow, or
 	// LokiGuardrailEnforce. Loki does not enforce max_query_bytes_read on log
