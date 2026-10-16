@@ -386,6 +386,14 @@ func (s *Selector) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(data, &selector); err != nil {
 			return err
 		}
+		if matchers, err := promqlParser.ParseMetricSelector(selector); err == nil {
+			filters := make([]LabelMatcher, 0, len(matchers))
+			for _, m := range matchers {
+				filters = append(filters, LabelMatcher{Name: m.Name, Type: m.Type.String(), Value: m.Value})
+			}
+			*s = Selector{Filters: filters}
+			return nil
+		}
 		parsed, err := parseSelectorStrings([]string{selector})
 		if err != nil {
 			return err
