@@ -30,6 +30,26 @@ func TestClickHouseDialect_SubstituteMacros(t *testing.T) {
 			"SELECT * FROM logs WHERE t BETWEEN 1705312800000 AND 1705316400000",
 		},
 		{
+			"plugin macros $__fromTime and $__toTime are left for the ClickHouse plugin",
+			"SELECT * FROM logs WHERE ts >= $__fromTime - INTERVAL 1 DAY AND ts <= $__toTime",
+			"SELECT * FROM logs WHERE ts >= $__fromTime - INTERVAL 1 DAY AND ts <= $__toTime",
+		},
+		{
+			"plugin macros $__fromTime_ms and $__toTime_ms are left for the ClickHouse plugin",
+			"SELECT * FROM logs WHERE ts BETWEEN $__fromTime_ms AND $__toTime_ms",
+			"SELECT * FROM logs WHERE ts BETWEEN $__fromTime_ms AND $__toTime_ms",
+		},
+		{
+			"plugin macro $__interval_s is left for the ClickHouse plugin",
+			"SELECT toStartOfInterval(ts, INTERVAL greatest($__interval_s, 60) SECOND) FROM logs",
+			"SELECT toStartOfInterval(ts, INTERVAL greatest($__interval_s, 60) SECOND) FROM logs",
+		},
+		{
+			"$__from and $__to next to punctuation",
+			"SELECT * FROM logs WHERE t > $__from/1000 AND t < ($__to)",
+			"SELECT * FROM logs WHERE t > 1705312800000/1000 AND t < (1705316400000)",
+		},
+		{
 			"interval",
 			"SELECT toStartOfInterval(ts, INTERVAL $__interval) AS time",
 			"SELECT toStartOfInterval(ts, INTERVAL 3s) AS time",
