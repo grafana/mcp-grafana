@@ -371,6 +371,7 @@ type toolEntry struct {
 func (dt *disabledTools) toolEntries() []toolEntry {
 	enableWriteTools := !dt.write
 	enableQueryTools := !dt.query
+	enableVariableQueries := isCategoryEnabled(strings.Split(dt.enabledTools, ","), dt.sql, "sql") && dt.queryToolsEnabled("sql")
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
 		{func(s *mcp.Server) { tools.AddDatasourceTools(s, enableWriteTools) }, dt.datasource, "datasource"},
@@ -381,7 +382,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddQuickwitTools(s, enableQueryTools) }, dt.quickwit, "quickwit"},
 		{func(s *mcp.Server) { tools.AddInfluxDBTools(s, dt.queryToolsEnabled("influxdb")) }, dt.influxdb, "influxdb"},
 		{func(s *mcp.Server) { tools.AddAlertingTools(s, enableWriteTools) }, dt.alerting, "alerting"},
-		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard"},
+		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools, enableVariableQueries) }, dt.dashboard, "dashboard"},
 		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
 		{func(s *mcp.Server) { tools.AddOnCallTools(s, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
@@ -396,7 +397,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddCloudLoggingTools(s, enableQueryTools) }, dt.cloudlogging, "cloudlogging"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
 		{func(s *mcp.Server) { tools.AddSQLTools(s, dt.queryToolsEnabled("sql")) }, dt.sql, "sql"},
-		{func(s *mcp.Server) { tools.AddRunPanelQueryTools(s, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
+		{func(s *mcp.Server) { tools.AddRunPanelQueryTools(s, enableQueryTools, enableVariableQueries) }, dt.runpanelquery, "runpanelquery"},
 		{func(s *mcp.Server) { tools.AddGraphiteTools(s, enableQueryTools) }, dt.graphite, "graphite"},
 		{func(s *mcp.Server) { tools.AddPluginTools(s, enableWriteTools) }, dt.plugin, "plugin"},
 		{func(s *mcp.Server) { tools.AddAPITools(s, enableWriteTools, dt.mutatingQueryToolsEnabled()) }, dt.api, "api"},
