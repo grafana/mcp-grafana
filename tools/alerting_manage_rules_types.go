@@ -626,7 +626,7 @@ func (p ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
 // ManageRulesReadWriteParams is the param struct for alerting_rules_write.
 type ManageRulesReadWriteParams struct {
 	listFilterParams
-	ManagedBy          string `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Defaults to Grafana-managed. Use datasource only when explicitly requested. Other mutations remain Grafana-only."`
+	ManagedBy          string `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Omission defaults to Grafana-managed. Select datasource when requested or clearly established by conversation or environment context. Other mutations remain Grafana-only."`
 	Namespace          string `json:"namespace,omitempty" jsonschema:"description=Namespace for datasource-managed creation. Required with managed_by=datasource."`
 	Expression         string `json:"expression,omitempty" jsonschema:"description=PromQL or LogQL expression for datasource-managed creation."`
 	EvaluationInterval string `json:"evaluation_interval,omitempty" jsonschema:"description=Interval for a new datasource rule group (default 1m). Must match an existing group's interval if supplied."`

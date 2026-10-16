@@ -33,7 +33,9 @@ Ask the assistant to list alert rules or get details for a rule by UID. You can 
 
 Ask the assistant to create a new alert rule or update an existing one. You provide (or the assistant infers) the folder UID, condition, queries, labels, and annotations. The service account needs write permissions and scope for the folder. The assistant uses the server’s create/update alert rule tool.
 
-Creation defaults to **Grafana-managed**. Using a datasource in a rule's queries does not make the rule datasource-managed. Only set `managed_by: "datasource"` when the user explicitly asks for datasource-managed creation.
+Creation defaults to **Grafana-managed**. The assistant can select `managed_by: "datasource"` when the user requests it or when established conversation or environment context clearly identifies a datasource-managed workflow. For example, the user's alerting setup may already be known to manage rules exclusively in a writable external backend. Using an external datasource in a query or finding no Grafana-managed rules alone does not establish that intent. If context conflicts, the assistant should ask before creating anything.
+
+The assistant must still send `managed_by: "datasource"` in the tool call. Omitting it keeps Grafana-managed creation. The server does not infer a management target from datasource discovery or switch targets after an error.
 
 ### Create a datasource-managed rule
 
@@ -63,7 +65,7 @@ Ask the assistant to list contact points or notification policies. The server ex
 
 ### Create an external Alertmanager contact point
 
-`alerting_routing_write` also defaults to **Grafana-managed**. For an explicitly requested external receiver, use `managed_by: "datasource"` and a Mimir/Cortex **Alertmanager datasource**, which is separate from the rule datasource. Standalone Prometheus Alertmanager does not expose a writable configuration API.
+`alerting_routing_write` also defaults to **Grafana-managed**. Select `managed_by: "datasource"` when the user requests an external receiver or established context clearly identifies an external Alertmanager workflow. An external rule datasource or an empty Grafana contact point list alone is insufficient. Use a Mimir/Cortex **Alertmanager datasource**, which is selected independently from the rule datasource. Standalone Prometheus Alertmanager does not expose a writable configuration API.
 
 ```json
 {

@@ -29,7 +29,8 @@ When to use:
 Operation 'update' replaces the whole rule: it takes all required fields, not only the changed ones.
 
 Creation defaults to Grafana-managed, even when queries use an external datasource.
-Only use managed_by='datasource' when explicitly requested: creates a Mimir/Cortex or Loki rule using namespace, rule_group, title and expression. datasource_uid is optional if exactly one compatible datasource exists. Ambiguity returns candidates for selection. Never falls back to Grafana-managed creation.
+Use managed_by='datasource' when requested or when established conversation or environment context clearly identifies a datasource-managed workflow. An external query datasource or an empty Grafana rule list alone is insufficient. Ask if context conflicts.
+Datasource-managed creation uses a Mimir/Cortex or Loki ruler with namespace, rule_group, title and expression. datasource_uid is optional if exactly one compatible datasource exists. Ambiguity returns candidates for selection. Never falls back to Grafana-managed creation.
 
 Does not list or inspect rules, and does not manage notification routing.`
 

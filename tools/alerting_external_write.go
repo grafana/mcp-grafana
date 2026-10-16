@@ -109,8 +109,9 @@ func (d externalAlertingDatasource) supportsCreation(receiver bool) bool {
 	return d.Type == "loki" || (d.Type == "prometheus" && (strings.EqualFold(d.JSONData.PrometheusType, "mimir") || strings.EqualFold(d.JSONData.PrometheusType, "cortex")))
 }
 
-// Resolve only after an explicit datasource-managed request. Never use isDefault
-// to break ties, and never switch away from a user-specified UID on failure.
+// Resolve only after the caller sets managed_by=datasource, whether requested
+// directly or inferred from established context. Never use isDefault to break
+// ties, and never switch away from a user-specified UID on failure.
 func (c *alertingClient) resolveExternalAlertingDatasource(ctx context.Context, uid string, receiver bool) (*externalAlertingDatasource, error) {
 	path := "/api/datasources"
 	if uid != "" {

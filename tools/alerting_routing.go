@@ -169,7 +169,7 @@ var ManageRouting = mcpgrafana.MustTool(
 
 // ManageRoutingWriteParams is the param struct for alerting_routing_write.
 type ManageRoutingWriteParams struct {
-	ManagedBy             string         `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Defaults to Grafana-managed. Use datasource only when explicitly requested."`
+	ManagedBy             string         `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Omission defaults to Grafana-managed. Select datasource when requested or clearly established by conversation or environment context."`
 	DatasourceUID         string         `json:"datasource_uid,omitempty" jsonschema:"description=External Mimir/Cortex Alertmanager UID. Only for managed_by=datasource. Omit to select the sole compatible datasource. Ambiguity returns candidates for selection."`
 	Operation             string         `json:"operation" jsonschema:"required,enum=create_contact_point,description=The operation to perform: 'create_contact_point'"`
 	Name                  string         `json:"name" jsonschema:"required,description=Contact point name. Integrations with the same name are grouped together."`
@@ -226,7 +226,8 @@ var AlertRoutingWrite = mcpgrafana.MustTool(
 	"alerting_routing_write",
 	`Create Grafana-managed contact points for alert notifications using operation 'create_contact_point'.
 Requires name, type and integration-specific settings. Returns uid, name and type without settings or secrets.
-Grafana-managed is the default and remains editable in the UI. Only use managed_by='datasource' when the user explicitly requests an external Mimir/Cortex Alertmanager receiver. Use native Alertmanager settings (email: to, webhook: url). Without datasource_uid select the sole compatible datasource, or return candidates for selection if ambiguous. Does not change notification routes.`,
+Grafana-managed is the default and remains editable in the UI. Use managed_by='datasource' for an external Mimir/Cortex Alertmanager receiver when requested or when established conversation or environment context clearly identifies an external Alertmanager workflow. An external query datasource or an empty Grafana contact point list alone is insufficient. Ask if context conflicts.
+Use native Alertmanager settings (email: to, webhook: url). Without datasource_uid select the sole compatible datasource, or return candidates for selection if ambiguous. Does not change notification routes.`,
 	manageRoutingWrite,
 	mcpgrafana.WithTitleAnnotation("Write alerting routing"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
