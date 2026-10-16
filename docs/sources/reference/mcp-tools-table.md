@@ -233,6 +233,18 @@ You can limit which tools the server exposes with `--enabled-tools`, `--disable-
 
 `get_panel_image` needs the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service installed and configured in Grafana.
 
+When dimensions or scale are omitted, defaults depend on the view:
+
+| View | Width (CSS pixels) | Height (CSS pixels) | Scale |
+| --- | --- | --- | --- |
+| Single panel (`panelId` supplied) | 720 | 540 | 2 |
+| Full dashboard (`panelId` omitted) | 1200 | 900 | 2 |
+| Explore | 1000 | 1000 | 1 |
+
+Panel and dashboard defaults also apply to provisioning previews. Each explicit `width`, `height`, or `scale` overrides only that parameter. Width and height remain capped at 3000, scale accepts 1 through 3, and `height: -1` retains full-page rendering behavior.
+
+The renderer applies its own configured viewport limits. Its default minimum width is 1000 CSS pixels, so a request for a 720-pixel panel may be rendered wider. These are requested viewport dimensions, not guaranteed PNG dimensions. See the [image rendering flags](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/flags/).
+
 ## Next steps
 
 - [Command-line flags](../../configure/command-line-flags/)
