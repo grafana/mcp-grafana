@@ -40,6 +40,13 @@ func TestExternalAlertingDatasourceSelection(t *testing.T) {
 		{name: "sole receiver", response: "[" + testAMDatasource + "]", receiver: true, wantUID: "am"},
 		{name: "explicit ruler", uid: "mimir", response: testMimirDatasource, wantUID: "mimir"},
 		{name: "explicit receiver", uid: "am", response: testAMDatasource, receiver: true, wantUID: "am"},
+		{name: "sole default receiver", response: `[{"uid":"am","type":"alertmanager","jsonData":{}}]`, receiver: true, wantUID: "am"},
+		{name: "explicit default receiver", uid: "am", response: `{"uid":"am","type":"alertmanager","jsonData":{}}`, receiver: true, wantUID: "am"},
+		{name: "receiver without jsonData", response: `[{"uid":"am","type":"alertmanager"}]`, receiver: true, wantUID: "am"},
+		{name: "receiver null implementation", response: `[{"uid":"am","type":"alertmanager","jsonData":{"implementation":null}}]`, receiver: true, wantUID: "am"},
+		{name: "receiver empty implementation", response: `[{"uid":"am","type":"alertmanager","jsonData":{"implementation":""}}]`, receiver: true, wantErr: "no compatible"},
+		{name: "receiver unknown implementation", response: `[{"uid":"am","type":"alertmanager","jsonData":{"implementation":"other"}}]`, receiver: true, wantErr: "no compatible"},
+		{name: "default receiver participates in ambiguity", response: "[" + testAMDatasource + `,{"uid":"default-am","type":"alertmanager","jsonData":{}}]`, receiver: true, wantErr: "Ask the user to choose"},
 		{name: "wrong kind", uid: "mimir", response: testMimirDatasource, receiver: true, wantErr: "no compatible"},
 		{name: "mismatched uid", uid: "am", response: testMimirDatasource, wantErr: "requested UID"},
 		{name: "none", response: "[]", wantErr: "no compatible"},
@@ -75,6 +82,47 @@ func TestExternalAlertingDatasourceSelection(t *testing.T) {
 				assert.Equal(t, tc.wantUID, ds.UID)
 			}
 			assert.EqualValues(t, 1, calls.Load())
+		})
+	}
+}
+
+func TestCreateExternalReceiverWithDefaultImplementation(t *testing.T) {
+	for _, explicitUID := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicitUID=%v", explicitUID), func(t *testing.T) {
+			var posts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				metadataPath := "/api/datasources"
+				metadata := `[{"uid":"am","name":"Default Cortex","type":"alertmanager","jsonData":{}}]`
+				if explicitUID {
+					metadataPath += "/uid/am"
+					metadata = `{"uid":"am","name":"Default Cortex","type":"alertmanager","jsonData":{}}`
+				}
+				if r.URL.Path == metadataPath {
+					assert.Equal(t, http.MethodGet, r.Method)
+					_, _ = w.Write([]byte(metadata))
+					return
+				}
+				assert.Equal(t, "/api/alertmanager/am/config/api/v1/alerts", r.URL.Path)
+				if r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(testExternalAMConfig))
+					return
+				}
+				assert.Equal(t, http.MethodPost, r.Method)
+				posts.Add(1)
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			defer server.Close()
+			args := externalReceiverArgs()
+			if explicitUID {
+				args.DatasourceUID = "am"
+			}
+			session := routingTestSession(t, mockDatasourcesCtx(server), true)
+			result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "alerting_routing_write", Arguments: args})
+			require.NoError(t, err)
+			require.False(t, result.IsError, "%v", result.Content)
+			assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, `"datasource_uid":"am"`)
+			assert.EqualValues(t, 1, posts.Load())
 		})
 	}
 }

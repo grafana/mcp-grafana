@@ -84,9 +84,9 @@ type externalAlertingDatasource struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	JSONData struct {
-		PrometheusType string `json:"prometheusType"`
-		Implementation string `json:"implementation"`
-		ManageAlerts   *bool  `json:"manageAlerts"`
+		PrometheusType string  `json:"prometheusType"`
+		Implementation *string `json:"implementation"`
+		ManageAlerts   *bool   `json:"manageAlerts"`
 	} `json:"jsonData"`
 }
 
@@ -95,7 +95,13 @@ func (d externalAlertingDatasource) supportsCreation(receiver bool) bool {
 		return false
 	}
 	if receiver {
-		return d.Type == "alertmanager" && (d.JSONData.Implementation == "mimir" || d.JSONData.Implementation == "cortex")
+		// Match Grafana's external Alertmanager proxy default. A missing or null
+		// implementation means Cortex, but an explicitly empty value is invalid.
+		implementation := "cortex"
+		if d.JSONData.Implementation != nil {
+			implementation = *d.JSONData.Implementation
+		}
+		return d.Type == "alertmanager" && (implementation == "mimir" || implementation == "cortex")
 	}
 	if d.JSONData.ManageAlerts != nil && !*d.JSONData.ManageAlerts {
 		return false
