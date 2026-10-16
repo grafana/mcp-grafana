@@ -126,18 +126,12 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		return nil, nil, fmt.Errorf("endTime is required")
 	}
 
-	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
-	if err != nil {
-		return nil, nil, fmt.Errorf("getting backend: %w", err)
-	}
-
 	queryType := args.QueryType
 	if queryType == "" {
 		queryType = "range"
 	}
 
-	var endTime time.Time
-	endTime, err = parseTime(args.EndTime)
+	endTime, err := parseTime(args.EndTime)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -148,10 +142,18 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		if args.StepSeconds == 0 {
 			return nil, nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
+		if strings.TrimSpace(args.StartTime) == "" {
+			return nil, nil, fmt.Errorf("startTime must be provided when queryType is 'range'")
+		}
 		startTime, err = parseTime(args.StartTime)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parsing start time: %w", err)
 		}
+	}
+
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting backend: %w", err)
 	}
 
 	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
