@@ -353,9 +353,12 @@ func TestConvertTool(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result, "nil pointer should return a non-nil result")
 		require.Len(t, result.Content, 1)
-		nullText, ok := result.Content[0].(*mcp.TextContent)
+		zeroText, ok := result.Content[0].(*mcp.TextContent)
 		require.True(t, ok)
-		assert.Equal(t, "null", nullText.Text)
+		// A client that sees an outputSchema requires structuredContent, so a nil
+		// pointer is reported as the zero value, as the go-sdk's typed handlers do.
+		assert.JSONEq(t, `{"name":"","value":0}`, zeroText.Text)
+		assert.JSONEq(t, zeroText.Text, string(result.StructuredContent.(json.RawMessage)))
 
 		errorRequest := newCallToolRequest("struct_ptr_tool", map[string]any{
 			"name":  "error",
@@ -397,7 +400,7 @@ func TestConvertTool(t *testing.T) {
 		require.Len(t, result.Content, 1)
 		resultString, ok := result.Content[0].(*mcp.TextContent)
 		require.True(t, ok)
-		assert.Equal(t, "[]", resultString.Text)
+		assert.Equal(t, `{"result":[]}`, resultString.Text)
 
 		normalRequest := newCallToolRequest("slice_tool", map[string]any{
 			"name":  "test",

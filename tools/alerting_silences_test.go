@@ -28,7 +28,7 @@ func createTestSilence(ctx context.Context, t *testing.T, params ManageSilencesP
 
 	result, err := manageSilencesReadWrite(ctx, params)
 	require.NoError(t, err)
-	created, ok := result.(*createSilenceResponse)
+	created, ok := result, result != nil
 	require.True(t, ok, "unexpected create result type %T", result)
 	require.NotEmpty(t, created.SilenceID)
 
@@ -73,7 +73,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		silence, ok := result.(*models.GettableSilence)
+		silence, ok := result.Silence, result != nil
 		require.True(t, ok, "unexpected get result type %T", result)
 		require.Equal(t, silenceID, *silence.ID)
 		require.Equal(t, comment, *silence.Comment)
@@ -92,7 +92,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		silences, ok := result.(models.GettableSilences)
+		silences, ok := result.Silences, result != nil
 		require.True(t, ok, "unexpected list result type %T", result)
 		require.Len(t, silences, 1)
 		require.Equal(t, silenceID, *silences[0].ID)
@@ -102,7 +102,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 		result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{Operation: "list"})
 		require.NoError(t, err)
 
-		silences, ok := result.(models.GettableSilences)
+		silences, ok := result.Silences, result != nil
 		require.True(t, ok, "unexpected list result type %T", result)
 		require.Contains(t, silenceIDs(silences), silenceID)
 	})
@@ -126,7 +126,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		updated, ok := result.(*createSilenceResponse)
+		updated, ok := result, result != nil
 		require.True(t, ok, "unexpected update result type %T", result)
 		require.Equal(t, silenceID, updated.SilenceID)
 
@@ -135,7 +135,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 			SilenceID: &silenceID,
 		})
 		require.NoError(t, err)
-		silence, ok := got.(*models.GettableSilence)
+		silence, ok := got.Silence, got != nil
 		require.True(t, ok, "unexpected get result type %T", got)
 		require.Equal(t, newComment, *silence.Comment)
 		require.Equal(t, "active", *silence.Status.State)
@@ -151,14 +151,14 @@ func TestManageSilencesLifecycle(t *testing.T) {
 			SilenceID: &silenceID,
 		})
 		require.NoError(t, err)
-		require.Equal(t, map[string]string{"status": "deleted", "silence_id": silenceID}, result)
+		require.Equal(t, &silencesWriteResult{SilenceID: silenceID, Status: "deleted"}, result)
 
 		got, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
 			Operation: "get",
 			SilenceID: &silenceID,
 		})
 		require.NoError(t, err)
-		silence, ok := got.(*models.GettableSilence)
+		silence, ok := got.Silence, got != nil
 		require.True(t, ok, "unexpected get result type %T", got)
 		require.Equal(t, "expired", *silence.Status.State)
 	})
@@ -200,7 +200,7 @@ func TestManageSilencesUpdateReplacesOnChangedStartsAt(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	replacement, ok := result.(*createSilenceResponse)
+	replacement, ok := result, result != nil
 	require.True(t, ok, "unexpected update result type %T", result)
 	require.NotEqual(t, originalID, replacement.SilenceID)
 	expireSilence(ctx, t, replacement.SilenceID)
@@ -212,7 +212,7 @@ func TestManageSilencesUpdateReplacesOnChangedStartsAt(t *testing.T) {
 		SilenceID: &originalID,
 	})
 	require.NoError(t, err)
-	silence, ok := got.(*models.GettableSilence)
+	silence, ok := got.Silence, got != nil
 	require.True(t, ok, "unexpected get result type %T", got)
 	require.Equal(t, "expired", *silence.Status.State)
 }
@@ -247,7 +247,7 @@ func TestManageSilencesRuleUIDFilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	silences, ok := result.(models.GettableSilences)
+	silences, ok := result.Silences, result != nil
 	require.True(t, ok, "unexpected list result type %T", result)
 	require.Len(t, silences, 1)
 	require.Equal(t, silenceID, *silences[0].ID)
@@ -260,7 +260,7 @@ func TestManageSilencesRuleUIDFilter(t *testing.T) {
 		Matchers:  []SilenceMatcherParam{{Name: "mcp_test_marker", Value: marker}},
 	})
 	require.NoError(t, err)
-	silences, ok = result.(models.GettableSilences)
+	silences, ok = result.Silences, result != nil
 	require.True(t, ok, "unexpected list result type %T", result)
 	require.Empty(t, silences)
 }
@@ -271,7 +271,7 @@ func TestManageSilencesReadOnlyVariant(t *testing.T) {
 	t.Run("list is served", func(t *testing.T) {
 		result, err := manageSilencesRead(ctx, ManageSilencesReadParams{Operation: "list"})
 		require.NoError(t, err)
-		_, ok := result.(models.GettableSilences)
+		_, ok := result.Silences, result != nil
 		require.True(t, ok, "unexpected list result type %T", result)
 	})
 
@@ -321,7 +321,7 @@ func getSilenceStartsAt(ctx context.Context, t *testing.T, id string) string {
 		SilenceID: &id,
 	})
 	require.NoError(t, err)
-	silence, ok := result.(*models.GettableSilence)
+	silence, ok := result.Silence, result != nil
 	require.True(t, ok, "unexpected get result type %T", result)
 	require.NotNil(t, silence.StartsAt)
 	return time.Time(*silence.StartsAt).UTC().Format(time.RFC3339Nano)
