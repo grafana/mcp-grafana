@@ -381,7 +381,7 @@ async def alert_rule_for_tests(mcp_client: ClientSession):
             "labels": {"team": "python-e2e"},
         },
     )
-    assert not result.isError, f"Failed to create test rule: {result.content}"
+    assert not result.is_error, f"Failed to create test rule: {result.content}"
 
     yield rule_uid
 
