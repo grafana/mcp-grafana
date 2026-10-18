@@ -14,76 +14,115 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
-func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, error) {
+// alertRulesReadResult is the result of an alerting_rules_read operation. The
+// field named after the operation is set: rules for list, rule for get,
+// versions for versions.
+type alertRulesReadResult struct {
+	Rules    []alertRuleSummary                `json:"rules,omitzero"`
+	Rule     *alertRuleDetail                  `json:"rule,omitempty"`
+	Versions []models.GettableExtendedRuleNode `json:"versions,omitzero"`
+}
+
+// alertRulesWriteResult adds the write operations' results: the saved rule
+// for create and update, a confirmation message for delete.
+type alertRulesWriteResult struct {
+	alertRulesReadResult
+	SavedRule *models.ProvisionedAlertRule `json:"savedRule,omitempty"`
+	Message   string                       `json:"message,omitempty"`
+}
+
+func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (*alertRulesReadResult, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_rules_read: %w", err)
 	}
+	return readAlertRules(ctx, "alerting_rules_read", args.Operation, args, args.DatasourceUID, args.RuleUID, args.LimitAlerts)
+}
 
-	switch args.Operation {
+// rulesListArgs builds the list operation's filters; both alerting rules
+// tools' parameter structs implement it.
+type rulesListArgs interface {
+	toGetRulesOpts() (*GetRulesOpts, error)
+	parseLabelSelectors() ([]Selector, error)
+}
+
+// readAlertRules runs the operations shared by both alerting rules tools.
+func readAlertRules(ctx context.Context, tool, operation string, listArgs rulesListArgs, datasourceUID *string, ruleUID string, limitAlerts int) (*alertRulesReadResult, error) {
+	switch operation {
 	case "list":
-		opts, err := args.toGetRulesOpts()
+		opts, err := listArgs.toGetRulesOpts()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_rules_read: %w", err)
+			return nil, fmt.Errorf("%s: %w", tool, err)
 		}
-		selectors, err := args.parseLabelSelectors()
+		selectors, err := listArgs.parseLabelSelectors()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_rules_read: %w", err)
+			return nil, fmt.Errorf("%s: %w", tool, err)
 		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+		var rules []alertRuleSummary
+		if datasourceUID != nil && *datasourceUID != "" {
+			rules, err = listDatasourceAlertRules(ctx, *datasourceUID, opts, selectors)
+		} else {
+			rules, err = listGrafanaRules(ctx, opts, selectors)
 		}
-		return listGrafanaRules(ctx, opts, selectors)
+		if err != nil {
+			return nil, err
+		}
+		return &alertRulesReadResult{Rules: nonNil(rules)}, nil
 	case "get":
-		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
+		rule, err := getAlertRuleDetail(ctx, ruleUID, limitAlerts)
+		if err != nil {
+			return nil, err
+		}
+		return &alertRulesReadResult{Rule: rule}, nil
 	case "versions":
-		return getAlertRuleVersions(ctx, args.RuleUID)
+		versions, err := getAlertRuleVersions(ctx, ruleUID)
+		if err != nil {
+			return nil, err
+		}
+		return &alertRulesReadResult{Versions: nonNil(versions)}, nil
 	default:
-		return nil, fmt.Errorf("alerting_rules_read: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("%s: unknown operation %q", tool, operation)
 	}
 }
 
-func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) (any, error) {
+func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) (*alertRulesWriteResult, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_rules_write: %w", err)
 	}
 
 	switch args.Operation {
-	case "list":
-		opts, err := args.toGetRulesOpts()
-		if err != nil {
-			return nil, fmt.Errorf("alerting_rules_write: %w", err)
-		}
-		selectors, err := args.parseLabelSelectors()
-		if err != nil {
-			return nil, fmt.Errorf("alerting_rules_write: %w", err)
-		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
-		}
-		return listGrafanaRules(ctx, opts, selectors)
-	case "get":
-		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
-	case "versions":
-		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
 		cp, err := args.toCreateParams()
 		if err != nil {
 			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
-		return createAlertRule(ctx, cp)
+		rule, err := createAlertRule(ctx, cp)
+		if err != nil {
+			return nil, err
+		}
+		return &alertRulesWriteResult{SavedRule: rule}, nil
 	case "update":
 		up, err := args.toUpdateParams()
 		if err != nil {
 			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
-		return updateAlertRule(ctx, up)
+		rule, err := updateAlertRule(ctx, up)
+		if err != nil {
+			return nil, err
+		}
+		return &alertRulesWriteResult{SavedRule: rule}, nil
 	case "delete":
-		return deleteAlertRule(ctx, DeleteAlertRuleParams{
-			UID: args.RuleUID,
-		})
-	default:
-		return nil, fmt.Errorf("alerting_rules_write: unknown operation %q", args.Operation)
+		msg, err := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: args.RuleUID})
+		if err != nil {
+			return nil, err
+		}
+		return &alertRulesWriteResult{Message: msg}, nil
 	}
+
+	read, err := readAlertRules(ctx, "alerting_rules_write", args.Operation, args, args.DatasourceUID, args.RuleUID, args.LimitAlerts)
+	if err != nil {
+		return nil, err
+	}
+	return &alertRulesWriteResult{alertRulesReadResult: *read}, nil
 }
 
 func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*alertRuleDetail, error) {
@@ -121,7 +160,7 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 	return &detail, nil
 }
 
-func getAlertRuleVersions(ctx context.Context, uid string) (any, error) {
+func getAlertRuleVersions(ctx context.Context, uid string) ([]models.GettableExtendedRuleNode, error) {
 	ac, err := newAlertingClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating alerting client: %w", err)

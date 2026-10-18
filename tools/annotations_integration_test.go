@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/grafana-openapi-client-go/client/annotations"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,9 +56,7 @@ func TestAnnotationTools(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
-		created, ok := resp.(*annotations.PostAnnotationOK)
-		require.True(t, ok)
-		id := created.Payload.ID // *int64
+		id := resp.ID // *int64
 
 		// 2. update annotation (PATCH semantics).
 		newText := "integration-test-updated"
@@ -84,9 +81,7 @@ func TestAnnotationTools(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
-		created, ok := resp.(*annotations.PostAnnotationOK)
-		require.True(t, ok)
-		id := created.Payload.ID // *int64
+		id := resp.ID // *int64
 
 		_, err = deleteAnnotation(ctx, DeleteAnnotationInput{ID: *id})
 		require.NoError(t, err)
