@@ -475,3 +475,30 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryPrometheusRequiresEndTime(t *testing.T) {
+	for _, endTime := range []string{"", "  "} {
+		_, err := queryPrometheusWithHints(context.Background(), QueryPrometheusParams{
+			DatasourceUID: "prometheus",
+			Expr:          "up",
+			EndTime:       endTime,
+			QueryType:     "instant",
+		})
+		require.Error(t, err)
+		assert.Equal(t, "endTime is required", err.Error())
+	}
+}
+
+func TestQueryPrometheusRangeRequiresStartTime(t *testing.T) {
+	for _, startTime := range []string{"", "  "} {
+		_, err := queryPrometheusWithHints(context.Background(), QueryPrometheusParams{
+			DatasourceUID: "prometheus",
+			Expr:          "up",
+			StartTime:     startTime,
+			EndTime:       "now",
+			StepSeconds:   60,
+		})
+		require.Error(t, err)
+		assert.Equal(t, "startTime must be provided when queryType is 'range'", err.Error())
+	}
+}
