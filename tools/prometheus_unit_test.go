@@ -476,6 +476,30 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 	}
 }
 
+func TestQueryPrometheusHistogramRequiresTimes(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, end, wantErr string
+		step                      int
+	}{
+		{name: "no start", end: "now", wantErr: "startTime is required"},
+		{name: "blank end", start: "now-1h", end: "  ", wantErr: "endTime is required"},
+		{name: "negative step", start: "now-1h", end: "now", step: -60, wantErr: "stepSeconds must be a positive number of seconds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := queryPrometheusHistogram(context.Background(), QueryPrometheusHistogramParams{
+				DatasourceUID: "prometheus",
+				Metric:        "http_request_duration_seconds",
+				Percentile:    95,
+				StartTime:     tc.start,
+				EndTime:       tc.end,
+				StepSeconds:   tc.step,
+			})
+			require.Error(t, err)
+			assert.Equal(t, tc.wantErr, err.Error())
+		})
+	}
+}
+
 func TestQueryPrometheusRequiresEndTime(t *testing.T) {
 	for _, endTime := range []string{"", "  "} {
 		_, err := queryPrometheusWithHints(context.Background(), QueryPrometheusParams{

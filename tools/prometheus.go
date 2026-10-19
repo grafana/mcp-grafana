@@ -567,8 +567,8 @@ type QueryPrometheusHistogramParams struct {
 	Percentile    float64 `json:"percentile" jsonschema:"required,description=Percentile to calculate (e.g. 50\\, 90\\, 95\\, 99)"`
 	Labels        string  `json:"labels,omitempty" jsonschema:"description=Label selector (e.g. job=\"api\"\\, service=\"gateway\")"`
 	RateInterval  string  `json:"rateInterval,omitempty" jsonschema:"description=Rate interval for the query (default: 5m)"`
-	StartTime     string  `json:"startTime,omitempty" jsonschema:"description=Start time (default: now-1h). Supports RFC3339\\, relative (now-1h)\\, or Unix ms."`
-	EndTime       string  `json:"endTime,omitempty" jsonschema:"description=End time (default: now). Supports RFC3339\\, relative\\, or Unix ms."`
+	StartTime     string  `json:"startTime" jsonschema:"required,description=Start time. Supports RFC3339\\, relative (now-1h)\\, or Unix ms."`
+	EndTime       string  `json:"endTime" jsonschema:"required,description=End time. Supports RFC3339\\, relative (now)\\, or Unix ms."`
 	StepSeconds   int     `json:"stepSeconds,omitempty" jsonschema:"description=Step size in seconds for range query (default: 60)"`
 	ProjectName   string  `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
@@ -581,16 +581,6 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 		rateInterval = "5m"
 	}
 
-	startTime := args.StartTime
-	if startTime == "" {
-		startTime = "now-1h"
-	}
-
-	endTime := args.EndTime
-	if endTime == "" {
-		endTime = "now"
-	}
-
 	stepSeconds := args.StepSeconds
 	if stepSeconds == 0 {
 		stepSeconds = 60
@@ -599,6 +589,17 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 	// Validate percentile is in valid range
 	if args.Percentile < 0 || args.Percentile > 100 {
 		return nil, fmt.Errorf("percentile must be between 0 and 100, got %g", args.Percentile)
+	}
+	// Checked here rather than left to queryPrometheus, whose errors suggest a
+	// queryType this tool doesn't have.
+	if strings.TrimSpace(args.StartTime) == "" {
+		return nil, fmt.Errorf("startTime is required")
+	}
+	if strings.TrimSpace(args.EndTime) == "" {
+		return nil, fmt.Errorf("endTime is required")
+	}
+	if stepSeconds < 0 {
+		return nil, fmt.Errorf("stepSeconds must be a positive number of seconds")
 	}
 
 	// Convert percentile to quantile (e.g., 95 -> 0.95)
@@ -628,8 +629,8 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 	result, err := queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: args.DatasourceUID,
 		Expr:          expr,
-		StartTime:     startTime,
-		EndTime:       endTime,
+		StartTime:     args.StartTime,
+		EndTime:       args.EndTime,
 		StepSeconds:   stepSeconds,
 		QueryType:     "range",
 		ProjectName:   args.ProjectName,
