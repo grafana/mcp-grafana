@@ -453,3 +453,133 @@ func TestRejectV1BodyOverV2Stored_AllowsNewAndV1(t *testing.T) {
 	assert.NoError(t, rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"uid": "missing", "panels": []interface{}{}}))
 	assert.NoError(t, rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"title": "no uid"}))
 }
+
+// staleStoredVersionServer serves a dashboard whose status.conversion.storedVersion
+// is a stale "v1" while its v2beta1 view has the given layout, mimicking a
+// dashboard created as v1 and later saved as v2 (#1356). Writes are recorded.
+func staleStoredVersionServer(t *testing.T, layout map[string]interface{}, writes *[]string) *httptest.Server {
+	t.Helper()
+	status := map[string]interface{}{"conversion": map[string]interface{}{"storedVersion": "v1"}}
+	return httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if serveDashboardDiscovery(w, r, "v1beta1", "v2beta1") {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			*writes = append(*writes, r.Method+" "+r.URL.Path)
+			var body map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewEncoder(w).Encode(body)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "/v1beta1/"):
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v1beta1",
+				"metadata":   map[string]interface{}{"name": "stale"},
+				"spec":       map[string]interface{}{"title": "Down-converted", "panels": []interface{}{}},
+				"status":     status,
+			})
+		case strings.Contains(r.URL.Path, "/v2beta1/"):
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v2beta1",
+				"metadata":   map[string]interface{}{"name": "stale", "resourceVersion": "7"},
+				"spec":       map[string]interface{}{"title": "Native", "elements": map[string]interface{}{}, "layout": layout},
+				"status":     status,
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+var autoGridWithConditionalRendering = map[string]interface{}{
+	"kind": "AutoGridLayout",
+	"spec": map[string]interface{}{"items": []interface{}{map[string]interface{}{
+		"kind": "AutoGridLayoutItem",
+		"spec": map[string]interface{}{
+			"element":              map[string]interface{}{"kind": "ElementReference", "name": "p1"},
+			"conditionalRendering": map[string]interface{}{"kind": "ConditionalRenderingGroup", "spec": map[string]interface{}{"items": []interface{}{}}},
+		},
+	}}},
+}
+
+func staleCtx(ts *httptest.Server) context.Context {
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	// A legacy client too, so a wrong v1 save is recorded rather than panicking.
+	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, ts.URL, "test-api-key", nil))
+	return mcpgrafana.WithKubernetesClient(ctx, k8s)
+}
+
+// TestUpdateDashboardWithPatches_StaleV1StoredVersion verifies a dashboard whose
+// storedVersion still says v1 but whose content is v2-only is patched and saved
+// as v2 via the k8s API, not down-converted through the legacy endpoint.
+func TestUpdateDashboardWithPatches_StaleV1StoredVersion(t *testing.T) {
+	var writes []string
+	ts := staleStoredVersionServer(t, autoGridWithConditionalRendering, &writes)
+	defer ts.Close()
+
+	_, err := updateDashboard(staleCtx(ts), UpdateDashboardParams{
+		UID:        "stale",
+		Operations: []PatchOperation{{Op: "replace", Path: "$.title", Value: "x"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, writes, 1)
+	assert.NotContains(t, writes[0], "/api/dashboards/db", "must not down-convert through the legacy save")
+	assert.Equal(t, http.MethodPut, strings.Fields(writes[0])[0])
+	assert.Contains(t, writes[0], "/v2beta1/", "must write back at the v2 version")
+}
+
+// TestFetchDashboardViaK8s_StaleV1StoredVersionGridLayout verifies a v1
+// dashboard (whose v2 view is a plain up-converted GridLayout) stays v1.
+func TestFetchDashboardViaK8s_StaleV1StoredVersionGridLayout(t *testing.T) {
+	var writes []string
+	ts := staleStoredVersionServer(t, map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}, &writes)
+	defer ts.Close()
+
+	ctx := staleCtx(ts)
+	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale")
+	require.NoError(t, err)
+	assert.False(t, res.IsV2)
+	assert.Equal(t, "Down-converted", safeString(res.Spec, "title"))
+}
+
+// TestRejectV1BodyOverV2Stored_StaleV1StoredVersion verifies a v1 full-JSON
+// overwrite of a v2-content dashboard with a stale storedVersion is refused.
+func TestRejectV1BodyOverV2Stored_StaleV1StoredVersion(t *testing.T) {
+	var writes []string
+	ts := staleStoredVersionServer(t, autoGridWithConditionalRendering, &writes)
+	defer ts.Close()
+
+	err := rejectV1BodyOverV2Stored(staleCtx(ts), map[string]interface{}{"uid": "stale", "panels": []interface{}{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stored as v2beta1")
+	assert.Empty(t, writes)
+}
+
+func TestHasV2OnlyLayout(t *testing.T) {
+	grid := map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}
+	rows := func(rowSpec map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{"kind": "RowsLayout", "spec": map[string]interface{}{"rows": []interface{}{
+			map[string]interface{}{"kind": "RowsLayoutRow", "spec": rowSpec},
+		}}}
+	}
+	for name, tc := range map[string]struct {
+		layout interface{}
+		want   bool
+	}{
+		"nil":                     {nil, false},
+		"grid":                    {grid, false},
+		"rows of grid":            {rows(map[string]interface{}{"layout": grid}), false},
+		"null conditional":        {rows(map[string]interface{}{"layout": grid, "conditionalRendering": nil}), false},
+		"auto grid":               {autoGridWithConditionalRendering, true},
+		"tabs":                    {map[string]interface{}{"kind": "TabsLayout"}, true},
+		"nested tabs in row":      {rows(map[string]interface{}{"layout": map[string]interface{}{"kind": "TabsLayout"}}), true},
+		"conditional on grid row": {rows(map[string]interface{}{"layout": grid, "conditionalRendering": map[string]interface{}{}}), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, hasV2OnlyLayout(tc.layout))
+		})
+	}
+}
