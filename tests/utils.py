@@ -21,8 +21,8 @@ def convert_tool(tool: Tool) -> dict:
             "name": tool.name,
             "description": tool.description,
             "parameters": {
-                **tool.inputSchema,
-                "properties": tool.inputSchema.get("properties", {}),
+                **tool.input_schema,
+                "properties": tool.input_schema.get("properties", {}),
             },
         },
     }
@@ -154,7 +154,7 @@ def assert_mcp_eval(
     # Give the output judge the actual tool evidence, not just the user's prompt.
     # Otherwise a correct answer with real logs looks fabricated to GEval.
     tool_results = [
-        f"{tool.name} {'error' if tool.result.isError else 'result'}: {tool_result_text(tool.result)}"
+        f"{tool.name} {'error' if tool.result.is_error else 'result'}: {tool_result_text(tool.result)}"
         for tool in tools_called
     ]
     test_case = LLMTestCase(

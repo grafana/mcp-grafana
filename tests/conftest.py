@@ -6,7 +6,7 @@ import base64
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp import ClientSession, StdioServerParameters
 
 load_dotenv()
@@ -119,13 +119,12 @@ async def mcp_client(mcp_transport, mcp_url, grafana_env, grafana_headers):
     elif mcp_transport == "streamable-http":
         # Use HTTP client for streamable-http transport
         url = f"{mcp_url}/mcp"
-        async with streamablehttp_client(url, headers=grafana_headers) as (
-            read,
-            write,
-            _,
+        async with (
+            create_mcp_http_client(headers=grafana_headers) as http_client,
+            streamable_http_client(url, http_client=http_client) as (read, write),
+            ClientSession(read, write) as session,
         ):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+            await session.initialize()
+            yield session
     else:
         raise ValueError(f"Unsupported transport: {mcp_transport}")
