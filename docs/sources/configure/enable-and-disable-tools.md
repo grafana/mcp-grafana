@@ -60,6 +60,8 @@ Use `--disable-write` to disable all write operations. The server can still read
 
 Read-only mode also removes `query_sql` and `query_influxdb`: they pass the query to the datasource unfiltered, so they can write whenever the datasource credentials permit it. Add `--enable-query` to keep them when those credentials are known to be read-only.
 
+In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through a `POST` request. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
+
 ## Run without query execution
 
 Use `--disable-query` to remove every tool that executes a query against a datasource, such as `query_prometheus`, `query_loki_logs`, `query_sql`, and `run_panel_query`. The server can still list datasources and dashboards, explore metric names, labels, and table schemas, and generate deeplinks, but it can't run the queries themselves.
