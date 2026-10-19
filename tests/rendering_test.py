@@ -36,7 +36,7 @@ async def test_get_panel_image(
         content_item = mcp_tc.result.content[0]
         assert isinstance(content_item, ImageContent)
         assert content_item.type == "image"
-        assert content_item.mimeType == "image/png"
+        assert content_item.mime_type == "image/png"
         assert len(content_item.data) > 0
 
     assert_mcp_eval(

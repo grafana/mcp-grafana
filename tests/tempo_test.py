@@ -74,21 +74,21 @@ class TestTempoToolsBasic:
 
         for tool in tempo_tools:
             # Verify the tool has input schema
-            assert hasattr(tool, "inputSchema"), (
+            assert hasattr(tool, "input_schema"), (
                 f"Tool {tool.name} should have inputSchema"
             )
-            assert isinstance(tool.inputSchema, dict), (
+            assert isinstance(tool.input_schema, dict), (
                 f"Tool {tool.name} inputSchema should be a dict"
             )
 
             # Verify datasourceUid parameter exists (camelCase)
-            properties = tool.inputSchema.get("properties", {})
+            properties = tool.input_schema.get("properties", {})
             assert "datasourceUid" in properties, (
                 f"Tool {tool.name} should have datasourceUid parameter (camelCase)"
             )
 
             # Verify it's required
-            required = tool.inputSchema.get("required", [])
+            required = tool.input_schema.get("required", [])
             assert "datasourceUid" in required, (
                 f"Tool {tool.name} should require datasourceUid parameter"
             )
@@ -137,7 +137,7 @@ class TestTempoToolsBasic:
                 arguments={},  # Missing datasourceUid
             )
             # If the server returns an error result instead of raising
-            assert result.isError, "Should return an error when datasourceUid is missing"
+            assert result.is_error, "Should return an error when datasourceUid is missing"
             error_text = result.content[0].text.lower()
             assert "datasourceuid" in error_text or "required" in error_text, (
                 f"Error should mention datasourceUid: {result.content[0].text}"
@@ -158,7 +158,7 @@ class TestTempoToolsBasic:
                 arguments={"datasourceUid": "nonexistent-tempo"},
             )
             # Server may return an error result rather than raising
-            assert result.isError, "Should return an error for invalid datasourceUid"
+            assert result.is_error, "Should return an error for invalid datasourceUid"
             error_text = result.content[0].text.lower()
             assert "not found" in error_text or "not accessible" in error_text, (
                 f"Should indicate datasource not found: {result.content[0].text}"
