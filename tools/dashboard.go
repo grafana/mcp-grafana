@@ -182,8 +182,9 @@ func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns,
 // conversion produces: a GridLayout, or a RowsLayout whose rows each hold a
 // GridLayout, with no conditional rendering anywhere. Anything else (auto grid,
 // tabs, nested rows, layout kinds added later) would be lost by a v1 save.
-// ponytail: shape heuristic; replace with storedVersion once Grafana stops
-// persisting a stale value there.
+// ponytail: shape heuristic for a stale storedVersion. grafana/grafana#135108
+// stops persisting it, but affected dashboards keep the stale value until
+// re-saved; drop this once Grafana also ignores the persisted value on read.
 func isV1ConvertibleLayout(layout interface{}) bool {
 	if layout == nil {
 		return true
