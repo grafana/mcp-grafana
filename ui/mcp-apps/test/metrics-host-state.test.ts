@@ -71,6 +71,20 @@ describe('createMetricsHostState', () => {
     expect(host.getSnapshot().status).toMatch(/^The query failed\. Check the expression/);
   });
 
+  it("shows the server's error text when a refresh fails", async () => {
+    const { app, resolveCall } = fakeHost();
+    const host = createMetricsHostState(app);
+    app.ontoolinput?.({ arguments: args });
+    app.ontoolresult?.(ok(vectorSingleUnbounded));
+
+    const refreshing = host.refresh();
+    resolveCall({ isError: true, content: [{ type: 'text', text: 'startTime must not be after endTime' }] });
+    await refreshing;
+    expect(host.getSnapshot().notice?.message).toBe(
+      'The refresh query failed: startTime must not be after endTime. The chart still shows the previous result.',
+    );
+  });
+
   it('drops the previous chart when the host starts a new call', () => {
     const { app } = fakeHost();
     const host = createMetricsHostState(app);

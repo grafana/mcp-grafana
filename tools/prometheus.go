@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -83,14 +82,6 @@ type QueryPrometheusResult struct {
 	// ExploreURL opens this query in Grafana Explore. Populated best-effort from
 	// the instance's public URL; omitted when it cannot be resolved.
 	ExploreURL string `json:"exploreUrl,omitempty"`
-}
-
-func parseTime(timeStr string) (time.Time, error) {
-	tr := gtime.TimeRange{
-		From: timeStr,
-		Now:  time.Now(),
-	}
-	return tr.ParseFrom()
 }
 
 // isPrometheusResultEmpty checks if a Prometheus query result contains no data
@@ -253,7 +244,7 @@ func exploreTimeRangeForQuery(args QueryPrometheusParams) *TimeRange {
 	if args.EndTime == "" {
 		return nil
 	}
-	end, err := parseTime(args.EndTime)
+	end, err := parseEndTime(args.EndTime)
 	if err != nil {
 		return nil
 	}

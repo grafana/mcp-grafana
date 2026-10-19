@@ -79,17 +79,12 @@ func TestParseRelativeTime(t *testing.T) {
 			input:         "yesterday",
 			expectedError: true,
 		},
-		{
-			name:          "empty string",
-			input:         "",
-			expectedError: true,
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
-			result, err := parseTime(tc.input)
+			result, err := parseStartTime(tc.input)
 
 			if tc.expectedError {
 				assert.Error(t, err)
@@ -104,7 +99,7 @@ func TestParseRelativeTime(t *testing.T) {
 				diff := result.Sub(now)
 				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
 			} else if tc.isMonthCase {
-				// The datemath library (used by parseTime) defaults to UTC for
+				// The datemath library (used by parseStartTime) defaults to UTC for
 				// calendar arithmetic, so use UTC to avoid DST differences.
 				expected := now.UTC().AddDate(0, -1, 0)
 				diff := result.Sub(expected)
