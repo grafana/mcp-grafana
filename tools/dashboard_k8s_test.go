@@ -609,9 +609,53 @@ func TestIsV1ConvertibleLayout(t *testing.T) {
 		"rows in row":             {rows(map[string]interface{}{"layout": rows(map[string]interface{}{"layout": grid})}), false},
 		"row without layout":      {rows(map[string]interface{}{}), false},
 		"conditional on grid row": {rows(map[string]interface{}{"layout": grid, "conditionalRendering": map[string]interface{}{}}), false},
+		"converted first row":     {rows(map[string]interface{}{"layout": grid, "title": "", "collapse": false, "hideHeader": true}), true},
+		"repeated row":            {rows(map[string]interface{}{"layout": grid, "title": "r", "repeat": map[string]interface{}{"mode": "variable", "value": "x"}}), true},
+		"fillScreen false":        {rows(map[string]interface{}{"layout": grid, "fillScreen": false, "variables": []interface{}{}}), true},
+		"fillScreen":              {rows(map[string]interface{}{"layout": grid, "fillScreen": true}), false},
+		"row variables":           {rows(map[string]interface{}{"layout": grid, "variables": []interface{}{map[string]interface{}{}}}), false},
+		"hidden header + repeat":  {rows(map[string]interface{}{"layout": grid, "hideHeader": true, "repeat": map[string]interface{}{"mode": "variable", "value": "x"}}), false},
+		"hidden header + title":   {rows(map[string]interface{}{"layout": grid, "hideHeader": true, "title": "t"}), false},
+		"hidden header not first": {map[string]interface{}{"kind": "RowsLayout", "spec": map[string]interface{}{"rows": []interface{}{
+			map[string]interface{}{"kind": "RowsLayoutRow", "spec": map[string]interface{}{"layout": grid, "title": "a"}},
+			map[string]interface{}{"kind": "RowsLayoutRow", "spec": map[string]interface{}{"layout": grid, "hideHeader": true}},
+		}}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tc.want, isV1ConvertibleLayout(tc.layout))
+		})
+	}
+}
+
+// TestStaleV1StoredVersion_LossyRowSettings verifies v2-only row settings keep
+// a stale-storedVersion dashboard on the v2 path for patches and block v1
+// overwrites.
+func TestStaleV1StoredVersion_LossyRowSettings(t *testing.T) {
+	grid := map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}
+	for name, rowSpec := range map[string]map[string]interface{}{
+		"fillScreen":             {"layout": grid, "title": "r", "fillScreen": true},
+		"hidden header + repeat": {"layout": grid, "hideHeader": true, "repeat": map[string]interface{}{"mode": "variable", "value": "x"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			layout := map[string]interface{}{"kind": "RowsLayout", "spec": map[string]interface{}{"rows": []interface{}{
+				map[string]interface{}{"kind": "RowsLayoutRow", "spec": rowSpec},
+			}}}
+			var writes []string
+			ts := staleStoredVersionServer(t, layout, &writes)
+			defer ts.Close()
+			ctx := staleCtx(ts)
+
+			err := rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"uid": "stale", "panels": []interface{}{}})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "stored as v2beta1")
+
+			_, err = updateDashboard(ctx, UpdateDashboardParams{
+				UID:        "stale",
+				Operations: []PatchOperation{{Op: "replace", Path: "$.title", Value: "x"}},
+			})
+			require.NoError(t, err)
+			require.Len(t, writes, 1)
+			assert.True(t, strings.HasPrefix(writes[0], http.MethodPut+" ") && strings.Contains(writes[0], "/v2beta1/"), writes[0])
 		})
 	}
 }

@@ -179,9 +179,10 @@ func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns,
 }
 
 // isV1ConvertibleLayout reports whether a v2 layout has a shape the v1→v2
-// conversion produces: a GridLayout, or a RowsLayout whose rows each hold a
-// GridLayout, with no conditional rendering anywhere. Anything else (auto grid,
-// tabs, nested rows, layout kinds added later) would be lost by a v1 save.
+// conversion produces: a GridLayout, or a RowsLayout of rows that
+// isV1ConvertibleRow accepts, with no conditional rendering anywhere. Anything
+// else (auto grid, tabs, nested rows, layout kinds added later) would be lost by
+// a v1 save.
 // ponytail: shape heuristic for a stale storedVersion. grafana/grafana#135108
 // stops persisting it, but affected dashboards keep the stale value until
 // re-saved; drop this once Grafana also ignores the persisted value on read.
@@ -197,15 +198,43 @@ func isV1ConvertibleLayout(layout interface{}) bool {
 	case "GridLayout":
 		return true
 	case "RowsLayout":
-		for _, row := range safeArray(safeObject(m, "spec"), "rows") {
-			r, _ := row.(map[string]interface{})
-			if safeString(r, "kind") != "RowsLayoutRow" || safeString(safeObject(safeObject(r, "spec"), "layout"), "kind") != "GridLayout" {
+		for i, row := range safeArray(safeObject(m, "spec"), "rows") {
+			if !isV1ConvertibleRow(i, row) {
 				return false
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// isV1ConvertibleRow reports whether a RowsLayoutRow is one the v1→v2
+// conversion emits: a GridLayout plus only title, collapse and repeat set, or
+// the untitled, unrepeated hidden-header row it creates first for panels above
+// the first v1 row. Other settings (fillScreen, row variables, a hidden header
+// elsewhere) have no v1 equivalent.
+func isV1ConvertibleRow(i int, row interface{}) bool {
+	r, _ := row.(map[string]interface{})
+	spec := safeObject(r, "spec")
+	if safeString(r, "kind") != "RowsLayoutRow" || safeString(safeObject(spec, "layout"), "kind") != "GridLayout" {
+		return false
+	}
+	for k, v := range spec {
+		switch k {
+		case "title", "collapse", "repeat", "layout", "hideHeader":
+			continue
+		}
+		if arr, ok := v.([]interface{}); ok && len(arr) == 0 {
+			continue
+		}
+		if v != nil && v != false {
+			return false
+		}
+	}
+	if hidden, _ := spec["hideHeader"].(bool); hidden {
+		return i == 0 && safeString(spec, "title") == "" && spec["repeat"] == nil
+	}
+	return true
 }
 
 // hasConditionalRendering reports whether any node in a layout tree sets
