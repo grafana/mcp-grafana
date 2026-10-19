@@ -71,7 +71,7 @@ type QueryPrometheusParams struct {
 	StartTime     string `json:"startTime,omitempty" jsonschema:"description=The start time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	EndTime       string `json:"endTime" jsonschema:"required,description=The end time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
-	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' (the default) or 'instant'"`
+	QueryType     string `json:"queryType,omitempty" jsonschema:"enum=range,enum=instant,description=The type of query to use. Either 'range' (the default) or 'instant'"`
 	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
@@ -115,21 +115,15 @@ func isPrometheusResultEmpty(result model.Value) bool {
 // queryPrometheus executes a PromQL query and returns raw results.
 // This is the internal function - use queryPrometheusWithHints for MCP tools.
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
-	result, _, err := queryPrometheusWithWarnings(ctx, args)
+	result, _, _, _, err := queryPrometheusWithTimes(ctx, args)
 	return result, err
 }
 
-// queryPrometheusWithWarnings is like queryPrometheus but also returns any
-// warnings the datasource reported, such as partial responses from Thanos.
-func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, error) {
-	result, warnings, _, _, err := queryPrometheusWithTimes(ctx, args)
-	return result, warnings, err
-}
-
 // queryPrometheusWithTimes validates args before resolving the backend, runs
-// the query, and also returns the parsed start and end times so callers don't
-// re-parse relative times against a later now. startTime is zero for instant
-// queries.
+// the query, and also returns any warnings the datasource reported (such as
+// partial responses from Thanos) and the parsed start and end times, so
+// callers don't re-parse relative times against a later now. startTime is
+// zero for instant queries.
 func queryPrometheusWithTimes(ctx context.Context, args QueryPrometheusParams) (result model.Value, warnings promv1.Warnings, startTime, endTime time.Time, err error) {
 	endStr := strings.TrimSpace(args.EndTime)
 	if endStr == "" {
@@ -144,7 +138,7 @@ func queryPrometheusWithTimes(ctx context.Context, args QueryPrometheusParams) (
 		return nil, nil, startTime, endTime, fmt.Errorf("invalid queryType %q: must be 'range' or 'instant'", args.QueryType)
 	}
 
-	endTime, err = parseTime(endStr)
+	endTime, err = parseEndTime(endStr)
 	if err != nil {
 		return nil, nil, startTime, endTime, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -157,9 +151,14 @@ func queryPrometheusWithTimes(ctx context.Context, args QueryPrometheusParams) (
 		if startStr == "" {
 			return nil, nil, startTime, endTime, fmt.Errorf("startTime must be provided when queryType is 'range' (the default); set queryType to 'instant' for a single point in time")
 		}
-		startTime, err = parseTime(startStr)
+		startTime, err = parseStartTime(startStr)
 		if err != nil {
 			return nil, nil, startTime, endTime, fmt.Errorf("parsing start time: %w", err)
+		}
+		// Prometheus rejects an inverted range, but VictoriaMetrics and Cloud
+		// Monitoring would collapse it to a single point; fail the same way everywhere.
+		if endTime.Before(startTime) {
+			return nil, nil, startTime, endTime, fmt.Errorf("startTime must not be after endTime")
 		}
 	}
 

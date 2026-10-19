@@ -518,6 +518,11 @@ func TestQueryPrometheusValidation(t *testing.T) {
 			wantErr: `invalid queryType "Range": must be 'range' or 'instant'`,
 		},
 		{
+			name:    "start after end",
+			args:    QueryPrometheusParams{StartTime: "now", EndTime: "now-1h", StepSeconds: 60},
+			wantErr: "startTime must not be after endTime",
+		},
+		{
 			name:    "negative step",
 			args:    QueryPrometheusParams{StartTime: "now-1h", EndTime: "now", StepSeconds: -60},
 			wantErr: "stepSeconds must be a positive number of seconds when queryType is 'range' (the default); set queryType to 'instant' for a single point in time",

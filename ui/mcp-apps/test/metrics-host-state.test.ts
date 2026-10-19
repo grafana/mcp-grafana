@@ -61,6 +61,16 @@ describe('createMetricsHostState', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the server's error text when a call fails", () => {
+    const { app } = fakeHost();
+    const host = createMetricsHostState(app);
+    app.ontoolresult?.({ isError: true, content: [{ type: 'text', text: 'endTime is required' }] });
+    expect(host.getSnapshot().status).toBe('The query failed: endTime is required');
+
+    app.ontoolresult?.({ isError: true, content: [] });
+    expect(host.getSnapshot().status).toMatch(/^The query failed\. Check the expression/);
+  });
+
   it('drops the previous chart when the host starts a new call', () => {
     const { app } = fakeHost();
     const host = createMetricsHostState(app);

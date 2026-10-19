@@ -139,7 +139,11 @@ export function createMetricsHostState(app: App): MetricsHostState {
         ...nextCall(),
         result: undefined,
         isError: true,
-        status: 'The query failed. Check the expression and datasource access, then run query_prometheus again.',
+        // The server's error names the bad argument (a missing endTime, an
+        // invalid queryType); a fixed message would blame the expression.
+        status:
+          toolErrorText(response) ??
+          'The query failed. Check the expression and datasource access, then run query_prometheus again.',
       });
       return;
     }
@@ -240,4 +244,10 @@ export function createMetricsHostState(app: App): MetricsHostState {
     openInGrafana,
     close: () => void app.close(),
   };
+}
+
+/** The first text block of a failed tool result, if it carries one. */
+function toolErrorText(response: { content?: Array<{ type?: string; text?: string }> }): string | undefined {
+  const text = response.content?.find((c) => c.type === 'text' && typeof c.text === 'string')?.text?.trim();
+  return text ? `The query failed: ${text}` : undefined;
 }
