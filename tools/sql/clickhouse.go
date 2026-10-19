@@ -53,10 +53,15 @@ func (d *clickHouseDialect) SubstituteMacros(query string, from, to time.Time) s
 		return match
 	})
 
-	query = strings.ReplaceAll(query, "$__from", strconv.FormatInt(fromMillis, 10))
-	query = strings.ReplaceAll(query, "$__to", strconv.FormatInt(toMillis, 10))
-	query = strings.ReplaceAll(query, "$__interval_ms", strconv.FormatInt(intervalSeconds*1000, 10))
-	query = strings.ReplaceAll(query, "$__interval", fmt.Sprintf("%ds", intervalSeconds))
+	// Whole-token replacement only: the ClickHouse plugin expands its own macros server-side
+	// ($__fromTime, $__toTime, $__fromTime_ms, $__toTime_ms, $__interval_s, $__timeInterval, ...),
+	// and a plain substring replace of $__from, $__to or $__interval would corrupt them.
+	query = replaceWholeMacros(query, map[string]string{
+		"from":        strconv.FormatInt(fromMillis, 10),
+		"to":          strconv.FormatInt(toMillis, 10),
+		"interval_ms": strconv.FormatInt(intervalSeconds*1000, 10),
+		"interval":    fmt.Sprintf("%ds", intervalSeconds),
+	})
 
 	return query
 }
