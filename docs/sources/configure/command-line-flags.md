@@ -118,6 +118,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
 - `--enable-query`: Keep the raw-SQL query tools registered under `--disable-write` (refer to the following section).
+- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, or `generate_deeplink`. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
 - `--disable-quickwit`: Disable Quickwit tools.
@@ -209,6 +210,8 @@ The server logs a warning at startup naming each of these that is still enabled.
 ## Run in read-only mode
 
 `--disable-write` prevents write operations to Grafana. Use it with read-only service accounts, safer production assistants, or to avoid accidental changes. It also removes the raw-SQL query tools, which can write through the datasource; refer to the preceding section for `--enable-query`, which keeps them.
+
+In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through `POST /api/short-urls`. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
 
 When enabled, the following writes are disabled:
 
