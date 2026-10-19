@@ -39,6 +39,11 @@ func TestAthenaDialect_SubstituteMacros(t *testing.T) {
 			"SELECT * WHERE ts > $__timeFrom() AND ts < $__timeTo()",
 			"SELECT * WHERE ts > TIMESTAMP '2024-01-15 10:00:00' AND ts < TIMESTAMP '2024-01-15 11:00:00'",
 		},
+		{
+			"macro prefixes stay intact",
+			"SELECT $__to_date, $__to, $__interval_ms, $__interval",
+			"SELECT $__to_date, 1705316400000, 3000, 3",
+		},
 	}
 
 	for _, tt := range tests {
