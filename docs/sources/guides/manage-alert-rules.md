@@ -57,7 +57,9 @@ The assistant must still send `managed_by: "datasource"` in the tool call. Omitt
 
 An explicit `datasource_uid` takes priority and is validated. If omitted, the tool discovers compatible datasources visible to the caller. It selects one only when exactly one exists. With multiple candidates, it returns their names and UIDs so the assistant can ask the user to choose. With none, it returns an error. It never falls back to Grafana-managed creation.
 
-The tool appends the rule to the existing group and preserves its other rules and settings. New groups default to a `1m` evaluation interval. You can set `evaluation_interval` for a new group, but it must match the interval when adding to an existing group. Duplicate alert names in the same group are rejected. External creation uses `expression` and `namespace`, not Grafana-only fields such as `data`, `condition` or `folder_uid`. Update and delete remain Grafana-only.
+The tool appends the rule to the existing group and preserves its other rules and settings. New groups default to a `1m` evaluation interval. You can set `evaluation_interval` for a new group, but it must match the interval when adding to an existing group. If the existing group omits its interval and uses the ruler default, omit `evaluation_interval` to preserve it. Duplicate alert names in the same group are rejected. External creation uses `expression` and `namespace`, not Grafana-only fields such as `data`, `condition` or `folder_uid`. Update and delete remain Grafana-only.
+
+For an explicitly selected Prometheus datasource without `jsonData.prometheusType`, the tool checks build information to select the Mimir or Cortex ruler route, then reads the group before writing. Automatic selection requires configured Mimir/Cortex metadata and does not probe every datasource.
 
 ## Manage contact points and routing
 
@@ -88,7 +90,7 @@ The result contains the receiver name, type and datasource UID, with an empty in
 
 External rule creation requires `datasources:read`, `alert.rules.external:read` and `alert.rules.external:write` for the target datasource. External receiver creation requires `datasources:read`, `alert.notifications.external:read` and `alert.notifications.external:write`. The backend must also allow the write. Both creation paths remain disabled by `--disable-write`.
 
-These APIs replace a complete rule group or Alertmanager configuration. The server serializes its own external creation calls, but cannot prevent concurrent edits from other MCP processes, the Grafana UI, or other clients. Coordinate such writes to avoid overwriting concurrent changes. Unsupported APIs, permission errors and ambiguous destinations fail without creating anything in Grafana instead.
+These APIs replace a complete rule group or Alertmanager configuration. The server serializes its own external creation calls for the same Grafana instance, organization and destination group or Alertmanager configuration. Unrelated destinations can proceed independently, and unused locks are removed. When the organization is implicit in authentication, calls to the same instance and destination conservatively share a lock. This cannot prevent concurrent edits from other MCP processes, the Grafana UI, or other clients. Coordinate such writes to avoid overwriting concurrent changes. Unsupported APIs, permission errors and ambiguous destinations fail without creating anything in Grafana instead.
 
 ## Next steps
 

@@ -37,7 +37,7 @@ func createExternalContactPoint(ctx context.Context, args ManageRoutingWritePara
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := lockExternalAlertingWrite(ctx)
+	unlock, err := lockExternalAlertingWrite(ctx, client.externalWriteKey(ctx, ds.UID, "", "", true))
 	if err != nil {
 		return nil, err
 	}

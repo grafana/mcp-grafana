@@ -51,6 +51,7 @@ func TestExternalAlertingDatasourceSelection(t *testing.T) {
 		{name: "mismatched uid", uid: "am", response: testMimirDatasource, wantErr: "requested UID"},
 		{name: "none", response: "[]", wantErr: "no compatible"},
 		{name: "standalone prometheus", response: `[{"uid":"prom","type":"prometheus","jsonData":{"prometheusType":"Prometheus"}}]`, wantErr: "no compatible"},
+		{name: "unknown ruler is not auto selected", response: `[{"uid":"mimir","type":"prometheus","jsonData":{}}]`, wantErr: "no compatible"},
 		{name: "standalone alertmanager", response: `[{"uid":"prom","type":"alertmanager","jsonData":{"implementation":"prometheus"}}]`, receiver: true, wantErr: "no compatible"},
 		{name: "disabled ruler", response: `[{"uid":"loki","type":"loki","jsonData":{"manageAlerts":false}}]`, wantErr: "no compatible"},
 		{name: "loki", response: `[{"uid":"loki","type":"loki"}]`, wantUID: "loki"},
@@ -363,12 +364,13 @@ func TestExternalReceiverConcurrentCreatesPreserveBoth(t *testing.T) {
 }
 
 func TestExternalAlertingCancelledWait(t *testing.T) {
-	unlock, err := lockExternalAlertingWrite(t.Context())
+	key := externalAlertingWriteKey{instance: t.Name()}
+	unlock, err := lockExternalAlertingWrite(t.Context(), key)
 	require.NoError(t, err)
 	defer unlock()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = lockExternalAlertingWrite(ctx)
+	_, err = lockExternalAlertingWrite(ctx, key)
 	require.ErrorIs(t, err, context.Canceled)
 }
 

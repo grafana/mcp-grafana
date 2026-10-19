@@ -42,7 +42,7 @@ func createDatasourceAlertRule(ctx context.Context, args ManageRulesReadWritePar
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := lockExternalAlertingWrite(ctx)
+	unlock, err := lockExternalAlertingWrite(ctx, client.externalWriteKey(ctx, ds.UID, args.Namespace, args.RuleGroup, false))
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +81,9 @@ func createDatasourceAlertRule(ctx context.Context, args ManageRulesReadWritePar
 			return nil, fmt.Errorf("unexpected rule group configuration, nothing was created")
 		}
 		if args.EvaluationInterval != "" {
+			if _, present := group["interval"]; !present {
+				return nil, fmt.Errorf("existing group uses the ruler's default interval, omit evaluation_interval to preserve it")
+			}
 			var interval string
 			if json.Unmarshal(group["interval"], &interval) != nil {
 				return nil, fmt.Errorf("cannot verify existing group evaluation_interval")

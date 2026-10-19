@@ -9,19 +9,76 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/common/model"
 )
 
-// External APIs replace entire groups/configurations. Serialize read-modify-write
-// calls in this process. Other clients must coordinate writes separately.
-var externalAlertingWriteGate = make(chan struct{}, 1)
+type externalAlertingWriteKey struct {
+	instance, org, uid, namespace, group string
+	receiver                             bool
+}
 
-func lockExternalAlertingWrite(ctx context.Context) (func(), error) {
+type externalAlertingWriteGate struct {
+	gate chan struct{}
+	refs int
+}
+
+// External APIs replace whole groups/configurations. Share a gate only for the
+// same destination and remove it when its last holder or waiter finishes.
+var externalAlertingWrites = struct {
+	sync.Mutex
+	gates map[externalAlertingWriteKey]*externalAlertingWriteGate
+}{gates: make(map[externalAlertingWriteKey]*externalAlertingWriteGate)}
+
+func (c *alertingClient) externalWriteKey(ctx context.Context, uid, namespace, group string, receiver bool) externalAlertingWriteKey {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	instance := c.baseURL.String()
+	if cfg.OverrideURL != "" {
+		instance = cfg.OverrideURL
+	}
+	org := fmt.Sprint(cfg.OrgID)
+	if cfg.OrgID <= 0 {
+		for name, value := range cfg.ExtraHeaders {
+			if strings.EqualFold(name, "X-Grafana-Org-Id") {
+				org = value
+			}
+		}
+	}
+	return externalAlertingWriteKey{strings.TrimRight(instance, "/"), org, uid, namespace, group, receiver}
+}
+
+func lockExternalAlertingWrite(ctx context.Context, key externalAlertingWriteKey) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	externalAlertingWrites.Lock()
+	entry := externalAlertingWrites.gates[key]
+	if entry == nil {
+		entry = &externalAlertingWriteGate{gate: make(chan struct{}, 1)}
+		externalAlertingWrites.gates[key] = entry
+	}
+	entry.refs++
+	externalAlertingWrites.Unlock()
+	release := func() {
+		externalAlertingWrites.Lock()
+		defer externalAlertingWrites.Unlock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(externalAlertingWrites.gates, key)
+		}
+	}
 	select {
-	case externalAlertingWriteGate <- struct{}{}:
-		return func() { <-externalAlertingWriteGate }, nil
+	case entry.gate <- struct{}{}:
+		unlock := func() { <-entry.gate; release() }
+		if err := ctx.Err(); err != nil {
+			unlock()
+			return nil, err
+		}
+		return unlock, nil
 	case <-ctx.Done():
+		release()
 		return nil, ctx.Err()
 	}
 }
@@ -44,8 +101,9 @@ func (p ManageRulesReadWriteParams) validateCreationTarget() error {
 	if p.DatasourceUID != nil {
 		uid = *p.DatasourceUID
 	}
-	// Keep the existing datasource_uid selector for list, without changing its default.
-	if p.Operation == "list" && p.ManagedBy != "datasource" {
+	// Preserve the existing selector on list and ignored UID on all other
+	// non-create operations. This only changes creation target selection.
+	if p.Operation != "create" && p.ManagedBy != "datasource" {
 		uid = ""
 	}
 	if err := validateAlertingTarget(p.ManagedBy, uid); err != nil {
@@ -90,7 +148,7 @@ type externalAlertingDatasource struct {
 	} `json:"jsonData"`
 }
 
-func (d externalAlertingDatasource) supportsCreation(receiver bool) bool {
+func (d externalAlertingDatasource) supportsCreation(receiver, explicit bool) bool {
 	if d.UID == "" || d.UID == "grafana" || !contactPointUIDPattern.MatchString(d.UID) {
 		return false
 	}
@@ -106,7 +164,7 @@ func (d externalAlertingDatasource) supportsCreation(receiver bool) bool {
 	if d.JSONData.ManageAlerts != nil && !*d.JSONData.ManageAlerts {
 		return false
 	}
-	return d.Type == "loki" || (d.Type == "prometheus" && (strings.EqualFold(d.JSONData.PrometheusType, "mimir") || strings.EqualFold(d.JSONData.PrometheusType, "cortex")))
+	return d.Type == "loki" || (d.Type == "prometheus" && (strings.EqualFold(d.JSONData.PrometheusType, "mimir") || strings.EqualFold(d.JSONData.PrometheusType, "cortex") || (explicit && d.JSONData.PrometheusType == "")))
 }
 
 // Resolve only after the caller sets managed_by=datasource, whether requested
@@ -136,7 +194,7 @@ func (c *alertingClient) resolveExternalAlertingDatasource(ctx context.Context, 
 	}
 	compatible := make([]externalAlertingDatasource, 0, len(candidates))
 	for _, ds := range candidates {
-		if ds.supportsCreation(receiver) {
+		if ds.supportsCreation(receiver, uid != "") {
 			compatible = append(compatible, ds)
 		}
 	}
@@ -155,7 +213,45 @@ func (c *alertingClient) resolveExternalAlertingDatasource(ctx context.Context, 
 		sort.Strings(names)
 		return nil, fmt.Errorf("multiple compatible %s datasources: %s. Ask the user to choose, then retry with datasource_uid. Nothing was created", kind, strings.Join(names, ", "))
 	}
-	return &compatible[0], nil
+	ds := &compatible[0]
+	if !receiver && ds.Type == "prometheus" && ds.JSONData.PrometheusType == "" {
+		subtype, err := c.discoverExternalRulerType(ctx, ds.UID)
+		if err != nil {
+			return nil, err
+		}
+		ds.JSONData.PrometheusType = subtype
+	}
+	return ds, nil
+}
+
+// Follow Grafana's buildinfo discovery for an explicitly selected datasource.
+// Cortex has no buildinfo endpoint. Its ruler is checked by the subsequent
+// group GET before any write. Never probe every datasource during auto-selection.
+func (c *alertingClient) discoverExternalRulerType(ctx context.Context, uid string) (string, error) {
+	path := "/api/datasources/proxy/uid/" + url.PathEscape(uid) + "/api/v1/status/buildinfo"
+	body, status, err := c.externalAlertingRequest(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return "", err
+	}
+	if status == http.StatusNotFound {
+		return "cortex", nil
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("discover datasource ruler type: HTTP %d, configure prometheusType explicitly", status)
+	}
+	var info struct {
+		Status string `json:"status"`
+		Data   struct {
+			Features map[string]string `json:"features"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &info) != nil || info.Status != "success" {
+		return "", fmt.Errorf("invalid datasource buildinfo, configure prometheusType explicitly")
+	}
+	if info.Data.Features["ruler_config_api"] != "true" {
+		return "", fmt.Errorf("datasource does not advertise a writable Mimir ruler API, configure prometheusType explicitly for Cortex")
+	}
+	return "mimir", nil
 }
 
 // Do not surface backend response bodies: configuration APIs can echo secrets.
