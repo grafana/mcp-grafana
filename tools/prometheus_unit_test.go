@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -559,6 +560,51 @@ func TestSelectorUnmarshalJSON(t *testing.T) {
 		err := json.Unmarshal([]byte(`{"datasourceUid":"prometheus","labelName":"job","matches":["{job=\"api\"}"]}`), &params)
 		require.NoError(t, err)
 		require.Len(t, params.Matches, 1)
-		assert.Equal(t, `{job='api'}`, params.Matches[0].String())
+		assert.Equal(t, `{job="api"}`, params.Matches[0].String())
 	})
+}
+
+func TestSelectorStringRoundTrip(t *testing.T) {
+	selectors := []string{
+		`{job="api", env!="dev"}`,
+		`http_requests_total{job="api"}`,
+		`{owner="O'Reilly"}`,
+		`{instance=~"host\\.example\\.com"}`,
+		`{path="C:\\temp"}`,
+		`{msg="line\nbreak"}`,
+		`{"service.name"="api"}`,
+	}
+
+	for _, selector := range selectors {
+		t.Run(selector, func(t *testing.T) {
+			input, err := json.Marshal(selector)
+			require.NoError(t, err)
+			var decoded Selector
+			require.NoError(t, json.Unmarshal(input, &decoded))
+
+			expected, err := promqlParser.ParseMetricSelector(selector)
+			require.NoError(t, err)
+			actual, err := promqlParser.ParseMetricSelector(decoded.String())
+			require.NoError(t, err, "rebuilt selector %s", decoded.String())
+			assert.ElementsMatch(t, matcherStrings(expected), matcherStrings(actual))
+		})
+	}
+
+	t.Run("filters object with quote in value", func(t *testing.T) {
+		selector := Selector{Filters: []LabelMatcher{{Name: "owner", Type: "=", Value: "O'Reilly"}}}
+		assert.Equal(t, `{owner="O'Reilly"}`, selector.String())
+	})
+
+	t.Run("unknown operator is passed through", func(t *testing.T) {
+		selector := Selector{Filters: []LabelMatcher{{Name: "job", Type: "==", Value: "api"}}}
+		assert.Equal(t, `{job=="api"}`, selector.String())
+	})
+}
+
+func matcherStrings(matchers []*labels.Matcher) []string {
+	out := make([]string, 0, len(matchers))
+	for _, m := range matchers {
+		out = append(out, m.String())
+	}
+	return out
 }

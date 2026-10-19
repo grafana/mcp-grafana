@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -410,10 +411,13 @@ func (s Selector) String() string {
 	b := strings.Builder{}
 	b.WriteRune('{')
 	for i, f := range s.Filters {
-		if f.Type == "" {
-			f.Type = "="
+		if matchType, ok := matchTypeMap[f.Type]; ok {
+			m := labels.Matcher{Type: matchType, Name: f.Name, Value: f.Value}
+			b.WriteString(m.String())
+		} else {
+			// Unknown operators pass through unchanged so the backend still rejects them.
+			fmt.Fprintf(&b, "%s%s%s", f.Name, f.Type, strconv.Quote(f.Value))
 		}
-		fmt.Fprintf(&b, `%s%s'%s'`, f.Name, f.Type, f.Value)
 		if i < len(s.Filters)-1 {
 			b.WriteString(", ")
 		}
