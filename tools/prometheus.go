@@ -71,7 +71,7 @@ type QueryPrometheusParams struct {
 	StartTime     string `json:"startTime,omitempty" jsonschema:"description=The start time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	EndTime       string `json:"endTime" jsonschema:"required,description=The end time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
-	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
+	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' (the default) or 'instant'"`
 	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
@@ -122,47 +122,60 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 // queryPrometheusWithWarnings is like queryPrometheus but also returns any
 // warnings the datasource reported, such as partial responses from Thanos.
 func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, error) {
-	if strings.TrimSpace(args.EndTime) == "" {
-		return nil, nil, fmt.Errorf("endTime is required")
+	result, warnings, _, _, err := queryPrometheusWithTimes(ctx, args)
+	return result, warnings, err
+}
+
+// queryPrometheusWithTimes validates args before resolving the backend, runs
+// the query, and also returns the parsed start and end times so callers don't
+// re-parse relative times against a later now. startTime is zero for instant
+// queries.
+func queryPrometheusWithTimes(ctx context.Context, args QueryPrometheusParams) (result model.Value, warnings promv1.Warnings, startTime, endTime time.Time, err error) {
+	endStr := strings.TrimSpace(args.EndTime)
+	if endStr == "" {
+		return nil, nil, startTime, endTime, fmt.Errorf("endTime is required")
 	}
 
 	queryType := args.QueryType
 	if queryType == "" {
 		queryType = "range"
 	}
-
-	endTime, err := parseTime(args.EndTime)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parsing end time: %w", err)
+	if queryType != "range" && queryType != "instant" {
+		return nil, nil, startTime, endTime, fmt.Errorf("invalid queryType %q: must be 'range' or 'instant'", args.QueryType)
 	}
 
-	var startTime time.Time
+	endTime, err = parseTime(endStr)
+	if err != nil {
+		return nil, nil, startTime, endTime, fmt.Errorf("parsing end time: %w", err)
+	}
 
 	if queryType == "range" {
-		if args.StepSeconds == 0 {
-			return nil, nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
+		if args.StepSeconds <= 0 {
+			return nil, nil, startTime, endTime, fmt.Errorf("stepSeconds must be a positive number of seconds when queryType is 'range' (the default); set queryType to 'instant' for a single point in time")
 		}
-		if strings.TrimSpace(args.StartTime) == "" {
-			return nil, nil, fmt.Errorf("startTime must be provided when queryType is 'range'")
+		startStr := strings.TrimSpace(args.StartTime)
+		if startStr == "" {
+			return nil, nil, startTime, endTime, fmt.Errorf("startTime must be provided when queryType is 'range' (the default); set queryType to 'instant' for a single point in time")
 		}
-		startTime, err = parseTime(args.StartTime)
+		startTime, err = parseTime(startStr)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parsing start time: %w", err)
+			return nil, nil, startTime, endTime, fmt.Errorf("parsing start time: %w", err)
 		}
 	}
 
 	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("getting backend: %w", err)
+		return nil, nil, startTime, endTime, fmt.Errorf("getting backend: %w", err)
 	}
 
-	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
+	result, warnings, err = backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
+	return result, warnings, startTime, endTime, err
 }
 
 // queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.
 // This is the MCP tool handler - hints are added at this layer, not in the internal function.
 func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
-	result, warnings, err := queryPrometheusWithWarnings(ctx, args)
+	result, warnings, startTime, endTime, err := queryPrometheusWithTimes(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +187,6 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 
 	// Add hints if the result is empty
 	if isPrometheusResultEmpty(result) {
-		startTime, _ := parseTime(args.StartTime)
-		endTime, _ := parseTime(args.EndTime)
 		response.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: "prometheus",
 			Query:          args.Expr,

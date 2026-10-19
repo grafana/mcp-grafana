@@ -499,6 +499,35 @@ func TestQueryPrometheusRangeRequiresStartTime(t *testing.T) {
 			StepSeconds:   60,
 		})
 		require.Error(t, err)
-		assert.Equal(t, "startTime must be provided when queryType is 'range'", err.Error())
+		assert.Equal(t, "startTime must be provided when queryType is 'range' (the default); set queryType to 'instant' for a single point in time", err.Error())
+	}
+}
+
+// Each case must fail validation before the backend is resolved: there is no
+// Grafana in the context, so reaching backendForDatasource would return a
+// different error.
+func TestQueryPrometheusValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    QueryPrometheusParams
+		wantErr string
+	}{
+		{
+			name:    "unknown queryType",
+			args:    QueryPrometheusParams{QueryType: "Range", StartTime: "now-1h", EndTime: "now", StepSeconds: 60},
+			wantErr: `invalid queryType "Range": must be 'range' or 'instant'`,
+		},
+		{
+			name:    "negative step",
+			args:    QueryPrometheusParams{StartTime: "now-1h", EndTime: "now", StepSeconds: -60},
+			wantErr: "stepSeconds must be a positive number of seconds when queryType is 'range' (the default); set queryType to 'instant' for a single point in time",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.args.DatasourceUID, tc.args.Expr = "prometheus", "up"
+			_, err := queryPrometheusWithHints(context.Background(), tc.args)
+			require.Error(t, err)
+			assert.Equal(t, tc.wantErr, err.Error())
+		})
 	}
 }
