@@ -237,13 +237,13 @@ When dimensions or scale are omitted, defaults depend on the view:
 
 | View | Width (CSS pixels) | Height (CSS pixels) | Scale |
 | --- | --- | --- | --- |
-| Single panel (`panelId` supplied) | 720 | 540 | 2 |
-| Full dashboard (`panelId` omitted) | 1200 | 900 | 2 |
+| Single panel (`panelId` supplied) | 1000 | 750 | 1 |
+| Full dashboard (`panelId` omitted) | 1200 | 900 | 1 |
 | Explore | 1000 | 1000 | 1 |
 
-Panel and dashboard defaults also apply to provisioning previews. Each explicit `width`, `height`, or `scale` overrides only that parameter. Width and height remain capped at 3000, scale accepts 1 through 3, and `height: -1` retains full-page rendering behavior.
+Panel and dashboard defaults also apply to provisioning previews. Each explicit `width`, `height`, or `scale` overrides its view default. Scale is clamped to 1-3. Positive viewport dimensions are capped so each dimension multiplied by scale is at most 3000 pixels. Width must be positive. Height must be positive or `-1` for full-page rendering, whose final height depends on the dashboard. Image responses larger than 10 MiB are rejected.
 
-The renderer applies its own configured viewport limits. Its default minimum width is 1000 CSS pixels, so a request for a 720-pixel panel may be rendered wider. These are requested viewport dimensions, not guaranteed PNG dimensions. See the [image rendering flags](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/flags/).
+The renderer applies its own configured viewport limits. Its default minimum width is 1000 CSS pixels, which the default panel width respects. These are requested viewport dimensions, not guaranteed PNG dimensions. See the [image rendering flags](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/flags/).
 
 ## Next steps
 
