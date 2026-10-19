@@ -168,6 +168,23 @@ func supportedDialectTypes() string {
 
 var sqlIdentifierRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
+// grafanaMacroRe matches a whole $__name token. replaceWholeMacros looks the name up, so a
+// macro that merely starts with a substituted name ($__toTime, $__interval_s, $__to_date) is
+// never touched.
+var grafanaMacroRe = regexp.MustCompile(`\$__([a-zA-Z0-9_]+)`)
+
+// replaceWholeMacros substitutes the macros named in values (without the $__ prefix) and
+// leaves every other $__ token for the datasource plugin, which expands its own macros
+// server-side.
+func replaceWholeMacros(query string, values map[string]string) string {
+	return grafanaMacroRe.ReplaceAllStringFunc(query, func(match string) string {
+		if value, ok := values[match[len("$__"):]]; ok {
+			return value
+		}
+		return match
+	})
+}
+
 func ValidateSQLIdentifier(name, field string) error {
 	if name == "" {
 		return nil

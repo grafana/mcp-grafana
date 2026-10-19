@@ -45,6 +45,16 @@ func TestClickHouseDialect_SubstituteMacros(t *testing.T) {
 			"SELECT toStartOfInterval(ts, INTERVAL greatest($__interval_s, 60) SECOND) FROM logs",
 		},
 		{
+			"plugin macros $__timeInterval(ts) and $__timeInterval_ms(ts) are left for the ClickHouse plugin",
+			"SELECT $__timeInterval(ts) AS t, $__timeInterval_ms(ts) AS t_ms, count() FROM logs GROUP BY t, t_ms",
+			"SELECT $__timeInterval(ts) AS t, $__timeInterval_ms(ts) AS t_ms, count() FROM logs GROUP BY t, t_ms",
+		},
+		{
+			"braced ${__from} and ${__to} are template syntax, not substituted here",
+			"SELECT * FROM logs WHERE t BETWEEN ${__from} AND ${__to}",
+			"SELECT * FROM logs WHERE t BETWEEN ${__from} AND ${__to}",
+		},
+		{
 			"$__from and $__to next to punctuation",
 			"SELECT * FROM logs WHERE t > $__from/1000 AND t < ($__to)",
 			"SELECT * FROM logs WHERE t > 1705312800000/1000 AND t < (1705316400000)",
