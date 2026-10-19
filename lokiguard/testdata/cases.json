@@ -11,6 +11,7 @@
     {"name": "commented-out catch-all is ignored", "logql": "{app=\"x\"} # see {cluster=~\".+\"} for all", "windowSeconds": 3600, "policy": {"maxRangeSeconds": 86400}, "expect": {"verdict": "allow"}},
     {"name": "block comment cannot hide a catch-all", "logql": "{cluster/*x*/=~\".+\"}", "windowSeconds": 3600, "policy": {"maxRangeSeconds": 86400}, "expect": {"verdict": "block", "kinds": ["selector"]}},
     {"name": "unparseable selector", "logql": "{app==\"x\"}", "windowSeconds": 3600, "policy": {"maxRangeSeconds": 86400}, "expect": {"verdict": "unknown", "cause": "unparseable"}},
+    {"name": "unparseable selector still hits the range cap", "logql": "{app==\"x\"}", "windowSeconds": 172800, "policy": {"maxRangeSeconds": 86400}, "expect": {"verdict": "block", "kinds": ["range"]}},
     {"name": "no selector", "logql": "foo", "windowSeconds": 3600, "policy": {"maxRangeSeconds": 86400}, "expect": {"verdict": "unknown", "cause": "unparseable"}},
 
     {"name": "window over the cap", "logql": "{namespace=\"foo\", app=\"bar\"}", "windowSeconds": 172800, "policy": {"maxRangeSeconds": 86400}, "expect": {"verdict": "block", "kinds": ["range"]}},

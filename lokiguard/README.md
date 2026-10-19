@@ -49,7 +49,8 @@ In order, stopping the stats round trips as soon as a cheaper check blocks:
    expression are scanned, so both count.
 
 `Unknown` is a separate verdict, not a form of `Allow`: the scanner found no
-selector it understands, or the estimate failed. Whether that is fatal depends
+selector it understands (and the time-range cap, which needs no selector, did
+not already block the query), or the estimate failed. Whether that is fatal depends
 on the caller. For example, an autonomous agent can block while an interactive
 user is warned.
 

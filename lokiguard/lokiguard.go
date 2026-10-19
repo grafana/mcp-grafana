@@ -154,7 +154,20 @@ type Decision struct {
 func Assess(ctx context.Context, q Query, p Policy, stats StatsFunc) Decision {
 	logql := stripLogQLComments(q.LogQL)
 	selectors := parseLogQLSelectors(logql)
+
+	// Range vectors extend the scan beyond the query window, and instant
+	// queries carry no window at all: their cost is set entirely by the
+	// vector duration ([30d] in count_over_time({...}[30d])).
+	vecDur := maxVectorDuration(logql)
+	rangeReason, hasRangeReason := checkRange(q, p, vecDur)
+
 	if len(selectors) == 0 {
+		// The range check needs no selector, so an over-cap window is still a
+		// Block: otherwise a query shape the scanner does not know would slip
+		// past the cap for callers that tolerate Unknown.
+		if hasRangeReason {
+			return Decision{Verdict: Block, Reasons: []Reason{rangeReason}}
+		}
 		return Decision{Verdict: Unknown, Cause: CauseUnparseable}
 	}
 	raws := make([]string, len(selectors))
@@ -171,32 +184,8 @@ func Assess(ctx context.Context, q Query, p Policy, stats StatsFunc) Decision {
 			})
 		}
 	}
-
-	// Range vectors extend the scan beyond the query window, and instant
-	// queries carry no window at all: their cost is set entirely by the
-	// vector duration ([30d] in count_over_time({...}[30d])).
-	vecDur := maxVectorDuration(logql)
-
-	if p.MaxRange > 0 {
-		window := time.Duration(0)
-		if !q.Instant && !q.Start.IsZero() && !q.End.IsZero() {
-			window = q.End.Sub(q.Start)
-		}
-		// End.Sub(Start) saturates at MaxInt64 for extreme spans, so a plain
-		// addition of vecDur would wrap negative and pass the cap.
-		effective := window
-		if vecDur > 0 && effective > math.MaxInt64-vecDur {
-			effective = math.MaxInt64
-		} else {
-			effective += vecDur
-		}
-		if effective > p.MaxRange {
-			message := fmt.Sprintf("the time range (%s) exceeds the maximum allowed (%s)", effective.Round(time.Minute), p.MaxRange)
-			if vecDur > 0 {
-				message = fmt.Sprintf("the time range (%s, including the %s range vector) exceeds the maximum allowed (%s)", effective.Round(time.Minute), vecDur, p.MaxRange)
-			}
-			d.Reasons = append(d.Reasons, Reason{Kind: KindRange, Message: message})
-		}
+	if hasRangeReason {
+		d.Reasons = append(d.Reasons, rangeReason)
 	}
 
 	// Only spend the index-stats round trips on queries that pass the static
@@ -227,6 +216,34 @@ func Assess(ctx context.Context, q Query, p Policy, stats StatsFunc) Decision {
 		d.Verdict = Block
 	}
 	return d
+}
+
+// checkRange reports whether the effective time range (query window plus the
+// largest range vector) exceeds p.MaxRange.
+func checkRange(q Query, p Policy, vecDur time.Duration) (Reason, bool) {
+	if p.MaxRange <= 0 {
+		return Reason{}, false
+	}
+	window := time.Duration(0)
+	if !q.Instant && !q.Start.IsZero() && !q.End.IsZero() {
+		window = q.End.Sub(q.Start)
+	}
+	// End.Sub(Start) saturates at MaxInt64 for extreme spans, so a plain
+	// addition of vecDur would wrap negative and pass the cap.
+	effective := window
+	if vecDur > 0 && effective > math.MaxInt64-vecDur {
+		effective = math.MaxInt64
+	} else {
+		effective += vecDur
+	}
+	if effective <= p.MaxRange {
+		return Reason{}, false
+	}
+	message := fmt.Sprintf("the time range (%s) exceeds the maximum allowed (%s)", effective.Round(time.Minute), p.MaxRange)
+	if vecDur > 0 {
+		message = fmt.Sprintf("the time range (%s, including the %s range vector) exceeds the maximum allowed (%s)", effective.Round(time.Minute), vecDur, p.MaxRange)
+	}
+	return Reason{Kind: KindRange, Message: message}, true
 }
 
 // statsWindow computes the window for the index/stats estimate. Range
