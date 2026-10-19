@@ -32,11 +32,6 @@
             "groupName": "all non-major dependencies"
         },
         {
-            "description": "Major updates get individual PRs for careful review",
-            "matchUpdateTypes": ["major"],
-            "groupName": null
-        },
-        {
             "description": "Group Docker digest updates and automerge",
             "matchDatasources": ["docker"],
             "matchUpdateTypes": ["digest"],
