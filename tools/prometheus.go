@@ -138,11 +138,8 @@ func queryPrometheusWithTimes(ctx context.Context, args QueryPrometheusParams) (
 		return nil, nil, startTime, endTime, fmt.Errorf("invalid queryType %q: must be 'range' or 'instant'", args.QueryType)
 	}
 
-	endTime, err = parseEndTime(endStr)
-	if err != nil {
-		return nil, nil, startTime, endTime, fmt.Errorf("parsing end time: %w", err)
-	}
-
+	// Parse start before end: each parse reads the clock, so this order keeps
+	// equal relative times like now/now from coming out inverted.
 	if queryType == "range" {
 		if args.StepSeconds <= 0 {
 			return nil, nil, startTime, endTime, fmt.Errorf("stepSeconds must be a positive number of seconds when queryType is 'range' (the default); set queryType to 'instant' for a single point in time")
@@ -155,11 +152,17 @@ func queryPrometheusWithTimes(ctx context.Context, args QueryPrometheusParams) (
 		if err != nil {
 			return nil, nil, startTime, endTime, fmt.Errorf("parsing start time: %w", err)
 		}
-		// Prometheus rejects an inverted range, but VictoriaMetrics and Cloud
-		// Monitoring would collapse it to a single point; fail the same way everywhere.
-		if endTime.Before(startTime) {
-			return nil, nil, startTime, endTime, fmt.Errorf("startTime must not be after endTime")
-		}
+	}
+
+	endTime, err = parseEndTime(endStr)
+	if err != nil {
+		return nil, nil, startTime, endTime, fmt.Errorf("parsing end time: %w", err)
+	}
+
+	// Prometheus rejects an inverted range, but VictoriaMetrics and Cloud
+	// Monitoring would collapse it to a single point; fail the same way everywhere.
+	if queryType == "range" && endTime.Before(startTime) {
+		return nil, nil, startTime, endTime, fmt.Errorf("startTime must not be after endTime")
 	}
 
 	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
