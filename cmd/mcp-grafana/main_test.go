@@ -1424,6 +1424,15 @@ func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 	assert.True(t, listed["generate_deeplink"].Annotations.ReadOnlyHint, "--disable-write should register the read-only variant")
 }
 
+func TestBuildInstructions_NavigationShorteningFollowsWriteOverride(t *testing.T) {
+	readOnly := (&disabledTools{enabledTools: "navigation", write: true}).buildInstructions()
+	assert.Contains(t, readOnly, navigationDescriptionNoShortening)
+	assert.NotContains(t, readOnly, "shortening")
+
+	overridden := (&disabledTools{enabledTools: "navigation", write: true, writeToolOverrides: "generate_deeplink"}).buildInstructions()
+	assert.Contains(t, overridden, categoryDescription["navigation"])
+}
+
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
