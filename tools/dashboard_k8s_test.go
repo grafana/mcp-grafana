@@ -456,7 +456,8 @@ func TestRejectV1BodyOverV2Stored_AllowsNewAndV1(t *testing.T) {
 
 // staleStoredVersionServer serves a dashboard whose status.conversion.storedVersion
 // is a stale "v1" while its v2beta1 view has the given layout, mimicking a
-// dashboard created as v1 and later saved as v2 (#1356). Writes are recorded.
+// dashboard created as v1 and later saved as v2 (#1356). A nil layout makes the
+// v2beta1 read fail. Writes are recorded.
 func staleStoredVersionServer(t *testing.T, layout map[string]interface{}, writes *[]string) *httptest.Server {
 	t.Helper()
 	status := map[string]interface{}{"conversion": map[string]interface{}{"storedVersion": "v1"}}
@@ -480,6 +481,8 @@ func staleStoredVersionServer(t *testing.T, layout map[string]interface{}, write
 				"spec":       map[string]interface{}{"title": "Down-converted", "panels": []interface{}{}},
 				"status":     status,
 			})
+		case strings.Contains(r.URL.Path, "/v2beta1/") && layout == nil:
+			w.WriteHeader(http.StatusInternalServerError)
 		case strings.Contains(r.URL.Path, "/v2beta1/"):
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"apiVersion": "dashboard.grafana.app/v2beta1",
@@ -558,7 +561,33 @@ func TestRejectV1BodyOverV2Stored_StaleV1StoredVersion(t *testing.T) {
 	assert.Empty(t, writes)
 }
 
-func TestHasV2OnlyLayout(t *testing.T) {
+// TestFetchDashboardViaK8s_V2CheckErrorAllowsReadsRefusesWrites verifies a
+// failing v2 read keeps the v1 result readable but blocks v1 writes.
+func TestFetchDashboardViaK8s_V2CheckErrorAllowsReadsRefusesWrites(t *testing.T) {
+	var writes []string
+	ts := staleStoredVersionServer(t, nil, &writes)
+	defer ts.Close()
+	ctx := staleCtx(ts)
+
+	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale")
+	require.NoError(t, err, "reads must not fail when the v2 check does")
+	assert.False(t, res.IsV2)
+	assert.Error(t, res.V2CheckErr)
+
+	_, err = updateDashboard(ctx, UpdateDashboardParams{
+		UID:        "stale",
+		Operations: []PatchOperation{{Op: "replace", Path: "$.title", Value: "x"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot confirm")
+
+	err = rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"uid": "stale", "panels": []interface{}{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot confirm")
+	assert.Empty(t, writes)
+}
+
+func TestIsV1ConvertibleLayout(t *testing.T) {
 	grid := map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}
 	rows := func(rowSpec map[string]interface{}) map[string]interface{} {
 		return map[string]interface{}{"kind": "RowsLayout", "spec": map[string]interface{}{"rows": []interface{}{
@@ -569,17 +598,20 @@ func TestHasV2OnlyLayout(t *testing.T) {
 		layout interface{}
 		want   bool
 	}{
-		"nil":                     {nil, false},
-		"grid":                    {grid, false},
-		"rows of grid":            {rows(map[string]interface{}{"layout": grid}), false},
-		"null conditional":        {rows(map[string]interface{}{"layout": grid, "conditionalRendering": nil}), false},
-		"auto grid":               {autoGridWithConditionalRendering, true},
-		"tabs":                    {map[string]interface{}{"kind": "TabsLayout"}, true},
-		"nested tabs in row":      {rows(map[string]interface{}{"layout": map[string]interface{}{"kind": "TabsLayout"}}), true},
-		"conditional on grid row": {rows(map[string]interface{}{"layout": grid, "conditionalRendering": map[string]interface{}{}}), true},
+		"nil":                     {nil, true},
+		"grid":                    {grid, true},
+		"rows of grid":            {rows(map[string]interface{}{"layout": grid}), true},
+		"null conditional":        {rows(map[string]interface{}{"layout": grid, "conditionalRendering": nil}), true},
+		"auto grid":               {autoGridWithConditionalRendering, false},
+		"tabs":                    {map[string]interface{}{"kind": "TabsLayout"}, false},
+		"unknown kind":            {map[string]interface{}{"kind": "FutureLayout"}, false},
+		"tabs in row":             {rows(map[string]interface{}{"layout": map[string]interface{}{"kind": "TabsLayout"}}), false},
+		"rows in row":             {rows(map[string]interface{}{"layout": rows(map[string]interface{}{"layout": grid})}), false},
+		"row without layout":      {rows(map[string]interface{}{}), false},
+		"conditional on grid row": {rows(map[string]interface{}{"layout": grid, "conditionalRendering": map[string]interface{}{}}), false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.want, hasV2OnlyLayout(tc.layout))
+			assert.Equal(t, tc.want, isV1ConvertibleLayout(tc.layout))
 		})
 	}
 }

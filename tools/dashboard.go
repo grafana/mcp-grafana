@@ -54,6 +54,9 @@ type dashboardResult struct {
 	// Object is the full Kubernetes object (metadata, resourceVersion, status)
 	// when fetched via the k8s API; nil on the legacy path. Needed for writes.
 	Object map[string]interface{}
+	// V2CheckErr is set when checking a v1 result for v2-only content failed
+	// (see fetchV2IfV1Lossy): the result is fine to read but unsafe to save as v1.
+	V2CheckErr error
 }
 
 // DashboardResponse is the get_dashboard_by_uid tool output. It preserves the
@@ -129,6 +132,7 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 	// down-conversion (status.conversion.storedVersion is set even when the
 	// conversion did not error); re-fetch at the stored version to get the
 	// native object.
+	var v2CheckErr error
 	if storedVersion := k8sNestedString(obj, "status", "conversion", "storedVersion"); strings.HasPrefix(storedVersion, "v2") {
 		nativeObj, err := k8s.Get(ctx, dashboardDescriptor(storedVersion), ns, uid)
 		if err != nil {
@@ -136,19 +140,24 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 		}
 		obj = nativeObj
 	} else if v2Obj, err := fetchV2IfV1Lossy(ctx, k8s, ns, uid); err != nil {
-		return nil, err
+		v2CheckErr = err
 	} else if v2Obj != nil {
 		obj = v2Obj
 	}
 
-	return dashboardResultFromK8s(obj)
+	res, err := dashboardResultFromK8s(obj)
+	if err != nil {
+		return nil, err
+	}
+	res.V2CheckErr = v2CheckErr
+	return res, nil
 }
 
 // fetchV2IfV1Lossy reads the dashboard at the preferred served v2 version and
 // returns it when its layout holds content the v1 schema cannot represent, i.e.
 // the dashboard is really v2 despite its storedVersion. It returns nil when no
 // v2 version is served or the v2 view is one a v1 dashboard up-converts to.
-// Errors fail closed: treating a v2 dashboard as v1 would make writes lossy.
+// On error the caller keeps the v1 result for reads but must refuse v1 writes.
 func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns, uid string) (map[string]interface{}, error) {
 	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
 	if err != nil {
@@ -163,34 +172,54 @@ func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns,
 		return nil, fmt.Errorf("get %s dashboard via k8s api %s: %w", version, uid, err)
 	}
 	spec, _ := obj["spec"].(map[string]interface{})
-	if !hasV2OnlyLayout(spec["layout"]) {
+	if isV1ConvertibleLayout(spec["layout"]) {
 		return nil, nil
 	}
 	return obj, nil
 }
 
-// hasV2OnlyLayout reports whether a v2 layout tree contains anything the v1→v2
-// conversion never produces (it only emits GridLayout and RowsLayout without
-// conditional rendering), so a v1 save would drop it.
-// ponytail: heuristic on known v2-only kinds; replace with a trustworthy
-// storedVersion once Grafana stops persisting the stale value.
-func hasV2OnlyLayout(node interface{}) bool {
+// isV1ConvertibleLayout reports whether a v2 layout has a shape the v1→v2
+// conversion produces: a GridLayout, or a RowsLayout whose rows each hold a
+// GridLayout, with no conditional rendering anywhere. Anything else (auto grid,
+// tabs, nested rows, layout kinds added later) would be lost by a v1 save.
+// ponytail: shape heuristic; replace with storedVersion once Grafana stops
+// persisting a stale value there.
+func isV1ConvertibleLayout(layout interface{}) bool {
+	if layout == nil {
+		return true
+	}
+	if hasConditionalRendering(layout) {
+		return false
+	}
+	m, _ := layout.(map[string]interface{})
+	switch safeString(m, "kind") {
+	case "GridLayout":
+		return true
+	case "RowsLayout":
+		for _, row := range safeArray(safeObject(m, "spec"), "rows") {
+			r, _ := row.(map[string]interface{})
+			if safeString(r, "kind") != "RowsLayoutRow" || safeString(safeObject(safeObject(r, "spec"), "layout"), "kind") != "GridLayout" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// hasConditionalRendering reports whether any node in a layout tree sets
+// conditionalRendering, which v1 has no equivalent for.
+func hasConditionalRendering(node interface{}) bool {
 	switch n := node.(type) {
 	case map[string]interface{}:
-		if kind, _ := n["kind"].(string); kind == "AutoGridLayout" || kind == "TabsLayout" {
-			return true
-		}
 		for k, v := range n {
-			if k == "conditionalRendering" && v != nil {
-				return true
-			}
-			if hasV2OnlyLayout(v) {
+			if (k == "conditionalRendering" && v != nil) || hasConditionalRendering(v) {
 				return true
 			}
 		}
 	case []interface{}:
 		for _, v := range n {
-			if hasV2OnlyLayout(v) {
+			if hasConditionalRendering(v) {
 				return true
 			}
 		}
@@ -367,6 +396,9 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	res, err := fetchDashboard(ctx, args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
+	}
+	if res.V2CheckErr != nil {
+		return nil, fmt.Errorf("cannot confirm dashboard %q is safe to save as v1, refusing a possibly lossy write: %w", args.UID, res.V2CheckErr)
 	}
 
 	dashboardMap := res.Spec
@@ -589,6 +621,9 @@ func rejectV1BodyOverV2Stored(ctx context.Context, dashboard map[string]interfac
 	}
 	if err != nil {
 		return fmt.Errorf("check existing dashboard %s: %w", uid, err)
+	}
+	if existing.V2CheckErr != nil {
+		return fmt.Errorf("cannot confirm dashboard %q is safe to replace with a classic v1 body, refusing a possibly lossy write: %w", uid, existing.V2CheckErr)
 	}
 	if existing.IsV2 {
 		return fmt.Errorf("dashboard %q is stored as %s and cannot be replaced with a classic v1 (panels[]) body: Grafana would down-convert it, dropping v2-only content such as tabs. Use patch operations (uid + operations) against the v2 spec, or send a full v2 body (elements/layout); fetch it with get_dashboard_by_uid to see its current v2 structure", uid, existing.APIVersion)
