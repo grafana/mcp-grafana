@@ -110,7 +110,7 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 // getPrometheusCauses returns possible causes for empty Prometheus results
 func getPrometheusCauses(ctx HintContext) []string {
 	causes := []string{
-		"The metric, labels, or time range may not match available series",
+		"The metric, labels, time range or scrape target may have no data.",
 	}
 
 	// Add query-specific causes
@@ -127,7 +127,9 @@ func getPrometheusCauses(ctx HintContext) []string {
 // getPrometheusActions returns suggested actions for empty Prometheus results
 func getPrometheusActions(ctx HintContext) []string {
 	actions := []string{
-		"Use list_prometheus_metric_names and list_prometheus_label_values to check metrics and labels. Try expanding the time range",
+		"Check metrics/labels with list_prometheus_metric_names and list_prometheus_label_values.",
+		"Expand the time range.",
+		"Check scrape target health with up{job=\"...\"}.",
 	}
 
 	// Add query-specific actions
@@ -141,7 +143,7 @@ func getPrometheusActions(ctx HintContext) []string {
 // getLokiCauses returns possible causes for empty Loki results
 func getLokiCauses(ctx HintContext) []string {
 	causes := []string{
-		"The stream selector or time range may not match available logs",
+		"The stream selector, time range or filters may not match available logs.",
 	}
 
 	// Add query-specific causes
@@ -159,7 +161,9 @@ func getLokiCauses(ctx HintContext) []string {
 // getLokiActions returns suggested actions for empty Loki results
 func getLokiActions(ctx HintContext) []string {
 	actions := []string{
-		"Use list_loki_label_names and list_loki_label_values to check labels, then query_loki_stats to check the stream selector. Try expanding the time range",
+		"Check labels with list_loki_label_names and list_loki_label_values.",
+		"Check the stream selector with query_loki_stats.",
+		"Expand the time range.",
 	}
 
 	// Add query-specific actions
@@ -167,7 +171,7 @@ func getLokiActions(ctx HintContext) []string {
 		actions = append(actions, "Try removing pipeline stages to see if the base stream selector matches any logs")
 	}
 	if strings.Contains(ctx.Query, "=~") {
-		actions = append(actions, "Verify regex patterns are correct - use list_loki_label_values to see actual values")
+		actions = append(actions, "Verify regex patterns against the available label values.")
 	}
 
 	return actions

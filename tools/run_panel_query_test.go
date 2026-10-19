@@ -1051,10 +1051,10 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			datasourceType: "prometheus",
 			query:          "rate(http_requests[5m])",
 			containsHints: []string{
-				"No data found",
-				"Time range",
+				"Prometheus query returned no data",
+				"time range",
 				"list_prometheus_metric_names",
-				"Label selectors",
+				"target health",
 			},
 		},
 		{
@@ -1062,8 +1062,8 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			datasourceType: "loki",
 			query:          "{job=\"app\"} |= \"error\"",
 			containsHints: []string{
-				"No data found",
-				"Time range",
+				"Loki query returned no log entries",
+				"time range",
 				"list_loki_label_names",
 				"query_loki_stats",
 			},
