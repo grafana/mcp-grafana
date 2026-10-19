@@ -16,8 +16,8 @@ import (
 )
 
 type externalAlertingWriteKey struct {
-	instance, org, uid, namespace, group string
-	receiver                             bool
+	instance, uid, namespace, group string
+	receiver                        bool
 }
 
 type externalAlertingWriteGate struct {
@@ -38,15 +38,10 @@ func (c *alertingClient) externalWriteKey(ctx context.Context, uid, namespace, g
 	if cfg.OverrideURL != "" {
 		instance = cfg.OverrideURL
 	}
-	org := fmt.Sprint(cfg.OrgID)
-	if cfg.OrgID <= 0 {
-		for name, value := range cfg.ExtraHeaders {
-			if strings.EqualFold(name, "X-Grafana-Org-Id") {
-				org = value
-			}
-		}
-	}
-	return externalAlertingWriteKey{strings.TrimRight(instance, "/"), org, uid, namespace, group, receiver}
+	// The token's default organization is not known locally and may match an
+	// explicit org selector. Share the destination gate across organizations
+	// rather than let implicit and explicit requests race on the same config.
+	return externalAlertingWriteKey{strings.TrimRight(instance, "/"), uid, namespace, group, receiver}
 }
 
 func lockExternalAlertingWrite(ctx context.Context, key externalAlertingWriteKey) (func(), error) {

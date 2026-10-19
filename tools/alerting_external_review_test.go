@@ -138,14 +138,12 @@ func TestExternalWriteIsolationAndCleanup(t *testing.T) {
 	unlock, err := lockExternalAlertingWrite(t.Context(), key)
 	require.NoError(t, err)
 	t.Cleanup(unlock)
-	otherOrg := mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: server.URL, OrgID: 2})
 	otherInstance := mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: server.URL, OverrideURL: "http://another-stack"})
 	for _, other := range []externalAlertingWriteKey{
 		client.externalWriteKey(baseCtx, "another", "team", "group", false),
 		client.externalWriteKey(baseCtx, "mimir", "another", "group", false),
 		client.externalWriteKey(baseCtx, "mimir", "team", "another", false),
 		client.externalWriteKey(baseCtx, "mimir", "", "", true),
-		client.externalWriteKey(otherOrg, "mimir", "team", "group", false),
 		client.externalWriteKey(otherInstance, "mimir", "team", "group", false),
 	} {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -179,4 +177,45 @@ func TestExternalWriteIsolationAndCleanup(t *testing.T) {
 	refs := externalAlertingWrites.gates[key].refs
 	externalAlertingWrites.Unlock()
 	assert.Equal(t, 1, refs, "cancelled waiter must release its reference")
+}
+
+// An omitted organization can resolve to the same destination as an explicit
+// selector. Both rule groups and receiver configurations must share a gate.
+func TestExternalWriteImplicitAndExplicitOrgSerialize(t *testing.T) {
+	for _, receiver := range []bool{false, true} {
+		for i, config := range []mcpgrafana.GrafanaConfig{
+			{OrgID: 1},
+			{ExtraHeaders: map[string]string{"X-Grafana-Org-Id": "1"}},
+			{ExtraHeaders: map[string]string{"x-grafana-org-id": "01"}},
+		} {
+			t.Run(fmt.Sprintf("receiver=%t/selector=%d", receiver, i), func(t *testing.T) {
+				server := httptest.NewServer(http.NotFoundHandler())
+				defer server.Close()
+				implicit := mockDatasourcesCtx(server)
+				client, err := newAlertingClientFromContext(implicit)
+				require.NoError(t, err)
+				config.URL = server.URL
+				explicit := mcpgrafana.WithGrafanaConfig(t.Context(), config)
+				first := client.externalWriteKey(implicit, "mimir", "team", "group", receiver)
+				second := client.externalWriteKey(explicit, "mimir", "team", "group", receiver)
+				unlock, err := lockExternalAlertingWrite(t.Context(), first)
+				require.NoError(t, err)
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+				defer cancel()
+				release, err := lockExternalAlertingWrite(ctx, second)
+				if release != nil {
+					release()
+				}
+				unlock()
+				require.ErrorIs(t, err, context.DeadlineExceeded, "same destination must wait regardless of org selector")
+				release, err = lockExternalAlertingWrite(t.Context(), second)
+				require.NoError(t, err)
+				release()
+				externalAlertingWrites.Lock()
+				_, retained := externalAlertingWrites.gates[first]
+				externalAlertingWrites.Unlock()
+				assert.False(t, retained)
+			})
+		}
+	}
 }
