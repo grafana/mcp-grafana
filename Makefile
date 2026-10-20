@@ -57,6 +57,11 @@ ifeq ($(origin GRAFANA_SERVICE_ACCOUNT_TOKEN), undefined)
 		$(warning GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead)
 	endif
 endif
+	@# The mcptests stack hibernates when idle and returns 503 on every endpoint while it wakes.
+	@# curl retries 503s as transient errors, so this blocks until the stack is up (max 10m).
+	curl -fsS -o /dev/null --retry 60 --retry-delay 10 --retry-max-time 600 \
+		-H "Authorization: Bearer $${GRAFANA_SERVICE_ACCOUNT_TOKEN:-$$GRAFANA_API_KEY}" \
+		https://mcptests.grafana-dev.net/api/frontend/settings
 	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud ./tools
 
 .PHONY: test-python-e2e
