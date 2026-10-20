@@ -551,6 +551,43 @@ func TestFetchDashboardViaK8s_StaleV1StoredVersionGridLayout(t *testing.T) {
 	assert.Equal(t, "Down-converted", safeString(res.Spec, "title"))
 }
 
+// TestFetchDashboardViaK8s_V1DefaultPreferences verifies a v1 dashboard stays
+// v1 when its v2 view carries the GridLayout preference the v1→v2 conversion
+// sets by default (#1368).
+func TestFetchDashboardViaK8s_V1DefaultPreferences(t *testing.T) {
+	var writes []string
+	grid := map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}
+	ts := staleStoredVersionServer(t, map[string]interface{}{
+		"layout":      grid,
+		"preferences": map[string]interface{}{"layout": grid},
+	}, &writes)
+	defer ts.Close()
+
+	ctx := staleCtx(ts)
+	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale", true)
+	require.NoError(t, err)
+	assert.False(t, res.IsV2)
+	assert.Equal(t, "Down-converted", safeString(res.Spec, "title"))
+}
+
+func TestIsDefaultPreferences(t *testing.T) {
+	grid := map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}
+	for name, tc := range map[string]struct {
+		prefs map[string]interface{}
+		want  bool
+	}{
+		"nil":            {nil, true},
+		"grid layout":    {map[string]interface{}{"layout": grid}, true},
+		"auto grid":      {map[string]interface{}{"layout": map[string]interface{}{"kind": "AutoGridLayout"}}, false},
+		"grid with item": {map[string]interface{}{"layout": map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{map[string]interface{}{}}}}}, false},
+		"other key":      {map[string]interface{}{"layout": grid, "other": true}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isDefaultPreferences(tc.prefs))
+		})
+	}
+}
+
 // TestRejectV1BodyOverV2Stored_StaleV1StoredVersion verifies a v1 full-JSON
 // overwrite of a v2-content dashboard with a stale storedVersion is refused.
 func TestRejectV1BodyOverV2Stored_StaleV1StoredVersion(t *testing.T) {
