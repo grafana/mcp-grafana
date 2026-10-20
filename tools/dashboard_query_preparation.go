@@ -1,6 +1,9 @@
 package tools
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // preparePanelQueries reuses execution's saved values, formatting and frontend
 // time macros. Inspection never fetches datasource metadata or variable options.
@@ -30,7 +33,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 	allWarnings := allTemplateSelectionWarnings(db, args.Variables, values)
 	for i := range queries {
 		query := &queries[i]
-		references := substituteGrafanaMacros(variableSearchText(*query), from, to)
+		references := substituteInspectionMacros(variableSearchText(*query), query.Datasource.Type, from, to)
 		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
 			if warning := allWarnings[variable.Name]; warning != "" {
@@ -40,10 +43,21 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery = substituteGrafanaMacros(substituteTemplateVariableValues(query.Query, values), from, to)
+		query.ProcessedQuery = substituteInspectionMacros(substituteTemplateVariableValues(query.Query, values), query.Datasource.Type, from, to)
 		query.Datasource.UID = substituteTemplateVariableValues(query.Datasource.UID, values)
 	}
 	return queries, nil
+}
+
+// CloudWatch and InfluxDB executors forward expressions without expanding
+// frontend time macros. Inspection must preserve the same expression.
+func substituteInspectionMacros(query, datasourceType string, from, to time.Time) string {
+	switch normalizeDatasourceType(datasourceType) {
+	case "cloudwatch", "influxdb":
+		return query
+	default:
+		return substituteGrafanaMacros(query, from, to)
+	}
 }
 
 func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[string]string, values templateVariableValues) map[string]string {

@@ -146,6 +146,7 @@ func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 		result := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
+			rawTarget:  queryTargetFields(safeObject(query, "spec")),
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
 		}
