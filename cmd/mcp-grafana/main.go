@@ -119,6 +119,8 @@ var categoryDescriptionNoQuery = map[string]string{
 	"graphite":     "Graphite: List Graphite metrics and tags. Query execution is disabled.",
 }
 
+const navigationDescriptionNoShortening = "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries."
+
 var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo"}
 
 var mutatingQueryCategories = []string{"sql", "influxdb"}
@@ -143,6 +145,10 @@ func (dt *disabledTools) writeToolOverridden(names ...string) bool {
 
 func (dt *disabledTools) writeToolEnabled(names ...string) bool {
 	return !dt.write || dt.writeToolOverridden(names...)
+}
+
+func (dt *disabledTools) deeplinkShorteningEnabled() bool {
+	return dt.writeToolEnabled(tools.GenerateDeeplink.Tool.Name)
 }
 
 func (dt *disabledTools) queryToolsEnabled(category string) bool {
@@ -389,7 +395,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
 		{tools.AddAdminTools, dt.admin, "admin"},
 		{func(s *mcp.Server) { tools.AddPyroscopeTools(s, enableQueryTools) }, dt.pyroscope, "pyroscope"},
-		{func(s *mcp.Server) { tools.AddNavigationTools(s, enableWriteTools) }, dt.navigation, "navigation"},
+		{func(s *mcp.Server) { tools.AddNavigationTools(s, dt.deeplinkShorteningEnabled()) }, dt.navigation, "navigation"},
 		{func(s *mcp.Server) { tools.AddTempoTools(s, enableQueryTools) }, dt.tempo, "tempo"},
 		{func(s *mcp.Server) { tools.AddAnnotationTools(s, enableWriteTools) }, dt.annotations, "annotations"},
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
@@ -533,6 +539,10 @@ func (dt *disabledTools) buildInstructions() string {
 				capabilities = append(capabilities, desc)
 				continue
 			}
+		}
+		if e.category == "navigation" && !dt.deeplinkShorteningEnabled() {
+			capabilities = append(capabilities, navigationDescriptionNoShortening)
+			continue
 		}
 		if desc, ok := categoryDescription[e.category]; ok {
 			capabilities = append(capabilities, desc)

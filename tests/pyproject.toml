@@ -15,8 +15,10 @@ dependencies = []
 dev = [
     "anyio>=4.9.0",
     "deepeval>=1.0.0",
-    "litellm>=1.88.6,<1.89",
-    "mcp>=1.9.3,<2",
+    "httpx>=0.28",
+    "jsonschema>=4.23",
+    "litellm>=1.105.1,<1.106",
+    "mcp>=2.3,<3",
     "pytest>=9.0.3",
     "pytest-rerunfailures>=15.0",
     "python-dotenv>=1.2.2",
@@ -24,3 +26,4 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-p no:flaky"
+markers = ["llm: drives a real LLM; needs API keys and is non-deterministic"]

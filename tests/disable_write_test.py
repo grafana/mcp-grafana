@@ -57,12 +57,12 @@ async def test_disable_write_flag_disables_write_tools(grafana_env):
             # Verify the read-only alerting_rules_read is present
             assert "alerting_rules_read" in tool_names, "alerting_rules_read should be available with --disable-write flag"
             alerting_tool = next(t for t in tools_result.tools if t.name == "alerting_rules_read")
-            assert alerting_tool.annotations.readOnlyHint is True, "alerting_rules_read should be read-only with --disable-write flag"
+            assert alerting_tool.annotations.read_only_hint is True, "alerting_rules_read should be read-only with --disable-write flag"
 
             # Verify the read-only alerting_silences_read is present
             assert "alerting_silences_read" in tool_names, "alerting_silences_read should be available with --disable-write flag"
             silences_tool = next(t for t in tools_result.tools if t.name == "alerting_silences_read")
-            assert silences_tool.annotations.readOnlyHint is True, "alerting_silences_read should be read-only with --disable-write flag"
+            assert silences_tool.annotations.read_only_hint is True, "alerting_silences_read should be read-only with --disable-write flag"
 
             # Verify read tools ARE still present
             read_tools = [
@@ -119,7 +119,7 @@ async def test_without_disable_write_flag_enables_write_tools(grafana_env):
 
             # Verify the read-write alerting_rules_write is present (with destructive hint)
             alerting_tool = next(t for t in tools_result.tools if t.name == "alerting_rules_write")
-            assert alerting_tool.annotations.destructiveHint is True, "alerting_rules_write should be marked destructive without --disable-write flag"
+            assert alerting_tool.annotations.destructive_hint is True, "alerting_rules_write should be marked destructive without --disable-write flag"
 
             # Verify read tools are also present
             read_tools = [
