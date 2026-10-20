@@ -318,6 +318,16 @@ func TestSubstituteVariables(t *testing.T) {
 			expected: "up{job=\"api-server\"}",
 		},
 		{
+			name:     "double bracket with option inserts literal value",
+			query:    "SELECT [[job:sqlstring]]",
+			expected: "SELECT api-server",
+		},
+		{
+			name:     "unknown formatted double bracket unchanged",
+			query:    "SELECT [[unknown:sqlstring]]",
+			expected: "SELECT [[unknown:sqlstring]]",
+		},
+		{
 			name:     "multiple variables",
 			query:    "up{job=\"$job\", instance=\"$instance\"}",
 			expected: "up{job=\"api-server\", instance=\"localhost:9090\"}",
@@ -409,63 +419,12 @@ func TestFindVariablesInQuery(t *testing.T) {
 
 		require.Len(t, vars, 1)
 	})
-}
 
-func TestBuildEffectiveVariables(t *testing.T) {
-	t.Run("uses current values from dashboard", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{
-			"job": {
-				Name:         "job",
-				CurrentValue: "api-server",
-				DefaultValue: "default-job",
-			},
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, nil)
-
-		assert.Equal(t, "api-server", effective["job"])
-	})
-
-	t.Run("falls back to default when no current value", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{
-			"job": {
-				Name:         "job",
-				CurrentValue: "",
-				DefaultValue: "default-job",
-			},
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, nil)
-
-		assert.Equal(t, "default-job", effective["job"])
-	})
-
-	t.Run("overrides take precedence", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{
-			"job": {
-				Name:         "job",
-				CurrentValue: "api-server",
-				DefaultValue: "default-job",
-			},
-		}
-		overrides := map[string]string{
-			"job": "overridden-job",
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, overrides)
-
-		assert.Equal(t, "overridden-job", effective["job"])
-	})
-
-	t.Run("overrides can add new variables", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{}
-		overrides := map[string]string{
-			"new_var": "new_value",
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, overrides)
-
-		assert.Equal(t, "new_value", effective["new_var"])
+	t.Run("deduplicates formatted bracket and mixed syntax variables", func(t *testing.T) {
+		vars := findVariablesInQuery("[[job:sqlstring]] ${job:raw} $job [[job]]", dashboardVars, map[string]string{"job": "override"})
+		require.Len(t, vars, 1)
+		assert.Equal(t, "job", vars[0].Name)
+		assert.Equal(t, "override", vars[0].CurrentValue)
 	})
 }
 
@@ -491,7 +450,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, dashboardVars, nil)
+		queries := inspectLegacyPanelForTest(t, panel, dashboardVars)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "A", queries[0].RefID)
@@ -521,7 +480,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "target-ds", queries[0].Datasource.UID)
@@ -548,7 +507,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, dashboardVars, nil)
+		queries := inspectLegacyPanelForTest(t, panel, dashboardVars)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "prometheus-prod", queries[0].Datasource.UID)
@@ -560,7 +519,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			"type":  "text",
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		assert.Empty(t, queries)
 	})
@@ -579,7 +538,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 2)
 		assert.Equal(t, "A", queries[0].RefID)
@@ -764,7 +723,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "EC2 CPU", queries[0].Title)
@@ -795,7 +754,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 2)
 		assert.Equal(t, "up", queries[0].Query)
@@ -817,7 +776,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		assert.Empty(t, queries)
 	})
@@ -848,7 +807,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "A", queries[0].RefID)
@@ -856,6 +815,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 
 	t.Run("reports variables referenced by a structured target", func(t *testing.T) {
 		panel := map[string]interface{}{
+			"datasource": map[string]interface{}{"uid": "cw-uid", "type": "cloudwatch"},
 			"targets": []interface{}{
 				map[string]interface{}{
 					"refId":      "A",
@@ -869,7 +829,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			"instance": {Name: "instance", CurrentValue: "i-1234567890"},
 		}
 
-		queries := extractPanelQueries(panel, dashboardVars, nil)
+		queries := inspectLegacyPanelForTest(t, panel, dashboardVars)
 
 		require.Len(t, queries, 1)
 		require.Len(t, queries[0].RequiredVariables, 1)
