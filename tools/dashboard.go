@@ -991,7 +991,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 		result = append(result, queries...)
 	}
 
-	return preparePanelQueries(db, args, result)
+	return preparePanelQueries(db, args, result, extractDashboardVariables(db))
 }
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(

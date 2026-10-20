@@ -28,7 +28,7 @@ func prepareTestPanelQueries(t *testing.T, panel map[string]interface{}, variabl
 		})
 	}
 	queries, err := preparePanelQueries(map[string]interface{}{"templating": map[string]interface{}{"list": list}},
-		DashboardPanelQueriesParams{Variables: map[string]string{}}, extractPanelQueries(panel))
+		DashboardPanelQueriesParams{Variables: map[string]string{}}, extractPanelQueries(panel), variables)
 	require.NoError(t, err)
 	return queries
 }
@@ -37,6 +37,9 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 	for _, v2 := range []bool{false, true} {
 		for _, tc := range []struct {
 			name, query, want string
+			currentText       string
+			omitCurrentValue  bool
+			defaultValue      string
 			current           interface{}
 			overrides         map[string]string
 			all               bool
@@ -52,12 +55,16 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "override", query: "SELECT ${choice:sqlstring}", current: "saved", overrides: map[string]string{"choice": "override"}, want: "SELECT 'override'"},
 			{name: "empty", query: "SELECT '${choice}'", current: "", want: "SELECT ''"},
 			{name: "null", query: "SELECT '${choice}'", want: "SELECT ''"},
+			{name: "null with All label", query: "SELECT '${choice}'", currentText: "All", want: "SELECT ''"},
+			{name: "saved option metadata", query: "SELECT ${choice:sqlstring}", current: "saved", defaultValue: "east", want: "SELECT 'saved'"},
 			{name: "time macros", query: "SELECT $__range_s, $__interval_ms", want: "SELECT 3600, 36000"},
 			{name: "default time range", query: "SELECT $__range_s", want: "SELECT 3600", defaultRange: true},
 			{name: "constant fallback", query: "SELECT ${choice:sqlstring}", kind: "Constant", fallback: "constant", want: "SELECT 'constant'"},
 			{name: "textbox fallback", query: "SELECT ${choice:sqlstring}", kind: "Textbox", fallback: "text", want: "SELECT 'text'"},
 			{name: "capture reference", query: "SELECT '$1'", want: "SELECT '$1'"},
 			{name: "All scalar", query: "SELECT ${choice:sqlstring}", current: "$__all", all: true},
+			{name: "text-only All", query: "SELECT ${choice:sqlstring}", currentText: "All", omitCurrentValue: true, all: true},
+			{name: "text-only All override", query: "SELECT ${choice:sqlstring}", currentText: "All", omitCurrentValue: true, overrides: map[string]string{"choice": "east"}, want: "SELECT 'east'"},
 			{name: "All array", query: "SELECT ${choice:sqlstring}", current: []interface{}{"$__all"}, all: true},
 			{name: "All with stale array entries", query: "SELECT ${choice:sqlstring}", current: []interface{}{"$__all", "east"}, all: true},
 			{name: "bracketed All", query: "SELECT [[choice:sqlstring]]", current: "$__all", all: true},
@@ -69,6 +76,16 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
 				variable := map[string]interface{}{"name": "choice", "type": "query", "datasource": nil,
 					"current": map[string]interface{}{"value": tc.current}}
+				current := safeObject(variable, "current")
+				if tc.currentText != "" {
+					current["text"] = tc.currentText
+				}
+				if tc.omitCurrentValue {
+					delete(current, "value")
+				}
+				if tc.defaultValue != "" {
+					variable["options"] = []interface{}{map[string]interface{}{"value": tc.defaultValue}}
+				}
 				kind := "Query"
 				if tc.kind != "" {
 					kind = tc.kind
@@ -175,6 +192,13 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 					return
 				}
 				require.Empty(t, queries[0].Warnings)
+				if tc.defaultValue != "" {
+					require.Len(t, queries[0].RequiredVariables, 1)
+					assert.Equal(t, tc.defaultValue, queries[0].RequiredVariables[0].DefaultValue)
+				}
+				if tc.name == "time macros" || tc.defaultRange {
+					assert.Empty(t, queries[0].RequiredVariables, "resolved frontend macros are not dashboard variables")
+				}
 				assert.Equal(t, tc.want, queries[0].ProcessedQuery)
 				assert.Equal(t, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, queries[0].Datasource)
 				result, err := runPanelQuery(ctx, RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1}, Variables: tc.overrides, Start: args.Start, End: args.End})

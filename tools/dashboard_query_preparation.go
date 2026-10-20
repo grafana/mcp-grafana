@@ -4,7 +4,7 @@ import "fmt"
 
 // preparePanelQueries reuses execution's saved values, formatting and frontend
 // time macros. Inspection never fetches datasource metadata or variable options.
-func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesParams, queries []panelQuery) ([]panelQuery, error) {
+func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesParams, queries []panelQuery, definitions map[string]VariableInfo) ([]panelQuery, error) {
 	if args.Variables == nil && args.Start == "" && args.End == "" {
 		return queries, nil
 	}
@@ -27,7 +27,6 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 	for name, value := range args.Variables {
 		values[name] = []string{value}
 	}
-	definitions := extractDashboardVariables(db)
 	allSelections := make(map[string]bool)
 	for _, item := range safeArray(safeObject(db, "templating"), "list") {
 		variable, ok := item.(map[string]interface{})
@@ -35,15 +34,19 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 			continue
 		}
 		name := safeString(variable, "name")
-		selection := safeObject(variable, "current")["value"]
+		current := safeObject(variable, "current")
+		selection, hasValue := current["value"]
 		if override, ok := args.Variables[name]; ok {
 			selection = override
+			hasValue = true
 		}
-		allSelections[name] = isAllTemplateSelection(selection)
+		_, resolved := values[name]
+		allSelections[name] = isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All")
 	}
 	for i := range queries {
 		query := &queries[i]
-		query.RequiredVariables = findVariablesInQuery(variableSearchText(*query)+" "+query.Datasource.UID, definitions, args.Variables)
+		references := substituteGrafanaMacros(variableSearchText(*query), from, to)
+		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
 			if allSelections[variable.Name] || args.Variables[variable.Name] == "$__all" {
 				query.Warnings = append(query.Warnings, fmt.Sprintf("Variable %q is set to All. Supply an explicit value in variables.", variable.Name))

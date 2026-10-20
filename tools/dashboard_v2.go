@@ -98,7 +98,7 @@ func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesPa
 	for _, panel := range panels {
 		result = append(result, extractPanelQueriesV2(panel)...)
 	}
-	return preparePanelQueries(templatingV1FromV2(spec), args, result)
+	return preparePanelQueries(templatingV1FromV2(spec), args, result, extractDashboardVariablesV2(spec))
 }
 
 // extractPanelQueriesV2 extracts all queries from a v2 panel spec. The query
