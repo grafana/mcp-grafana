@@ -12,6 +12,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -385,6 +386,18 @@ type Selector struct {
 	Filters []LabelMatcher `json:"filters"`
 }
 
+// JSONSchemaExtend advertises the selector string form accepted by UnmarshalJSON
+// alongside the reflected filters object.
+func (Selector) JSONSchemaExtend(schema *jsonschema.Schema) {
+	object := *schema
+	*schema = jsonschema.Schema{
+		OneOf: []*jsonschema.Schema{
+			{Type: "string", Description: `A Prometheus selector such as {job="api"}`},
+			&object,
+		},
+	}
+}
+
 // UnmarshalJSON also accepts a Prometheus selector string such as '{job="api"}',
 // the form LLM callers commonly send instead of the filters object.
 func (s *Selector) UnmarshalJSON(data []byte) error {
@@ -392,14 +405,6 @@ func (s *Selector) UnmarshalJSON(data []byte) error {
 		var selector string
 		if err := json.Unmarshal(data, &selector); err != nil {
 			return err
-		}
-		if matchers, err := promqlParser.ParseMetricSelector(selector); err == nil {
-			filters := make([]LabelMatcher, 0, len(matchers))
-			for _, m := range matchers {
-				filters = append(filters, LabelMatcher{Name: m.Name, Type: m.Type.String(), Value: m.Value})
-			}
-			*s = Selector{Filters: filters}
-			return nil
 		}
 		parsed, err := parseSelectorStrings([]string{selector})
 		if err != nil {
@@ -429,6 +434,19 @@ func (s Selector) String() string {
 	}
 	b.WriteRune('}')
 	return b.String()
+}
+
+// selectorMatchers renders selectors as match[] values. Empty selectors (often ""
+// from LLMs) filter nothing and Prometheus rejects match[]={}, so they are skipped.
+func selectorMatchers(selectors []Selector) []string {
+	var matchers []string
+	for _, s := range selectors {
+		if len(s.Filters) == 0 {
+			continue
+		}
+		matchers = append(matchers, s.String())
+	}
+	return matchers
 }
 
 // Matches runs the matchers against the given labels and returns whether they match the selector.
@@ -481,10 +499,7 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	var matchers []string
-	for _, m := range args.Matches {
-		matchers = append(matchers, m.String())
-	}
+	matchers := selectorMatchers(args.Matches)
 
 	labelNames, err := backend.LabelNames(ctx, matchers, startTime, endTime)
 	if err != nil {
@@ -541,10 +556,7 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	var matchers []string
-	for _, m := range args.Matches {
-		matchers = append(matchers, m.String())
-	}
+	matchers := selectorMatchers(args.Matches)
 
 	values, err := backend.LabelValues(ctx, args.LabelName, matchers, startTime, endTime)
 	if err != nil {

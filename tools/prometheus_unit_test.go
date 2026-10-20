@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
@@ -529,6 +530,29 @@ func TestSelectorUnmarshalJSON(t *testing.T) {
 			expected: Selector{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}},
 		},
 		{
+			name:  "unquoted value next to a quoted value containing an equals sign",
+			input: `"{path=\"/a?b=c\", severity=critical}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "path", Type: "=", Value: "/a?b=c"},
+				{Name: "severity", Type: "=", Value: "critical"},
+			}},
+		},
+		{
+			name:     "empty string",
+			input:    `""`,
+			expected: Selector{},
+		},
+		{
+			name:     "blank string",
+			input:    `"  "`,
+			expected: Selector{},
+		},
+		{
+			name:     "empty braces",
+			input:    `"{}"`,
+			expected: Selector{},
+		},
+		{
 			name:     "filters object",
 			input:    `{"filters":[{"name":"job","value":"api","type":"="}]}`,
 			expected: Selector{Filters: []LabelMatcher{{Name: "job", Type: "=", Value: "api"}}},
@@ -552,7 +576,7 @@ func TestSelectorUnmarshalJSON(t *testing.T) {
 		var selector Selector
 		err := json.Unmarshal([]byte(`"not a selector{"`), &selector)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid label selector")
+		assert.Contains(t, err.Error(), `invalid label selector "not a selector{"`)
 	})
 
 	t.Run("label values params with selector strings", func(t *testing.T) {
@@ -599,6 +623,41 @@ func TestSelectorStringRoundTrip(t *testing.T) {
 		selector := Selector{Filters: []LabelMatcher{{Name: "job", Type: "==", Value: "api"}}}
 		assert.Equal(t, `{job=="api"}`, selector.String())
 	})
+}
+
+func TestSelectorMatchersSkipsEmptySelectors(t *testing.T) {
+	selectors := []Selector{
+		{},
+		{Filters: []LabelMatcher{{Name: "job", Type: "=", Value: "api"}}},
+		{Filters: []LabelMatcher{}},
+	}
+	assert.Equal(t, []string{`{job="api"}`}, selectorMatchers(selectors))
+	assert.Empty(t, selectorMatchers([]Selector{{}}))
+}
+
+func TestSelectorInputSchemaAcceptsString(t *testing.T) {
+	for _, tool := range []mcpgrafana.Tool{ListPrometheusLabelNames, ListPrometheusLabelValues} {
+		t.Run(tool.Tool.Name, func(t *testing.T) {
+			raw, err := json.Marshal(tool.Tool.InputSchema)
+			require.NoError(t, err)
+			var schema struct {
+				Properties map[string]struct {
+					Items struct {
+						OneOf []struct {
+							Type       string         `json:"type"`
+							Properties map[string]any `json:"properties"`
+						} `json:"oneOf"`
+					} `json:"items"`
+				} `json:"properties"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			oneOf := schema.Properties["matches"].Items.OneOf
+			require.Len(t, oneOf, 2)
+			assert.Equal(t, "string", oneOf[0].Type)
+			assert.Equal(t, "object", oneOf[1].Type)
+			assert.Contains(t, oneOf[1].Properties, "filters")
+		})
+	}
 }
 
 func matcherStrings(matchers []*labels.Matcher) []string {

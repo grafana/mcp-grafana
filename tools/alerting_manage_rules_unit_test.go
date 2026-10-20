@@ -1686,6 +1686,16 @@ func TestQuoteUnquotedLabelValues(t *testing.T) {
 			expected: `{env!~"staging.*"}`,
 		},
 		{
+			name:     "equals sign inside quoted value unchanged",
+			input:    `{path="/a?b=c", severity=critical}`,
+			expected: `{path="/a?b=c", severity="critical"}`,
+		},
+		{
+			name:     "single-quoted value unchanged",
+			input:    `{team='a=b', env=dev}`,
+			expected: `{team='a=b', env="dev"}`,
+		},
+		{
 			name:     "empty selector",
 			input:    `{}`,
 			expected: `{}`,
@@ -1736,6 +1746,19 @@ func TestParseSelectorStrings_UnquotedValues(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, selectors, 1)
 		require.Equal(t, "critical", selectors[0].Filters[0].Value)
+	})
+
+	t.Run("accepts equals sign inside quoted value", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`{path="/search?q=abc"}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.Equal(t, "/search?q=abc", selectors[0].Filters[0].Value)
+	})
+
+	t.Run("error quotes the original selector", func(t *testing.T) {
+		_, err := parseSelectorStrings([]string{`{severity=}`})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `invalid label selector "{severity=}"`)
 	})
 }
 

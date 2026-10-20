@@ -18,9 +18,10 @@ var validAlertStates = map[string]bool{
 	"recovering": true, "nodata": true, "error": true,
 }
 
-// unquotedLabelValueRe matches a label matcher operator followed by an unquoted
-// value. Values already starting with " are excluded by [^"}.
-var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
+// unquotedLabelValueRe matches either a quoted string, which is left untouched so
+// operators inside quoted values are never rewritten, or a label matcher operator
+// followed by an unquoted value.
+var unquotedLabelValueRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(!=|!~|=~|=)\s*([^"'}\s,~][^},]*)`)
 
 // quoteUnquotedLabelValues adds double quotes around unquoted label values in
 // Prometheus-style selectors. LLMs frequently omit the required quotes, e.g.
@@ -28,13 +29,7 @@ var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
 func quoteUnquotedLabelValues(s string) string {
 	return unquotedLabelValueRe.ReplaceAllStringFunc(s, func(match string) string {
 		groups := unquotedLabelValueRe.FindStringSubmatch(match)
-		if len(groups) < 3 {
-			return match
-		}
-		// When "=" matched but the value starts with "~", the actual operator
-		// is "=~" with an already-quoted value — the regex fell back from =~ to
-		// = because " didn't match the value-start character class.
-		if groups[1] == "=" && strings.HasPrefix(groups[2], "~") {
+		if groups[1] == "" {
 			return match
 		}
 		return groups[1] + `"` + strings.TrimSpace(groups[2]) + `"`
@@ -520,13 +515,18 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 	var result []Selector
 	for _, s := range strs {
 		s = strings.TrimSpace(s)
-		if !strings.HasPrefix(s, "{") {
-			s = "{" + s + "}"
-		}
-		s = quoteUnquotedLabelValues(s)
-		parsed, err := promqlParser.ParseMetricSelector(s)
-		if err != nil {
-			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
+		// Parse strictly first: normalization would rewrite some valid selectors,
+		// such as bare metric names.
+		parsed, strictErr := promqlParser.ParseMetricSelector(s)
+		if strictErr != nil {
+			normalized := s
+			if !strings.HasPrefix(normalized, "{") {
+				normalized = "{" + normalized + "}"
+			}
+			var err error
+			if parsed, err = promqlParser.ParseMetricSelector(quoteUnquotedLabelValues(normalized)); err != nil {
+				return nil, fmt.Errorf("invalid label selector %q: %w", s, strictErr)
+			}
 		}
 		var filters []LabelMatcher
 		for _, m := range parsed {
