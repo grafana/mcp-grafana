@@ -26,9 +26,10 @@ func (p ListContactPointsParams) validate() error {
 }
 
 type contactPointSummary struct {
-	UID  string  `json:"uid"`
-	Name string  `json:"name"`
-	Type *string `json:"type,omitempty"`
+	UID           string  `json:"uid"`
+	Name          string  `json:"name"`
+	Type          *string `json:"type,omitempty"`
+	DatasourceUID string  `json:"datasource_uid,omitempty"`
 }
 
 func createContactPoint(ctx context.Context, args ManageRoutingWriteParams) (*contactPointSummary, error) {
