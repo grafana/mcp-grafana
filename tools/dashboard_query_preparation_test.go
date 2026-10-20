@@ -1,0 +1,189 @@
+//go:build unit
+
+package tools
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Existing extraction tests retain their preparation assertions through the
+// same helper used by the public inspection handler.
+func prepareTestPanelQueries(t *testing.T, panel map[string]interface{}, variables map[string]VariableInfo) []panelQuery {
+	t.Helper()
+	list := make([]interface{}, 0, len(variables))
+	for name, variable := range variables {
+		list = append(list, map[string]interface{}{
+			"name": name, "current": map[string]interface{}{"value": variable.CurrentValue},
+		})
+	}
+	queries, err := preparePanelQueries(map[string]interface{}{"templating": map[string]interface{}{"list": list}},
+		DashboardPanelQueriesParams{Variables: map[string]string{}}, extractPanelQueries(panel))
+	require.NoError(t, err)
+	return queries
+}
+
+func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, query, want string
+			current           interface{}
+			overrides         map[string]string
+			all               bool
+			kind, fallback    string
+			datasource        string
+			raw, defaultRange bool
+		}{
+			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
+			{name: "multi-value glob", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, want: "SELECT '{east,west}'"},
+			{name: "bracketed sqlstring", query: "SELECT [[choice:sqlstring]]", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
+			{name: "quoted value", query: "SELECT ${choice:sqlstring}", current: "O'Reilly", want: "SELECT 'O''Reilly'"},
+			{name: "quoted list is saved data", query: "SELECT ${choice:sqlstring}", current: "'east','west'", want: "SELECT '''east'',''west'''"},
+			{name: "override", query: "SELECT ${choice:sqlstring}", current: "saved", overrides: map[string]string{"choice": "override"}, want: "SELECT 'override'"},
+			{name: "empty", query: "SELECT '${choice}'", current: "", want: "SELECT ''"},
+			{name: "null", query: "SELECT '${choice}'", want: "SELECT ''"},
+			{name: "time macros", query: "SELECT $__range_s, $__interval_ms", want: "SELECT 3600, 36000"},
+			{name: "default time range", query: "SELECT $__range_s", want: "SELECT 3600", defaultRange: true},
+			{name: "constant fallback", query: "SELECT ${choice:sqlstring}", kind: "Constant", fallback: "constant", want: "SELECT 'constant'"},
+			{name: "textbox fallback", query: "SELECT ${choice:sqlstring}", kind: "Textbox", fallback: "text", want: "SELECT 'text'"},
+			{name: "capture reference", query: "SELECT '$1'", want: "SELECT '$1'"},
+			{name: "All scalar", query: "SELECT ${choice:sqlstring}", current: "$__all", all: true},
+			{name: "All array", query: "SELECT ${choice:sqlstring}", current: []interface{}{"$__all"}, all: true},
+			{name: "All with stale array entries", query: "SELECT ${choice:sqlstring}", current: []interface{}{"$__all", "east"}, all: true},
+			{name: "bracketed All", query: "SELECT [[choice:sqlstring]]", current: "$__all", all: true},
+			{name: "All override", query: "SELECT ${choice:sqlstring}", current: "$__all", overrides: map[string]string{"choice": "east"}, want: "SELECT 'east'"},
+			{name: "unreferenced All", query: "SELECT 1", current: "$__all", want: "SELECT 1"},
+			{name: "datasource variable", query: "SELECT 1", datasource: "$source", want: "SELECT 1"},
+			{name: "raw inspection", query: "SELECT ${choice:sqlstring}", current: "$__all", raw: true},
+		} {
+			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
+				variable := map[string]interface{}{"name": "choice", "type": "query", "datasource": nil,
+					"current": map[string]interface{}{"value": tc.current}}
+				kind := "Query"
+				if tc.kind != "" {
+					kind = tc.kind
+					variable["type"] = strings.ToLower(kind)
+					variable["query"] = tc.fallback
+					delete(variable, "current")
+				}
+				if kind == "Textbox" {
+					kind = "Text"
+				}
+				ds := map[string]interface{}{"uid": "postgres-uid", "type": "postgres"}
+				panelUID := "postgres-uid"
+				if tc.datasource != "" {
+					panelUID = tc.datasource
+				}
+				db := map[string]interface{}{
+					"templating": map[string]interface{}{"list": []interface{}{variable}},
+					"panels": []interface{}{map[string]interface{}{
+						"id": float64(1), "datasource": map[string]interface{}{"uid": panelUID, "type": "postgres"},
+						"targets": []interface{}{map[string]interface{}{"refId": "A", "rawSql": tc.query, "datasource": map[string]interface{}{"uid": panelUID}}},
+					}},
+				}
+				if v2 {
+					db = map[string]interface{}{
+						"variables": []interface{}{map[string]interface{}{"kind": kind + "Variable", "spec": variable}},
+						"elements": map[string]interface{}{"panel": map[string]interface{}{"kind": "Panel", "spec": map[string]interface{}{
+							"id": float64(1), "data": map[string]interface{}{"spec": map[string]interface{}{"queries": []interface{}{
+								map[string]interface{}{"spec": map[string]interface{}{"refId": "A", "query": map[string]interface{}{
+									"group": "postgres", "datasource": map[string]interface{}{"name": panelUID}, "spec": map[string]interface{}{"rawSql": tc.query},
+								}}},
+							}}},
+						}}},
+					}
+				}
+				if tc.datasource != "" {
+					source := map[string]interface{}{"name": "source", "type": "datasource", "current": map[string]interface{}{"value": "postgres-uid"}}
+					if v2 {
+						db["variables"] = append(safeArray(db, "variables"), map[string]interface{}{"kind": "DatasourceVariable", "spec": source})
+					} else {
+						safeObject(db, "templating")["list"] = append(safeArray(safeObject(db, "templating"), "list"), source)
+					}
+				}
+				var submitted string
+				queryCalls, metadataCalls := 0, 0
+				ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if v2 && serveDashboardDiscovery(w, r, "v1beta1", "v2beta1") {
+						return
+					}
+					switch {
+					case r.URL.Path == "/api/datasources/uid/postgres-uid":
+						metadataCalls++
+						_ = json.NewEncoder(w).Encode(ds)
+					case r.URL.Path == "/api/dashboards/uid/test":
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{"dashboard": db})
+					case v2 && strings.Contains(r.URL.Path, "/v1beta1/"):
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": map[string]interface{}{"conversion": map[string]interface{}{"storedVersion": "v2beta1"}}})
+					case v2 && strings.Contains(r.URL.Path, "/v2beta1/"):
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{"apiVersion": "dashboard.grafana.app/v2beta1", "spec": db})
+					case r.URL.Path == "/api/ds/query":
+						queryCalls++
+						var payload map[string]interface{}
+						require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+						submitted = safeString(safeArray(payload, "queries")[0].(map[string]interface{}), "rawSql")
+						frames := data.Frames{data.NewFrame("", data.NewField("value", nil, []int64{1}))}
+						_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: frames}}})
+					default:
+						metadataCalls++
+						t.Errorf("unexpected request: %s", r.URL.Path)
+						http.NotFound(w, r)
+					}
+				}))
+				t.Cleanup(ts.Close)
+				ctx := enforceTestCtx(ts, false)
+				if v2 {
+					ctx = mcpgrafana.WithKubernetesClient(ctx, &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()})
+				}
+				variables := tc.overrides
+				if variables == nil {
+					variables = map[string]string{}
+				}
+				args := DashboardPanelQueriesParams{UID: "test", Variables: variables, Start: "1704067200000", End: "1704070800000"}
+				if tc.defaultRange {
+					args.Start, args.End = "", ""
+				}
+				if tc.raw {
+					args = DashboardPanelQueriesParams{UID: "test"}
+				}
+				queries, err := GetDashboardPanelQueriesTool(ctx, args)
+				require.NoError(t, err)
+				require.Len(t, queries, 1)
+				assert.Zero(t, queryCalls, "inspection must not execute option queries")
+				assert.Zero(t, metadataCalls, "inspection must not resolve datasource types via the API")
+				if tc.raw {
+					assert.Equal(t, tc.query, queries[0].Query)
+					assert.Empty(t, queries[0].ProcessedQuery)
+					assert.Empty(t, queries[0].Warnings)
+					return
+				}
+				if tc.all {
+					require.Len(t, queries[0].Warnings, 1)
+					assert.Contains(t, queries[0].Warnings[0], "Supply an explicit value")
+					assert.Empty(t, queries[0].ProcessedQuery)
+					return
+				}
+				require.Empty(t, queries[0].Warnings)
+				assert.Equal(t, tc.want, queries[0].ProcessedQuery)
+				assert.Equal(t, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, queries[0].Datasource)
+				result, err := runPanelQuery(ctx, RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1}, Variables: tc.overrides, Start: args.Start, End: args.End})
+				require.NoError(t, err)
+				require.Empty(t, result.Errors)
+				assert.Equal(t, queries[0].ProcessedQuery, submitted)
+				assert.Equal(t, 1, queryCalls)
+				assert.Equal(t, queries[0].Datasource.UID, result.Results[1].DatasourceUID)
+			})
+		}
+	}
+}
