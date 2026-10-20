@@ -54,7 +54,7 @@ func TestFindPanelByIDV2(t *testing.T) {
 func TestGetPanelQueriesV2(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 
-	queries, err := getPanelQueriesV2(spec, DashboardPanelQueriesParams{UID: "v2-test-uid"})
+	queries, err := getPanelQueriesV2(spec, nil)
 	require.NoError(t, err)
 	require.Len(t, queries, 2)
 
@@ -69,15 +69,17 @@ func TestGetPanelQueriesV2(t *testing.T) {
 	assert.Equal(t, "loki-uid", queries[1].Datasource.UID)
 }
 
-func TestGetPanelQueriesV2_WithVariableSubstitution(t *testing.T) {
+func TestPreparedPanelQueriesV2_WithVariableSubstitution(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 
-	queries, err := getPanelQueriesV2(spec, DashboardPanelQueriesParams{
+	args := DashboardPanelQueriesParams{
 		UID:       "v2-test-uid",
 		PanelID:   intPtrV2(1),
 		Variables: map[string]string{"job": "web"},
-	})
+	}
+	queries, err := getPanelQueriesV2(spec, args.PanelID)
 	require.NoError(t, err)
+	queries = prepareInspectedQueries(t.Context(), templatingV1FromV2(spec), args, queries)
 	require.Len(t, queries, 1)
 
 	assert.Equal(t, `rate(cpu_seconds_total{job="web"}[5m])`, queries[0].ProcessedQuery)
@@ -113,7 +115,7 @@ func TestExtractPanelQueriesV2_StructuredTarget(t *testing.T) {
 		},
 	}
 
-	queries := extractPanelQueriesV2(panel, nil, nil)
+	queries := extractPanelQueriesV2(panel)
 
 	require.Len(t, queries, 1)
 	assert.Equal(t, "EC2 CPU", queries[0].Title)
@@ -128,10 +130,10 @@ func TestExtractPanelQueriesV2_StructuredTarget(t *testing.T) {
 	assert.Equal(t, "cloudwatch", queries[0].Datasource.Type)
 }
 
-func TestExtractDashboardVariablesV2(t *testing.T) {
+func TestConvertedDashboardVariablesV2(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 
-	vars := extractDashboardVariablesV2(spec)
+	vars := extractDashboardVariables(templatingV1FromV2(spec))
 	require.Contains(t, vars, "job")
 	require.Contains(t, vars, "env")
 	assert.Equal(t, "api", vars["job"].CurrentValue)

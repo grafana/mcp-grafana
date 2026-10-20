@@ -182,23 +182,30 @@ func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 	return result
 }
 
+// extractPanelDatasource inherits the panel type when both references name
+// the same datasource. A different target UID must resolve its own type.
+func extractPanelDatasource(panel, target map[string]interface{}) datasourceInfo {
+	ds := safeObject(target, "datasource")
+	panelDS := safeObject(panel, "datasource")
+	if safeString(ds, "uid") == "" {
+		ds = panelDS
+	}
+	info := datasourceInfo{UID: safeString(ds, "uid"), Type: safeString(ds, "type")}
+	if info.Type == "" && info.UID == safeString(panelDS, "uid") {
+		info.Type = safeString(panelDS, "type")
+	}
+	return info
+}
+
 // extractPanelQueries extracts all queries from a panel.
-// When dashboardVars is non-nil, performs variable analysis and substitution,
-// populating ProcessedQuery and RequiredVariables fields.
-func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+// Preparation is handled separately by prepareInspectedQueries.
+func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
 	targets := safeArray(panel, "targets")
 	if targets == nil {
 		return queries
-	}
-
-	// Get panel-level datasource if set
-	var panelDs datasourceInfo
-	if dsField := safeObject(panel, "datasource"); dsField != nil {
-		panelDs.UID = safeString(dsField, "uid")
-		panelDs.Type = safeString(dsField, "type")
 	}
 
 	for _, t := range targets {
@@ -213,21 +220,14 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 		rawQuery := extractQueryExpression(target)
 
 		// Get datasource from target or fall back to panel level
-		dsInfo := panelDs
-		if targetDs := safeObject(target, "datasource"); targetDs != nil {
-			if uid := safeString(targetDs, "uid"); uid != "" {
-				dsInfo.UID = uid
-			}
-			if dsType := safeString(targetDs, "type"); dsType != "" {
-				dsInfo.Type = dsType
-			}
-		}
+		dsInfo := extractPanelDatasource(panel, target)
 
 		pq := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
 			Datasource: dsInfo,
 			RefID:      refID,
+			rawTarget:  target,
 		}
 
 		// Targets built in a datasource's visual editor carry no string
@@ -238,18 +238,6 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 				continue
 			}
 			pq.Target = queryTargetFields(target)
-		}
-
-		// Only do variable processing when dashboardVars is provided
-		if dashboardVars != nil {
-			// A structured target has nothing runnable to substitute into, but it
-			// can still reference variables (a CloudWatch dimension of
-			// "$instance", say), so report those as required too.
-			pq.RequiredVariables = findVariablesInQuery(variableSearchText(pq), dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			pq.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			pq.Datasource = dsInfo
 		}
 
 		queries = append(queries, pq)
@@ -392,6 +380,18 @@ func queryTargetFields(target map[string]interface{}) map[string]interface{} {
 	return fields
 }
 
+// sqlQueryDependencyFields excludes frontend state ignored by the supported
+// SQL backends. Preserve execution fields such as format and connectionArgs.
+func sqlQueryDependencyFields(target map[string]interface{}) map[string]interface{} {
+	fields := queryTargetFields(target)
+	// The executor writes the selected expression into rawSql. Other saved
+	// expression aliases are inactive, even when they contain variables.
+	for _, field := range []string{"expr", "query", "expression", "rawSql", "rawSQL", "target", "sql", "legendFormat"} {
+		delete(fields, field)
+	}
+	return fields
+}
+
 // isEmptyTargetValue reports whether a target field is set but carries no
 // information, which query editors leave behind routinely.
 func isEmptyTargetValue(val interface{}) bool {
@@ -409,30 +409,50 @@ func isEmptyTargetValue(val interface{}) bool {
 	}
 }
 
-// variableSearchText returns the text of a panel query to scan for template
-// variable references: the expression when there is one, otherwise the target's
-// JSON, which catches variables used inside structured fields such as a
-// CloudWatch dimension of "$instance".
+// variableSearchText scans the inputs consumed by the datasource executor.
+// SQL and CloudWatch consume target fields such as location and dimensions,
+// while expression-only executors must ignore dependencies in display metadata.
+// Datasource and refId metadata are handled separately from query fields.
 func variableSearchText(pq panelQuery) string {
-	if pq.Query != "" {
+	target := pq.rawTarget
+	if target == nil {
+		target = pq.Target
+	}
+	if target == nil {
 		return pq.Query
 	}
-	encoded, err := json.Marshal(pq.Target)
-	if err != nil {
-		return ""
+	switch normalizeDatasourceType(pq.Datasource.Type) {
+	case "prometheus", "loki", "clickhouse":
+		return pq.Query
+	case "influxdb":
+		if pq.Query != "" {
+			return pq.Query + " " + safeString(target, "queryType")
+		}
 	}
-	return string(encoded)
+	fields := queryTargetFields(target)
+	switch normalizeDatasourceType(pq.Datasource.Type) {
+	case "postgres", "mysql", "mssql", "bigquery":
+		// SQL backends execute rawSql without using saved builder or legend state.
+		if pq.Query != "" {
+			fields = sqlQueryDependencyFields(target)
+		}
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return pq.Query
+	}
+	return pq.Query + " " + string(encoded)
 }
 
 // variableRegex matches Grafana template variable patterns
-// Matches: $varname, ${varname}, ${varname:option}, [[varname]]
-var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}|\$([a-zA-Z_][a-zA-Z0-9_]*)|\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
+// Matches: $varname, ${varname}, ${varname:option}, [[varname]], [[varname:option]]
+var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z0-9_]+)(?::[^}]*)?\}|\$([a-zA-Z0-9_]+)|\[\[([a-zA-Z0-9_]+)(?::[^\]]*)?\]\]`)
 
 // Pre-compiled regex patterns for substituteVariables
 var (
-	dollarBraceVarRegex   = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}`)
-	dollarBraceNameRegex  = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)`)
-	doubleBracketVarRegex = regexp.MustCompile(`\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
+	dollarBraceVarRegex   = regexp.MustCompile(`\$\{([a-zA-Z0-9_]+)(?::[^}]*)?\}`)
+	dollarBraceNameRegex  = regexp.MustCompile(`\$\{([a-zA-Z0-9_]+)`)
+	doubleBracketVarRegex = regexp.MustCompile(`\[\[([a-zA-Z0-9_]+)(?::[^\]]*)?\]\]`)
 )
 
 // findVariablesInQuery extracts all variable references from a query
@@ -477,25 +497,16 @@ func findVariablesInQuery(query string, dashboardVars map[string]VariableInfo, o
 	return variables
 }
 
-// buildEffectiveVariables combines dashboard variables with user overrides
-func buildEffectiveVariables(dashboardVars map[string]VariableInfo, overrides map[string]string) map[string]string {
-	effective := make(map[string]string)
-
-	// Start with dashboard variable current values
-	for name, varInfo := range dashboardVars {
-		if varInfo.CurrentValue != "" {
-			effective[name] = varInfo.CurrentValue
-		} else if varInfo.DefaultValue != "" {
-			effective[name] = varInfo.DefaultValue
+// substituteLiteralVariables inserts literal values into the original template
+// once, without interpreting variable-like text inside a selected value.
+func substituteLiteralVariables(text string, variables map[string]string) string {
+	return variableRegex.ReplaceAllStringFunc(text, func(reference string) string {
+		parts := variableRegex.FindStringSubmatch(reference)
+		if value, ok := variables[parts[1]+parts[2]+parts[3]]; ok {
+			return value
 		}
-	}
-
-	// Apply overrides
-	for name, value := range overrides {
-		effective[name] = value
-	}
-
-	return effective
+		return reference
+	})
 }
 
 // substituteVariables replaces template variables in a query with their values
@@ -520,9 +531,9 @@ func substituteVariables(query string, variables map[string]string) string {
 		result = replaceSimpleDollarVar(result, name, value)
 	}
 
-	// Replace [[varname]] patterns
+	// Replace [[varname:option]] and [[varname]] patterns
 	result = doubleBracketVarRegex.ReplaceAllStringFunc(result, func(match string) string {
-		name := match[2 : len(match)-2]
+		name := doubleBracketVarRegex.FindStringSubmatch(match)[1]
 		if val, ok := variables[name]; ok {
 			return val
 		}
