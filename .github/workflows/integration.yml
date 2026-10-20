@@ -12,8 +12,18 @@ permissions:
 
 jobs:
   test-integration:
-    name: Test Integration
+    # The nightly leg catches Grafana changes that reach Cloud before the
+    # pinned release, e.g. #1368. It is advisory: a nightly regression must
+    # not block PRs, and only the pinned leg is the required check.
+    name: ${{ matrix.grafana-image && 'Test Integration (Grafana nightly)' || 'Test Integration' }}
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.grafana-image != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        grafana-image: ["", "grafana/grafana:nightly"]
+    env:
+      GRAFANA_IMAGE: ${{ matrix.grafana-image }}
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
