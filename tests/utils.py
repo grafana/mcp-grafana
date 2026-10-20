@@ -140,6 +140,14 @@ def assert_expected_tools_called(
         )
 
 
+def assert_mentions(final_content: str, *needles: str) -> None:
+    """Assert the answer names seeded values. Prefer this to a GEval criterion
+    whenever the check is really a string match: it can't flake."""
+    lowered = final_content.lower()
+    missing = [n for n in needles if n.lower() not in lowered]
+    assert not missing, f"Response does not mention {missing}:\n{final_content}"
+
+
 def assert_mcp_eval(
     prompt: str,
     final_content: str,
