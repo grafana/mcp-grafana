@@ -530,6 +530,14 @@ func TestSelectorUnmarshalJSON(t *testing.T) {
 			expected: Selector{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}},
 		},
 		{
+			name:  "metric-prefixed selector with unquoted value",
+			input: `"http_requests_total{job=api}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "job", Type: "=", Value: "api"},
+				{Name: "__name__", Type: "=", Value: "http_requests_total"},
+			}},
+		},
+		{
 			name:  "unquoted value next to a quoted value containing an equals sign",
 			input: `"{path=\"/a?b=c\", severity=critical}"`,
 			expected: Selector{Filters: []LabelMatcher{

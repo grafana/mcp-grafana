@@ -1755,6 +1755,17 @@ func TestParseSelectorStrings_UnquotedValues(t *testing.T) {
 		require.Equal(t, "/search?q=abc", selectors[0].Filters[0].Value)
 	})
 
+	t.Run("accepts metric-prefixed selector with unquoted values", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`up{env!=dev, team=~back.*}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.ElementsMatch(t, []LabelMatcher{
+			{Name: "__name__", Type: "=", Value: "up"},
+			{Name: "env", Type: "!=", Value: "dev"},
+			{Name: "team", Type: "=~", Value: "back.*"},
+		}, selectors[0].Filters)
+	})
+
 	t.Run("error quotes the original selector", func(t *testing.T) {
 		_, err := parseSelectorStrings([]string{`{severity=}`})
 		require.Error(t, err)

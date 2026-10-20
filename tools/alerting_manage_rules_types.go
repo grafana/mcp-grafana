@@ -520,7 +520,7 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 		parsed, strictErr := promqlParser.ParseMetricSelector(s)
 		if strictErr != nil {
 			normalized := s
-			if !strings.HasPrefix(normalized, "{") {
+			if !strings.Contains(normalized, "{") {
 				normalized = "{" + normalized + "}"
 			}
 			var err error
