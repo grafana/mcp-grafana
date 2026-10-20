@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,12 +66,12 @@ func (StringOrSlice) JSONSchema() *jsonschema.Schema {
 type GetPanelImageParams struct {
 	DashboardUID string                   `json:"dashboardUid,omitempty" jsonschema:"description=The UID of a stored dashboard containing the panel. Required unless provisioningPreview is provided."`
 	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
-	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000\\, capped at 3000. The image renderer raises values below its configured minimum viewport width (1000 by default)."`
-	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500 (1000 for explore)\\, capped at 3000. The image renderer raises values below its configured minimum viewport height (500 by default)."`
+	Width        *int                     `json:"width,omitempty" jsonschema:"description=Positive viewport width in CSS pixels. See tool description for per-view defaults. Capped so width times scale is at most 3000. The renderer may raise values below its configured minimum (1000 by default)."`
+	Height       *int                     `json:"height,omitempty" jsonschema:"description=Positive viewport height in CSS pixels\\, or -1 for full-page rendering. See tool description for per-view defaults. Positive heights are capped so height times scale is at most 3000. The renderer may raise values below its configured minimum (500 by default)."`
 	TimeRange    *RenderTimeRange         `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
 	Variables    map[string]StringOrSlice `json:"variables,omitempty" jsonschema:"description=Dashboard variables to apply. Values can be a single string or an array of strings for multi-value variables (e.g.\\, {\"var-datasource\": \"prometheus\"\\, \"var-instance\": [\"server1\"\\, \"server2\"]})"`
 	Theme        *string                  `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`
-	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 1"`
+	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Image scale factor. See tool description for default and limits. Higher scales reduce the maximum allowed viewport dimensions."`
 	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60\\, capped at 120"`
 	// ProvisioningPreview renders a dashboard from a provisioning repository
 	// branch that has not yet been merged or applied. Mutually exclusive with
@@ -168,8 +169,11 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	}
 
 	// Read the image data
-	imageData, err := io.ReadAll(resp.Body)
+	imageData, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
+		if errors.Is(err, errResponseBodyTooLarge) {
+			err = fmt.Errorf("%w of %d bytes; try a smaller width, height or scale", errResponseBodyTooLarge, defaultResponseLimitBytes)
+		}
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
 
@@ -208,9 +212,17 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 // Upper bounds for caller-supplied render parameters. The dimension cap matches
 // the image renderer's default maximum viewport size.
 const (
-	defaultRenderTimeout = 60 * time.Second
-	maxRenderTimeoutSecs = 120
-	maxRenderDimension   = 3000
+	defaultRenderTimeout   = 60 * time.Second
+	maxRenderTimeoutSecs   = 120
+	maxRenderDimension     = 3000
+	defaultPanelWidth      = 1000
+	defaultPanelHeight     = 750
+	defaultDashboardWidth  = 1200
+	defaultDashboardHeight = 900
+	defaultExploreWidth    = 1000
+	defaultExploreHeight   = 1000
+	defaultRenderScale     = 1
+	maxRenderScale         = 3
 )
 
 func renderTimeout(args GetPanelImageParams) time.Duration {
@@ -314,28 +326,39 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 			params.Set("panelId", strconv.Itoa(*args.PanelID))
 		}
 	}
-	// Set dimensions
-	width := 1000
-	height := 500
+	// Choose defaults for the view, then apply each caller override independently.
+	width, height, scale := defaultDashboardWidth, defaultDashboardHeight, defaultRenderScale
 	if hasExplore {
 		// Explore shows its query editor above the graph and scrolls inside
 		// its own container (so height=-1 doesn't help); give it room.
-		height = 1000
+		width, height = defaultExploreWidth, defaultExploreHeight
+	} else if args.PanelID != nil {
+		width, height = defaultPanelWidth, defaultPanelHeight
 	}
 	if args.Width != nil {
-		width = min(*args.Width, maxRenderDimension)
+		if *args.Width <= 0 {
+			return "", fmt.Errorf("width must be positive")
+		}
+		width = *args.Width
 	}
 	if args.Height != nil {
-		height = min(*args.Height, maxRenderDimension)
+		if *args.Height <= 0 && *args.Height != -1 {
+			return "", fmt.Errorf("height must be positive or -1 for full-page rendering")
+		}
+		height = *args.Height
+	}
+	if args.Scale != nil {
+		scale = min(max(*args.Scale, defaultRenderScale), maxRenderScale)
+	}
+	// Bound device pixels, not just CSS pixels. Full-page height is determined
+	// by the dashboard, so the response byte limit remains necessary too.
+	width = min(width, maxRenderDimension/scale)
+	if height != -1 {
+		height = min(height, maxRenderDimension/scale)
 	}
 	params.Set("width", strconv.Itoa(width))
 	params.Set("height", strconv.Itoa(height))
 
-	// Set scale
-	scale := 1
-	if args.Scale != nil && *args.Scale >= 1 && *args.Scale <= 3 {
-		scale = *args.Scale
-	}
 	params.Set("scale", strconv.Itoa(scale))
 
 	// Add time range. Explore carries it inside the pane state instead.
@@ -485,7 +508,8 @@ var GetPanelImage = mcpgrafana.MustTool(
 	"get_panel_image",
 	"Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. "+
 		"Exactly one of dashboardUid (for stored dashboards), provisioningPreview (for dashboards staged on a provisioning repository branch, e.g. a git-sync PR) or explore (an ad-hoc datasource query rendered in Explore, no saved dashboard needed) must be supplied. "+
-		"Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.",
+		fmt.Sprintf("Defaults in CSS pixels: panel %dx%d, dashboard %dx%d, Explore %dx%d. Scale defaults to %d for all views and is clamped to %d-%d. Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.",
+			defaultPanelWidth, defaultPanelHeight, defaultDashboardWidth, defaultDashboardHeight, defaultExploreWidth, defaultExploreHeight, defaultRenderScale, defaultRenderScale, maxRenderScale),
 	getPanelImage,
 	mcpgrafana.WithTitleAnnotation("Get panel or dashboard image"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
