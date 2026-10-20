@@ -18,9 +18,10 @@ var validAlertStates = map[string]bool{
 	"recovering": true, "nodata": true, "error": true,
 }
 
-// unquotedLabelValueRe matches a label matcher operator followed by an unquoted
-// value. Values already starting with " are excluded by [^"}.
-var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
+// unquotedLabelValueRe matches either a quoted string, which is left untouched so
+// operators inside quoted values are never rewritten, or a label matcher operator
+// followed by an unquoted value.
+var unquotedLabelValueRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(!=|!~|=~|=)\s*([^"'}\s,~][^},]*)`)
 
 // quoteUnquotedLabelValues adds double quotes around unquoted label values in
 // Prometheus-style selectors. LLMs frequently omit the required quotes, e.g.
@@ -28,13 +29,7 @@ var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
 func quoteUnquotedLabelValues(s string) string {
 	return unquotedLabelValueRe.ReplaceAllStringFunc(s, func(match string) string {
 		groups := unquotedLabelValueRe.FindStringSubmatch(match)
-		if len(groups) < 3 {
-			return match
-		}
-		// When "=" matched but the value starts with "~", the actual operator
-		// is "=~" with an already-quoted value — the regex fell back from =~ to
-		// = because " didn't match the value-start character class.
-		if groups[1] == "=" && strings.HasPrefix(groups[2], "~") {
+		if groups[1] == "" {
 			return match
 		}
 		return groups[1] + `"` + strings.TrimSpace(groups[2]) + `"`
@@ -520,11 +515,7 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 	var result []Selector
 	for _, s := range strs {
 		s = strings.TrimSpace(s)
-		if !strings.HasPrefix(s, "{") {
-			s = "{" + s + "}"
-		}
-		s = quoteUnquotedLabelValues(s)
-		parsed, err := promqlParser.ParseMetricSelector(s)
+		parsed, err := parseSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
 		}
@@ -539,6 +530,19 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 		result = append(result, Selector{Filters: filters})
 	}
 	return result, nil
+}
+
+func parseSelector(s string) ([]*labels.Matcher, error) {
+	matchers, err := promqlParser.ParseMetricSelector(s)
+	if err == nil {
+		return matchers, nil
+	}
+	for _, candidate := range []string{s, "{" + s + "}"} {
+		if repaired, repairErr := promqlParser.ParseMetricSelector(quoteUnquotedLabelValues(candidate)); repairErr == nil {
+			return repaired, nil
+		}
+	}
+	return nil, err
 }
 
 // buildGetRulesOpts validates shared list filter fields and constructs GetRulesOpts.

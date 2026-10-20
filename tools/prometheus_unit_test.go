@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"math"
 	"net/http"
@@ -10,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -474,6 +477,203 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errMsg)
 		})
 	}
+}
+
+func TestSelectorUnmarshalJSON(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected Selector
+	}{
+		{
+			name:  "selector string",
+			input: `"{job=\"api\", env!=\"dev\"}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "job", Type: "=", Value: "api"},
+				{Name: "env", Type: "!=", Value: "dev"},
+			}},
+		},
+		{
+			name:     "selector string without braces",
+			input:    `"job=\"api\""`,
+			expected: Selector{Filters: []LabelMatcher{{Name: "job", Type: "=", Value: "api"}}},
+		},
+		{
+			name:  "selector string with regex matchers",
+			input: `"{job=~\"api.*\", env!~\"dev|test\"}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "job", Type: "=~", Value: "api.*"},
+				{Name: "env", Type: "!~", Value: "dev|test"},
+			}},
+		},
+		{
+			name:     "bare metric name",
+			input:    `"up"`,
+			expected: Selector{Filters: []LabelMatcher{{Name: "__name__", Type: "=", Value: "up"}}},
+		},
+		{
+			name:  "metric-prefixed selector",
+			input: `"http_requests_total{job=\"api\"}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "job", Type: "=", Value: "api"},
+				{Name: "__name__", Type: "=", Value: "http_requests_total"},
+			}},
+		},
+		{
+			name:     "quoted value containing an equals sign",
+			input:    `"{path=\"/search?q=abc\"}"`,
+			expected: Selector{Filters: []LabelMatcher{{Name: "path", Type: "=", Value: "/search?q=abc"}}},
+		},
+		{
+			name:     "unquoted value",
+			input:    `"{severity=critical}"`,
+			expected: Selector{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}},
+		},
+		{
+			name:  "metric-prefixed selector with unquoted value",
+			input: `"http_requests_total{job=api}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "job", Type: "=", Value: "api"},
+				{Name: "__name__", Type: "=", Value: "http_requests_total"},
+			}},
+		},
+		{
+			name:  "unquoted value next to a quoted value containing an equals sign",
+			input: `"{path=\"/a?b=c\", severity=critical}"`,
+			expected: Selector{Filters: []LabelMatcher{
+				{Name: "path", Type: "=", Value: "/a?b=c"},
+				{Name: "severity", Type: "=", Value: "critical"},
+			}},
+		},
+		{
+			name:     "empty string",
+			input:    `""`,
+			expected: Selector{},
+		},
+		{
+			name:     "blank string",
+			input:    `"  "`,
+			expected: Selector{},
+		},
+		{
+			name:     "empty braces",
+			input:    `"{}"`,
+			expected: Selector{},
+		},
+		{
+			name:     "filters object",
+			input:    `{"filters":[{"name":"job","value":"api","type":"="}]}`,
+			expected: Selector{Filters: []LabelMatcher{{Name: "job", Type: "=", Value: "api"}}},
+		},
+		{
+			name:     "null",
+			input:    `null`,
+			expected: Selector{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var selector Selector
+			require.NoError(t, json.Unmarshal([]byte(tc.input), &selector))
+			assert.Equal(t, tc.expected, selector)
+		})
+	}
+
+	t.Run("invalid selector string", func(t *testing.T) {
+		var selector Selector
+		err := json.Unmarshal([]byte(`"not a selector{"`), &selector)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `invalid label selector "not a selector{"`)
+	})
+
+	t.Run("label values params with selector strings", func(t *testing.T) {
+		var params ListPrometheusLabelValuesParams
+		err := json.Unmarshal([]byte(`{"datasourceUid":"prometheus","labelName":"job","matches":["{job=\"api\"}"]}`), &params)
+		require.NoError(t, err)
+		require.Len(t, params.Matches, 1)
+		assert.Equal(t, `{job="api"}`, params.Matches[0].String())
+	})
+}
+
+func TestSelectorStringRoundTrip(t *testing.T) {
+	selectors := []string{
+		`{job="api", env!="dev"}`,
+		`http_requests_total{job="api"}`,
+		`{owner="O'Reilly"}`,
+		`{instance=~"host\\.example\\.com"}`,
+		`{path="C:\\temp"}`,
+		`{msg="line\nbreak"}`,
+		`{"service.name"="api"}`,
+	}
+
+	for _, selector := range selectors {
+		t.Run(selector, func(t *testing.T) {
+			input, err := json.Marshal(selector)
+			require.NoError(t, err)
+			var decoded Selector
+			require.NoError(t, json.Unmarshal(input, &decoded))
+
+			expected, err := promqlParser.ParseMetricSelector(selector)
+			require.NoError(t, err)
+			actual, err := promqlParser.ParseMetricSelector(decoded.String())
+			require.NoError(t, err, "rebuilt selector %s", decoded.String())
+			assert.ElementsMatch(t, matcherStrings(expected), matcherStrings(actual))
+		})
+	}
+
+	t.Run("filters object with quote in value", func(t *testing.T) {
+		selector := Selector{Filters: []LabelMatcher{{Name: "owner", Type: "=", Value: "O'Reilly"}}}
+		assert.Equal(t, `{owner="O'Reilly"}`, selector.String())
+	})
+
+	t.Run("unknown operator is passed through", func(t *testing.T) {
+		selector := Selector{Filters: []LabelMatcher{{Name: "job", Type: "==", Value: "api"}}}
+		assert.Equal(t, `{job=="api"}`, selector.String())
+	})
+}
+
+func TestSelectorMatchersSkipsEmptySelectors(t *testing.T) {
+	selectors := []Selector{
+		{},
+		{Filters: []LabelMatcher{{Name: "job", Type: "=", Value: "api"}}},
+		{Filters: []LabelMatcher{}},
+	}
+	assert.Equal(t, []string{`{job="api"}`}, selectorMatchers(selectors))
+	assert.Empty(t, selectorMatchers([]Selector{{}}))
+}
+
+func TestSelectorInputSchemaAcceptsString(t *testing.T) {
+	for _, tool := range []mcpgrafana.Tool{ListPrometheusLabelNames, ListPrometheusLabelValues} {
+		t.Run(tool.Tool.Name, func(t *testing.T) {
+			raw, err := json.Marshal(tool.Tool.InputSchema)
+			require.NoError(t, err)
+			var schema struct {
+				Properties map[string]struct {
+					Items struct {
+						OneOf []struct {
+							Type       string         `json:"type"`
+							Properties map[string]any `json:"properties"`
+						} `json:"oneOf"`
+					} `json:"items"`
+				} `json:"properties"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			oneOf := schema.Properties["matches"].Items.OneOf
+			require.Len(t, oneOf, 2)
+			assert.Equal(t, "string", oneOf[0].Type)
+			assert.Equal(t, "object", oneOf[1].Type)
+			assert.Contains(t, oneOf[1].Properties, "filters")
+		})
+	}
+}
+
+func matcherStrings(matchers []*labels.Matcher) []string {
+	out := make([]string, 0, len(matchers))
+	for _, m := range matchers {
+		out = append(out, m.String())
+	}
+	return out
 }
 
 func TestQueryPrometheusRequiresEndTime(t *testing.T) {

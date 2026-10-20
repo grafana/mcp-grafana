@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1686,6 +1688,16 @@ func TestQuoteUnquotedLabelValues(t *testing.T) {
 			expected: `{env!~"staging.*"}`,
 		},
 		{
+			name:     "equals sign inside quoted value unchanged",
+			input:    `{path="/a?b=c", severity=critical}`,
+			expected: `{path="/a?b=c", severity="critical"}`,
+		},
+		{
+			name:     "single-quoted value unchanged",
+			input:    `{team='a=b', env=dev}`,
+			expected: `{team='a=b', env="dev"}`,
+		},
+		{
 			name:     "empty selector",
 			input:    `{}`,
 			expected: `{}`,
@@ -1737,6 +1749,30 @@ func TestParseSelectorStrings_UnquotedValues(t *testing.T) {
 		require.Len(t, selectors, 1)
 		require.Equal(t, "critical", selectors[0].Filters[0].Value)
 	})
+
+	t.Run("accepts equals sign inside quoted value", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`{path="/search?q=abc"}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.Equal(t, "/search?q=abc", selectors[0].Filters[0].Value)
+	})
+
+	t.Run("accepts metric-prefixed selector with unquoted values", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`up{env!=dev, team=~back.*}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.ElementsMatch(t, []LabelMatcher{
+			{Name: "__name__", Type: "=", Value: "up"},
+			{Name: "env", Type: "!=", Value: "dev"},
+			{Name: "team", Type: "=~", Value: "back.*"},
+		}, selectors[0].Filters)
+	})
+
+	t.Run("error quotes the original selector", func(t *testing.T) {
+		_, err := parseSelectorStrings([]string{`{severity=}`})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `invalid label selector "{severity=}"`)
+	})
 }
 
 func TestParseMatcherStrings_UnquotedValues(t *testing.T) {
@@ -1754,4 +1790,46 @@ func TestParseMatcherStrings_UnquotedValues(t *testing.T) {
 		require.Len(t, matchers, 1)
 		require.Equal(t, "critical", matchers[0].Value)
 	})
+}
+
+// Every value/operator pair must survive each selector shape LLMs send.
+func TestParseSelectorStrings_Shapes(t *testing.T) {
+	values := []string{"api", "/users/{id}", "/a?b=c", "x,y", "a}b", `q"=x`, "O'Reilly", `C:\temp`, "line\nbreak"}
+	shapes := []struct{ input, canonical string }{
+		{"{%s, env=dev}", `{%s, env="dev"}`},
+		{"%s, env=dev", `{%s, env="dev"}`},
+		{"env=dev, %s", `{env="dev", %s}`},
+		{"up{%s}", "up{%s}"},
+		{"up{%s, env=dev}", `up{%s, env="dev"}`},
+	}
+
+	for _, value := range values {
+		for _, op := range []string{"=", "!=", "=~", "!~"} {
+			matcher := "path" + op + strconv.Quote(value)
+			for _, shape := range shapes {
+				input := fmt.Sprintf(shape.input, matcher)
+				t.Run(input, func(t *testing.T) {
+					want, err := promqlParser.ParseMetricSelector(fmt.Sprintf(shape.canonical, matcher))
+					require.NoError(t, err)
+
+					selectors, err := parseSelectorStrings([]string{input})
+					require.NoError(t, err)
+					got, err := promqlParser.ParseMetricSelector(selectors[0].String())
+					require.NoError(t, err)
+					require.ElementsMatch(t, matcherStrings(want), matcherStrings(got))
+				})
+			}
+		}
+	}
+}
+
+func TestParseSelectorStrings_UnquotedValueShapes(t *testing.T) {
+	for _, input := range []string{"path=api, env=dev", "{path=api, env=dev}", "up{path=api, env=dev}"} {
+		t.Run(input, func(t *testing.T) {
+			selectors, err := parseSelectorStrings([]string{input})
+			require.NoError(t, err)
+			require.Contains(t, selectors[0].Filters, LabelMatcher{Name: "path", Type: "=", Value: "api"})
+			require.Contains(t, selectors[0].Filters, LabelMatcher{Name: "env", Type: "=", Value: "dev"})
+		})
+	}
 }
