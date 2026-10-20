@@ -31,7 +31,7 @@ func TestReadResponseBody(t *testing.T) {
 		content := strings.Repeat("x", 51)
 		body := strings.NewReader(content)
 		_, err := readResponseBody(body, 50)
-		require.Error(t, err)
+		require.ErrorIs(t, err, errResponseBodyTooLarge)
 		assert.Contains(t, err.Error(), "response body exceeds maximum size of 50 bytes")
 		assert.Contains(t, err.Error(), "try narrowing your query")
 	})

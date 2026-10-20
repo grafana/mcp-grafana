@@ -21,8 +21,8 @@ def convert_tool(tool: Tool) -> dict:
             "name": tool.name,
             "description": tool.description,
             "parameters": {
-                **tool.inputSchema,
-                "properties": tool.inputSchema.get("properties", {}),
+                **tool.input_schema,
+                "properties": tool.input_schema.get("properties", {}),
             },
         },
     }
@@ -140,6 +140,14 @@ def assert_expected_tools_called(
         )
 
 
+def assert_mentions(final_content: str, *needles: str) -> None:
+    """Assert the answer names seeded values. Prefer this to a GEval criterion
+    whenever the check is really a string match: it can't flake."""
+    lowered = final_content.lower()
+    missing = [n for n in needles if n.lower() not in lowered]
+    assert not missing, f"Response does not mention {missing}:\n{final_content}"
+
+
 def assert_mcp_eval(
     prompt: str,
     final_content: str,
@@ -154,7 +162,7 @@ def assert_mcp_eval(
     # Give the output judge the actual tool evidence, not just the user's prompt.
     # Otherwise a correct answer with real logs looks fabricated to GEval.
     tool_results = [
-        f"{tool.name} {'error' if tool.result.isError else 'result'}: {tool_result_text(tool.result)}"
+        f"{tool.name} {'error' if tool.result.is_error else 'result'}: {tool_result_text(tool.result)}"
         for tool in tools_called
     ]
     test_case = LLMTestCase(
