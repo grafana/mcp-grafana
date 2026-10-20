@@ -102,7 +102,7 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 | `query_quickwit`                  | Quickwit*      | Query Quickwit using Lucene syntax or Query DSL                                                              | `datasources:query`                                    | `datasources:uid:quickwit-uid`                      |
 | `alerting_rules_read`             | Alerting       | List and inspect alert rules (list, get, versions)                                                           | `alert.rules:read`                                     | `folders:*` or `folders:uid:alerts-folder`          |
 | `alerting_rules_write`              | Alerting                  | Create, update and delete Grafana-managed rules, or explicitly create datasource-managed rules                                                                | `alert.provisioning.provenance:write`, `alert.rules.external:read`, `alert.rules.external:write`, `alert.rules:create`, `alert.rules:delete`, `alert.rules:read`, `alert.rules:write`, `datasources:read`, `folders:read` | `folders:*`, or `datasources:uid:<uid>` for external creation |
-| `alerting_manage_routing`         | Alerting       | Manage notification policies, contact points, and time intervals                                             | `alert.notifications:read`                             | Global scope                                        |
+| `alerting_manage_routing`         | Alerting       | Manage notification policies, contact points, and time intervals                                             | `alert.notifications:read`, or the fine-grained `alert.notifications.receivers:read`, `alert.notifications.time-intervals:read`, and `notifications.alerting.grafana.app/routingtrees:get` (or `alert.notifications.routes:read`) | Global scope                                        |
 | `alerting_routing_write`            | Alerting                  | Create Grafana-managed contact points by default, or explicitly create external Alertmanager receivers                                                        | `alert.notifications.external:read`, `alert.notifications.external:write`, `alert.notifications.receivers:create`, `alert.provisioning.provenance:write`, `datasources:read`                                              | Global, or `datasources:uid:<uid>` for external creation      |
 | `alerting_silences_read`          | Alerting       | List and inspect alerting silences (list, get)                                                               | `alert.instances:read`                                 | Global scope                                        |
 | `alerting_silences_write`         | Alerting       | Create, update, and expire alerting silences                                                                 | `alert.instances:read` + `alert.instances:write`       | Global scope                                        |
@@ -232,6 +232,18 @@ You can limit which tools the server exposes with `--enabled-tools`, `--disable-
 ## Panel and dashboard images
 
 `get_panel_image` needs the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service installed and configured in Grafana.
+
+When dimensions or scale are omitted, defaults depend on the view:
+
+| View | Width (CSS pixels) | Height (CSS pixels) | Scale |
+| --- | --- | --- | --- |
+| Single panel (`panelId` supplied) | 1000 | 750 | 1 |
+| Full dashboard (`panelId` omitted) | 1200 | 900 | 1 |
+| Explore | 1000 | 1000 | 1 |
+
+Panel and dashboard defaults also apply to provisioning previews. Each explicit `width`, `height`, or `scale` overrides its view default. Scale is clamped to 1-3. Positive viewport dimensions are capped so each dimension multiplied by scale is at most 3000 pixels. Width must be positive. Height must be positive or `-1` for full-page rendering, whose final height depends on the dashboard. Image responses larger than 10 MiB are rejected.
+
+The renderer applies its own configured viewport limits. Its default minimum width is 1000 CSS pixels, which the default panel width respects. These are requested viewport dimensions, not guaranteed PNG dimensions. See the [image rendering flags](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/flags/).
 
 ## Next steps
 
