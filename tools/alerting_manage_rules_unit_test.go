@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1788,4 +1790,46 @@ func TestParseMatcherStrings_UnquotedValues(t *testing.T) {
 		require.Len(t, matchers, 1)
 		require.Equal(t, "critical", matchers[0].Value)
 	})
+}
+
+// Every value/operator pair must survive each selector shape LLMs send.
+func TestParseSelectorStrings_Shapes(t *testing.T) {
+	values := []string{"api", "/users/{id}", "/a?b=c", "x,y", "a}b", `q"=x`, "O'Reilly", `C:\temp`, "line\nbreak"}
+	shapes := []struct{ input, canonical string }{
+		{"{%s, env=dev}", `{%s, env="dev"}`},
+		{"%s, env=dev", `{%s, env="dev"}`},
+		{"env=dev, %s", `{env="dev", %s}`},
+		{"up{%s}", "up{%s}"},
+		{"up{%s, env=dev}", `up{%s, env="dev"}`},
+	}
+
+	for _, value := range values {
+		for _, op := range []string{"=", "!=", "=~", "!~"} {
+			matcher := "path" + op + strconv.Quote(value)
+			for _, shape := range shapes {
+				input := fmt.Sprintf(shape.input, matcher)
+				t.Run(input, func(t *testing.T) {
+					want, err := promqlParser.ParseMetricSelector(fmt.Sprintf(shape.canonical, matcher))
+					require.NoError(t, err)
+
+					selectors, err := parseSelectorStrings([]string{input})
+					require.NoError(t, err)
+					got, err := promqlParser.ParseMetricSelector(selectors[0].String())
+					require.NoError(t, err)
+					require.ElementsMatch(t, matcherStrings(want), matcherStrings(got))
+				})
+			}
+		}
+	}
+}
+
+func TestParseSelectorStrings_UnquotedValueShapes(t *testing.T) {
+	for _, input := range []string{"path=api, env=dev", "{path=api, env=dev}", "up{path=api, env=dev}"} {
+		t.Run(input, func(t *testing.T) {
+			selectors, err := parseSelectorStrings([]string{input})
+			require.NoError(t, err)
+			require.Contains(t, selectors[0].Filters, LabelMatcher{Name: "path", Type: "=", Value: "api"})
+			require.Contains(t, selectors[0].Filters, LabelMatcher{Name: "env", Type: "=", Value: "dev"})
+		})
+	}
 }

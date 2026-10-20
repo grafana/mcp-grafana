@@ -515,18 +515,9 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 	var result []Selector
 	for _, s := range strs {
 		s = strings.TrimSpace(s)
-		// Parse strictly first: normalization would rewrite some valid selectors,
-		// such as bare metric names.
-		parsed, strictErr := promqlParser.ParseMetricSelector(s)
-		if strictErr != nil {
-			normalized := s
-			if !strings.Contains(normalized, "{") {
-				normalized = "{" + normalized + "}"
-			}
-			var err error
-			if parsed, err = promqlParser.ParseMetricSelector(quoteUnquotedLabelValues(normalized)); err != nil {
-				return nil, fmt.Errorf("invalid label selector %q: %w", s, strictErr)
-			}
+		parsed, err := parseSelector(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
 		}
 		var filters []LabelMatcher
 		for _, m := range parsed {
@@ -539,6 +530,19 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 		result = append(result, Selector{Filters: filters})
 	}
 	return result, nil
+}
+
+func parseSelector(s string) ([]*labels.Matcher, error) {
+	matchers, err := promqlParser.ParseMetricSelector(s)
+	if err == nil {
+		return matchers, nil
+	}
+	for _, candidate := range []string{s, "{" + s + "}"} {
+		if repaired, repairErr := promqlParser.ParseMetricSelector(quoteUnquotedLabelValues(candidate)); repairErr == nil {
+			return repaired, nil
+		}
+	}
+	return nil, err
 }
 
 // buildGetRulesOpts validates shared list filter fields and constructs GetRulesOpts.
