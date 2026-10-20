@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -174,6 +176,20 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	for name, value := range params.Variables {
 		vars[name] = value
 		templateVariables[name] = []string{value}
+	}
+	allWarnings := allTemplateSelectionWarnings(db, params.Variables, templateVariables)
+	referenceDatasource := panelData.DatasourceUID
+	if params.DsUID != "" {
+		referenceDatasource = params.DsUID
+	}
+	// Executors replace the target datasource with the resolved UID below.
+	referenceTarget := maps.Clone(panelData.RawTarget)
+	delete(referenceTarget, "datasource")
+	references := variableSearchText(panelQuery{Query: panelData.Query, Target: referenceTarget})
+	for _, variable := range findVariablesInQuery(references+" "+referenceDatasource, nil, nil) {
+		if warning := allWarnings[variable.Name]; warning != "" {
+			return nil, errors.New(warning)
+		}
 	}
 
 	// Resolve datasource UID and type
