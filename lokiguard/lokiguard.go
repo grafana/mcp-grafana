@@ -49,6 +49,10 @@ type Policy struct {
 	// MaxRange caps the effective time range: the query window plus the
 	// largest range-vector duration.
 	MaxRange time.Duration
+	// EstimateAlways runs the byte estimate even when a static check has
+	// already blocked the query, so callers can record the size distribution of
+	// every query. The extra stats failures cannot change the verdict.
+	EstimateAlways bool
 }
 
 // StatsFunc returns Loki's index/stats byte estimate for a bare stream
@@ -189,25 +193,33 @@ func Assess(ctx context.Context, q Query, p Policy, stats StatsFunc) Decision {
 	}
 
 	// Only spend the index-stats round trips on queries that pass the static
-	// checks.
-	if len(d.Reasons) == 0 && p.MaxBytes > 0 && stats != nil {
+	// checks, unless the caller wants the estimate for every query.
+	staticOK := len(d.Reasons) == 0
+	if stats != nil && (p.MaxBytes > 0 || p.EstimateAlways) && (staticOK || p.EstimateAlways) {
 		if from, to, ok := statsWindow(q, vecDur); ok {
-			total, ok, err := sumSelectorBytes(ctx, selectors, from, to, p.MaxBytes, stats)
+			budget := p.MaxBytes
+			if budget <= 0 {
+				// No budget: a partial total is never "already over budget".
+				budget = math.MaxInt64
+			}
+			total, ok, err := sumSelectorBytes(ctx, selectors, from, to, budget, stats)
 			d.Err = err
 			switch {
-			case !ok:
+			case !ok && staticOK:
 				d.Verdict = Unknown
 				d.Cause = CauseEstimateFailed
 				return d
-			case total > p.MaxBytes:
-				d.EstimatedBytes = total
-				d.Reasons = append(d.Reasons, Reason{
-					Kind: KindBytes,
-					Message: fmt.Sprintf("Loki estimates this query would scan %s, above the %s budget",
-						humanizeBytes(total), humanizeBytes(p.MaxBytes)),
-				})
+			case !ok:
+				// Already blocked by a static check; the estimate was best effort.
 			default:
 				d.EstimatedBytes = total
+				if p.MaxBytes > 0 && total > p.MaxBytes {
+					d.Reasons = append(d.Reasons, Reason{
+						Kind: KindBytes,
+						Message: fmt.Sprintf("Loki estimates this query would scan %s, above the %s budget",
+							humanizeBytes(total), humanizeBytes(p.MaxBytes)),
+					})
+				}
 			}
 		}
 	}

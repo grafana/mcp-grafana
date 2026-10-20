@@ -18,6 +18,7 @@ type goldenCase struct {
 	Policy        struct {
 		MaxBytes        int64 `json:"maxBytes"`
 		MaxRangeSeconds int64 `json:"maxRangeSeconds"`
+		EstimateAlways  bool  `json:"estimateAlways"`
 	} `json:"policy"`
 	Stats struct {
 		Bytes      int64            `json:"bytes"`
@@ -57,13 +58,13 @@ func TestGoldenCases(t *testing.T) {
 				q.End = testEnd
 				q.Start = testEnd.Add(-time.Duration(c.WindowSeconds) * time.Second)
 			}
-			p := Policy{MaxBytes: c.Policy.MaxBytes, MaxRange: time.Duration(c.Policy.MaxRangeSeconds) * time.Second}
+			p := Policy{MaxBytes: c.Policy.MaxBytes, MaxRange: time.Duration(c.Policy.MaxRangeSeconds) * time.Second, EstimateAlways: c.Policy.EstimateAlways}
 
 			// Stats are only wired when a byte budget is set, as in a real
 			// caller; statsCalls then verifies the guard's own call pattern.
 			var stats StatsFunc
 			calls := 0
-			if c.Policy.MaxBytes > 0 {
+			if c.Policy.MaxBytes > 0 || c.Policy.EstimateAlways {
 				stats = func(_ context.Context, selector string, _, _ time.Time) (int64, error) {
 					calls++
 					if b, ok := c.Stats.BySelector[selector]; ok {
