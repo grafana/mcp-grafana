@@ -713,7 +713,7 @@ func TestFetchDashboardViaK8s_StaleV1StoredVersionPreferences(t *testing.T) {
 	var writes []string
 	ts := staleStoredVersionServer(t, map[string]interface{}{
 		"layout":      map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}},
-		"preferences": map[string]interface{}{"defaultLayout": map[string]interface{}{"kind": "AutoGridLayout"}},
+		"preferences": map[string]interface{}{"layout": map[string]interface{}{"kind": "AutoGridLayout"}},
 	}, &writes)
 	defer ts.Close()
 
