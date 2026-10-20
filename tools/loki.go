@@ -891,6 +891,9 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	default:
 		return nil, fmt.Errorf("invalid format %q: must be 'full' or 'compact'", args.Format)
 	}
+	if args.MaxLineBytes < 0 {
+		return nil, fmt.Errorf("invalid maxLineBytes %d: must be >= 0", args.MaxLineBytes)
+	}
 
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {

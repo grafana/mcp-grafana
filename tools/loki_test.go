@@ -131,6 +131,36 @@ func TestLokiTools(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid format")
 	})
 
+	t.Run("query loki logs caps line bytes", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+			MaxLineBytes:  8,
+		})
+		require.NoError(t, err)
+
+		for _, entry := range result.Data {
+			assert.LessOrEqual(t, len(entry.Line), 8, "Log line should be cut to maxLineBytes")
+			assert.Positive(t, entry.TruncatedBytes, "Every test-stack line is longer than 8 bytes, so each entry should report a cut")
+			for _, v := range entry.StructuredMetadata {
+				assert.LessOrEqual(t, len(v), 8, "Structured metadata value should be cut to maxLineBytes")
+			}
+		}
+	})
+
+	t.Run("query loki logs rejects negative maxLineBytes", func(t *testing.T) {
+		ctx := newTestContext()
+		_, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			MaxLineBytes:  -1,
+		})
+		require.Error(t, err, "Negative maxLineBytes should be rejected")
+		assert.Contains(t, err.Error(), "invalid maxLineBytes")
+	})
+
 	t.Run("query loki logs with no results", func(t *testing.T) {
 		ctx := newTestContext()
 		// Use a query that's unlikely to match any logs

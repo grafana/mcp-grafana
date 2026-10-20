@@ -271,7 +271,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
 
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
-	flag.IntVar(&gc.maxLokiLineBytes, "max-loki-line-bytes", 0, "Default byte cap for each log line and each parsed or structured metadata value returned by query_loki_logs, used when a call sets no maxLineBytes. 0 means no cap.")
+	flag.IntVar(&gc.maxLokiLineBytes, "max-loki-line-bytes", 0, "Default byte cap for each log line and each parsed or structured metadata value returned by query_loki_logs and by run_panel_query for Loki panels, used when a call sets no maxLineBytes. 0 means no cap.")
 
 	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode for query_loki_logs: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run; still pays the index/stats round trip), or 'enforce' (reject blocked queries with rewrite guidance). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.lokiGuardrailMaxBytes, "loki-guardrail-max-bytes", 100<<30, "Maximum bytes a single query_loki_logs call may scan, estimated via Loki's index/stats API before running the query. 0 disables the byte-budget check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_BYTES environment variable when the flag is not set.")
@@ -1396,6 +1396,10 @@ func main() {
 	}
 	if err := gc.validateLokiGuardrail(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if gc.maxLokiLineBytes < 0 {
+		fmt.Fprintf(os.Stderr, "invalid --max-loki-line-bytes %d: must be >= 0 (0 disables the cap)\n", gc.maxLokiLineBytes)
 		os.Exit(2)
 	}
 	if gc.lokiGuardrailMode != mcpgrafana.LokiGuardrailOff {
