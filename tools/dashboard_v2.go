@@ -83,11 +83,6 @@ func findPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]inter
 
 // getPanelQueriesV2 implements get_dashboard_panel_queries for v2 dashboards.
 func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	var dashboardVars map[string]VariableInfo
-	if args.Variables != nil {
-		dashboardVars = extractDashboardVariablesV2(spec)
-	}
-
 	var panels []map[string]interface{}
 	if args.PanelID != nil {
 		panel, err := findPanelByIDV2(spec, *args.PanelID)
@@ -101,16 +96,16 @@ func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesPa
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		result = append(result, extractPanelQueriesV2(panel, dashboardVars, args.Variables)...)
+		result = append(result, extractPanelQueriesV2(panel)...)
 	}
-	return result, nil
+	return preparePanelQueries(templatingV1FromV2(spec), args, result, extractDashboardVariablesV2(spec))
 }
 
 // extractPanelQueriesV2 extracts all queries from a v2 panel spec. The query
 // string is read from the free-form per-query body (query.spec), reusing the
 // same field-probe as v1; the datasource type is the query `group` and the uid
 // is `datasource.name`.
-func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
@@ -163,14 +158,6 @@ func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[strin
 				continue
 			}
 			result.Target = queryTargetFields(body)
-		}
-
-		if dashboardVars != nil {
-			result.RequiredVariables = findVariablesInQuery(variableSearchText(result), dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			result.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			result.Datasource = dsInfo
 		}
 
 		queries = append(queries, result)
