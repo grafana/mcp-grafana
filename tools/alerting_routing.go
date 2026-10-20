@@ -162,7 +162,18 @@ var ManageRouting = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions("alert.notifications:read", "alert.notifications.external:read"),
+	// Each Grafana read route accepts the legacy alert.notifications:read or a
+	// fine-grained action: receivers:read (contact points), time-intervals:read
+	// (time intervals), and routes:read or routingtrees:get (policies). Each is
+	// declared so the on-behalf-of token carries whichever the user holds.
+	mcpgrafana.RequiresPermissions(
+		"alert.notifications:read",
+		"alert.notifications.receivers:read",
+		"alert.notifications.time-intervals:read",
+		"alert.notifications.routes:read",
+		"notifications.alerting.grafana.app/routingtrees:get",
+		"alert.notifications.external:read",
+	),
 	// datasource_uid reads an external Alertmanager through the datasource proxy.
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
