@@ -54,9 +54,6 @@ type dashboardResult struct {
 	// Object is the full Kubernetes object (metadata, resourceVersion, status)
 	// when fetched via the k8s API; nil on the legacy path. Needed for writes.
 	Object map[string]interface{}
-	// V2CheckErr is set when checking a v1 result for v2-only content failed
-	// (see fetchV2IfV1Lossy): the result is fine to read but unsafe to save as v1.
-	V2CheckErr error
 }
 
 // DashboardResponse is the get_dashboard_by_uid tool output. It preserves the
@@ -73,7 +70,7 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*Dash
 	if args.Version != nil {
 		return fetchDashboardVersion(ctx, args.UID, *args.Version)
 	}
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -97,14 +94,15 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*Dash
 // back to the legacy API, because doing so on a v2-capable Grafana would read —
 // and, for update_dashboard, write — a lossy v1 conversion that corrupts the
 // stored v2 dashboard. Only a definitive "v1beta1 not served" routes to legacy.
-func fetchDashboard(ctx context.Context, uid string) (*dashboardResult, error) {
+// forWrite is passed through to fetchDashboardViaK8s.
+func fetchDashboard(ctx context.Context, uid string, forWrite bool) (*dashboardResult, error) {
 	if k8s := mcpgrafana.KubernetesClientFromContext(ctx); k8s != nil {
 		versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
 		if err != nil {
 			return nil, fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
 		}
 		if slices.Contains(versions, dashboardReadVersion) {
-			return fetchDashboardViaK8s(ctx, k8s, uid)
+			return fetchDashboardViaK8s(ctx, k8s, uid, forWrite)
 		}
 	}
 	return fetchDashboardLegacy(ctx, uid)
@@ -114,10 +112,12 @@ func fetchDashboard(ctx context.Context, uid string) (*dashboardResult, error) {
 // It requests v1beta1 first, then re-fetches at the stored version when the
 // dashboard is actually stored as v2. Because storedVersion can be stale (a
 // dashboard created as v1 and later saved as v2 keeps reporting "v1"), a
-// non-v2 storedVersion is double-checked against the v2 representation.
+// non-v2 storedVersion is double-checked against the v2 representation. If that
+// check fails, reads (forWrite=false) fall back to the v1 result, while writes
+// get an error, since a v1 save of a dashboard that is really v2 is lossy.
 // Callers only reach this after confirming v1beta1 is served, so a 404 here is a
 // genuine "dashboard not found".
-func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient, uid string) (*dashboardResult, error) {
+func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient, uid string, forWrite bool) (*dashboardResult, error) {
 	ns, err := mcpgrafana.GrafanaNamespace(ctx)
 	if err != nil {
 		return nil, err
@@ -132,7 +132,6 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 	// down-conversion (status.conversion.storedVersion is set even when the
 	// conversion did not error); re-fetch at the stored version to get the
 	// native object.
-	var v2CheckErr error
 	if storedVersion := k8sNestedString(obj, "status", "conversion", "storedVersion"); strings.HasPrefix(storedVersion, "v2") {
 		nativeObj, err := k8s.Get(ctx, dashboardDescriptor(storedVersion), ns, uid)
 		if err != nil {
@@ -140,24 +139,23 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 		}
 		obj = nativeObj
 	} else if v2Obj, err := fetchV2IfV1Lossy(ctx, k8s, ns, uid); err != nil {
-		v2CheckErr = err
+		if forWrite {
+			// %v, not %w: a wrapped 404 from the v2 read must not look like
+			// "dashboard not found" to callers that would then create it.
+			return nil, fmt.Errorf("cannot confirm dashboard %q is not stored as v2, refusing a possibly lossy write: %v", uid, err)
+		}
 	} else if v2Obj != nil {
 		obj = v2Obj
 	}
 
-	res, err := dashboardResultFromK8s(obj)
-	if err != nil {
-		return nil, err
-	}
-	res.V2CheckErr = v2CheckErr
-	return res, nil
+	return dashboardResultFromK8s(obj)
 }
 
 // fetchV2IfV1Lossy reads the dashboard at the preferred served v2 version and
 // returns it when its layout holds content the v1 schema cannot represent, i.e.
 // the dashboard is really v2 despite its storedVersion. It returns nil when no
-// v2 version is served or the v2 view is one a v1 dashboard up-converts to.
-// On error the caller keeps the v1 result for reads but must refuse v1 writes.
+// v2 version is served or the v2 view is one a v1 dashboard up-converts to:
+// a v1-convertible layout and no preferences, which the v2→v1 conversion drops.
 func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns, uid string) (map[string]interface{}, error) {
 	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
 	if err != nil {
@@ -172,7 +170,7 @@ func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns,
 		return nil, fmt.Errorf("get %s dashboard via k8s api %s: %w", version, uid, err)
 	}
 	spec, _ := obj["spec"].(map[string]interface{})
-	if isV1ConvertibleLayout(spec["layout"]) {
+	if isV1ConvertibleLayout(spec["layout"]) && len(safeObject(spec, "preferences")) == 0 {
 		return nil, nil
 	}
 	return obj, nil
@@ -423,12 +421,9 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	args.Operations = sortedOps
 
 	// Get the current dashboard in its native stored schema.
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, true)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
-	}
-	if res.V2CheckErr != nil {
-		return nil, fmt.Errorf("cannot confirm dashboard %q is safe to save as v1, refusing a possibly lossy write: %w", args.UID, res.V2CheckErr)
 	}
 
 	dashboardMap := res.Spec
@@ -645,15 +640,12 @@ func rejectV1BodyOverV2Stored(ctx context.Context, dashboard map[string]interfac
 	if !slices.Contains(versions, dashboardReadVersion) {
 		return nil // pre-v2 Grafana: no v2 dashboards can exist
 	}
-	existing, err := fetchDashboardViaK8s(ctx, k8s, uid)
+	existing, err := fetchDashboardViaK8s(ctx, k8s, uid, true)
 	if isK8sNotFound(err) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("check existing dashboard %s: %w", uid, err)
-	}
-	if existing.V2CheckErr != nil {
-		return fmt.Errorf("cannot confirm dashboard %q is safe to replace with a classic v1 body, refusing a possibly lossy write: %w", uid, existing.V2CheckErr)
 	}
 	if existing.IsV2 {
 		return fmt.Errorf("dashboard %q is stored as %s and cannot be replaced with a classic v1 (panels[]) body: Grafana would down-convert it, dropping v2-only content such as tabs. Use patch operations (uid + operations) against the v2 spec, or send a full v2 body (elements/layout); fetch it with get_dashboard_by_uid to see its current v2 structure", uid, existing.APIVersion)
@@ -740,7 +732,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	// treated as "absent" — that would turn an update into a create/conflict and
 	// hide the real failure — so surface it.
 	if uid != "" {
-		existing, err := fetchDashboardViaK8s(ctx, k8s, uid)
+		existing, err := fetchDashboardViaK8s(ctx, k8s, uid, true)
 		switch {
 		case err == nil && existing.Object != nil:
 			// Mirror the legacy save: refuse to replace an existing dashboard
@@ -951,7 +943,7 @@ type panelQuery struct {
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -1013,7 +1005,7 @@ type GetDashboardPropertyParams struct {
 // getDashboardProperty retrieves specific parts of a dashboard using JSONPath expressions.
 // This helps reduce context window usage by fetching only the needed data.
 func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) (interface{}, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -1097,7 +1089,7 @@ type TimeRangeSummary struct {
 
 // getDashboardSummary provides a compact overview of a dashboard to help with context management
 func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*DashboardSummary, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}

@@ -41,7 +41,7 @@ func TestFetchDashboardViaK8s_V1SingleFetch(t *testing.T) {
 	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
 
-	res, err := fetchDashboardViaK8s(ctx, k8s, "abc")
+	res, err := fetchDashboardViaK8s(ctx, k8s, "abc", false)
 	require.NoError(t, err)
 	assert.False(t, res.IsV2)
 	assert.Equal(t, "v1beta1", res.APIVersion)
@@ -49,7 +49,10 @@ func TestFetchDashboardViaK8s_V1SingleFetch(t *testing.T) {
 	assert.Equal(t, "f1", res.Meta.FolderUID)
 	assert.Equal(t, "abc", safeString(res.Spec, "uid"), "uid should be injected into v1 body")
 	assert.Equal(t, int32(1), atomic.LoadInt32(&v1Calls))
-	assert.Equal(t, int32(0), atomic.LoadInt32(&v2Calls), "v1 dashboards must not trigger a second fetch")
+	// No discovery handler, so no v2 version is served and the stale-storedVersion
+	// check is skipped; TestFetchDashboardViaK8s_StaleV1StoredVersionGridLayout
+	// covers a v1 dashboard on a v2-serving Grafana.
+	assert.Equal(t, int32(0), atomic.LoadInt32(&v2Calls), "no v2 fetch when no v2 version is served")
 }
 
 func TestFetchDashboardViaK8s_V2Refetch(t *testing.T) {
@@ -79,7 +82,7 @@ func TestFetchDashboardViaK8s_V2Refetch(t *testing.T) {
 	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
 
-	res, err := fetchDashboardViaK8s(ctx, k8s, "v2-test-uid")
+	res, err := fetchDashboardViaK8s(ctx, k8s, "v2-test-uid", false)
 	require.NoError(t, err)
 	assert.True(t, res.IsV2)
 	assert.Equal(t, "v2beta1", res.APIVersion)
@@ -150,7 +153,7 @@ func TestFetchDashboard_FailsClosedOnTransientDiscoveryError(t *testing.T) {
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
 	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
 
-	_, err := fetchDashboard(ctx, "some-uid")
+	_, err := fetchDashboard(ctx, "some-uid", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "capability", "should fail closed on inconclusive discovery, not use lossy legacy")
 }
@@ -455,10 +458,10 @@ func TestRejectV1BodyOverV2Stored_AllowsNewAndV1(t *testing.T) {
 }
 
 // staleStoredVersionServer serves a dashboard whose status.conversion.storedVersion
-// is a stale "v1" while its v2beta1 view has the given layout, mimicking a
-// dashboard created as v1 and later saved as v2 (#1356). A nil layout makes the
-// v2beta1 read fail. Writes are recorded.
-func staleStoredVersionServer(t *testing.T, layout map[string]interface{}, writes *[]string) *httptest.Server {
+// is a stale "v1" while its v2beta1 view has the given spec fields (title and
+// elements are filled in), mimicking a dashboard created as v1 and later saved
+// as v2 (#1356). A nil v2Spec makes the v2beta1 read fail. Writes are recorded.
+func staleStoredVersionServer(t *testing.T, v2Spec map[string]interface{}, writes *[]string) *httptest.Server {
 	t.Helper()
 	status := map[string]interface{}{"conversion": map[string]interface{}{"storedVersion": "v1"}}
 	return httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
@@ -481,13 +484,13 @@ func staleStoredVersionServer(t *testing.T, layout map[string]interface{}, write
 				"spec":       map[string]interface{}{"title": "Down-converted", "panels": []interface{}{}},
 				"status":     status,
 			})
-		case strings.Contains(r.URL.Path, "/v2beta1/") && layout == nil:
+		case strings.Contains(r.URL.Path, "/v2beta1/") && v2Spec == nil:
 			w.WriteHeader(http.StatusInternalServerError)
 		case strings.Contains(r.URL.Path, "/v2beta1/"):
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"apiVersion": "dashboard.grafana.app/v2beta1",
 				"metadata":   map[string]interface{}{"name": "stale", "resourceVersion": "7"},
-				"spec":       map[string]interface{}{"title": "Native", "elements": map[string]interface{}{}, "layout": layout},
+				"spec":       mergeMaps(map[string]interface{}{"title": "Native", "elements": map[string]interface{}{}}, v2Spec),
 				"status":     status,
 			})
 		default:
@@ -520,7 +523,7 @@ func staleCtx(ts *httptest.Server) context.Context {
 // as v2 via the k8s API, not down-converted through the legacy endpoint.
 func TestUpdateDashboardWithPatches_StaleV1StoredVersion(t *testing.T) {
 	var writes []string
-	ts := staleStoredVersionServer(t, autoGridWithConditionalRendering, &writes)
+	ts := staleStoredVersionServer(t, map[string]interface{}{"layout": autoGridWithConditionalRendering}, &writes)
 	defer ts.Close()
 
 	_, err := updateDashboard(staleCtx(ts), UpdateDashboardParams{
@@ -538,11 +541,11 @@ func TestUpdateDashboardWithPatches_StaleV1StoredVersion(t *testing.T) {
 // dashboard (whose v2 view is a plain up-converted GridLayout) stays v1.
 func TestFetchDashboardViaK8s_StaleV1StoredVersionGridLayout(t *testing.T) {
 	var writes []string
-	ts := staleStoredVersionServer(t, map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}, &writes)
+	ts := staleStoredVersionServer(t, map[string]interface{}{"layout": map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}}}, &writes)
 	defer ts.Close()
 
 	ctx := staleCtx(ts)
-	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale")
+	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale", false)
 	require.NoError(t, err)
 	assert.False(t, res.IsV2)
 	assert.Equal(t, "Down-converted", safeString(res.Spec, "title"))
@@ -552,7 +555,7 @@ func TestFetchDashboardViaK8s_StaleV1StoredVersionGridLayout(t *testing.T) {
 // overwrite of a v2-content dashboard with a stale storedVersion is refused.
 func TestRejectV1BodyOverV2Stored_StaleV1StoredVersion(t *testing.T) {
 	var writes []string
-	ts := staleStoredVersionServer(t, autoGridWithConditionalRendering, &writes)
+	ts := staleStoredVersionServer(t, map[string]interface{}{"layout": autoGridWithConditionalRendering}, &writes)
 	defer ts.Close()
 
 	err := rejectV1BodyOverV2Stored(staleCtx(ts), map[string]interface{}{"uid": "stale", "panels": []interface{}{}})
@@ -569,10 +572,9 @@ func TestFetchDashboardViaK8s_V2CheckErrorAllowsReadsRefusesWrites(t *testing.T)
 	defer ts.Close()
 	ctx := staleCtx(ts)
 
-	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale")
+	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale", false)
 	require.NoError(t, err, "reads must not fail when the v2 check does")
 	assert.False(t, res.IsV2)
-	assert.Error(t, res.V2CheckErr)
 
 	_, err = updateDashboard(ctx, UpdateDashboardParams{
 		UID:        "stale",
@@ -641,7 +643,7 @@ func TestStaleV1StoredVersion_LossyRowSettings(t *testing.T) {
 				map[string]interface{}{"kind": "RowsLayoutRow", "spec": rowSpec},
 			}}}
 			var writes []string
-			ts := staleStoredVersionServer(t, layout, &writes)
+			ts := staleStoredVersionServer(t, map[string]interface{}{"layout": layout}, &writes)
 			defer ts.Close()
 			ctx := staleCtx(ts)
 
@@ -658,4 +660,47 @@ func TestStaleV1StoredVersion_LossyRowSettings(t *testing.T) {
 			assert.True(t, strings.HasPrefix(writes[0], http.MethodPut+" ") && strings.Contains(writes[0], "/v2beta1/"), writes[0])
 		})
 	}
+}
+
+func mergeMaps(dst, src map[string]interface{}) map[string]interface{} {
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// TestFetchDashboardViaK8s_StaleV1StoredVersionPreferences verifies v2
+// preferences, which the v2→v1 conversion drops, keep a dashboard on the v2 path
+// even with a plain GridLayout.
+func TestFetchDashboardViaK8s_StaleV1StoredVersionPreferences(t *testing.T) {
+	var writes []string
+	ts := staleStoredVersionServer(t, map[string]interface{}{
+		"layout":      map[string]interface{}{"kind": "GridLayout", "spec": map[string]interface{}{"items": []interface{}{}}},
+		"preferences": map[string]interface{}{"defaultLayout": map[string]interface{}{"kind": "AutoGridLayout"}},
+	}, &writes)
+	defer ts.Close()
+
+	ctx := staleCtx(ts)
+	res, err := fetchDashboardViaK8s(ctx, mcpgrafana.KubernetesClientFromContext(ctx), "stale", true)
+	require.NoError(t, err)
+	assert.True(t, res.IsV2)
+	assert.Equal(t, "v2beta1", res.APIVersion)
+}
+
+// TestCreateOrUpdateDashboardV2_V2CheckErrorRefuses verifies a full v2 body
+// over a dashboard whose v2 check fails is refused as unconfirmed, not
+// misreported as stored v1 (which would steer the caller to a duplicate).
+func TestCreateOrUpdateDashboardV2_V2CheckErrorRefuses(t *testing.T) {
+	var writes []string
+	ts := staleStoredVersionServer(t, nil, &writes)
+	defer ts.Close()
+
+	_, err := updateDashboard(staleCtx(ts), UpdateDashboardParams{
+		Dashboard: map[string]interface{}{"uid": "stale", "title": "v2", "elements": map[string]interface{}{}, "layout": map[string]interface{}{"kind": "GridLayout"}},
+		Overwrite: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot confirm")
+	assert.NotContains(t, err.Error(), "stored as classic v1")
+	assert.Empty(t, writes)
 }
