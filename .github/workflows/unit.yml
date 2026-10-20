@@ -24,7 +24,7 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - name: Run linter
         run: make lint-jsonschema
 
@@ -40,7 +40,7 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - name: Check gofmt
         run: |
           unformatted=$(gofmt -l .)
