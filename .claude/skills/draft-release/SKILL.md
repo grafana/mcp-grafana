@@ -129,14 +129,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The compare link for the new version goes at the bottom, before existing compare links
 - Order sections: Added, Fixed, Changed, Security, Removed
 
-## Step 6: Commit
+## Step 6: Customer communications
+
+For every major release, or minor release containing breaking changes, prepare customer communications:
+
+- Use [grafana-product:whats-new](https://github.com/grafana/ai-kit/tree/main/plugins/grafana-product/skills/whats-new) for new or improved capabilities.
+- Use [grafana-product:whats-next](https://github.com/grafana/ai-kit/tree/main/plugins/grafana-product/skills/whats-next) for breaking changes, deprecations, removals, or disruptive behaviour changes (e.g. renamed or removed tools, changed flags or env vars, changed tool arguments).
+- If both apply, prepare separate entries. If neither applies (e.g. a patch release), skip this step and say why in the report.
+
+Identify the required entries by inspecting the source PRs and compatibility changes, not just the commit prefixes or the CHANGELOG you just wrote. Reuse existing contributions where appropriate.
+
+Read the relevant upstream skill and its required references, using `gh` to retrieve them if they are not installed. Follow their content and formatting guidance, but override their advance-notice timing: prepare the content during the release, without requiring a 2–4 week lead time or delaying the release to create one. Describe the actual release timing; do not present an already available change as upcoming.
+
+Include affected users, exact before/after behaviour, and concrete migration instructions for breaking changes. Verify CMS metadata rather than treating an mcp-grafana version as a Grafana self-managed release version.
+
+Do not commit the drafts to the release branch.
+
+## Step 7: Commit
 
 ```
 git add CHANGELOG.md
 git commit -m "docs: add CHANGELOG.md for v<NEW_VERSION> release"
 ```
 
-## Step 7: Push and create PR
+## Step 8: Push and create PR
 
 ```
 git push -u origin release/v<NEW_VERSION>
@@ -165,7 +181,7 @@ EOF
 )"
 ```
 
-## Step 8: Report
+## Step 9: Report
 
 Print a summary:
 - New version: `v<NEW_VERSION>`
@@ -173,3 +189,4 @@ Print a summary:
 - PR URL (from `gh pr create` output)
 - Number of changelog entries added, broken down by section
 - Remind the user: merging the PR will automatically tag and release
+- Customer communications: draft paths and CMS submission/publication status for each required What's new / What's next entry. If submission is outstanding, name the comms owner and remaining action; a local draft alone is not a submitted contribution. If none was required, state why.
