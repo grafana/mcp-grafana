@@ -94,7 +94,9 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	}
 	url := grafanaURL + primaryBase
 
-	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
+	// A nil base selects cfg.HTTPTransport(), so an embedder's BaseTransport
+	// (tracing, connection pooling, limits) applies here as for other tools.
+	rt, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
