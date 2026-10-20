@@ -33,7 +33,9 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 	allWarnings := allTemplateSelectionWarnings(db, args.Variables, values)
 	for i := range queries {
 		query := &queries[i]
-		references := substituteInspectionMacros(variableSearchText(*query), query.Datasource.Type, from, to)
+		// Frontend macros are not dashboard variables, even when the executor
+		// leaves them intact in the submitted expression.
+		references := substituteGrafanaMacros(variableSearchText(*query), from, to)
 		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
 			if warning := allWarnings[variable.Name]; warning != "" {

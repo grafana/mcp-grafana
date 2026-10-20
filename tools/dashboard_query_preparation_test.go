@@ -49,6 +49,7 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			raw, defaultRange bool
 			datasourceType    string
 			targetFields      map[string]interface{}
+			requiredNames     []string
 		}{
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "multi-value glob", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, want: "SELECT '{east,west}'"},
@@ -83,6 +84,8 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "SQL location override", query: "SELECT 1", current: "$__all", targetFields: map[string]interface{}{"location": "$choice"}, datasourceType: "grafana-bigquery-datasource", overrides: map[string]string{"choice": "us-east1"}, want: "SELECT 1"},
 			{name: "InfluxQL macros", query: "SELECT mean(value) FROM cpu GROUP BY time($__interval)", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "influxql"}, want: "SELECT mean(value) FROM cpu GROUP BY time($__interval)"},
 			{name: "Flux macros", query: "from(bucket: \"metrics\") |> aggregateWindow(every: ${__interval}, fn: mean)", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "flux"}, want: "from(bucket: \"metrics\") |> aggregateWindow(every: ${__interval}, fn: mean)"},
+			{name: "InfluxQL macro and variable", query: "SELECT mean(value) FROM $choice GROUP BY time($__interval)", current: "cpu", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "influxql"}, want: "SELECT mean(value) FROM cpu GROUP BY time($__interval)", requiredNames: []string{"choice"}},
+			{name: "CloudWatch macro and variable", query: "SELECT $choice, $__interval_ms", current: "CPUUtilization", datasourceType: "cloudwatch", want: "SELECT CPUUtilization, $__interval_ms", requiredNames: []string{"choice"}},
 			{name: "CloudWatch macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", want: "SELECT $__interval_ms"},
 			{name: "raw inspection", query: "SELECT ${choice:sqlstring}", current: "$__all", raw: true},
 		} {
@@ -246,8 +249,15 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 					require.Len(t, queries[0].RequiredVariables, 1)
 					assert.Equal(t, tc.defaultValue, queries[0].RequiredVariables[0].DefaultValue)
 				}
-				if tc.name == "time macros" || tc.defaultRange {
-					assert.Empty(t, queries[0].RequiredVariables, "resolved frontend macros are not dashboard variables")
+				if strings.Contains(tc.name, "macros") || tc.defaultRange {
+					assert.Empty(t, queries[0].RequiredVariables, "frontend macros are not dashboard variables")
+				}
+				if tc.requiredNames != nil {
+					var names []string
+					for _, variable := range queries[0].RequiredVariables {
+						names = append(names, variable.Name)
+					}
+					assert.ElementsMatch(t, tc.requiredNames, names)
 				}
 				assert.Equal(t, tc.want, queries[0].ProcessedQuery)
 				assert.Equal(t, datasourceInfo{UID: "postgres-uid", Type: datasourceType}, queries[0].Datasource)
