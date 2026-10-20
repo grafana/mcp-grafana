@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -170,6 +171,9 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	// Read the image data
 	imageData, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
+		if errors.Is(err, errResponseBodyTooLarge) {
+			err = fmt.Errorf("%w of %d bytes; try a smaller width, height or scale", errResponseBodyTooLarge, defaultResponseLimitBytes)
+		}
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
 

@@ -646,6 +646,9 @@ func TestGetPanelImageResponseLimit(t *testing.T) {
 			result, err := getPanelImage(ctx, GetPanelImageParams{DashboardUID: "abc"})
 			if size > int(defaultResponseLimitBytes) {
 				require.ErrorContains(t, err, "exceeds maximum size")
+				require.ErrorIs(t, err, errResponseBodyTooLarge)
+				require.ErrorContains(t, err, "try a smaller width, height or scale")
+				require.NotContains(t, err.Error(), "narrowing your query")
 				require.Nil(t, result)
 			} else {
 				require.NoError(t, err)
