@@ -27,29 +27,14 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 	for name, value := range args.Variables {
 		values[name] = []string{value}
 	}
-	allSelections := make(map[string]bool)
-	for _, item := range safeArray(safeObject(db, "templating"), "list") {
-		variable, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		name := safeString(variable, "name")
-		current := safeObject(variable, "current")
-		selection, hasValue := current["value"]
-		if override, ok := args.Variables[name]; ok {
-			selection = override
-			hasValue = true
-		}
-		_, resolved := values[name]
-		allSelections[name] = isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All")
-	}
+	allWarnings := allTemplateSelectionWarnings(db, args.Variables, values)
 	for i := range queries {
 		query := &queries[i]
 		references := substituteGrafanaMacros(variableSearchText(*query), from, to)
 		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
-			if allSelections[variable.Name] || args.Variables[variable.Name] == "$__all" {
-				query.Warnings = append(query.Warnings, fmt.Sprintf("Variable %q is set to All. Supply an explicit value in variables.", variable.Name))
+			if warning := allWarnings[variable.Name]; warning != "" {
+				query.Warnings = append(query.Warnings, warning)
 			}
 		}
 		if len(query.Warnings) > 0 {
@@ -59,6 +44,34 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		query.Datasource.UID = substituteTemplateVariableValues(query.Datasource.UID, values)
 	}
 	return queries, nil
+}
+
+func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[string]string, values templateVariableValues) map[string]string {
+	warnings := make(map[string]string)
+	const message = "Variable %q is set to All. Supply an explicit value in variables."
+	for _, item := range safeArray(safeObject(db, "templating"), "list") {
+		variable, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name := safeString(variable, "name")
+		current := safeObject(variable, "current")
+		selection, hasValue := current["value"]
+		if override, ok := overrides[name]; ok {
+			selection = override
+			hasValue = true
+		}
+		_, resolved := values[name]
+		if isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All") {
+			warnings[name] = fmt.Sprintf(message, name)
+		}
+	}
+	for name, value := range overrides {
+		if isAllTemplateSelection(value) {
+			warnings[name] = fmt.Sprintf(message, name)
+		}
+	}
+	return warnings
 }
 
 func isAllTemplateSelection(value interface{}) bool {

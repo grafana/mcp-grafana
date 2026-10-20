@@ -45,6 +45,7 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			all               bool
 			kind, fallback    string
 			datasource        string
+			sourceCurrent     string
 			raw, defaultRange bool
 		}{
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
@@ -69,8 +70,12 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "All with stale array entries", query: "SELECT ${choice:sqlstring}", current: []interface{}{"$__all", "east"}, all: true},
 			{name: "bracketed All", query: "SELECT [[choice:sqlstring]]", current: "$__all", all: true},
 			{name: "All override", query: "SELECT ${choice:sqlstring}", current: "$__all", overrides: map[string]string{"choice": "east"}, want: "SELECT 'east'"},
+			{name: "explicit All override", query: "SELECT ${choice:sqlstring}", current: "east", overrides: map[string]string{"choice": "$__all"}, all: true},
+			{name: "All override without definition", query: "SELECT $other", overrides: map[string]string{"other": "$__all"}, all: true},
 			{name: "unreferenced All", query: "SELECT 1", current: "$__all", want: "SELECT 1"},
 			{name: "datasource variable", query: "SELECT 1", datasource: "$source", want: "SELECT 1"},
+			{name: "All datasource variable", query: "SELECT 1", datasource: "$source", sourceCurrent: "$__all", all: true},
+			{name: "All datasource override", query: "SELECT 1", datasource: "$source", sourceCurrent: "$__all", overrides: map[string]string{"source": "postgres-uid"}, want: "SELECT 1"},
 			{name: "raw inspection", query: "SELECT ${choice:sqlstring}", current: "$__all", raw: true},
 		} {
 			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
@@ -121,7 +126,11 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 					}
 				}
 				if tc.datasource != "" {
-					source := map[string]interface{}{"name": "source", "type": "datasource", "current": map[string]interface{}{"value": "postgres-uid"}}
+					sourceValue := tc.sourceCurrent
+					if sourceValue == "" {
+						sourceValue = "postgres-uid"
+					}
+					source := map[string]interface{}{"name": "source", "type": "datasource", "current": map[string]interface{}{"value": sourceValue}}
 					if v2 {
 						db["variables"] = append(safeArray(db, "variables"), map[string]interface{}{"kind": "DatasourceVariable", "spec": source})
 					} else {
@@ -189,6 +198,12 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 					require.Len(t, queries[0].Warnings, 1)
 					assert.Contains(t, queries[0].Warnings[0], "Supply an explicit value")
 					assert.Empty(t, queries[0].ProcessedQuery)
+					result, err := runPanelQuery(ctx, RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1}, Variables: tc.overrides, Start: args.Start, End: args.End})
+					require.NoError(t, err)
+					assert.Equal(t, queries[0].Warnings[0], result.Errors[1])
+					assert.Empty(t, result.Results)
+					assert.Zero(t, queryCalls, "All selections must be rejected before execution")
+					assert.Zero(t, metadataCalls, "All selections must be rejected before datasource lookup")
 					return
 				}
 				require.Empty(t, queries[0].Warnings)
@@ -209,5 +224,65 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 				assert.Equal(t, queries[0].Datasource.UID, result.Results[1].DatasourceUID)
 			})
 		}
+	}
+}
+
+func TestRunPanelQueryAllDatasourceOverride(t *testing.T) {
+	for _, v2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("v2=%t", v2), func(t *testing.T) {
+			variable := map[string]interface{}{"name": "source", "type": "datasource", "current": map[string]interface{}{"value": "$__all"}}
+			target := map[string]interface{}{"refId": "A", "namespace": "AWS/EC2", "metricName": "CPUUtilization", "region": "us-east-1",
+				"datasource": map[string]interface{}{"uid": "$source", "type": "cloudwatch"}}
+			db := map[string]interface{}{
+				"templating": map[string]interface{}{"list": []interface{}{variable}},
+				"panels": []interface{}{map[string]interface{}{
+					"id": float64(1), "targets": []interface{}{target},
+				}},
+			}
+			if v2 {
+				db = map[string]interface{}{
+					"variables": []interface{}{map[string]interface{}{"kind": "DatasourceVariable", "spec": variable}},
+					"elements": map[string]interface{}{"panel": map[string]interface{}{"kind": "Panel", "spec": map[string]interface{}{
+						"id": float64(1), "data": map[string]interface{}{"spec": map[string]interface{}{"queries": []interface{}{
+							map[string]interface{}{"spec": map[string]interface{}{"refId": "A", "query": map[string]interface{}{
+								"group": "cloudwatch", "datasource": map[string]interface{}{"name": "$source"}, "spec": target,
+							}}},
+						}}},
+					}}},
+				}
+			}
+			queryCalls := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/datasources/uid/cloudwatch-override":
+					_ = json.NewEncoder(w).Encode(map[string]string{"uid": "cloudwatch-override", "type": "cloudwatch"})
+				case "/api/ds/query":
+					queryCalls++
+					var payload map[string]interface{}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+					submitted := safeArray(payload, "queries")[0].(map[string]interface{})
+					assert.Equal(t, "cloudwatch-override", safeString(safeObject(submitted, "datasource"), "uid"))
+					_, _ = w.Write([]byte(`{"results":{}}`))
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(ts.Close)
+			params := singlePanelQueryParams{DB: db, IsV2: v2, PanelID: 1, Start: "1704067200000", End: "1704070800000"}
+			_, err := runSinglePanelQuery(enforceTestCtx(ts, false), params)
+			require.EqualError(t, err, `Variable "source" is set to All. Supply an explicit value in variables.`)
+			assert.Zero(t, queryCalls)
+			params.DsUID = "cloudwatch-override"
+			_, err = runSinglePanelQuery(enforceTestCtx(ts, false), params)
+			require.NoError(t, err)
+			assert.Equal(t, 1, queryCalls)
+			assert.Equal(t, "$source", safeString(safeObject(target, "datasource"), "uid"))
+			target["namespace"] = "$source"
+			_, err = runSinglePanelQuery(enforceTestCtx(ts, false), params)
+			require.EqualError(t, err, `Variable "source" is set to All. Supply an explicit value in variables.`)
+			assert.Equal(t, 1, queryCalls, "datasource overrides must not skip All checks in other target fields")
+		})
 	}
 }

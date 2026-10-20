@@ -931,11 +931,11 @@ var UpdateDashboard = mcpgrafana.MustTool(
 )
 
 type DashboardPanelQueriesParams struct {
-	Start     string            `json:"start,omitempty" jsonschema:"description=Query start time for macros (default now-1h)."`
-	End       string            `json:"end,omitempty" jsonschema:"description=Query end time for macros (default now)."`
 	UID       string            `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 	PanelID   *int              `json:"panelId,omitempty" jsonschema:"description=Optional panel ID to filter to a specific panel"`
 	Variables map[string]string `json:"variables,omitempty" jsonschema:"description=Optional variable substitutions (e.g.\\, {\"job\": \"api-server\"})"`
+	Start     string            `json:"start,omitempty" jsonschema:"description=Query start time for macros (default now-1h)."`
+	End       string            `json:"end,omitempty" jsonschema:"description=Query end time for macros (default now)."`
 }
 
 type datasourceInfo struct {
