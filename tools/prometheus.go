@@ -415,7 +415,6 @@ func (s Selector) String() string {
 			m := labels.Matcher{Type: matchType, Name: f.Name, Value: f.Value}
 			b.WriteString(m.String())
 		} else {
-			// Unknown operators pass through unchanged so the backend still rejects them.
 			fmt.Fprintf(&b, "%s%s%s", f.Name, f.Type, strconv.Quote(f.Value))
 		}
 		if i < len(s.Filters)-1 {
