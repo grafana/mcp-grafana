@@ -23,8 +23,8 @@ func TestGenerateEmptyResultHints(t *testing.T) {
 			budget                  int
 			want                    []string
 		}{
-			{"prometheus generic", "prometheus", "up", 400, []string{"list_prometheus_metric_names", "list_prometheus_label_values", "target health", "Expand the time range"}},
-			{"loki generic", "loki", `{job="app"}`, 400, []string{"list_loki_label_names", "list_loki_label_values", "query_loki_stats", "Expand the time range"}},
+			{"prometheus generic", "prometheus", "up", 400, []string{"list_prometheus_metric_names", "list_prometheus_label_values", "target health", "last 6h or 24h"}},
+			{"loki generic", "loki", `{job="app"}`, 400, []string{"list_loki_label_names", "list_loki_label_values", "query_loki_stats", "last 6h or 24h"}},
 			{"prometheus rate", "prometheus", `rate(http_requests_total{job="x"}[5m])`, 650, []string{"at least two data points", "simplifying label matchers", "target health"}},
 			{"loki pipeline", "loki", `{job="app"} |= "x" | json`, 650, []string{"filtering out all", "Log parsing", "removing pipeline stages"}},
 			{"loki parsed label filter", "loki", `{job="app"} | json | status="500"`, 650, []string{"or filters", "removing pipeline stages"}},
@@ -39,6 +39,7 @@ func TestGenerateEmptyResultHints(t *testing.T) {
 				for _, text := range tc.want {
 					require.Contains(t, string(data), text)
 				}
+				require.NotContains(t, string(data), "start='")
 				if tc.datasource == "loki" {
 					require.Equal(t, 1, strings.Count(string(data), "list_loki_label_values"))
 				}

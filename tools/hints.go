@@ -128,7 +128,7 @@ func getPrometheusCauses(ctx HintContext) []string {
 func getPrometheusActions(ctx HintContext) []string {
 	actions := []string{
 		"Check metrics/labels with list_prometheus_metric_names and list_prometheus_label_values.",
-		"Expand the time range.",
+		"Expand the time range to the last 6h or 24h.",
 		"Check scrape target health with up{job=\"...\"}.",
 	}
 
@@ -163,7 +163,7 @@ func getLokiActions(ctx HintContext) []string {
 	actions := []string{
 		"Check labels with list_loki_label_names and list_loki_label_values.",
 		"Check the stream selector with query_loki_stats.",
-		"Expand the time range.",
+		"Expand the time range to the last 6h or 24h.",
 	}
 
 	// Add query-specific actions

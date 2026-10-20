@@ -928,10 +928,11 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 	typ := normalizeDatasourceType(datasourceType)
 	if typ == "prometheus" || typ == "loki" {
 		shared := GenerateEmptyResultHints(HintContext{DatasourceType: typ, Query: query})
-		hints := []string{shared.Summary}
+		hints := []string{shared.Summary, "Possible causes:"}
 		for _, cause := range shared.PossibleCauses {
 			hints = append(hints, "- "+cause)
 		}
+		hints = append(hints, "Try:")
 		for _, action := range shared.SuggestedActions {
 			hints = append(hints, "- "+action)
 		}

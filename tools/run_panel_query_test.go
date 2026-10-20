@@ -1157,6 +1157,46 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 	}
 }
 
+func TestGeneratePanelQueryHintsGroups(t *testing.T) {
+	for _, tc := range []struct {
+		datasource, query string
+		want              []string
+	}{
+		{
+			datasource: "prometheus",
+			query:      "up",
+			want: []string{
+				"The Prometheus query returned no data for the specified time range.",
+				"Possible causes:",
+				"- The metric, labels, time range or scrape target may have no data.",
+				"Try:",
+				"- Check metrics/labels with list_prometheus_metric_names and list_prometheus_label_values.",
+				"- Expand the time range to the last 6h or 24h.",
+				"- Check scrape target health with up{job=\"...\"}.",
+				"- Query executed: up",
+			},
+		},
+		{
+			datasource: "loki",
+			query:      `{job="app"}`,
+			want: []string{
+				"The Loki query returned no log entries for the specified time range.",
+				"Possible causes:",
+				"- The stream selector, time range or filters may not match available logs.",
+				"Try:",
+				"- Check labels with list_loki_label_names and list_loki_label_values.",
+				"- Check the stream selector with query_loki_stats.",
+				"- Expand the time range to the last 6h or 24h.",
+				`- Query executed: {job="app"}`,
+			},
+		},
+	} {
+		t.Run(tc.datasource, func(t *testing.T) {
+			require.Equal(t, tc.want, generatePanelQueryHints(tc.datasource, tc.query))
+		})
+	}
+}
+
 func TestTruncateString(t *testing.T) {
 	tests := []struct {
 		name     string
