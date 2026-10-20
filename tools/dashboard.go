@@ -155,7 +155,8 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 // returns it when its layout holds content the v1 schema cannot represent, i.e.
 // the dashboard is really v2 despite its storedVersion. It returns nil when no
 // v2 version is served or the v2 view is one a v1 dashboard up-converts to:
-// a v1-convertible layout and no preferences, which the v2→v1 conversion drops.
+// a v1-convertible layout and no preferences beyond the default GridLayout one
+// the v1→v2 conversion sets, since the v2→v1 conversion drops preferences.
 func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns, uid string) (map[string]interface{}, error) {
 	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
 	if err != nil {
@@ -170,10 +171,22 @@ func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns,
 		return nil, fmt.Errorf("get %s dashboard via k8s api %s: %w", version, uid, err)
 	}
 	spec, _ := obj["spec"].(map[string]interface{})
-	if isV1ConvertibleLayout(spec["layout"]) && len(safeObject(spec, "preferences")) == 0 {
+	if isV1ConvertibleLayout(spec["layout"]) && isDefaultPreferences(safeObject(spec, "preferences")) {
 		return nil, nil
 	}
 	return obj, nil
+}
+
+// isDefaultPreferences reports whether v2 preferences are empty or hold only
+// the empty GridLayout the v1→v2 conversion sets as the default layout.
+func isDefaultPreferences(prefs map[string]interface{}) bool {
+	for k := range prefs {
+		if k != "layout" {
+			return false
+		}
+	}
+	layout := safeObject(prefs, "layout")
+	return layout == nil || safeString(layout, "kind") == "GridLayout" && len(safeArray(safeObject(layout, "spec"), "items")) == 0
 }
 
 // isV1ConvertibleLayout reports whether a v2 layout has a shape the v1→v2
