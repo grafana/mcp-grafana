@@ -37,6 +37,7 @@
     {"name": "estimateAlways sizes a statically blocked query", "logql": "{job=~\".+\"}", "windowSeconds": 3600, "policy": {"estimateAlways": true}, "stats": {"bytes": 214748364800}, "expect": {"verdict": "block", "kinds": ["selector"], "estimatedBytes": 214748364800, "statsCalls": 1}},
     {"name": "estimateAlways with a budget adds the bytes reason to a static block", "logql": "{job=~\".+\"}", "windowSeconds": 3600, "policy": {"maxBytes": 107374182400, "estimateAlways": true}, "stats": {"bytes": 214748364800}, "expect": {"verdict": "block", "kinds": ["selector", "bytes"], "estimatedBytes": 214748364800, "statsCalls": 1}},
     {"name": "estimateAlways failure cannot downgrade a static block", "logql": "{job=~\".+\"}", "windowSeconds": 3600, "policy": {"estimateAlways": true}, "stats": {"error": true}, "expect": {"verdict": "block", "kinds": ["selector"], "statsCalls": 1}},
-    {"name": "estimateAlways without a budget allows a selective query", "logql": "{namespace=\"foo\"}", "windowSeconds": 3600, "policy": {"estimateAlways": true}, "stats": {"bytes": 1073741824}, "expect": {"verdict": "allow", "estimatedBytes": 1073741824, "statsCalls": 1}}
+    {"name": "estimateAlways without a budget allows a selective query", "logql": "{namespace=\"foo\"}", "windowSeconds": 3600, "policy": {"estimateAlways": true}, "stats": {"bytes": 1073741824}, "expect": {"verdict": "allow", "estimatedBytes": 1073741824, "statsCalls": 1}},
+    {"name": "estimateAlways without a budget ignores a stats failure", "logql": "{namespace=\"foo\"}", "windowSeconds": 3600, "policy": {"estimateAlways": true}, "stats": {"error": true}, "expect": {"verdict": "allow", "statsCalls": 1}}
   ]
 }

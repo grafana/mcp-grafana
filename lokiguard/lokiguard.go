@@ -51,7 +51,8 @@ type Policy struct {
 	MaxRange time.Duration
 	// EstimateAlways runs the byte estimate even when a static check has
 	// already blocked the query, so callers can record the size distribution of
-	// every query. The extra stats failures cannot change the verdict.
+	// every query. It never changes a verdict by itself: a failed estimate is
+	// only Unknown when MaxBytes > 0, and Decision.Err still carries it.
 	EstimateAlways bool
 }
 
@@ -136,7 +137,8 @@ type Decision struct {
 	EstimatedBytes int64
 	// Err is the first StatsFunc error, if any. It is set for
 	// CauseEstimateFailed, and also for a Block that rests on a partial total
-	// (see Assess).
+	// (see Assess) or an Allow/Block whose best-effort estimate failed
+	// (Policy.EstimateAlways with no MaxBytes, or a static block).
 	Err error
 }
 
@@ -205,12 +207,14 @@ func Assess(ctx context.Context, q Query, p Policy, stats StatsFunc) Decision {
 			total, ok, err := sumSelectorBytes(ctx, selectors, from, to, budget, stats)
 			d.Err = err
 			switch {
-			case !ok && staticOK:
+			case !ok && staticOK && p.MaxBytes > 0:
 				d.Verdict = Unknown
 				d.Cause = CauseEstimateFailed
 				return d
 			case !ok:
-				// Already blocked by a static check; the estimate was best effort.
+				// The estimate was best effort: a static check already blocked
+				// the query, or there is no byte budget to leave undetermined.
+				// Err still carries the failure.
 			default:
 				d.EstimatedBytes = total
 				if p.MaxBytes > 0 && total > p.MaxBytes {
