@@ -79,17 +79,12 @@ func TestParseRelativeTime(t *testing.T) {
 			input:         "yesterday",
 			expectedError: true,
 		},
-		{
-			name:          "empty string",
-			input:         "",
-			expectedError: true,
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
-			result, err := parseTime(tc.input)
+			result, err := parseStartTime(tc.input)
 
 			if tc.expectedError {
 				assert.Error(t, err)
@@ -104,7 +99,7 @@ func TestParseRelativeTime(t *testing.T) {
 				diff := result.Sub(now)
 				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
 			} else if tc.isMonthCase {
-				// The datemath library (used by parseTime) defaults to UTC for
+				// The datemath library (used by parseStartTime) defaults to UTC for
 				// calendar arithmetic, so use UTC to avoid DST differences.
 				expected := now.UTC().AddDate(0, -1, 0)
 				diff := result.Sub(expected)
@@ -476,6 +471,30 @@ func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
 	}
 }
 
+func TestQueryPrometheusHistogramRequiresTimes(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, end, wantErr string
+		step                      int
+	}{
+		{name: "no start", end: "now", wantErr: "startTime is required"},
+		{name: "blank end", start: "now-1h", end: "  ", wantErr: "endTime is required"},
+		{name: "negative step", start: "now-1h", end: "now", step: -60, wantErr: "stepSeconds must be a positive number of seconds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := queryPrometheusHistogram(context.Background(), QueryPrometheusHistogramParams{
+				DatasourceUID: "prometheus",
+				Metric:        "http_request_duration_seconds",
+				Percentile:    95,
+				StartTime:     tc.start,
+				EndTime:       tc.end,
+				StepSeconds:   tc.step,
+			})
+			require.Error(t, err)
+			assert.Equal(t, tc.wantErr, err.Error())
+		})
+	}
+}
+
 func TestQueryPrometheusRequiresEndTime(t *testing.T) {
 	for _, endTime := range []string{"", "  "} {
 		_, err := queryPrometheusWithHints(context.Background(), QueryPrometheusParams{
@@ -499,6 +518,40 @@ func TestQueryPrometheusRangeRequiresStartTime(t *testing.T) {
 			StepSeconds:   60,
 		})
 		require.Error(t, err)
-		assert.Equal(t, "startTime must be provided when queryType is 'range'", err.Error())
+		assert.Equal(t, "startTime must be provided when queryType is 'range' (the default); set queryType to 'instant' for a single point in time", err.Error())
+	}
+}
+
+// Each case must fail validation before the backend is resolved: there is no
+// Grafana in the context, so reaching backendForDatasource would return a
+// different error.
+func TestQueryPrometheusValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    QueryPrometheusParams
+		wantErr string
+	}{
+		{
+			name:    "unknown queryType",
+			args:    QueryPrometheusParams{QueryType: "Range", StartTime: "now-1h", EndTime: "now", StepSeconds: 60},
+			wantErr: `invalid queryType "Range": must be 'range' or 'instant'`,
+		},
+		{
+			name:    "start after end",
+			args:    QueryPrometheusParams{StartTime: "now", EndTime: "now-1h", StepSeconds: 60},
+			wantErr: "startTime must not be after endTime",
+		},
+		{
+			name:    "negative step",
+			args:    QueryPrometheusParams{StartTime: "now-1h", EndTime: "now", StepSeconds: -60},
+			wantErr: "stepSeconds must be a positive number of seconds when queryType is 'range' (the default); set queryType to 'instant' for a single point in time",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.args.DatasourceUID, tc.args.Expr = "prometheus", "up"
+			_, err := queryPrometheusWithHints(context.Background(), tc.args)
+			require.Error(t, err)
+			assert.Equal(t, tc.wantErr, err.Error())
+		})
 	}
 }

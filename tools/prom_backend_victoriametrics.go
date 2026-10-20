@@ -59,9 +59,7 @@ func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryTy
 		return nil, nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
 
-	if start.IsZero() && end.IsZero() {
-		end = time.Now()
-	}
+	// Instant queries carry no start.
 	if start.IsZero() {
 		start = end
 	}

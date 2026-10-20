@@ -135,11 +135,16 @@ export function createMetricsHostState(app: App): MetricsHostState {
 
   app.ontoolresult = (response) => {
     if (response.isError) {
+      const errorText = toolErrorText(response);
       set({
         ...nextCall(),
         result: undefined,
         isError: true,
-        status: 'The query failed. Check the expression and datasource access, then run query_prometheus again.',
+        // The server's error names the bad argument (a missing endTime, an
+        // invalid queryType); a fixed message would blame the expression.
+        status: errorText
+          ? `The query failed: ${errorText}`
+          : 'The query failed. Check the expression and datasource access, then run query_prometheus again.',
       });
       return;
     }
@@ -187,7 +192,12 @@ export function createMetricsHostState(app: App): MetricsHostState {
       const response = await app.callServerTool({ name: TOOL_NAME, arguments: { ...args } });
       if (superseded()) return;
       if (response.isError) {
-        set({ notice: error('The refresh query failed. The chart still shows the previous result.') });
+        const errorText = toolErrorText(response);
+        set({
+          notice: error(
+            `The refresh query failed${errorText ? `: ${errorText}` : ''}. The chart still shows the previous result.`,
+          ),
+        });
       } else if (!applyResult(response)) {
         set({ notice: error('Refresh returned a result the app could not read.') });
       }
@@ -240,4 +250,10 @@ export function createMetricsHostState(app: App): MetricsHostState {
     openInGrafana,
     close: () => void app.close(),
   };
+}
+
+/** The first text block of a failed tool result, if it carries one. */
+function toolErrorText(response: { content?: Array<{ type?: string; text?: string }> }): string | undefined {
+  const text = response.content?.find((c) => c.type === 'text' && typeof c.text === 'string')?.text?.trim();
+  return text || undefined;
 }

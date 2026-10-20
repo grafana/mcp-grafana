@@ -106,6 +106,11 @@ func TestExploreTimeRangeForInstantQueries(t *testing.T) {
 			QueryType: "instant", StartTime: "now-6h", EndTime: "2026-01-02T03:00:00Z",
 		}))
 
+	// The link ends where the query was evaluated: a rounded end rounds up.
+	endOfYesterday := time.Now().UTC().Truncate(24 * time.Hour).Add(-time.Second).Format(time.RFC3339)
+	assert.Equal(t, endOfYesterday,
+		exploreTimeRangeForQuery(QueryPrometheusParams{QueryType: "instant", EndTime: "now-1d/d"}).To)
+
 	for _, end := range []string{"now", "now-5m"} {
 		got := exploreTimeRangeForQuery(QueryPrometheusParams{QueryType: "instant", EndTime: end})
 		require.NotNil(t, got, end)

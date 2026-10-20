@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -71,7 +70,7 @@ type QueryPrometheusParams struct {
 	StartTime     string `json:"startTime,omitempty" jsonschema:"description=The start time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	EndTime       string `json:"endTime" jsonschema:"required,description=The end time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
-	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
+	QueryType     string `json:"queryType,omitempty" jsonschema:"enum=range,enum=instant,description=The type of query to use. Either 'range' (the default) or 'instant'"`
 	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
@@ -83,14 +82,6 @@ type QueryPrometheusResult struct {
 	// ExploreURL opens this query in Grafana Explore. Populated best-effort from
 	// the instance's public URL; omitted when it cannot be resolved.
 	ExploreURL string `json:"exploreUrl,omitempty"`
-}
-
-func parseTime(timeStr string) (time.Time, error) {
-	tr := gtime.TimeRange{
-		From: timeStr,
-		Now:  time.Now(),
-	}
-	return tr.ParseFrom()
 }
 
 // isPrometheusResultEmpty checks if a Prometheus query result contains no data
@@ -115,54 +106,69 @@ func isPrometheusResultEmpty(result model.Value) bool {
 // queryPrometheus executes a PromQL query and returns raw results.
 // This is the internal function - use queryPrometheusWithHints for MCP tools.
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
-	result, _, err := queryPrometheusWithWarnings(ctx, args)
+	result, _, _, _, err := queryPrometheusWithTimes(ctx, args)
 	return result, err
 }
 
-// queryPrometheusWithWarnings is like queryPrometheus but also returns any
-// warnings the datasource reported, such as partial responses from Thanos.
-func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, error) {
-	if strings.TrimSpace(args.EndTime) == "" {
-		return nil, nil, fmt.Errorf("endTime is required")
+// queryPrometheusWithTimes validates args before resolving the backend, runs
+// the query, and also returns any warnings the datasource reported (such as
+// partial responses from Thanos) and the parsed start and end times, so
+// callers don't re-parse relative times against a later now. startTime is
+// zero for instant queries.
+func queryPrometheusWithTimes(ctx context.Context, args QueryPrometheusParams) (result model.Value, warnings promv1.Warnings, startTime, endTime time.Time, err error) {
+	endStr := strings.TrimSpace(args.EndTime)
+	if endStr == "" {
+		return nil, nil, startTime, endTime, fmt.Errorf("endTime is required")
 	}
 
 	queryType := args.QueryType
 	if queryType == "" {
 		queryType = "range"
 	}
-
-	endTime, err := parseTime(args.EndTime)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parsing end time: %w", err)
+	if queryType != "range" && queryType != "instant" {
+		return nil, nil, startTime, endTime, fmt.Errorf("invalid queryType %q: must be 'range' or 'instant'", args.QueryType)
 	}
 
-	var startTime time.Time
-
+	// Parse start before end: each parse reads the clock, so this order keeps
+	// equal relative times like now/now from coming out inverted.
 	if queryType == "range" {
-		if args.StepSeconds == 0 {
-			return nil, nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
+		if args.StepSeconds <= 0 {
+			return nil, nil, startTime, endTime, fmt.Errorf("stepSeconds must be a positive number of seconds when queryType is 'range' (the default); set queryType to 'instant' for a single point in time")
 		}
-		if strings.TrimSpace(args.StartTime) == "" {
-			return nil, nil, fmt.Errorf("startTime must be provided when queryType is 'range'")
+		startStr := strings.TrimSpace(args.StartTime)
+		if startStr == "" {
+			return nil, nil, startTime, endTime, fmt.Errorf("startTime must be provided when queryType is 'range' (the default); set queryType to 'instant' for a single point in time")
 		}
-		startTime, err = parseTime(args.StartTime)
+		startTime, err = parseStartTime(startStr)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parsing start time: %w", err)
+			return nil, nil, startTime, endTime, fmt.Errorf("parsing start time: %w", err)
 		}
+	}
+
+	endTime, err = parseEndTime(endStr)
+	if err != nil {
+		return nil, nil, startTime, endTime, fmt.Errorf("parsing end time: %w", err)
+	}
+
+	// Prometheus rejects an inverted range, but VictoriaMetrics and Cloud
+	// Monitoring would collapse it to a single point; fail the same way everywhere.
+	if queryType == "range" && endTime.Before(startTime) {
+		return nil, nil, startTime, endTime, fmt.Errorf("startTime must not be after endTime")
 	}
 
 	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("getting backend: %w", err)
+		return nil, nil, startTime, endTime, fmt.Errorf("getting backend: %w", err)
 	}
 
-	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
+	result, warnings, err = backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
+	return result, warnings, startTime, endTime, err
 }
 
 // queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.
 // This is the MCP tool handler - hints are added at this layer, not in the internal function.
 func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
-	result, warnings, err := queryPrometheusWithWarnings(ctx, args)
+	result, warnings, startTime, endTime, err := queryPrometheusWithTimes(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +180,6 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 
 	// Add hints if the result is empty
 	if isPrometheusResultEmpty(result) {
-		startTime, _ := parseTime(args.StartTime)
-		endTime, _ := parseTime(args.EndTime)
 		response.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: "prometheus",
 			Query:          args.Expr,
@@ -240,7 +244,7 @@ func exploreTimeRangeForQuery(args QueryPrometheusParams) *TimeRange {
 	if args.EndTime == "" {
 		return nil
 	}
-	end, err := parseTime(args.EndTime)
+	end, err := parseEndTime(args.EndTime)
 	if err != nil {
 		return nil
 	}
@@ -554,8 +558,8 @@ type QueryPrometheusHistogramParams struct {
 	Percentile    float64 `json:"percentile" jsonschema:"required,description=Percentile to calculate (e.g. 50\\, 90\\, 95\\, 99)"`
 	Labels        string  `json:"labels,omitempty" jsonschema:"description=Label selector (e.g. job=\"api\"\\, service=\"gateway\")"`
 	RateInterval  string  `json:"rateInterval,omitempty" jsonschema:"description=Rate interval for the query (default: 5m)"`
-	StartTime     string  `json:"startTime,omitempty" jsonschema:"description=Start time (default: now-1h). Supports RFC3339\\, relative (now-1h)\\, or Unix ms."`
-	EndTime       string  `json:"endTime,omitempty" jsonschema:"description=End time (default: now). Supports RFC3339\\, relative\\, or Unix ms."`
+	StartTime     string  `json:"startTime" jsonschema:"required,description=Start time. Supports RFC3339\\, relative (now-1h)\\, or Unix ms."`
+	EndTime       string  `json:"endTime" jsonschema:"required,description=End time. Supports RFC3339\\, relative (now)\\, or Unix ms."`
 	StepSeconds   int     `json:"stepSeconds,omitempty" jsonschema:"description=Step size in seconds for range query (default: 60)"`
 	ProjectName   string  `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
@@ -568,16 +572,6 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 		rateInterval = "5m"
 	}
 
-	startTime := args.StartTime
-	if startTime == "" {
-		startTime = "now-1h"
-	}
-
-	endTime := args.EndTime
-	if endTime == "" {
-		endTime = "now"
-	}
-
 	stepSeconds := args.StepSeconds
 	if stepSeconds == 0 {
 		stepSeconds = 60
@@ -586,6 +580,17 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 	// Validate percentile is in valid range
 	if args.Percentile < 0 || args.Percentile > 100 {
 		return nil, fmt.Errorf("percentile must be between 0 and 100, got %g", args.Percentile)
+	}
+	// Checked here rather than left to queryPrometheus, whose errors suggest a
+	// queryType this tool doesn't have.
+	if strings.TrimSpace(args.StartTime) == "" {
+		return nil, fmt.Errorf("startTime is required")
+	}
+	if strings.TrimSpace(args.EndTime) == "" {
+		return nil, fmt.Errorf("endTime is required")
+	}
+	if stepSeconds < 0 {
+		return nil, fmt.Errorf("stepSeconds must be a positive number of seconds")
 	}
 
 	// Convert percentile to quantile (e.g., 95 -> 0.95)
@@ -615,8 +620,8 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 	result, err := queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: args.DatasourceUID,
 		Expr:          expr,
-		StartTime:     startTime,
-		EndTime:       endTime,
+		StartTime:     args.StartTime,
+		EndTime:       args.EndTime,
 		StepSeconds:   stepSeconds,
 		QueryType:     "range",
 		ProjectName:   args.ProjectName,

@@ -204,16 +204,15 @@ func TestVictoriaMetricsBackendQuery_RejectsInvalidQueryType(t *testing.T) {
 	assert.Nil(t, fake.lastPayload, "should not hit the server with an invalid query type")
 }
 
-func TestVictoriaMetricsBackendQuery_DefaultsToNowWhenBothTimesZero(t *testing.T) {
+func TestVictoriaMetricsBackendQuery_InstantStartDefaultsToEnd(t *testing.T) {
 	fake := newFakeVMServer(t, backend.QueryDataResponse{Responses: backend.Responses{
 		"A": backend.DataResponse{Frames: data.Frames{}},
 	}})
 	b := newTestVMBackend(t, fake.server)
 
-	before := time.Now().UnixMilli()
-	_, _, err := b.Query(context.Background(), "up", "instant", time.Time{}, time.Time{}, 0)
+	end := time.Now()
+	_, _, err := b.Query(context.Background(), "up", "instant", time.Time{}, end, 0)
 	require.NoError(t, err)
-	after := time.Now().UnixMilli()
 
 	require.NotNil(t, fake.lastPayload)
 	from, err := strconv.ParseInt(fake.lastPayload["from"].(string), 10, 64)
@@ -221,9 +220,8 @@ func TestVictoriaMetricsBackendQuery_DefaultsToNowWhenBothTimesZero(t *testing.T
 	to, err := strconv.ParseInt(fake.lastPayload["to"].(string), 10, 64)
 	require.NoError(t, err)
 
-	assert.GreaterOrEqual(t, from, before)
-	assert.LessOrEqual(t, to, after)
-	assert.Equal(t, from, to, "both times default to the same now() value")
+	assert.Equal(t, end.UnixMilli(), to)
+	assert.Equal(t, from, to, "a zero start defaults to end")
 }
 
 func TestVictoriaMetricsBackendQuery_HTTPError(t *testing.T) {

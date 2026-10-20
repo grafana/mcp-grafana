@@ -555,11 +555,11 @@ func firstTemplateVariableValues(values templateVariableValues) map[string]strin
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
 func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
 	// Parse time range for macro substitution
-	startTime, err := parseTime(start)
+	startTime, err := parseStartTime(start)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	endTime, err := parseTime(end)
+	endTime, err := parseEndTime(end)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -580,11 +580,11 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 // executeLokiQuery runs a Loki query using the existing queryLokiLogs function
 func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end string) ([]LogEntry, error) {
 	// Convert relative times to RFC3339 for Loki
-	startTime, err := parseTime(start)
+	startTime, err := parseStartTime(start)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	endTime, err := parseTime(end)
+	endTime, err := parseEndTime(end)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -630,11 +630,11 @@ func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, pane
 	}
 
 	// Parse time range
-	startTime, err := parseTime(start)
+	startTime, err := parseStartTime(start)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	endTime, err := parseTime(end)
+	endTime, err := parseEndTime(end)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -706,11 +706,11 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 	}
 
 	// Parse time range
-	startTime, err := parseTime(start)
+	startTime, err := parseStartTime(start)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	endTime, err := parseTime(end)
+	endTime, err := parseEndTime(end)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
