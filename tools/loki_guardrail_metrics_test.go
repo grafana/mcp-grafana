@@ -314,3 +314,154 @@ func newSelectiveStatsBackend(t *testing.T, estimates map[string]int64) *lokiNat
 	t.Cleanup(srv.Close)
 	return &lokiNativeBackend{client: &Client{httpClient: srv.Client(), baseURL: srv.URL}}
 }
+
+// histogramPoints returns the estimated_bytes histogram data points keyed by
+// "attr=value,..." with each point's sum and count.
+func histogramPoints(t *testing.T, reader *sdkmetric.ManualReader) map[string]metricdata.HistogramDataPoint[int64] {
+	t.Helper()
+	var data metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &data))
+	out := map[string]metricdata.HistogramDataPoint[int64]{}
+	for _, sm := range data.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "mcp.loki_guardrail.estimated_bytes" {
+				continue
+			}
+			assert.Equal(t, "By", m.Unit)
+			h, ok := m.Data.(metricdata.Histogram[int64])
+			require.True(t, ok)
+			for _, dp := range h.DataPoints {
+				key := ""
+				for _, kv := range dp.Attributes.ToSlice() {
+					if key != "" {
+						key += ","
+					}
+					key += string(kv.Key) + "=" + kv.Value.String()
+				}
+				out[key] = dp
+			}
+		}
+	}
+	return out
+}
+
+func TestGuardrailEstimatedBytesHistogram(t *testing.T) {
+	end := time.Now()
+	start := end.Add(-time.Hour)
+
+	t.Run("allow records the estimate", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		require.NoError(t, guardLokiQuery(ctx, newStatsBackend(t, 5<<20, &hits), `{namespace="foo", app="bar"}`, "", start, end))
+
+		pts := histogramPoints(t, reader)
+		require.Contains(t, pts, "backend=loki,verdict=allow")
+		assert.Equal(t, int64(5<<20), pts["backend=loki,verdict=allow"].Sum)
+	})
+
+	t.Run("blocked by bytes records the estimate", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		require.Error(t, guardLokiQuery(ctx, newStatsBackend(t, 200<<30, &hits), `{namespace="foo", app="bar"}`, "", start, end))
+
+		pts := histogramPoints(t, reader)
+		require.Contains(t, pts, "backend=loki,verdict=block")
+		assert.Equal(t, int64(200<<30), pts["backend=loki,verdict=block"].Sum)
+	})
+
+	// EstimateAlways: a query blocked by a static check is still sized.
+	t.Run("statically blocked query is still sized", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		require.Error(t, guardLokiQuery(ctx, newStatsBackend(t, 7<<30, &hits), `{cluster=~".+"}`, "", start, end))
+
+		assert.Equal(t, 1, hits)
+		pts := histogramPoints(t, reader)
+		require.Contains(t, pts, "backend=loki,verdict=block")
+		assert.Equal(t, int64(7<<30), pts["backend=loki,verdict=block"].Sum)
+	})
+
+	t.Run("a genuine zero estimate is recorded", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailShadow, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		require.NoError(t, guardLokiQuery(ctx, newStatsBackend(t, 0, &hits), `{namespace="foo", app="bar"}`, "", start, end))
+
+		pts := histogramPoints(t, reader)
+		require.Contains(t, pts, "backend=loki,verdict=allow")
+		assert.Equal(t, uint64(1), pts["backend=loki,verdict=allow"].Count)
+	})
+
+	t.Run("no estimate, nothing recorded", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		require.NoError(t, guardLokiQuery(ctx, newBrokenStatsBackend(t), `{namespace="foo", app="bar"}`, "", start, end))
+		require.NoError(t, guardLokiQuery(ctx, &victoriaLogsBackend{}, `_time:5m error`, "", start, end))
+
+		assert.Empty(t, histogramPoints(t, reader))
+	})
+
+	t.Run("off never calls stats", func(t *testing.T) {
+		_, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailOff, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		require.NoError(t, guardLokiQuery(ctx, newStatsBackend(t, 1<<30, &hits), `{cluster=~".+"}`, "", start, end))
+		assert.Zero(t, hits)
+	})
+}
+
+func TestGuardrailBlockOnEstimateFailure(t *testing.T) {
+	end := time.Now()
+	start := end.Add(-time.Hour)
+
+	withBlock := func(config mcpgrafana.GrafanaConfig) mcpgrafana.GrafanaConfig {
+		config.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureBlock
+		return config
+	}
+
+	t.Run("enforce blocks an unparseable query", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), withBlock(config))
+		err := guardLokiQuery(ctx, newBrokenStatsBackend(t), `{app=="x"}`, "", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no stream selector")
+
+		counts := guardrailCounts(t, reader)
+		assert.Equal(t, map[string]int64{"backend=loki,reason=unparseable": 1}, counts["mcp.loki_guardrail.blocked"])
+		assert.Empty(t, counts["mcp.loki_guardrail.fail_open"])
+	})
+
+	t.Run("enforce blocks a failed estimate", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), withBlock(config))
+		err := guardLokiQuery(ctx, newBrokenStatsBackend(t), `{namespace="foo", app="bar"}`, "", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "could not be estimated")
+		assert.Contains(t, err.Error(), "query_loki_stats")
+
+		counts := guardrailCounts(t, reader)
+		assert.Equal(t, map[string]int64{"backend=loki,reason=estimate_failed": 1}, counts["mcp.loki_guardrail.blocked"])
+	})
+
+	t.Run("shadow only records would_block", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailShadow, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), withBlock(config))
+		require.NoError(t, guardLokiQuery(ctx, newBrokenStatsBackend(t), `{namespace="foo", app="bar"}`, "", start, end))
+
+		counts := guardrailCounts(t, reader)
+		assert.Equal(t, map[string]int64{"backend=loki,reason=estimate_failed": 1}, counts["mcp.loki_guardrail.would_block"])
+	})
+
+	t.Run("allow (default) still fails open", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		config.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureAllow
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		require.NoError(t, guardLokiQuery(ctx, newBrokenStatsBackend(t), `{namespace="foo", app="bar"}`, "", start, end))
+
+		counts := guardrailCounts(t, reader)
+		assert.Equal(t, map[string]int64{"backend=loki,cause=estimate_failed": 1}, counts["mcp.loki_guardrail.fail_open"])
+	})
+}

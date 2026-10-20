@@ -248,6 +248,15 @@ const (
 	LokiGuardrailEnforce = "enforce"
 )
 
+// Loki guardrail behaviours for GrafanaConfig.LokiGuardrailOnEstimateFailure.
+const (
+	// LokiGuardrailFailureAllow runs queries the guardrail could not assess
+	// (default).
+	LokiGuardrailFailureAllow = "allow"
+	// LokiGuardrailFailureBlock rejects queries the guardrail could not assess.
+	LokiGuardrailFailureBlock = "block"
+)
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -338,6 +347,13 @@ type GrafanaConfig struct {
 	// a single query_loki_logs call, including range-vector durations like
 	// [30d]. Zero disables the range check.
 	LokiGuardrailMaxRange time.Duration
+
+	// LokiGuardrailOnEstimateFailure says what the guardrail does when it
+	// cannot reach a verdict: the query has no stream selector it understands,
+	// or Loki's index/stats estimate failed. LokiGuardrailFailureAllow (the
+	// default, also for "") runs the query; LokiGuardrailFailureBlock rejects
+	// it with a tool error in enforce mode, for autonomous callers.
+	LokiGuardrailOnEstimateFailure string
 
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server

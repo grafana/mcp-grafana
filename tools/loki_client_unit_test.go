@@ -127,3 +127,17 @@ func TestQueryLokiLogsPreservesNanosecondBounds(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1705312800000000004", query.Get("time"))
 }
+
+func TestLokiClient_MakeRequest_SetsQueryTags(t *testing.T) {
+	var gotTags string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTags = r.Header.Get("X-Query-Tags")
+		_, _ = w.Write([]byte(`{"status":"success","data":[]}`))
+	}))
+	defer server.Close()
+
+	c := &Client{httpClient: server.Client(), baseURL: server.URL}
+	_, err := c.fetchData(context.Background(), "/loki/api/v1/labels", "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "Source=mcp-grafana", gotTags)
+}
