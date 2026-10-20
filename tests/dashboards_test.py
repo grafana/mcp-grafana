@@ -45,6 +45,7 @@ async def test_dashboard_update_with_patch_operations(
     model: str,
     mcp_client: ClientSession,
     mcp_transport: str,
+    grafana_http,
 ):
     # Create a non-provisioned test dashboard by copying the demo dashboard
     demo_result = await mcp_client.call_tool("get_dashboard_by_uid", {"uid": "fe9gm6guyzi0wd"})
@@ -67,20 +68,23 @@ async def test_dashboard_update_with_patch_operations(
     create_data = json.loads(create_result.content[0].text)
     created_dashboard_uid = create_data["uid"]
 
-    updated_title = "Updated Test Dashboard"
-    prompt = (
-        f"Update the title of the Test Dashboard to {updated_title}. "
-        "Search for the dashboard by title first."
-    )
-    final_content, tools_called, mcp_server = await run_llm_tool_loop(
-        model, mcp_client, mcp_transport, prompt
-    )
+    try:
+        updated_title = "Updated Test Dashboard"
+        prompt = (
+            f"Update the title of the Test Dashboard to {updated_title}. "
+            "Search for the dashboard by title first."
+        )
+        final_content, tools_called, mcp_server = await run_llm_tool_loop(
+            model, mcp_client, mcp_transport, prompt
+        )
 
-    assert_mcp_eval(
-        prompt,
-        final_content,
-        tools_called,
-        mcp_server,
-        "Does the response indicate the dashboard was found and its title was updated successfully?",
-        expected_tools=["search_dashboards", "update_dashboard"],
-    )
+        assert_mcp_eval(
+            prompt,
+            final_content,
+            tools_called,
+            mcp_server,
+            "Does the response indicate the dashboard was found and its title was updated successfully?",
+            expected_tools=["search_dashboards", "update_dashboard"],
+        )
+    finally:
+        await grafana_http.delete(f"/api/dashboards/uid/{created_dashboard_uid}")

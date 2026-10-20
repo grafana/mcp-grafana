@@ -1,0 +1,87 @@
+name: LLM Evals
+
+# Drives real models against the server and grades them with an LLM judge.
+# Non-deterministic and paid for, so it runs nightly and on PRs that change the
+# evals, never as a required check. Transport coverage lives in e2e.yml.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+      - ".github/workflows/llm-evals.yml"
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  llm-evals:
+    name: LLM Evals
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      GRAFANA_USAGE_STATS: disabled
+      GRAFANA_USERNAME: admin
+      GRAFANA_PASSWORD: admin
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Python dependencies
+        run: |
+          cd tests
+          uv sync --all-groups
+
+      - id: get-secrets
+        uses: grafana/shared-workflows/actions/get-vault-secrets@2f1ddaf3ce1aa677356243d0dd584be33cfa35e3 # get-vault-secrets/v2.1
+        with:
+          # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
+          repo_secrets: |
+            ANTHROPIC_API_KEY=anthropic:api-key
+            OPENAI_API_KEY=openai:api-key
+
+      - name: Start docker-compose services
+        uses: hoverkraft-tech/compose-action@3c795f9eb1db588146398cd8e4ab0fe98e0f92db
+        with:
+          compose-file: "docker-compose.yaml"
+
+      # `up --wait` on the whole project fails as soon as a one-shot seed
+      # container exits, so wait on the services the tests talk to instead.
+      - name: Wait for Grafana and Prometheus
+        run: |
+          docker compose up -d --wait --wait-timeout 300 grafana
+          curl -sf --retry 60 --retry-delay 1 --retry-all-errors http://localhost:9090/-/ready
+
+      - name: Build mcp-grafana
+        run: go build -o dist/mcp-grafana ./cmd/mcp-grafana
+
+      - name: Start MCP server in background
+        run: |
+          nohup ./dist/mcp-grafana -t streamable-http --enabled-tools search,datasource,incident,prometheus,loki,elasticsearch,influxdb,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,admin,sql,cloudwatch > mcp.log 2>&1 &
+          curl -sf --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8000/healthz
+
+      - name: Run LLM evals
+        env:
+          MCP_TRANSPORT: streamable-http
+          ANTHROPIC_API_KEY: ${{ fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ fromJSON(steps.get-secrets.outputs.secrets).OPENAI_API_KEY }}
+        run: |
+          cd tests
+          uv run pytest -m llm
+
+      - if: failure()
+        name: Print MCP logs
+        run: cat mcp.log 2>/dev/null || echo "No log file found (mcp.log)"

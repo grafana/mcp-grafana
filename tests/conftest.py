@@ -3,6 +3,7 @@ import os
 import asyncio
 import gc
 import base64
+import httpx
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
@@ -16,10 +17,17 @@ DEFAULT_MCP_URL = "http://localhost:8000"
 DEFAULT_MCP_TRANSPORT = "sse"
 
 # litellm requires provider prefix for Claude models
-# Claude Sonnet 4.5
-models = ["gpt-4o", "anthropic/claude-sonnet-4-5-20250929"]
+models = ["gpt-5.4-mini", "anthropic/claude-sonnet-4-6"]
 
 pytestmark = pytest.mark.anyio
+
+
+def pytest_collection_modifyitems(items):
+    # Anything parametrized over a model drives an LLM: it needs API keys, costs
+    # money and is non-deterministic, so CI runs it separately (`-m llm`).
+    for item in items:
+        if "model" in item.fixturenames:
+            item.add_marker(pytest.mark.llm)
 
 
 @pytest.fixture
@@ -95,6 +103,21 @@ def grafana_headers():
             "Basic " + base64.b64encode(credentials.encode("utf-8")).decode()
         )
     return headers
+
+
+@pytest.fixture
+async def grafana_http(grafana_env):
+    """An HTTP client for Grafana's own API, for test setup and cleanup."""
+    auth = None
+    headers = {}
+    if key := grafana_env.get("GRAFANA_SERVICE_ACCOUNT_TOKEN") or grafana_env.get("GRAFANA_API_KEY"):
+        headers["Authorization"] = f"Bearer {key}"
+    elif "GRAFANA_USERNAME" in grafana_env:
+        auth = (grafana_env["GRAFANA_USERNAME"], grafana_env["GRAFANA_PASSWORD"])
+    async with httpx.AsyncClient(
+        base_url=grafana_env["GRAFANA_URL"], headers=headers, auth=auth
+    ) as client:
+        yield client
 
 
 @pytest.fixture

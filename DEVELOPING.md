@@ -36,7 +36,8 @@ make run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
 make test-unit           # unit tests (no external deps)
 make test-integration    # integration tests (requires docker-compose services)
 make test-cloud          # cloud tests (requires GRAFANA_SERVICE_ACCOUNT_TOKEN)
-make test-python-e2e     # Python E2E tests (requires docker-compose + SSE server)
+make test-python-e2e     # Python E2E tests, no LLM (requires docker-compose + SSE server)
+make test-python-llm     # Python LLM evals (as above, plus OpenAI/Anthropic API keys)
 ```
 
 ## Linting
