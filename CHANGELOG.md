@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** `list_users_by_org` is paginated, with new `query`, `limit` (default 100, max 1000) and `page` inputs. Its response changes from an array of users to an object `{totalCount, page, perPage, orgUsers}` ([#1313](https://github.com/grafana/mcp-grafana/pull/1313))
+- **Breaking:** `list_users_by_org` is paginated, with new `query`, `limit` (default 100, max 1000) and `page` inputs, and returns `{totalCount, page, perPage, orgUsers}` instead of an array of users. Agents pick up the new shape from the tool description and need no changes; only code that parses the tool output directly must read `orgUsers` ([#1313](https://github.com/grafana/mcp-grafana/pull/1313))
 - `generate_deeplink` with `shorten: true` returns an error containing the full link when a short URL cannot be created, instead of silently returning the long URL ([#1313](https://github.com/grafana/mcp-grafana/pull/1313))
 - `grafana_api_request` times out after the Grafana client timeout (10s by default; raise it with `--grafana-timeout`). `get_panel_image` render timeouts default to 60s and are capped at 120s. The client cache is bounded to 1000 entries per client type ([#1315](https://github.com/grafana/mcp-grafana/pull/1315))
 - Prometheus query and metadata responses larger than 10 MiB fail with an error asking you to narrow the query, instead of being read without limit ([#1331](https://github.com/grafana/mcp-grafana/pull/1331))
