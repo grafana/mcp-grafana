@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-10-20
+
+### Fixed
+
+- Classic (v1) dashboards are read and patched as v1 again on Grafana versions whose v1→v2 conversion adds a default grid layout preference, such as Grafana Cloud 13.3. Since v2.1.0, `get_dashboard_by_uid` reported every such dashboard as v2, so `update_dashboard` patches with `$.panels[...]` paths failed, and retrying with v2 paths migrated the dashboard to v2 ([#1369](https://github.com/grafana/mcp-grafana/pull/1369))
+
 ## [2.1.0] - 2026-10-20
 
 ### Added
@@ -634,6 +640,7 @@ This is the last 1.x release; the next release will be 2.0.
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[2.1.1]: https://github.com/grafana/mcp-grafana/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/grafana/mcp-grafana/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/grafana/mcp-grafana/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/grafana/mcp-grafana/compare/v2.0.0...v2.0.1
