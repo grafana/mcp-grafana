@@ -51,6 +51,24 @@ func (t Tool) NotOrgScoped() Tool {
 	return t
 }
 
+// AsReadOnly returns a copy of t annotated read-only and non-destructive,
+// leaving t itself unchanged. Use it for a tool that passes queries through
+// unfiltered when the operator has declared every datasource's credentials
+// read-only (--read-only-datasource-credentials): those credentials are then
+// its only way to write.
+func (t Tool) AsReadOnly() Tool {
+	tool := *t.Tool
+	annotations := mcp.ToolAnnotations{}
+	if tool.Annotations != nil {
+		annotations = *tool.Annotations
+	}
+	tool.Annotations = &annotations
+	WithReadOnlyHintAnnotation(true)(&tool)
+	WithDestructiveHintAnnotation(false)(&tool)
+	t.Tool = &tool
+	return t
+}
+
 // HardError wraps an error to indicate it should propagate as a JSON-RPC protocol
 // error rather than being converted to CallToolResult with IsError=true.
 // Use sparingly for non-recoverable failures (e.g., missing auth).

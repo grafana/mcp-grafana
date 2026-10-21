@@ -250,11 +250,19 @@ var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions(),
 )
 
-func AddAPITools(s *mcp.Server, enableWriteTools bool, enableQueryTools bool) {
+// AddAPITools registers grafana_api_request. Only the variant limited to GET
+// and POST /api/ds/query can be annotated read-only by readOnlyCredentials:
+// the unrestricted one writes through Grafana's own API, whatever the
+// datasource credentials.
+func AddAPITools(s *mcp.Server, enableWriteTools, enableQueryTools, readOnlyCredentials bool) {
 	if enableWriteTools {
 		APIRequest.Register(s)
 	} else if enableQueryTools {
-		APIRequestReadOnly.Register(s)
+		apiRequest := APIRequestReadOnly
+		if readOnlyCredentials {
+			apiRequest = APIRequestReadOnly.AsReadOnly()
+		}
+		apiRequest.Register(s)
 	} else {
 		APIRequestReadOnlyGetOnly.Register(s)
 	}

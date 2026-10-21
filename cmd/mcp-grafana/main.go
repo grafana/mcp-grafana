@@ -176,7 +176,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, admin,
-	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
+	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery, readOnlyDatasourceCredentials,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -235,6 +235,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
+	flag.BoolVar(&dt.readOnlyDatasourceCredentials, "read-only-datasource-credentials", false, "Declare that every datasource's credentials are read-only, so query_sql, query_influxdb and the GET-and-/api/ds/query variant of grafana_api_request are annotated read-only and non-destructive instead of destructive. MCP clients that ask for approval before destructive tools then stop asking. The server cannot check this: set it only when it holds for every datasource. It registers no tool by itself; use it with --enable-query under --disable-write.")
 	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
@@ -377,6 +378,7 @@ type toolEntry struct {
 func (dt *disabledTools) toolEntries() []toolEntry {
 	enableWriteTools := !dt.write
 	enableQueryTools := !dt.query
+	readOnlyCredentials := dt.readOnlyDatasourceCredentials
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
 		{func(s *mcp.Server) { tools.AddDatasourceTools(s, enableWriteTools) }, dt.datasource, "datasource"},
@@ -385,7 +387,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddLokiTools(s, enableQueryTools) }, dt.loki, "loki"},
 		{func(s *mcp.Server) { tools.AddElasticsearchTools(s, enableQueryTools) }, dt.elasticsearch, "elasticsearch"},
 		{func(s *mcp.Server) { tools.AddQuickwitTools(s, enableQueryTools) }, dt.quickwit, "quickwit"},
-		{func(s *mcp.Server) { tools.AddInfluxDBTools(s, dt.queryToolsEnabled("influxdb")) }, dt.influxdb, "influxdb"},
+		{func(s *mcp.Server) { tools.AddInfluxDBTools(s, dt.queryToolsEnabled("influxdb"), readOnlyCredentials) }, dt.influxdb, "influxdb"},
 		{func(s *mcp.Server) { tools.AddAlertingTools(s, enableWriteTools) }, dt.alerting, "alerting"},
 		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard"},
 		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
@@ -401,11 +403,13 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddCloudWatchTools(s, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
 		{func(s *mcp.Server) { tools.AddCloudLoggingTools(s, enableQueryTools) }, dt.cloudlogging, "cloudlogging"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
-		{func(s *mcp.Server) { tools.AddSQLTools(s, dt.queryToolsEnabled("sql")) }, dt.sql, "sql"},
+		{func(s *mcp.Server) { tools.AddSQLTools(s, dt.queryToolsEnabled("sql"), readOnlyCredentials) }, dt.sql, "sql"},
 		{func(s *mcp.Server) { tools.AddRunPanelQueryTools(s, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
 		{func(s *mcp.Server) { tools.AddGraphiteTools(s, enableQueryTools) }, dt.graphite, "graphite"},
 		{func(s *mcp.Server) { tools.AddPluginTools(s, enableWriteTools) }, dt.plugin, "plugin"},
-		{func(s *mcp.Server) { tools.AddAPITools(s, enableWriteTools, dt.mutatingQueryToolsEnabled()) }, dt.api, "api"},
+		{func(s *mcp.Server) {
+			tools.AddAPITools(s, enableWriteTools, dt.mutatingQueryToolsEnabled(), readOnlyCredentials)
+		}, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 		{func(s *mcp.Server) { tools.AddAgento11yTools(s, enableWriteTools) }, dt.agento11y, "agento11y"},
