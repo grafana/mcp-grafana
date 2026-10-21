@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -172,6 +173,53 @@ func TestExecuteInfinityPanelQuery_MacrosAndTypePassThrough(t *testing.T) {
 	// 1h range: $__range = 1h, $__interval = range/100 = 36s
 	assert.Equal(t, "/api/metrics?range=1h&step=36s&step_ms=36000", q["url"])
 	assert.Equal(t, `{"window": "1h"}`, q["url_options"].(map[string]interface{})["data"], "macros are substituted in nested fields too")
+}
+
+func TestExecuteInfinityPanelQuery_PerRefIDError(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			"datasource error inside a 200",
+			`{"results":{"A":{"status":500,"error":"error while performing the infinity query. 404 Not Found","errorSource":"downstream","frames":[]}}}`,
+			"refId A (downstream): error while performing the infinity query. 404 Not Found",
+		},
+		{
+			"non-2xx status without error text",
+			`{"results":{"A":{"status":400,"frames":[]}}}`,
+			"refId A: status 400",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer ts.Close()
+			ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+			info, err := extractPanelInfo(infinityPanel("backend"), 0)
+			require.NoError(t, err)
+
+			_, _, err = executeInfinityPanelQuery(ctx, "netbox-infinity", InfinityDatasourceType, info, "now-1h", "now", nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestDSQueryResponsesError(t *testing.T) {
+	assert.NoError(t, dsQueryResponsesError(backend.Responses{}))
+	assert.NoError(t, dsQueryResponsesError(backend.Responses{"A": {Status: 200}, "B": {}}))
+	err := dsQueryResponsesError(backend.Responses{
+		"B": {Status: 502, Error: errors.New("upstream unreachable"), ErrorSource: backend.ErrorSourceDownstream},
+		"A": {Status: 400},
+		"C": {Status: 200},
+	})
+	require.Error(t, err)
+	assert.Equal(t, "refId A: status 400; refId B (downstream): upstream unreachable", err.Error(), "sorted by refId, 2xx skipped")
 }
 
 func TestIsEmptyPanelResult_DSQueryResponses(t *testing.T) {

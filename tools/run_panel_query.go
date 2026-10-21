@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -897,7 +898,9 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 	}, nil
 }
 
-// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint.
+// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint. Grafana
+// answers 200 even when the datasource fails a query (unreachable URL, upstream 404, bad
+// query) and reports that per refId, so those failures are returned as an error here.
 func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	client, baseURL, err := newDSQueryHTTPClient(ctx)
 	if err != nil {
@@ -908,8 +911,34 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 	if err != nil {
 		return nil, err
 	}
+	if err := dsQueryResponsesError(resp.Responses); err != nil {
+		return nil, err
+	}
 
 	return resp.Responses, nil
+}
+
+// dsQueryResponsesError collects the per-refId failures of a /api/ds/query response: a
+// response whose error is set, or whose status is set and not 2xx.
+func dsQueryResponsesError(responses backend.Responses) error {
+	var failures []string
+	for _, refID := range slices.Sorted(maps.Keys(responses)) {
+		r := responses[refID]
+		source := ""
+		if r.ErrorSource != "" {
+			source = fmt.Sprintf(" (%s)", r.ErrorSource)
+		}
+		switch {
+		case r.Error != nil:
+			failures = append(failures, fmt.Sprintf("refId %s%s: %v", refID, source, r.Error))
+		case r.Status != 0 && (r.Status < 200 || r.Status >= 300):
+			failures = append(failures, fmt.Sprintf("refId %s%s: status %d", refID, source, r.Status))
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(failures, "; "))
 }
 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
