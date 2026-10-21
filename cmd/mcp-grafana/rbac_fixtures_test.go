@@ -196,8 +196,10 @@ var rbacFixtures = map[string]rbacFixture{
 	},
 	"get_query_examples": {args: map[string]any{"datasourceType": "prometheus"}},
 
-	"search_dashboards":           {args: map[string]any{"query": "mcp-rbac"}, filtered: true},
-	"get_dashboard_by_uid":        {args: map[string]any{"uid": rbacDashboardUID}},
+	"search_dashboards": {args: map[string]any{"query": "mcp-rbac"}, filtered: true},
+	// version takes the legacy versions API, which needs more than the
+	// current-dashboard path.
+	"get_dashboard_by_uid":        {args: map[string]any{"uid": rbacDashboardUID, "version": 1}},
 	"get_dashboard_panel_queries": {args: map[string]any{"uid": rbacDashboardUID}},
 	"get_dashboard_property":      {args: map[string]any{"uid": rbacDashboardUID, "jsonPath": "$.title"}},
 	"get_dashboard_summary":       {args: map[string]any{"uid": rbacDashboardUID}},
@@ -259,23 +261,9 @@ var rbacFixtures = map[string]rbacFixture{
 	"list_users_by_org":        {args: map[string]any{}},
 	"get_resource_description": {args: map[string]any{"resourceType": "dashboards"}},
 	"get_resource_permissions": {args: map[string]any{"resource": "dashboards", "resourceId": rbacDashboardUID}},
-	"list_team_roles": {
-		// TODO: find what Cloud needs here and declare it.
-		skip: "Grafana Cloud authorizes this route through iam.grafana.app rolebindings, " +
-			"which a custom role with teams.roles:read (on teams:*) doesn't satisfy",
-		setup: func(t *testing.T, api rbacAPI) map[string]any {
-			var found struct {
-				Teams []struct {
-					ID int64 `json:"id"`
-				} `json:"teams"`
-			}
-			require.NoError(t, api("GET", "/api/teams/search?perpage=1", nil, &found))
-			if len(found.Teams) == 0 {
-				t.Skip("mcptests has no teams")
-			}
-			return map[string]any{"teamIds": []int64{found.Teams[0].ID}}
-		},
-	},
+	// TODO: find what Grafana Cloud needs here and declare it.
+	"list_team_roles": {skip: "Grafana Cloud authorizes this route through iam.grafana.app rolebindings, " +
+		"which a custom role with teams.roles:read (on teams:*) doesn't satisfy"},
 	"list_user_roles": {
 		setup: func(t *testing.T, api rbacAPI) map[string]any {
 			var users []struct {

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -70,13 +71,34 @@ func TestToolPermissions(t *testing.T) {
 	}, nil))
 
 	tools := listAllCategoryTools(t, disabledTools{})
-	adminSession := newRBACSession(t, adminToken)
+	readOnlyTools := listAllCategoryTools(t, disabledTools{write: true})
+	adminSession := newRBACSession(t, adminToken, disabledTools{})
 	noneToken, err := admin.serviceAccountToken(t, nil)
 	require.NoError(t, err)
-	noneSession := newRBACSession(t, noneToken)
-	granted := map[string]*rbacSession{}
+	noneSession := newRBACSession(t, noneToken, disabledTools{})
 
+	// One session per distinct permission set and tool variant. A tool
+	// declaring nothing grantable gets noneSession.
+	sessionKey := func(perms []string, dt disabledTools) string {
+		return fmt.Sprintf("write-disabled=%t %s", dt.write, strings.Join(perms, ","))
+	}
+	sessions := map[string]*rbacSession{sessionKey(nil, disabledTools{}): noneSession}
 	parent := t
+	sessionFor := func(t *testing.T, perms []string, dt disabledTools) *rbacSession {
+		key := sessionKey(perms, dt)
+		s, ok := sessions[key]
+		if !ok {
+			// Sessions outlive the subtest that creates them, so they and
+			// their service accounts and roles are cleaned up with the
+			// parent.
+			token, err := admin.serviceAccountToken(parent, perms)
+			require.NoError(t, err)
+			s = newRBACSession(parent, token, dt)
+			sessions[key] = s
+		}
+		return s
+	}
+
 	for _, name := range slices.Sorted(maps.Keys(tools)) {
 		t.Run(name, func(t *testing.T) {
 			f := rbacFixtures[name]
@@ -98,21 +120,22 @@ func TestToolPermissions(t *testing.T) {
 				t.Skipf("fails with the admin token, so this stack can't check it: %s", failure)
 			}
 
-			declared, _ := mcpgrafana.ToolRequiredPermissions(tools[name])
-			perms := slices.DeleteFunc(declared, func(a string) bool { return strings.Contains(a, "/") })
-			key := strings.Join(perms, ",")
-			s, ok := granted[key]
-			if !ok {
-				// Sessions outlive the subtest that creates them, so they and
-				// their service accounts and roles are cleaned up with the
-				// parent.
-				token, err := admin.serviceAccountToken(parent, perms)
-				require.NoError(t, err)
-				s = newRBACSession(parent, token)
-				granted[key] = s
+			perms, declaresAny := grantable(tools[name])
+			if declaresAny && len(perms) == 0 {
+				t.Skip("declares only on-behalf-of actions, which a service account can't be granted")
 			}
-			if failure, denials := call(s); failure != "" {
+			if failure, denials := call(sessionFor(t, perms, disabledTools{})); failure != "" {
 				t.Errorf("fails with exactly its declared permissions %v: %s\nRBAC denials: %v", perms, failure, denials)
+			}
+
+			// Under --disable-write some tools register a read-only variant
+			// with a narrower declaration, which must be enough on its own.
+			if ro, ok := readOnlyTools[name]; ok {
+				if roPerms, _ := grantable(ro); !slices.Equal(roPerms, perms) {
+					if failure, denials := call(sessionFor(t, roPerms, disabledTools{write: true})); failure != "" {
+						t.Errorf("with --disable-write, fails with exactly its declared permissions %v: %s\nRBAC denials: %v", roPerms, failure, denials)
+					}
+				}
 			}
 
 			if f.filtered {
@@ -129,6 +152,16 @@ func TestToolPermissions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// grantable returns a tool's declared actions that a custom role can hold,
+// and whether it declares any actions at all. Actions of the form
+// group/resource:verb are left out: Grafana checks them only for on-behalf-of
+// tokens and rejects them in roles.
+func grantable(tool *mcp.Tool) ([]string, bool) {
+	declared, _ := mcpgrafana.ToolRequiredPermissions(tool)
+	perms := slices.DeleteFunc(slices.Clone(declared), func(a string) bool { return strings.Contains(a, "/") })
+	return perms, len(declared) > 0
 }
 
 // rbacAdmin provisions roles and service accounts with the admin token.
@@ -203,11 +236,16 @@ func (a *rbacAdmin) serviceAccountToken(t *testing.T, perms []string) (string, e
 		if !ok {
 			return "", fmt.Errorf("the admin token lacks the declared permission %s, so it can't grant it", p)
 		}
+		grantedAny := false
 		for _, scope := range slices.Compact(slices.Sorted(slices.Values(scopes))) {
 			singleResource := (strings.Contains(scope, ":uid:") || strings.Contains(scope, ":id:")) && !strings.HasSuffix(scope, "*")
 			if !singleResource {
 				permissions = append(permissions, map[string]string{"action": p, "scope": scope})
+				grantedAny = true
 			}
+		}
+		if !grantedAny {
+			return "", fmt.Errorf("the admin token holds the declared permission %s only on single resources (%v), so it can't grant it broadly", p, scopes)
 		}
 	}
 
@@ -252,7 +290,7 @@ type rbacSession struct {
 	recorder *denialRecorder
 }
 
-func newRBACSession(t *testing.T, token string) *rbacSession {
+func newRBACSession(t *testing.T, token string, dt disabledTools) *rbacSession {
 	t.Helper()
 	recorder := &denialRecorder{base: http.DefaultTransport}
 	httpFn := mcpgrafana.ComposedHTTPContextFunc(mcpgrafana.GrafanaConfig{BaseTransport: recorder})
@@ -260,7 +298,6 @@ func newRBACSession(t *testing.T, token string) *rbacSession {
 	header.Set("X-Grafana-Service-Account-Token", token)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	dt := disabledTools{}
 	for _, e := range dt.toolEntries() {
 		dt.enabledTools += e.category + ","
 	}
@@ -330,12 +367,29 @@ func (r *denialRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
-	if d := rbacDenial(body); d != "" {
+	if d := rbacDenial(gunzipped(resp.Header, body)); d != "" {
 		r.mu.Lock()
 		r.denials = append(r.denials, req.Method+" "+req.URL.Path+": "+d)
 		r.mu.Unlock()
 	}
 	return resp, nil
+}
+
+// gunzipped returns body decompressed if the response says it is gzip, as it
+// is for clients (such as incident-go) that ask for gzip themselves.
+func gunzipped(h http.Header, body []byte) []byte {
+	if !strings.Contains(h.Get("Content-Encoding"), "gzip") {
+		return body
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		return body
+	}
+	b, err := io.ReadAll(zr)
+	if err != nil {
+		return body
+	}
+	return b
 }
 
 func (r *denialRecorder) take() []string {
