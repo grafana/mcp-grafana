@@ -482,6 +482,8 @@ github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42 h1:2vBu6b0IHnF
 github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42/go.mod h1:3QDfdZOWKRxNhMJFL+0C/+12+jLNHDlt0VKNr/i9Daw=
 github.com/grafana/mcp-doc-server v1.0.0 h1:59McgsHgNEa9Ifrh5VsXcJCz5pSQAbJNdDtF+6iK54I=
 github.com/grafana/mcp-doc-server v1.0.0/go.mod h1:ghhbVTtTKG11OjHFiztryyLWQIlNzPp1dx/IJ8/CZeg=
+github.com/grafana/mcp-grafana/lokiguard v0.1.0 h1:z60xEv8+zbR4vfaBDA9lWMJrFwLFBuj139M6WVfYKeE=
+github.com/grafana/mcp-grafana/lokiguard v0.1.0/go.mod h1:Tukxz12eeUBqR2Z/uBs27egshtHNjIgTHmroCUrYM1M=
 github.com/grafana/otel-profiling-go v0.6.0 h1:W7lOZaJj4IJISXMcM1UBk3fJF3tzF2OD6MJBJaQp1H8=
 github.com/grafana/otel-profiling-go v0.6.0/go.mod h1:cqLIDgNXlnzknJ0WLiEe+JPjZk2MZ4ftMdqRJRWj1ZM=
 github.com/grafana/otel-profiling-go v0.7.0 h1:Q6CBLSgAnYmNQNNrj4ipG0S/K/K8iazA9E4kYRzZf0I=
