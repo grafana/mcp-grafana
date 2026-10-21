@@ -240,8 +240,13 @@ func (t *datasourceFallbackTransport) fallbackCacheKey(req *http.Request) string
 // fallbackRequest returns a copy of req addressed to the fallback base.
 func (t *datasourceFallbackTransport) fallbackRequest(req *http.Request) *http.Request {
 	from := t.primaryBase
-	if t.fallbackTrimPrefix != "" && strings.HasPrefix(req.URL.Path, from+t.fallbackTrimPrefix+"/") {
-		from += t.fallbackTrimPrefix
+	// The base need not start the path: a Grafana served from a subpath
+	// (https://host/grafana) puts it after that subpath. Look at what follows
+	// its first occurrence, the one rewriteRequest replaces.
+	if t.fallbackTrimPrefix != "" {
+		if i := strings.Index(req.URL.Path, from); i >= 0 && strings.HasPrefix(req.URL.Path[i+len(from):], t.fallbackTrimPrefix+"/") {
+			from += t.fallbackTrimPrefix
+		}
 	}
 	return t.rewriteRequest(req, from, t.fallbackBase)
 }

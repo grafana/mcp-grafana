@@ -350,6 +350,44 @@ func TestDatasourceFallbackTransport_JSONFallbackBodyIsPreserved(t *testing.T) {
 	assert.Equal(t, payload, string(body))
 }
 
+func TestLokiDatasourceFallbackTransport_TrimsAPIPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		name, grafanaPath string
+	}{
+		{name: "root", grafanaPath: ""},
+		// Grafana served from a subpath: the datasource base is not at the
+		// start of the request path.
+		{name: "subpath", grafanaPath: "/grafana"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetFallbackCache()
+			t.Cleanup(resetFallbackCache)
+
+			var requests []*http.Request
+			mock := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests = append(requests, req)
+				if strings.Contains(req.URL.Path, "/resources/") {
+					return newMockResponse(http.StatusOK), nil
+				}
+				return newMockResponse(http.StatusInternalServerError), nil
+			})
+
+			rt := newLokiDatasourceFallbackTransport(mock,
+				"/api/datasources/proxy/uid/test-uid",
+				"/api/datasources/uid/test-uid/resources",
+			)
+
+			req, _ := http.NewRequest("GET", "http://grafana.example.com"+tc.grafanaPath+"/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range?query=%7Bapp%3D%22a%22%7D", nil)
+			resp, err := rt.RoundTrip(req)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Len(t, requests, 2)
+			assert.Equal(t, tc.grafanaPath+"/api/datasources/uid/test-uid/resources/query_range", requests[1].URL.Path)
+			assert.Equal(t, `{app="a"}`, requests[1].URL.Query().Get("query"))
+		})
+	}
+}
+
 // errAfterReader yields data, then fails, like a connection reset mid-body.
 type errAfterReader struct {
 	data string
