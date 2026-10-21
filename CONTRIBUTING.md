@@ -80,8 +80,8 @@ To see the numbers, open that check's run and read its summary — you'll get th
 If you want the number before you push, or you're weighing two designs against each other:
 
 ```bash
-make token-baseline   # once, on your base branch
-make token-check      # on your branch
+mise run token-baseline   # once, on your base branch
+mise run token-check      # on your branch
 ```
 
 A tool's cost is almost entirely its description and its JSON schema. If your delta looks larger than you expected, that's usually where to trim — long parameter descriptions and deeply nested schemas are the expensive parts.
@@ -92,14 +92,14 @@ The changelog is generated automatically when a release is cut. PRs that touch `
 
 ## Conventions that CI enforces
 
-Run `make lint` and `make test-unit` before pushing. The specifics:
+Run `mise run lint` and `mise run test-unit` before pushing. The specifics:
 
 - **Signed commits are required.** Every commit must have a verified signature — this is [an organisation-wide Grafana policy](https://community.grafana.com/t/action-required-signed-commits-mandatory-for-all-grafana-repositories/163404). Setting this up once saves a round trip later; it is the most common reason a finished PR sits unmerged here.
 - **The CLA must be signed.** It's a required check, so nothing can merge without it, however good the code is.
 - **Conventional commit messages** — `feat(tools):`, `fix(loki):`, `docs:` and so on.
-- **Commas inside `jsonschema` struct tags must be escaped.** There's a dedicated linter because it's easy to get wrong: `make lint-jsonschema-fix` will fix it for you.
+- **Commas inside `jsonschema` struct tags must be escaped.** There's a dedicated linter because it's easy to get wrong: `mise run lint-jsonschema-fix` will fix it for you.
 - **No bare boolean sub-schemas.** An `any` or `interface{}` field makes the schema reflector emit `true`, which breaks some MCP clients outright. Tool creation panics if this happens; add the type to the reflector's `Mapper` in `tools.go`.
-- **Pass `context.Context` through Grafana API client calls** — enforced by `make lint-openapi`.
+- **Pass `context.Context` through Grafana API client calls** — enforced by `mise run lint-openapi`.
 - **Write tools must respect `--disable-write`.** Any tool that creates, updates or deletes anything must be registered so that it disappears when the server runs read-only. Take the `enableWriteTools` parameter in your category's `Add*Tools` function.
 - **Query tools must respect `--disable-query`.** Any tool that executes a query against a datasource must disappear when query execution is disabled. Take the `enableQueryTools` parameter in your category's `Add*Tools` function, and leave metadata and discovery tools registered unconditionally. If the tool passes the query through unfiltered — raw SQL, InfluxQL — it can write, so it counts as a write tool too: add its category to `mutatingQueryCategories` in `cmd/mcp-grafana/main.go` so `--disable-write` removes it.
 - **New tools declare their RBAC permissions** with `mcpgrafana.RequiresPermissions(...)` on the `MustTool` call (see `tools/rbac.go` for shared groups such as `datasourceQuery`), and **need a row in the README's tool table** with the category and required scopes. The permissions column is generated: run `go test ./cmd/mcp-grafana -run TestReadmeToolPermissions -update-readme`.

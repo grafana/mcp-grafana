@@ -421,7 +421,7 @@ func (c *countingTransport) count() int {
 // This is a regression test for a real leak: Enabled() used to be "mode is not
 // disabled", so usagestats.New(usagestats.Config{}) in the cmd tests was
 // enabled, New filled in DefaultEndpoint, and a torn-down server POSTed a
-// usage report to the production endpoint on every `make test-unit` run.
+// usage report to the production endpoint on every `mise run test-unit` run.
 func TestZeroConfigLifecycleSendsNothing(t *testing.T) {
 	ct := &countingTransport{}
 	r := New(Config{HTTPClient: &http.Client{Transport: ct}})

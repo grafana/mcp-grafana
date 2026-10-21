@@ -1,0 +1,29 @@
+name: Set up mise
+description: Install the tools pinned in mise.toml, and cache them along with Go build and module downloads.
+
+inputs:
+  cache:
+    description: Cache tools and Go downloads. Turn off in jobs that publish what they build, where a poisoned cache would ship.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up mise
+      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      with:
+        version: 2026.9.2
+        install: true
+        cache: ${{ inputs.cache == 'true' }}
+
+    # mise-action caches the tools only, so this replaces setup-go's cache.
+    - name: Cache Go build and modules
+      if: inputs.cache == 'true'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: go-${{ runner.os }}-${{ hashFiles('mise.toml', '**/go.sum') }}
+        restore-keys: go-${{ runner.os }}-

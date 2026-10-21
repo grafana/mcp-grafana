@@ -11,7 +11,7 @@ npm test
 npm run build
 ```
 
-`npm run build` creates the reusable library (`dist/index.js` and declarations) and the single-file MCP resources `dist/trace.html` and `dist/metrics.html`. The HTML files are committed for the Go server's `go:embed`. Regenerate them after changing app source; do not edit generated HTML. `make build-ui` runs the same install and build sequence. To build one resource, use `npm run build:trace` or `npm run build:metrics`.
+`npm run build` creates the reusable library (`dist/index.js` and declarations) and the single-file MCP resources `dist/trace.html` and `dist/metrics.html`. The HTML files are committed for the Go server's `go:embed`. Regenerate them after changing app source; do not edit generated HTML. `mise run build-ui` runs the same install and build sequence. To build one resource, use `npm run build:trace` or `npm run build:metrics`.
 
 Run `npm run dev` for component and host previews. The preview fixtures are synthetic and do not query a Grafana server.
 

@@ -1,115 +1,14 @@
+# Tasks moved to mise.toml. This stub forwards `make <target>` to
+# `mise run <target>` for muscle memory and will be removed in a later release.
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
-help: ## Print this help message.
-	@echo "Usage: make [target]"
-	@echo ""
-	@echo "Targets:"
-	@echo ""
-	@grep -E '^[a-zA-Z_0-9-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+help:
+	@echo "Tasks now live in mise.toml: install mise (https://mise.jdx.dev/getting-started.html),"
+	@echo "then run 'mise tasks' to list them and 'mise run <task>' to run one."
 
-.PHONY: build-image
-build-image: ## Build the Docker image.
-	docker build -t mcp-grafana:latest .
-
-.PHONY: build-ui
-build-ui: ## Rebuild MCP App UI bundles under ui/. Requires Node; the built artifacts are committed for `go:embed`, so this only needs to run when ui/*/src changes.
-	@for dir in ui/*/; do \
-		if [ -f "$$dir/package.json" ]; then \
-			echo "Building $$dir..."; \
-			(cd "$$dir" && npm ci --ignore-scripts && npm run build); \
-		fi; \
-	done
-
-.PHONY: build
-build: ## Build the binary.
-	go build -o dist/mcp-grafana ./cmd/mcp-grafana
-
-.PHONY: lint lint-jsonschema lint-jsonschema-fix lint-openapi
-lint: lint-jsonschema lint-openapi ## Run format checks and lint the Go code.
-	gofmt -l . 
-	golangci-lint run
-	cd lokiguard && golangci-lint run --config ../.golangci.yaml
-
-lint-jsonschema: ## Lint for unescaped commas in jsonschema tags.
-	go run ./cmd/linters/jsonschema --path .
-
-lint-openapi: ## Lint for openapi client calls missing context propagation.
-	go run ./cmd/linters/openapi ./tools/... ./
-
-lint-jsonschema-fix: ## Automatically fix unescaped commas in jsonschema tags.
-	go run ./cmd/linters/jsonschema --path . --fix
-
-.PHONY: test test-unit
-test-unit: ## Run the unit tests (no external dependencies required).
-	go test -v -tags unit ./...
-	cd lokiguard && go test -v ./...
-test: test-unit
-
-.PHONY: test-integration
-test-integration: ## Run only the Docker-based integration tests (requires docker-compose services to be running, use `make run-test-services` to start them).
-	go test -v -tags integration ./...
-
-.PHONY: test-cloud
-test-cloud: ## Run only the cloud-based tests (requires cloud Grafana instance and credentials).
-ifeq ($(origin GRAFANA_SERVICE_ACCOUNT_TOKEN), undefined)
-	ifeq ($(origin GRAFANA_API_KEY), undefined)
-		$(error Neither GRAFANA_SERVICE_ACCOUNT_TOKEN nor GRAFANA_API_KEY is set. Please 'export GRAFANA_SERVICE_ACCOUNT_TOKEN=...' or use a tool like direnv to load it from .envrc. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.)
-	else
-		$(warning GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead)
-	endif
-endif
-	@# The mcptests stack hibernates when idle and returns 503 on every endpoint while it wakes.
-	@# curl retries 503s as transient errors, so this blocks until the stack is up (max 10m).
-	curl -fsS -o /dev/null --retry 60 --retry-delay 10 --retry-max-time 600 \
-		-H "Authorization: Bearer $${GRAFANA_SERVICE_ACCOUNT_TOKEN:-$$GRAFANA_API_KEY}" \
-		https://mcptests.grafana-dev.net/api/frontend/settings
-	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud ./tools
-	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud -run TestToolPermissions ./cmd/mcp-grafana
-
-.PHONY: test-python-e2e
-test-python-e2e: ## Run the deterministic Python E2E tests, no LLM involved (requires docker-compose services and SSE server to be running, use `make run-test-services` and `make run-sse` to start them).
-	cd tests && uv sync --all-groups
-	cd tests && GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin uv run pytest -m "not llm"
-
-.PHONY: test-python-llm
-test-python-llm: ## Run the Python LLM evals (as test-python-e2e, plus OPENAI_API_KEY and ANTHROPIC_API_KEY).
-	cd tests && uv sync --all-groups
-	cd tests && GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin uv run pytest -m llm
-
-# Common environment variables for run targets
-GRAFANA_ENV = GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin
-OTEL_ENV = OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true
-ENABLED_TOOLS = search,datasource,incident,prometheus,loki,elasticsearch,influxdb,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,admin,clickhouse,cloudwatch,athena
-# Note: influxdb is opt-in for end users (like clickhouse/cloudwatch/elasticsearch)
-# but included in Makefile run targets so local development exercises the code.
-
-.PHONY: run
-run: ## Run the MCP server in stdio mode.
-	$(GRAFANA_ENV) go run ./cmd/mcp-grafana --enabled-tools $(ENABLED_TOOLS)
-
-.PHONY: run-sse
-run-sse: ## Run the MCP server in SSE mode.
-	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport sse --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
-
-PHONY: run-streamable-http
-run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
-	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
-
-define check_mcp_tokens
-	@command -v mcp-tokens >/dev/null 2>&1 || { echo "Error: mcp-tokens is not installed. Install it from https://github.com/sd2k/mcp-tokens"; exit 1; }
-endef
-
-.PHONY: token-baseline
-token-baseline: build ## Generate a token baseline for the MCP server.
-	$(check_mcp_tokens)
-	mcp-tokens analyze --format json --all-providers --output baseline.json -- ./dist/mcp-grafana
-
-.PHONY: token-check
-token-check: build ## Compare token usage against the baseline.
-	$(check_mcp_tokens)
-	mcp-tokens analyze --baseline baseline.json --threshold-percent 5 -- ./dist/mcp-grafana
-
-.PHONY: run-test-services
-run-test-services: ## Run the docker-compose services required for the unit and integration tests.
-	docker-compose up -d --build
+%:
+	@command -v mise >/dev/null 2>&1 || { echo "mise is required: https://mise.jdx.dev/getting-started.html" >&2; exit 1; }
+	@echo "make $@ is deprecated, use: mise run $@" >&2
+	mise run $@
