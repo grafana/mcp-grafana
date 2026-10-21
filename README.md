@@ -516,7 +516,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
-- `--read-only-datasource-credentials`: Declare that every datasource's credentials are read-only, so `query_sql`, `query_influxdb` and the read-only variant of `grafana_api_request` (GET and POST to `/api/ds/query`) are annotated read-only and non-destructive. MCP clients that ask for approval before destructive tools then stop asking. The server cannot check this, and the flag registers no tool by itself.
+- `--read-only-datasource-credentials`: Declare that every datasource's credentials are read-only, so `query_sql`, `query_influxdb` and the read-only variant of `grafana_api_request` (GET and POST to `/api/ds/query`) are annotated read-only and non-destructive. MCP clients that request approval because of the destructive hint may then stop; each client keeps its own approval rules. The server cannot check this, and the flag registers no tool by itself.
 - `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
@@ -586,7 +586,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 
 **Raw-SQL Query Tools:**
 
-These execute whatever query you give them without inspecting it, so they can write when the datasource credentials permit it — `query_sql` will run a `DROP TABLE`, `query_influxdb` will run a `DELETE`. Read-only mode therefore removes them. Pass `--enable-query` to keep them when the datasource credentials are known to be read-only. They stay annotated destructive, so some MCP clients ask for approval before each call; add `--read-only-datasource-credentials` to annotate them read-only once that holds for every datasource.
+These execute whatever query you give them without inspecting it, so they can write when the datasource credentials permit it — `query_sql` will run a `DROP TABLE`, `query_influxdb` will run a `DELETE`. Read-only mode therefore removes them. Pass `--enable-query` to keep them when the datasource credentials are known to be read-only. They stay annotated destructive, so MCP clients that gate on that hint ask for approval before each call; add `--read-only-datasource-credentials` to annotate them read-only once that holds for every datasource.
 
 - `query_sql`
 - `query_influxdb`

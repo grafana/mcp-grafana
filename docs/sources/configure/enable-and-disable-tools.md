@@ -58,7 +58,7 @@ Tempo tools can be disabled with `--disable-tempo` or removed from `--enabled-to
 
 Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert groups, alert rules, annotations, snapshots, or Agent Observability evaluators, eval rules, guards, saved conversations, and collections.
 
-Read-only mode also removes `query_sql` and `query_influxdb`: they pass the query to the datasource unfiltered, so they can write whenever the datasource credentials permit it. Add `--enable-query` to keep them when those credentials are known to be read-only, and `--read-only-datasource-credentials` to annotate them read-only so MCP clients don't ask for approval before each call.
+Read-only mode also removes `query_sql` and `query_influxdb`: they pass the query to the datasource unfiltered, so they can write whenever the datasource credentials permit it. Add `--enable-query` to keep them when those credentials are known to be read-only, and `--read-only-datasource-credentials` to annotate them read-only, so MCP clients that gate on the destructive hint may stop asking for approval before each call.
 
 In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through a `POST` request. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
 
