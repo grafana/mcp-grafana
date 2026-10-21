@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f}
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,googlecloud-logging-datasource,elasticsearch 12.6.2
@@ -82,7 +82,7 @@ services:
       retries: 10
 
   provisioning-repo-seed:
-    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       grafana:
         condition: service_healthy
@@ -95,7 +95,7 @@ services:
   # Seeds a secondary org + dashboard on both Grafana instances for the
   # orgId-parameter integration tests (see tools/orgid_integration_test.go).
   orgs-seed:
-    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       grafana:
         condition: service_healthy
@@ -141,7 +141,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:2.3.1@sha256:86a9ee7448487409ead8ada78789de7b78b739711b92b5d7224a1a54abf3eeb2
+    image: grafana/pyroscope:2.4.0@sha256:b7e62699a27463aa3533efe3f88c320da594da495731fd6eabca6f44f92cdd7b
     ports:
       - 4040:4040
 
@@ -180,7 +180,7 @@ services:
       retries: 10
 
   elasticsearch-seed:
-    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -203,7 +203,7 @@ services:
       retries: 10
 
   opensearch-seed:
-    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       opensearch:
         condition: service_healthy
@@ -223,7 +223,7 @@ services:
       retries: 15
 
   quickwit-seed:
-    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       quickwit:
         condition: service_healthy
@@ -248,7 +248,7 @@ services:
       retries: 5
 
   influxdb:
-    image: influxdb:2.9@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e
+    image: influxdb:2.9@sha256:cdd3dbdea45c2f43513abd06ee9644b6e05d2354a2b93ca829c9f07d716eaaac
     ports:
       - "8086:8086"
     environment:
@@ -265,7 +265,7 @@ services:
       retries: 10
 
   influxdb-seed:
-    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       influxdb:
         condition: service_healthy
@@ -288,7 +288,7 @@ services:
       retries: 5
 
   mysql:
-    image: mysql:26.7@sha256:9d48c42f8341068f199116dfccb919b607c99765b5c61e549a548a43033471a4
+    image: mysql:26.7@sha256:893418c8a7a34c60d2d961cc30ef136095da141478562ed2101ae3f5faba9c3f
     environment:
       MYSQL_ROOT_PASSWORD: rootroot
       MYSQL_DATABASE: test
@@ -303,7 +303,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: test

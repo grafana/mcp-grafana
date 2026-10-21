@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -174,6 +176,20 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	for name, value := range params.Variables {
 		vars[name] = value
 		templateVariables[name] = []string{value}
+	}
+	allWarnings := allTemplateSelectionWarnings(db, params.Variables, templateVariables)
+	referenceDatasource := panelData.DatasourceUID
+	if params.DsUID != "" {
+		referenceDatasource = params.DsUID
+	}
+	// Executors replace the target datasource with the resolved UID below.
+	referenceTarget := maps.Clone(panelData.RawTarget)
+	delete(referenceTarget, "datasource")
+	references := variableSearchText(panelQuery{Query: panelData.Query, Target: referenceTarget})
+	for _, variable := range findVariablesInQuery(references+" "+referenceDatasource, nil, nil) {
+		if warning := allWarnings[variable.Name]; warning != "" {
+			return nil, errors.New(warning)
+		}
 	}
 
 	// Resolve datasource UID and type
@@ -987,23 +1003,27 @@ func isEmptyPanelResult(results interface{}) bool {
 
 // generatePanelQueryHints generates helpful hints when panel query returns no data
 func generatePanelQueryHints(datasourceType, query string) []string {
+	typ := normalizeDatasourceType(datasourceType)
+	if typ == "prometheus" || typ == "loki" {
+		shared := GenerateEmptyResultHints(HintContext{DatasourceType: typ, Query: query})
+		hints := []string{shared.Summary, "Possible causes:"}
+		for _, cause := range shared.PossibleCauses {
+			hints = append(hints, "- "+cause)
+		}
+		hints = append(hints, "Try:")
+		for _, action := range shared.SuggestedActions {
+			hints = append(hints, "- "+action)
+		}
+		if query != "" {
+			hints = append(hints, "- Query executed: "+truncateString(query, 100))
+		}
+		return hints
+	}
 	hints := []string{"No data found for the panel query. Possible reasons:"}
 
 	hints = append(hints, "- Time range may have no data - try extending with start='now-6h' or start='now-24h'")
 
 	switch normalizeDatasourceType(datasourceType) {
-	case "prometheus":
-		hints = append(hints,
-			"- Metric may not exist - use list_prometheus_metric_names to discover available metrics",
-			"- Label selectors may be too restrictive - try removing some filters",
-			"- Prometheus may not have scraped data for this time range",
-		)
-	case "loki":
-		hints = append(hints,
-			"- Log stream selectors may not match any streams - use list_loki_label_names to discover labels",
-			"- Pipeline filters may be filtering out all logs - try simplifying the query",
-			"- Use query_loki_stats to check if logs exist in this time range",
-		)
 	case "clickhouse":
 		hints = append(hints,
 			"- Table may be empty for this time range - use query_sql with a COUNT(*) to verify",

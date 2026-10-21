@@ -66,6 +66,9 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 	case "versions":
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
+		if args.ManagedBy == "datasource" {
+			return createDatasourceAlertRule(ctx, args)
+		}
 		cp, err := args.toCreateParams()
 		if err != nil {
 			return nil, fmt.Errorf("alerting_rules_write: %w", err)

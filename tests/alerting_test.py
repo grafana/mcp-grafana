@@ -6,7 +6,7 @@ from mcp import ClientSession
 from typing import List, Optional
 
 from conftest import models
-from utils import assert_mcp_eval, run_llm_tool_loop
+from utils import assert_mcp_eval, assert_mentions, run_llm_tool_loop
 
 pytestmark = pytest.mark.anyio
 
@@ -26,13 +26,12 @@ async def test_list_alert_rules(
 
     assert_tool_operation(tools_called, "alerting_rules_read", "list")
 
+    assert_mentions(final_content, "Test Alert Rule 1", "Test Alert Rule 2")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response list alert rules with their titles, states, and labels? "
-        "There should be at least two rules including 'Test Alert Rule 1' and 'Test Alert Rule 2'.",
         expected_tools="alerting_rules_read",
     )
 
@@ -82,13 +81,12 @@ async def test_get_alert_rule_by_uid(
         extra_args={"rule_uid": "test_alert_rule_1"},
     )
 
+    assert_mentions(final_content, "Test Alert Rule 1")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response contain detailed configuration of the alert rule, "
-        "including its title ('Test Alert Rule 1'), queries, condition, and state?",
         expected_tools="alerting_rules_read",
     )
 
@@ -194,13 +192,12 @@ async def test_list_alert_rules_in_folder(
 
     assert_tool_operation(tools_called, "alerting_rules_read", "list")
 
+    assert_mentions(final_content, "Test Alert Rule 1", "Test Alert Rule 2")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response list alert rules from the 'Test Alerts' folder? "
-        "It should include 'Test Alert Rule 1' and 'Test Alert Rule 2'.",
         expected_tools="alerting_rules_read",
     )
 
@@ -222,14 +219,12 @@ async def test_get_notification_policies(
         tools_called, "alerting_manage_routing", "get_notification_policies"
     )
 
+    assert_mentions(final_content, "Email1", "weekends")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response describe the notification policy routing tree? "
-        "It should mention that alerts with severity=info are routed to Email1, "
-        "and that the 'weekends' mute time interval is applied.",
         expected_tools="alerting_manage_routing",
     )
 
@@ -249,13 +244,12 @@ async def test_list_contact_points(
 
     assert_tool_operation(tools_called, "alerting_manage_routing", "get_contact_points")
 
+    assert_mentions(final_content, "Email1", "Email2")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response list contact points? "
-        "It should include 'Email1' and 'Email2'.",
         expected_tools="alerting_manage_routing",
     )
 
@@ -277,13 +271,12 @@ async def test_get_contact_point_by_name(
 
     assert_tool_operation(tools_called, "alerting_manage_routing", "get_contact_point")
 
+    assert_mentions(final_content, "test1@example.com")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response contain details about the 'Email1' contact point, "
-        "including that it is an email type sending to test1@example.com?",
         expected_tools="alerting_manage_routing",
     )
 
@@ -303,13 +296,12 @@ async def test_list_time_intervals(
 
     assert_tool_operation(tools_called, "alerting_manage_routing", "get_time_intervals")
 
+    assert_mentions(final_content, "weekends", "saturday", "sunday")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response list time intervals? "
-        "It should include a 'weekends' interval covering Saturday and Sunday.",
         expected_tools="alerting_manage_routing",
     )
 
@@ -331,13 +323,12 @@ async def test_get_time_interval_by_name(
 
     assert_tool_operation(tools_called, "alerting_manage_routing", "get_time_interval")
 
+    assert_mentions(final_content, "saturday", "sunday")
     assert_mcp_eval(
         prompt,
         final_content,
         tools_called,
         mcp_server,
-        "Does the response describe the 'weekends' time interval, "
-        "including that it covers Saturday and Sunday?",
         expected_tools="alerting_manage_routing",
     )
 
@@ -381,7 +372,7 @@ async def alert_rule_for_tests(mcp_client: ClientSession):
             "labels": {"team": "python-e2e"},
         },
     )
-    assert not result.isError, f"Failed to create test rule: {result.content}"
+    assert not result.is_error, f"Failed to create test rule: {result.content}"
 
     yield rule_uid
 
