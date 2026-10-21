@@ -59,12 +59,22 @@ ifeq ($(origin GRAFANA_SERVICE_ACCOUNT_TOKEN), undefined)
 		$(warning GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead)
 	endif
 endif
+	@# The mcptests stack hibernates when idle and returns 503 on every endpoint while it wakes.
+	@# curl retries 503s as transient errors, so this blocks until the stack is up (max 10m).
+	curl -fsS -o /dev/null --retry 60 --retry-delay 10 --retry-max-time 600 \
+		-H "Authorization: Bearer $${GRAFANA_SERVICE_ACCOUNT_TOKEN:-$$GRAFANA_API_KEY}" \
+		https://mcptests.grafana-dev.net/api/frontend/settings
 	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud ./tools
 
 .PHONY: test-python-e2e
-test-python-e2e: ## Run Python E2E tests (requires docker-compose services and SSE server to be running, use `make run-test-services` and `make run-sse` to start them).
+test-python-e2e: ## Run the deterministic Python E2E tests, no LLM involved (requires docker-compose services and SSE server to be running, use `make run-test-services` and `make run-sse` to start them).
 	cd tests && uv sync --all-groups
-	cd tests && GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin uv run pytest
+	cd tests && GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin uv run pytest -m "not llm"
+
+.PHONY: test-python-llm
+test-python-llm: ## Run the Python LLM evals (as test-python-e2e, plus OPENAI_API_KEY and ANTHROPIC_API_KEY).
+	cd tests && uv sync --all-groups
+	cd tests && GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin uv run pytest -m llm
 
 # Common environment variables for run targets
 GRAFANA_ENV = GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin

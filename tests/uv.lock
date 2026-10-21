@@ -2059,6 +2059,8 @@ source = { virtual = "." }
 dev = [
     { name = "anyio" },
     { name = "deepeval" },
+    { name = "httpx" },
+    { name = "jsonschema" },
     { name = "litellm" },
     { name = "mcp" },
     { name = "pytest" },
@@ -2072,6 +2074,8 @@ dev = [
 dev = [
     { name = "anyio", specifier = ">=4.9.0" },
     { name = "deepeval", specifier = ">=1.0.0" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "litellm", specifier = ">=1.105.1,<1.106" },
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "pytest", specifier = ">=9.0.3" },

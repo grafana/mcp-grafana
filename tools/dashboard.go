@@ -70,7 +70,7 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*Dash
 	if args.Version != nil {
 		return fetchDashboardVersion(ctx, args.UID, *args.Version)
 	}
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -94,25 +94,30 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*Dash
 // back to the legacy API, because doing so on a v2-capable Grafana would read —
 // and, for update_dashboard, write — a lossy v1 conversion that corrupts the
 // stored v2 dashboard. Only a definitive "v1beta1 not served" routes to legacy.
-func fetchDashboard(ctx context.Context, uid string) (*dashboardResult, error) {
+// forWrite is passed through to fetchDashboardViaK8s.
+func fetchDashboard(ctx context.Context, uid string, forWrite bool) (*dashboardResult, error) {
 	if k8s := mcpgrafana.KubernetesClientFromContext(ctx); k8s != nil {
 		versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
 		if err != nil {
 			return nil, fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
 		}
 		if slices.Contains(versions, dashboardReadVersion) {
-			return fetchDashboardViaK8s(ctx, k8s, uid)
+			return fetchDashboardViaK8s(ctx, k8s, uid, forWrite)
 		}
 	}
 	return fetchDashboardLegacy(ctx, uid)
 }
 
 // fetchDashboardViaK8s fetches a dashboard through the dashboard.grafana.app API.
-// It requests v1beta1 first (one round-trip for the common classic case), then
-// re-fetches at the stored version when the dashboard is actually stored as v2.
+// It requests v1beta1 first, then re-fetches at the stored version when the
+// dashboard is actually stored as v2. Because storedVersion can be stale (a
+// dashboard created as v1 and later saved as v2 keeps reporting "v1"), a
+// non-v2 storedVersion is double-checked against the v2 representation. If that
+// check fails, reads (forWrite=false) fall back to the v1 result, while writes
+// get an error, since a v1 save of a dashboard that is really v2 is lossy.
 // Callers only reach this after confirming v1beta1 is served, so a 404 here is a
 // genuine "dashboard not found".
-func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient, uid string) (*dashboardResult, error) {
+func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient, uid string, forWrite bool) (*dashboardResult, error) {
 	ns, err := mcpgrafana.GrafanaNamespace(ctx)
 	if err != nil {
 		return nil, err
@@ -133,9 +138,134 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 			return nil, fmt.Errorf("get native %s dashboard via k8s api %s: %w", storedVersion, uid, err)
 		}
 		obj = nativeObj
+	} else if v2Obj, err := fetchV2IfV1Lossy(ctx, k8s, ns, uid); err != nil {
+		if forWrite {
+			// %v, not %w: a wrapped 404 from the v2 read must not look like
+			// "dashboard not found" to callers that would then create it.
+			return nil, fmt.Errorf("cannot confirm dashboard %q is not stored as v2, refusing a possibly lossy write: %v", uid, err)
+		}
+	} else if v2Obj != nil {
+		obj = v2Obj
 	}
 
 	return dashboardResultFromK8s(obj)
+}
+
+// fetchV2IfV1Lossy reads the dashboard at the preferred served v2 version and
+// returns it when its layout holds content the v1 schema cannot represent, i.e.
+// the dashboard is really v2 despite its storedVersion. It returns nil when no
+// v2 version is served or the v2 view is one a v1 dashboard up-converts to:
+// a v1-convertible layout and no preferences beyond the default GridLayout one
+// the v1→v2 conversion sets, since the v2→v1 conversion drops preferences.
+func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns, uid string) (map[string]interface{}, error) {
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		return nil, fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
+	}
+	version := preferredV2Version(versions)
+	if version == "" {
+		return nil, nil
+	}
+	obj, err := k8s.Get(ctx, dashboardDescriptor(version), ns, uid)
+	if err != nil {
+		return nil, fmt.Errorf("get %s dashboard via k8s api %s: %w", version, uid, err)
+	}
+	spec, _ := obj["spec"].(map[string]interface{})
+	if isV1ConvertibleLayout(spec["layout"]) && isDefaultPreferences(safeObject(spec, "preferences")) {
+		return nil, nil
+	}
+	return obj, nil
+}
+
+// isDefaultPreferences reports whether v2 preferences are empty or hold only
+// the empty GridLayout the v1→v2 conversion sets as the default layout.
+func isDefaultPreferences(prefs map[string]interface{}) bool {
+	for k := range prefs {
+		if k != "layout" {
+			return false
+		}
+	}
+	layout := safeObject(prefs, "layout")
+	return layout == nil || safeString(layout, "kind") == "GridLayout" && len(safeArray(safeObject(layout, "spec"), "items")) == 0
+}
+
+// isV1ConvertibleLayout reports whether a v2 layout has a shape the v1→v2
+// conversion produces: a GridLayout, or a RowsLayout of rows that
+// isV1ConvertibleRow accepts, with no conditional rendering anywhere. Anything
+// else (auto grid, tabs, nested rows, layout kinds added later) would be lost by
+// a v1 save.
+// ponytail: shape heuristic for a stale storedVersion. grafana/grafana#135108
+// stops persisting it, but affected dashboards keep the stale value until
+// re-saved; drop this once Grafana also ignores the persisted value on read.
+func isV1ConvertibleLayout(layout interface{}) bool {
+	if layout == nil {
+		return true
+	}
+	if hasConditionalRendering(layout) {
+		return false
+	}
+	m, _ := layout.(map[string]interface{})
+	switch safeString(m, "kind") {
+	case "GridLayout":
+		return true
+	case "RowsLayout":
+		for i, row := range safeArray(safeObject(m, "spec"), "rows") {
+			if !isV1ConvertibleRow(i, row) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isV1ConvertibleRow reports whether a RowsLayoutRow is one the v1→v2
+// conversion emits: a GridLayout plus only title, collapse and repeat set, or
+// the untitled, unrepeated hidden-header row it creates first for panels above
+// the first v1 row. Other settings (fillScreen, row variables, a hidden header
+// elsewhere) have no v1 equivalent.
+func isV1ConvertibleRow(i int, row interface{}) bool {
+	r, _ := row.(map[string]interface{})
+	spec := safeObject(r, "spec")
+	if safeString(r, "kind") != "RowsLayoutRow" || safeString(safeObject(spec, "layout"), "kind") != "GridLayout" {
+		return false
+	}
+	for k, v := range spec {
+		switch k {
+		case "title", "collapse", "repeat", "layout", "hideHeader":
+			continue
+		}
+		if arr, ok := v.([]interface{}); ok && len(arr) == 0 {
+			continue
+		}
+		if v != nil && v != false {
+			return false
+		}
+	}
+	if hidden, _ := spec["hideHeader"].(bool); hidden {
+		return i == 0 && safeString(spec, "title") == "" && spec["repeat"] == nil
+	}
+	return true
+}
+
+// hasConditionalRendering reports whether any node in a layout tree sets
+// conditionalRendering, which v1 has no equivalent for.
+func hasConditionalRendering(node interface{}) bool {
+	switch n := node.(type) {
+	case map[string]interface{}:
+		for k, v := range n {
+			if (k == "conditionalRendering" && v != nil) || hasConditionalRendering(v) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, v := range n {
+			if hasConditionalRendering(v) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // dashboardDescriptor builds a ResourceDescriptor for the dashboards resource at
@@ -304,7 +434,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	args.Operations = sortedOps
 
 	// Get the current dashboard in its native stored schema.
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, true)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -523,7 +653,7 @@ func rejectV1BodyOverV2Stored(ctx context.Context, dashboard map[string]interfac
 	if !slices.Contains(versions, dashboardReadVersion) {
 		return nil // pre-v2 Grafana: no v2 dashboards can exist
 	}
-	existing, err := fetchDashboardViaK8s(ctx, k8s, uid)
+	existing, err := fetchDashboardViaK8s(ctx, k8s, uid, true)
 	if isK8sNotFound(err) {
 		return nil
 	}
@@ -615,7 +745,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	// treated as "absent" — that would turn an update into a create/conflict and
 	// hide the real failure — so surface it.
 	if uid != "" {
-		existing, err := fetchDashboardViaK8s(ctx, k8s, uid)
+		existing, err := fetchDashboardViaK8s(ctx, k8s, uid, true)
 		switch {
 		case err == nil && existing.Object != nil:
 			// Mirror the legacy save: refuse to replace an existing dashboard
@@ -804,6 +934,8 @@ type DashboardPanelQueriesParams struct {
 	UID       string            `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 	PanelID   *int              `json:"panelId,omitempty" jsonschema:"description=Optional panel ID to filter to a specific panel"`
 	Variables map[string]string `json:"variables,omitempty" jsonschema:"description=Optional variable substitutions (e.g.\\, {\"job\": \"api-server\"})"`
+	Start     string            `json:"start,omitempty" jsonschema:"description=Query start time for macros (default now-1h)."`
+	End       string            `json:"end,omitempty" jsonschema:"description=Query end time for macros (default now)."`
 }
 
 type datasourceInfo struct {
@@ -819,6 +951,7 @@ type panelQuery struct {
 	// editor (CloudWatch metric search, InfluxDB's query builder), which has no
 	// string expression to put in Query.
 	Target            map[string]interface{} `json:"target,omitempty"`
+	Warnings          []string               `json:"warnings,omitempty"`
 	ProcessedQuery    string                 `json:"processedQuery,omitempty"`
 	Datasource        datasourceInfo         `json:"datasource"`
 	RefID             string                 `json:"refId,omitempty"`
@@ -826,7 +959,7 @@ type panelQuery struct {
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -838,12 +971,6 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 	if res.IsV2 {
 		return getPanelQueriesV2(db, args)
-	}
-
-	// Determine if variable processing is needed
-	var dashboardVars map[string]VariableInfo
-	if args.Variables != nil {
-		dashboardVars = extractDashboardVariables(db)
 	}
 
 	// Determine which panels to process
@@ -860,16 +987,16 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		queries := extractPanelQueries(panel, dashboardVars, args.Variables)
+		queries := extractPanelQueries(panel)
 		result = append(result, queries...)
 	}
 
-	return result, nil
+	return preparePanelQueries(db, args, result, extractDashboardVariables(db))
 }
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Optionally provide `variables` for template variable substitution, which populates `processedQuery` and `requiredVariables` fields. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.",
+	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to populate `processedQuery` and `requiredVariables`. Referenced All selections return `warnings` requesting explicit values. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.",
 	GetDashboardPanelQueriesTool,
 	mcpgrafana.WithTitleAnnotation("Get dashboard panel queries"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -888,7 +1015,7 @@ type GetDashboardPropertyParams struct {
 // getDashboardProperty retrieves specific parts of a dashboard using JSONPath expressions.
 // This helps reduce context window usage by fetching only the needed data.
 func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) (interface{}, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -972,7 +1099,7 @@ type TimeRangeSummary struct {
 
 // getDashboardSummary provides a compact overview of a dashboard to help with context management
 func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*DashboardSummary, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
