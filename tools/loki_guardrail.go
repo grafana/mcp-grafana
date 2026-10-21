@@ -40,8 +40,23 @@ const lokiGuardrailScopeHint = "use query_loki_stats or list_loki_label_names/li
 // mode a plain error is returned, which ConvertTool surfaces to the client
 // as a tool result with isError=true so LLM callers can rewrite and retry.
 // Queries the guardrail cannot assess (unparseable, or a failed estimate) run
-// unless LokiGuardrailOnEstimateFailure is "block".
+// unless LokiGuardrailOnEstimateFailure is "block", which applies to native
+// Loki only.
 func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType string, start, end time.Time) error {
+	return assessLokiQuery(ctx, backend, logql, queryType, start, end, true)
+}
+
+// guardLokiPatterns applies the guardrail to a query_loki_patterns call. The
+// selector and time-range checks apply as they do for log queries, but the
+// byte budget does not: patterns are served by the pattern ingesters, so the
+// index/stats bytes for a selector are not what a patterns query costs.
+func guardLokiPatterns(ctx context.Context, backend lokiBackend, logql string, start, end time.Time) error {
+	return assessLokiQuery(ctx, backend, logql, "", start, end, false)
+}
+
+// assessLokiQuery is the shared implementation. byteBudget selects whether the
+// index/stats byte budget is part of the assessment.
+func assessLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType string, start, end time.Time, byteBudget bool) error {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
 	mode := config.LokiGuardrailMode
 	if mode == "" || mode == mcpgrafana.LokiGuardrailOff {
@@ -58,15 +73,20 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 		})
 	}
 	enforced := mode != mcpgrafana.LokiGuardrailShadow
-	blockUnknown := config.LokiGuardrailOnEstimateFailure == mcpgrafana.LokiGuardrailFailureBlock
 
 	// The byte estimate is only consulted on native Loki, where index/stats
 	// is an index-only lookup. The VictoriaLogs QueryStats approximation
 	// runs the selector as a real query, which would defeat the purpose.
 	_, native := backend.(*lokiNativeBackend)
+
+	// Blocking queries the guardrail cannot assess only makes sense on native
+	// Loki. LogsQL has no braces, so on VictoriaLogs nearly every query is
+	// "unparseable": treat those as not assessed and let them run.
+	blockUnknown := native && config.LokiGuardrailOnEstimateFailure == mcpgrafana.LokiGuardrailFailureBlock
+
 	var statsCalls, statsOK int
 	var stats lokiguard.StatsFunc
-	if native {
+	if native && byteBudget {
 		stats = func(ctx context.Context, selector string, start, end time.Time) (int64, error) {
 			statsCalls++
 			s, err := backend.QueryStats(ctx, selector, start, end)
@@ -79,12 +99,16 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 	}
 
 	policy := lokiguard.Policy{
-		MaxBytes: config.LokiGuardrailMaxBytes,
 		MaxRange: config.LokiGuardrailMaxRange,
 		// Size every query, including ones a static check already blocks, so
-		// the estimated_bytes histogram shows the full distribution. Costs one
-		// extra index/stats call per statically blocked query.
-		EstimateAlways: true,
+		// the estimated_bytes histogram shows the full distribution. Only in
+		// shadow mode: the extra index/stats call covers the full window, which
+		// for a catch-all selector over a long range is the most expensive
+		// lookup there is, and in enforce mode the verdict does not depend on it.
+		EstimateAlways: byteBudget && !enforced,
+	}
+	if byteBudget {
+		policy.MaxBytes = config.LokiGuardrailMaxBytes
 	}
 	d := lokiguard.Assess(ctx, lokiguard.Query{
 		LogQL:   logql,
@@ -170,7 +194,7 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 // not assess when LokiGuardrailOnEstimateFailure is "block".
 func unassessableError(d lokiguard.Decision) error {
 	if d.Cause == lokiguard.CauseUnparseable {
-		return fmt.Errorf("query blocked by the Loki cost guardrail: it has no stream selector the guardrail can assess. " +
+		return errors.New("query blocked by the Loki cost guardrail: it has no stream selector the guardrail can assess. " +
 			"Rewrite it as a plain LogQL query with a stream selector such as {namespace=\"x\", app=\"y\"}, " +
 			lokiGuardrailScopeHint)
 	}

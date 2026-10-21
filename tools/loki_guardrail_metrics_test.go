@@ -371,17 +371,29 @@ func TestGuardrailEstimatedBytesHistogram(t *testing.T) {
 		assert.Equal(t, int64(200<<30), pts["backend=loki,verdict=block"].Sum)
 	})
 
-	// EstimateAlways: a query blocked by a static check is still sized.
-	t.Run("statically blocked query is still sized", func(t *testing.T) {
-		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+	// EstimateAlways is shadow-only: a query a static check would block is still
+	// sized, so the distribution covers every query, without delaying a
+	// rejection in enforce mode.
+	t.Run("statically blocked query is sized in shadow mode", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailShadow, 100<<30, 24*time.Hour)
 		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
 		var hits int
-		require.Error(t, guardLokiQuery(ctx, newStatsBackend(t, 7<<30, &hits), `{cluster=~".+"}`, "", start, end))
+		require.NoError(t, guardLokiQuery(ctx, newStatsBackend(t, 7<<30, &hits), `{cluster=~".+"}`, "", start, end))
 
 		assert.Equal(t, 1, hits)
 		pts := histogramPoints(t, reader)
 		require.Contains(t, pts, "backend=loki,verdict=block")
 		assert.Equal(t, int64(7<<30), pts["backend=loki,verdict=block"].Sum)
+	})
+
+	t.Run("statically blocked query makes no stats call in enforce mode", func(t *testing.T) {
+		reader, config := newGuardrailMetricsReader(t, mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		require.Error(t, guardLokiQuery(ctx, newStatsBackend(t, 7<<30, &hits), `{cluster=~".+"}`, "", start, end))
+
+		assert.Zero(t, hits, "a rejection must not wait on an index/stats lookup over the full window")
+		assert.NotContains(t, histogramPoints(t, reader), "backend=loki,verdict=block")
 	})
 
 	t.Run("a genuine zero estimate is recorded", func(t *testing.T) {

@@ -205,3 +205,108 @@ func TestGuardLokiQueryEnforceMessageUsesGuidance(t *testing.T) {
 		assert.Contains(t, err.Error(), tool)
 	}
 }
+
+// newFailingStatsBackend returns a native Loki backend whose index/stats
+// endpoint always fails, counting the calls it receives.
+func newFailingStatsBackend(t *testing.T, hits *int) *lokiNativeBackend {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/loki/api/v1/index/stats", func(w http.ResponseWriter, r *http.Request) {
+		*hits++
+		http.Error(w, "stats unavailable", http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return &lokiNativeBackend{client: &Client{httpClient: srv.Client(), baseURL: srv.URL}}
+}
+
+func TestGuardLokiQueryBlockOnEstimateFailure(t *testing.T) {
+	end := time.Now()
+	start := end.Add(-time.Hour)
+
+	t.Run("native Loki blocks a failed estimate", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		config.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureBlock
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		err := guardLokiQuery(ctx, newFailingStatsBackend(t, &hits), `{namespace="foo", app="bar"}`, "", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "could not be estimated")
+	})
+
+	t.Run("a disabled byte budget is not a failed estimate", func(t *testing.T) {
+		// With the budget off there is no byte check to leave undetermined, so
+		// a failing index/stats must not block (or count as a fail-open).
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 0, 24*time.Hour)
+		config.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureBlock
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		assert.NoError(t, guardLokiQuery(ctx, newFailingStatsBackend(t, &hits), `{namespace="foo", app="bar"}`, "", start, end))
+		assert.Zero(t, hits, "no byte budget and not shadow mode: no stats call at all")
+	})
+
+	t.Run("a disabled byte budget in shadow mode ignores a failing estimate", func(t *testing.T) {
+		config, buf := guardrailConfig(mcpgrafana.LokiGuardrailShadow, 0, 24*time.Hour)
+		config.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureBlock
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		assert.NoError(t, guardLokiQuery(ctx, newFailingStatsBackend(t, &hits), `{namespace="foo", app="bar"}`, "", start, end))
+		assert.NotContains(t, buf.String(), "level=WARN")
+	})
+
+	t.Run("VictoriaLogs queries are never blocked as unassessable", func(t *testing.T) {
+		// LogsQL has no braces, so it is always unparseable: with block on, that
+		// must not reject every VictoriaLogs query.
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		config.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureBlock
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		assert.NoError(t, guardLokiQuery(ctx, &fakeLokiBackend{}, `_time:5m error`, "", start, end))
+	})
+
+	t.Run("native Loki still blocks an unparseable query", func(t *testing.T) {
+		config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		config.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureBlock
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		var hits int
+		err := guardLokiQuery(ctx, newStatsBackend(t, 0, &hits), `{app=="x"}`, "", start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no stream selector")
+	})
+}
+
+func TestGuardLokiPatternsSkipsTheByteBudget(t *testing.T) {
+	end := time.Now()
+	start := end.Add(-time.Hour)
+	config, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+
+	t.Run("over the byte budget is allowed, with no stats call", func(t *testing.T) {
+		var hits int
+		backend := newStatsBackend(t, 200<<30, &hits)
+		assert.NoError(t, guardLokiPatterns(ctx, backend, `{namespace="foo", app="bar"}`, start, end))
+		assert.Zero(t, hits)
+		// The same query as a log query is blocked on bytes.
+		assert.Error(t, guardLokiQuery(ctx, backend, `{namespace="foo", app="bar"}`, "", start, end))
+	})
+
+	t.Run("selector check still applies", func(t *testing.T) {
+		err := guardLokiPatterns(ctx, newStatsBackend(t, 0, new(int)), `{cluster=~".+"}`, start, end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "selective")
+	})
+
+	t.Run("time range check still applies", func(t *testing.T) {
+		err := guardLokiPatterns(ctx, newStatsBackend(t, 0, new(int)), `{namespace="foo", app="bar"}`, end.Add(-48*time.Hour), end)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "time range")
+	})
+
+	t.Run("a failing estimate is irrelevant", func(t *testing.T) {
+		blockCfg, _ := guardrailConfig(mcpgrafana.LokiGuardrailEnforce, 100<<30, 24*time.Hour)
+		blockCfg.LokiGuardrailOnEstimateFailure = mcpgrafana.LokiGuardrailFailureBlock
+		blockCtx := mcpgrafana.WithGrafanaConfig(context.Background(), blockCfg)
+		var hits int
+		assert.NoError(t, guardLokiPatterns(blockCtx, newFailingStatsBackend(t, &hits), `{namespace="foo", app="bar"}`, start, end))
+		assert.Zero(t, hits)
+	})
+}

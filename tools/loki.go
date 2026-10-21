@@ -1123,7 +1123,7 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pat
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	if err := guardLokiQuery(ctx, backend, args.LogQL, "", startTime, endTime); err != nil {
+	if err := guardLokiPatterns(ctx, backend, args.LogQL, startTime, endTime); err != nil {
 		return nil, err
 	}
 
