@@ -32,8 +32,13 @@ jobs:
           cache: false
 
       # Only the binaries the bundle needs, including the universal macOS build.
+      # Pin the version to the latest v* tag: goreleaser otherwise picks module
+      # tags like lokiguard/v0.1.0, and the slash puts the bundle under a subdir.
       - name: Build binaries
-        run: goreleaser build --snapshot --clean --id mcpb
+        run: |
+          GORELEASER_CURRENT_TAG=$(git describe --tags --abbrev=0 --match 'v*')
+          export GORELEASER_CURRENT_TAG
+          goreleaser build --snapshot --clean --id mcpb
 
       # Packing is the check: it validates the manifest, asserts the macOS binary
       # carries both architectures, and fails if the server reports no tools.
