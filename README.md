@@ -1541,12 +1541,6 @@ More comprehensive integration tests will require a Grafana instance to be runni
 docker-compose up -d
 ```
 
-The integration tests can be run with:
-
-```bash
-mise run test-integration
-```
-
 If you're adding more tools, please add integration tests for them. The existing tests should be a good starting point.
 
 ### Linting

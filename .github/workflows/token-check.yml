@@ -35,8 +35,10 @@ jobs:
       - name: Set up mise
         uses: ./.github/actions/setup-mise
 
+      # The same literal command as the base build below, so both binaries are
+      # built identically.
       - name: Build server
-        run: mise run build
+        run: go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
       # The baseline is the PR's own base commit, built and counted in this job,
       # so every PR is compared against exactly the branch it merges into.
@@ -92,7 +94,7 @@ jobs:
 
       - name: Write job summary
         # Only when the analysis actually measured something, so a failed checkout
-        # or `mise run build` doesn't render an empty table. A threshold failure still
+        # or a build doesn't render an empty table. A threshold failure still
         # produces counts, so genuine over-budget runs are unaffected.
         if: always() && steps.analyze.outputs.total-tokens != ''
         # Values are passed through the environment rather than interpolated into
