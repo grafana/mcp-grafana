@@ -10,8 +10,8 @@ import (
 	"github.com/grafana/incident-go"
 )
 
-// rejectIncidentErrorStatuses makes the incident client return an error for a
-// non-2xx response. The generated incident-go client checks the status only
+// rejectIncidentErrorStatuses makes the incident client return an error for an
+// error (4xx or 5xx) response. The generated incident-go client checks the status only
 // when the body isn't JSON, so a JSON error such as Grafana's 403 ("Permissions
 // needed: plugins.app:access") decoded as an empty success: list_incidents
 // told a caller without access that there were no incidents.
@@ -29,7 +29,8 @@ type incidentStatusTransport struct {
 
 func (t incidentStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
-	if err != nil || resp.StatusCode/100 == 2 {
+	// Redirects pass through so http.Client can follow them.
+	if err != nil || resp.StatusCode < http.StatusBadRequest {
 		return resp, err
 	}
 	defer func() { _ = resp.Body.Close() }()
