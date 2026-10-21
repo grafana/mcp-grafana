@@ -558,7 +558,7 @@ func TestApplyLokiGuardrailEnv(t *testing.T) {
 	// Flag defaults as registered in addFlags.
 	defaults := grafanaConfig{
 		lokiGuardrailMode:      "off",
-		lokiGuardrailMaxBytes:  100 << 30,
+		lokiGuardrailMaxBytes:  50 << 30,
 		lokiGuardrailMaxRange:  24 * time.Hour,
 		lokiGuardrailOnFailure: "allow",
 	}
