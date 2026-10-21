@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -254,6 +255,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
+	// Structured targets (CloudWatch, Infinity) have no query expression; the executors
+	// return the substituted target so the fetched URL can be reported as the query.
+	var target map[string]interface{}
 
 	switch normalizeDatasourceType(datasourceType) {
 	case "prometheus":
@@ -263,9 +267,10 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "clickhouse":
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
-		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
+		results, target, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
 	case "infinity":
-		results, err = executeInfinityPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
+		// Pass the resolved type through, so a renamed or forked plugin ID reaches Grafana as declared.
+		results, target, err = executeInfinityPanelQuery(ctx, datasourceUID, datasourceType, panelData, params.Start, params.End, templateVariables)
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
@@ -285,6 +290,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 	if err != nil {
 		return nil, fmt.Errorf("executing query: %w", err)
+	}
+	if query == "" && target != nil {
+		query = safeString(target, "url")
 	}
 
 	// Check for empty results and generate hints
@@ -635,40 +643,77 @@ func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, en
 }
 
 // executeCloudWatchPanelQuery runs a CloudWatch query using Grafana's /api/ds/query endpoint
-func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, error) {
-	if panelData.RawTarget == nil {
-		return nil, fmt.Errorf("CloudWatch panel target not available")
+func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, map[string]interface{}, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, nil, fmt.Errorf("cloudwatch panel target not available")
 	}
 
 	// Check for math expression panels
 	if dsField := safeObject(panelData.RawTarget, "datasource"); dsField != nil {
 		if dsType := safeString(dsField, "type"); dsType == "__expr__" || dsType == "expression" {
-			return nil, fmt.Errorf("math expression panels require executing multiple queries; use query_cloudwatch directly for the underlying metrics")
+			return nil, nil, fmt.Errorf("math expression panels require executing multiple queries; use query_cloudwatch directly for the underlying metrics")
 		}
 	}
 
-	// Parse time range
+	return executeStructuredPanelQuery(ctx, datasourceUID, "cloudwatch", panelData, start, end, variables)
+}
+
+// executeStructuredPanelQuery runs a structured panel target (CloudWatch, Infinity) through
+// Grafana's /api/ds/query endpoint. Template variables and Grafana macros are substituted in
+// every string field of a deep copy of the target, the datasource is set to the resolved UID
+// and type, and refId defaults to "A". The substituted target is returned with the responses.
+func executeStructuredPanelQuery(ctx context.Context, datasourceUID, datasourceType string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, map[string]interface{}, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, nil, fmt.Errorf("panel target not available")
+	}
+
 	startTime, err := parseTime(start)
 	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
+		return nil, nil, fmt.Errorf("parsing start time: %w", err)
 	}
 	endTime, err := parseTime(end)
 	if err != nil {
-		return nil, fmt.Errorf("parsing end time: %w", err)
+		return nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Deep copy and substitute variables in target fields
 	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
+	substituteGrafanaMacrosInMap(target, startTime, endTime)
 
-	// Ensure datasource is set correctly
-	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": "cloudwatch"}
-
-	// Ensure refId is set
+	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
 	}
 
-	return executeGrafanaDSQuery(ctx, dsQueryPayload(startTime, endTime, target))
+	results, err := executeGrafanaDSQuery(ctx, dsQueryPayload(startTime, endTime, target))
+	return results, target, err
+}
+
+// substituteGrafanaMacrosInMap applies substituteGrafanaMacros to every string in target,
+// which must already be a private deep copy (substituteTemplateVariablesInMapWithValues).
+func substituteGrafanaMacrosInMap(target map[string]interface{}, start, end time.Time) {
+	for k, v := range target {
+		switch val := v.(type) {
+		case string:
+			target[k] = substituteGrafanaMacros(val, start, end)
+		case map[string]interface{}:
+			substituteGrafanaMacrosInMap(val, start, end)
+		case []interface{}:
+			substituteGrafanaMacrosInSlice(val, start, end)
+		}
+	}
+}
+
+func substituteGrafanaMacrosInSlice(slice []interface{}, start, end time.Time) {
+	for i, v := range slice {
+		switch val := v.(type) {
+		case string:
+			slice[i] = substituteGrafanaMacros(val, start, end)
+		case map[string]interface{}:
+			substituteGrafanaMacrosInMap(val, start, end)
+		case []interface{}:
+			substituteGrafanaMacrosInSlice(val, start, end)
+		}
+	}
 }
 
 // InfinityDatasourceType is the plugin ID of the Infinity datasource (yesoreyeram-infinity-datasource),
@@ -686,47 +731,69 @@ func usesStructuredTarget(datasourceType string) bool {
 	}
 }
 
-// infinityBackendParsers are the Infinity parsers that run inside the plugin backend, so the
-// query can be executed through /api/ds/query (the plugin's isBackendQuery: "backend" and
-// "jq-backend"). The default "simple" parser and the UQL and GROQ parsers transform the response
-// in the browser; Grafana's API would return it untransformed.
-var infinityBackendParsers = map[string]bool{"backend": true, "jq-backend": true}
+// Infinity query types the plugin backend parses with the "backend" parser (the plugin's
+// isBackendQuerySupported), and the subset it also parses with "jq-backend". A missing type
+// is "json", the plugin default.
+var (
+	infinityBackendTypes   = map[string]bool{"json": true, "csv": true, "tsv": true, "xml": true, "graphql": true, "html": true}
+	infinityJQBackendTypes = map[string]bool{"json": true, "xml": true, "graphql": true, "html": true}
+)
+
+// infinityBackendQueryError reports why the Infinity plugin backend would not execute the
+// target, mirroring the plugin's isBackendQuery: data types need the backend or jq-backend
+// parser; google-sheets always runs in the backend; transformations run in the backend but
+// only over the panel's other queries; series, global, uql and groq run in the browser, where
+// Grafana's API would return the response untransformed.
+func infinityBackendQueryError(target map[string]interface{}) error {
+	typ := safeString(target, "type")
+	if typ == "" {
+		typ = "json"
+	}
+	switch typ {
+	case "google-sheets":
+		return nil
+	case "transformations":
+		return fmt.Errorf("infinity transformations query combines the panel's other queries inside the plugin and cannot run on its own; run those queries instead")
+	case "series":
+		return fmt.Errorf("infinity series query generates random-walk data in the browser; there is nothing to execute through the API")
+	case "global":
+		return fmt.Errorf("infinity global query is resolved from the datasource settings in the browser and cannot be executed through the API")
+	case "uql", "groq":
+		return fmt.Errorf("infinity %q query is transformed in the browser; only the backend and jq-backend parsers can be executed through the API", typ)
+	}
+	if !infinityBackendTypes[typ] {
+		return fmt.Errorf("unsupported infinity query type %q", typ)
+	}
+
+	parser := safeString(target, "parser")
+	if parser == "" {
+		parser = "simple"
+	}
+	switch parser {
+	case "backend":
+		return nil
+	case "jq-backend":
+		if infinityJQBackendTypes[typ] {
+			return nil
+		}
+		return fmt.Errorf("infinity %q query with the jq-backend parser runs in the browser; use the backend parser", typ)
+	default:
+		return fmt.Errorf("infinity panel uses the %q parser, which runs in the browser; only the backend and jq-backend parsers can be executed through the API. Change the query's parser in the panel", parser)
+	}
+}
 
 // executeInfinityPanelQuery runs an Infinity panel target through Grafana's /api/ds/query
 // endpoint. The target is sent as saved (URL, root_selector, parser, headers, ...) with
-// template variables substituted, so the plugin backend does the fetch and the parsing.
-func executeInfinityPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, error) {
+// template variables and Grafana macros substituted, so the plugin backend does the fetch
+// and the parsing.
+func executeInfinityPanelQuery(ctx context.Context, datasourceUID, datasourceType string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, map[string]interface{}, error) {
 	if panelData == nil || panelData.RawTarget == nil {
-		return nil, fmt.Errorf("Infinity panel target not available")
+		return nil, nil, fmt.Errorf("infinity panel target not available")
 	}
-
-	parser := safeString(panelData.RawTarget, "parser")
-	if !infinityBackendParsers[parser] {
-		if parser == "" {
-			parser = "simple"
-		}
-		return nil, fmt.Errorf("Infinity panel uses the %q parser, which runs in the browser; only the backend and jq-backend parsers can be executed through the API. Change the query's parser in the panel", parser)
+	if err := infinityBackendQueryError(panelData.RawTarget); err != nil {
+		return nil, nil, err
 	}
-
-	startTime, err := parseTime(start)
-	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
-	}
-	endTime, err := parseTime(end)
-	if err != nil {
-		return nil, fmt.Errorf("parsing end time: %w", err)
-	}
-
-	// Deep copy and substitute variables in target fields (URL, root_selector, inline data, ...)
-	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
-
-	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": InfinityDatasourceType}
-
-	if safeString(target, "refId") == "" {
-		target["refId"] = "A"
-	}
-
-	return executeGrafanaDSQuery(ctx, dsQueryPayload(startTime, endTime, target))
+	return executeStructuredPanelQuery(ctx, datasourceUID, datasourceType, panelData, start, end, variables)
 }
 
 // executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
@@ -997,6 +1064,16 @@ func isEmptyPanelResult(results interface{}) bool {
 		case model.Vector:
 			return len(m) == 0
 		}
+	case backend.Responses:
+		// /api/ds/query results (CloudWatch, Infinity): empty unless some frame has rows.
+		for _, r := range v {
+			for _, frame := range r.Frames {
+				if frame != nil && frame.Rows() > 0 {
+					return false
+				}
+			}
+		}
+		return true
 	}
 	return false
 }
@@ -1032,7 +1109,7 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 		)
 	case "infinity":
 		hints = append(hints,
-			"- The URL or inline content may have returned no rows for these variables - check the substituted url field in the query",
+			"- The URL or inline content may have returned no rows for these variables - the query field shows the substituted URL",
 			"- root_selector may not match the response shape - verify it against a sample response in the panel editor",
 		)
 	case "cloudwatch":
