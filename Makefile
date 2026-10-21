@@ -29,6 +29,7 @@ build: ## Build the binary.
 lint: lint-jsonschema lint-openapi ## Run format checks and lint the Go code.
 	gofmt -l . 
 	golangci-lint run
+	cd lokiguard && golangci-lint run --config ../.golangci.yaml
 
 lint-jsonschema: ## Lint for unescaped commas in jsonschema tags.
 	go run ./cmd/linters/jsonschema --path .
@@ -42,6 +43,7 @@ lint-jsonschema-fix: ## Automatically fix unescaped commas in jsonschema tags.
 .PHONY: test test-unit
 test-unit: ## Run the unit tests (no external dependencies required).
 	go test -v -tags unit ./...
+	cd lokiguard && go test -v ./...
 test: test-unit
 
 .PHONY: test-integration
