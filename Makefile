@@ -65,6 +65,7 @@ endif
 		-H "Authorization: Bearer $${GRAFANA_SERVICE_ACCOUNT_TOKEN:-$$GRAFANA_API_KEY}" \
 		https://mcptests.grafana-dev.net/api/frontend/settings
 	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud ./tools
+	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud -run TestToolPermissions ./cmd/mcp-grafana
 
 .PHONY: test-python-e2e
 test-python-e2e: ## Run the deterministic Python E2E tests, no LLM involved (requires docker-compose services and SSE server to be running, use `make run-test-services` and `make run-sse` to start them).

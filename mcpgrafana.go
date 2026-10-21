@@ -1757,6 +1757,7 @@ var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) co
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
+	rejectIncidentErrorStatuses(client)
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
@@ -1780,6 +1781,7 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
+	rejectIncidentErrorStatuses(client)
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }

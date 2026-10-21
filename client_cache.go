@@ -391,6 +391,7 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 			default:
 				logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 			}
+			rejectIncidentErrorStatuses(client)
 
 			return client
 		})
