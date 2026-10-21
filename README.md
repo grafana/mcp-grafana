@@ -347,6 +347,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_loki_patterns`               | Loki                      | Query detected log patterns to identify common structures                                                                                                     | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:loki-uid`                                    |
 | `analyze_loki_labels`               | Loki                      | Audit a Loki label strategy (live or static) and optionally diagnose query performance                                                                        | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:loki-uid`                                    |
 | `suggest_loki_alloy_label_config`   | Config                    | Generate an Alloy `loki.process` snippet enforcing approved labels                                                                                            | None                                                                                                                                                                                                                                                                                | N/A                                                           |
+| `suggest_loki_otel_label_config`    | Config                    | Generate OpenTelemetry Collector contrib transform YAML enforcing a logs resource attribute allowlist                                                         | None                                                                                                                                                                                                                                                                                | N/A                                                           |
 | `query_influxdb`                    | InfluxDB*                 | Query InfluxDB using InfluxQL (v1) or Flux (v2)                                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:influxdb-uid`                                |
 | `list_sql_databases`                | SQL*                      | List databases, schemas, or catalogs from a SQL datasource                                                                                                    | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_sql_tables`                   | SQL*                      | List tables in a SQL datasource                                                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
@@ -425,6 +426,24 @@ Scopes define the specific resources that permissions apply to. Each action requ
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
 The `get_tempo_trace` tool displays an interactive trace viewer in compatible MCP hosts whenever Tempo query tools are enabled. Its existing text output remains available. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
+
+### OpenTelemetry label configuration
+
+The `config` tool category includes `suggest_loki_otel_label_config`. Supply
+`approvedLabels` using native OTel resource attribute names, such as `service.name`
+(not Loki's normalized `service_name`). Optional `requiredLabels` are added to the
+allowlist and get `"unknown"` when missing or empty. `normalizeLogLevel` normalizes
+the log record `level` attribute, not resource attributes or `severity_text`.
+
+The returned `yaml` defines the Collector contrib processor
+`transform/enforce_labels` (override with `processorName: "transform/custom"`).
+Merge it into your Collector configuration and add the processor to
+`service.pipelines.logs.processors` before exporting logs to Loki.
+**This removes all unapproved resource attributes, including structured metadata;
+it does not select Loki index labels.** Configure Loki's
+`limits_config.otlp_config.resource_attributes` separately with `action: index_label`
+for the desired resource attributes, reviewing default index labels and
+`ignore_defaults` as needed. Log record and scope attributes are not filtered.
 
 ## CLI Flags Reference
 
