@@ -272,6 +272,84 @@ func TestDatasourceFallbackTransport_HTMLFallbackIsNotSuccess(t *testing.T) {
 	assert.Contains(t, requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range")
 }
 
+func TestDatasourceFallbackTransport_HTMLFallbackLabelledJSONIsNotSuccess(t *testing.T) {
+	resetFallbackCache()
+
+	// Grafana's Loki resource handler stamps every response it relays with
+	// Content-Type: application/json, including the Loki UI's index.html that
+	// Loki serves for a path it does not recognise. The header alone cannot
+	// tell this page apart from an API answer, so the body has to.
+	var requests []*http.Request
+	mock := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req)
+
+		if strings.Contains(req.URL.Path, "/api/datasources/uid/test-uid/resources") {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader("\n<!DOCTYPE html>\n<html lang=\"en\"><head><title>Loki UI</title></head></html>")),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"message":"query timed out"}`)),
+		}, nil
+	})
+
+	rt := newDatasourceFallbackTransport(mock,
+		"/api/datasources/proxy/uid/test-uid",
+		"/api/datasources/uid/test-uid/resources",
+	)
+
+	req1, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range", nil)
+	resp, err := rt.RoundTrip(req1)
+	require.NoError(t, err)
+	require.Len(t, requests, 2, "should still try the fallback on 500")
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, `{"message":"query timed out"}`, string(body))
+
+	req2, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range", nil)
+	_, err = rt.RoundTrip(req2)
+	require.NoError(t, err)
+	require.Len(t, requests, 4)
+	assert.Contains(t, requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range")
+}
+
+func TestDatasourceFallbackTransport_JSONFallbackBodyIsPreserved(t *testing.T) {
+	resetFallbackCache()
+
+	// Sniffing the fallback body for HTML must not consume it: a real API
+	// answer still has to reach the caller byte for byte.
+	const payload = `{"status":"success","data":{"resultType":"streams","result":[]}}`
+	mock := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Path, "/api/datasources/uid/test-uid/resources") {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(payload)),
+			}, nil
+		}
+		return newMockResponse(http.StatusInternalServerError), nil
+	})
+
+	rt := newDatasourceFallbackTransport(mock,
+		"/api/datasources/proxy/uid/test-uid",
+		"/api/datasources/uid/test-uid/resources",
+	)
+
+	req, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/loki/api/v1/query_range", nil)
+	resp, err := rt.RoundTrip(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, payload, string(body))
+}
+
 // errAfterReader yields data, then fails, like a connection reset mid-body.
 type errAfterReader struct {
 	data string

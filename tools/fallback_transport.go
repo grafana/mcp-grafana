@@ -46,6 +46,12 @@ type datasourceFallbackTransport struct {
 	//     uid-based path for a Grafana 8.x tenant, whose uid routes answer
 	//     400.
 	legacy bool
+	// fallbackTrimPrefix is removed from the request path, right after the
+	// primary base, when a request is sent to the fallback base. Grafana's
+	// Loki /resources handler prepends /loki/api/v1/ to the path it is given,
+	// so a Loki API path must reach it without that prefix: /proxy/.../
+	// loki/api/v1/query_range and /resources/query_range are the same call.
+	fallbackTrimPrefix string
 }
 
 // shouldRetry reports whether the primary response status warrants trying
@@ -89,13 +95,29 @@ func newLegacyDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase
 	}
 }
 
+// lokiAPIPrefix is the path prefix of every Loki HTTP API route.
+const lokiAPIPrefix = "/loki/api/v1"
+
+// newLokiDatasourceFallbackTransport is newDatasourceFallbackTransport for a
+// Loki datasource whose primary is the uid proxy path and whose fallback is
+// the /resources path: the fallback drops the /loki/api/v1 prefix, which
+// Grafana's Loki resource handler adds back (see fallbackTrimPrefix).
+func newLokiDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fallbackBase string) http.RoundTripper {
+	return &datasourceFallbackTransport{
+		wrapped:            wrapped,
+		primaryBase:        primaryBase,
+		fallbackBase:       fallbackBase,
+		fallbackTrimPrefix: lokiAPIPrefix,
+	}
+}
+
 func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	cacheKey := t.fallbackCacheKey(req)
 
 	// Check cache: if we already know the fallback works, use it directly.
 	if !t.legacy {
 		if useFallback, ok := fallbackEndpoints.Load(cacheKey); ok && useFallback.(bool) {
-			return t.wrapped.RoundTrip(t.rewriteRequest(req, t.primaryBase, t.fallbackBase))
+			return t.wrapped.RoundTrip(t.fallbackRequest(req))
 		}
 	}
 
@@ -130,7 +152,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	primaryBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxPrimaryErrorBodyBytes))
 	resp.Body.Close() //nolint:errcheck
 
-	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
+	retryReq := t.fallbackRequest(req)
 	if bodyBytes != nil {
 		retryReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		retryReq.ContentLength = int64(len(bodyBytes))
@@ -141,10 +163,9 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, retryErr
 	}
 
-	// A datasource API never answers with HTML. A 2xx text/html response is
-	// the upstream's web UI catching an unknown route — Loki, for one, serves
-	// its UI's index.html for any path it does not recognise, which is what a
-	// /resources request for a Loki API path turns into. Treat it as a failed
+	// A datasource API never answers with HTML. A 2xx HTML response is the
+	// upstream's web UI catching an unknown route — Loki, for one, serves its
+	// UI's index.html for any path it does not recognise. Treat it as a failed
 	// fallback: return the primary's real error and do not cache the route.
 	if isHTMLResponse(retryResp) {
 		retryResp.Body.Close() //nolint:errcheck
@@ -169,12 +190,36 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 // surface the first KiB of them.
 const maxPrimaryErrorBodyBytes = 64 << 10
 
-// isHTMLResponse reports whether resp is a successful text/html response.
+// htmlSniffBytes is how much of a response body is read to detect HTML; it
+// matches what http.DetectContentType considers.
+const htmlSniffBytes = 512
+
+// isHTMLResponse reports whether resp is a successful HTML response, judged by
+// its Content-Type or, failing that, by its body. The header alone is not
+// enough: Grafana's Loki resource handler labels every body it relays
+// application/json, Loki's UI page included. Sniffing reads the start of the
+// body, so resp.Body is replaced with a reader that yields the full body.
 func isHTMLResponse(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false
 	}
-	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil && mediaType == "text/html" {
+		return true
+	}
+	if resp.Body == nil {
+		return false
+	}
+
+	// A read error is left for the caller to hit on its own read of the body.
+	head := make([]byte, htmlSniffBytes)
+	n, _ := io.ReadFull(resp.Body, head)
+	head = head[:n]
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head), resp.Body), resp.Body}
+
+	mediaType, _, err := mime.ParseMediaType(http.DetectContentType(head))
 	return err == nil && mediaType == "text/html"
 }
 
@@ -190,6 +235,15 @@ func (t *datasourceFallbackTransport) fallbackCacheKey(req *http.Request) string
 	}
 
 	return t.primaryBase + suffix
+}
+
+// fallbackRequest returns a copy of req addressed to the fallback base.
+func (t *datasourceFallbackTransport) fallbackRequest(req *http.Request) *http.Request {
+	from := t.primaryBase
+	if t.fallbackTrimPrefix != "" && strings.HasPrefix(req.URL.Path, from+t.fallbackTrimPrefix+"/") {
+		from += t.fallbackTrimPrefix
+	}
+	return t.rewriteRequest(req, from, t.fallbackBase)
 }
 
 func (t *datasourceFallbackTransport) rewriteRequest(req *http.Request, from, to string) *http.Request {
