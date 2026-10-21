@@ -193,7 +193,10 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions("annotations:write"),
+	// Grafana finds the annotation through a search filtered by
+	// annotations:read before checking annotations:write; without read it
+	// answers 404.
+	mcpgrafana.RequiresPermissions("annotations:read", "annotations:write"),
 )
 
 // DeleteAnnotationInput identifies the annotation to delete.
