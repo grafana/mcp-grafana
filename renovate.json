@@ -42,6 +42,27 @@
             "description": "Automerge patch-level updates",
             "matchUpdateTypes": ["patch", "pin"],
             "automerge": true
+        },
+        {
+            "description": "Bump the go directive in the root go.mod, which Renovate skips by default. lokiguard keeps its own consumer minimum.",
+            "matchManagers": ["gomod"],
+            "matchFileNames": ["go.mod"],
+            "matchDepNames": ["go"],
+            "matchDepTypes": ["golang"],
+            "rangeStrategy": "bump"
+        },
+        {
+            "description": "Bump Go everywhere in one PR: the go.mod directive, mise.toml, and the Dockerfile builder images.",
+            "matchDepNames": ["go", "golang"],
+            "groupName": "go"
+        },
+        {
+            "description": "Patch only for the go directive: a minor raises the minimum Go for module consumers, so it stays a deliberate change.",
+            "matchManagers": ["gomod"],
+            "matchDepNames": ["go"],
+            "matchDepTypes": ["golang"],
+            "matchUpdateTypes": ["major", "minor"],
+            "enabled": false
         }
     ]
 }
