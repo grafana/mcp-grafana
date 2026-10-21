@@ -93,7 +93,7 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	if legacyMode {
 		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
 	} else {
-		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+		rt = newLokiDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
 	}
 
 	client := &http.Client{
