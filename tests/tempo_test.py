@@ -1,9 +1,6 @@
 from mcp import ClientSession
 import pytest
 
-from conftest import models
-from utils import assert_mcp_eval, run_llm_tool_loop
-
 pytestmark = pytest.mark.anyio
 
 
@@ -188,38 +185,3 @@ class TestTempoToolsBasic:
             assert (
                 "not found" not in error_msg or "tempo" not in error_msg
             ), f"Datasource tempo should be accessible: {e}"
-
-
-class TestTempoToolsWithLLM:
-    """LLM integration tests for Tempo tools."""
-
-    @pytest.mark.parametrize("model", models)
-    @pytest.mark.flaky(reruns=2)
-    async def test_llm_can_list_trace_attributes(
-        self, model: str, mcp_client: ClientSession, mcp_transport: str
-    ):
-        """Test that an LLM can list available trace attributes from Tempo."""
-        prompt = (
-            "Use the tempo tools to get the available span attribute names "
-            "from the datasource with UID 'tempo'. Tell me which span attributes "
-            "I can use in TraceQL, or say if none are available."
-        )
-        final_content, tools_called, mcp_server = await run_llm_tool_loop(
-            model, mcp_client, mcp_transport, prompt
-        )
-
-        attr_calls = [tc for tc in tools_called if tc.name == "list_tempo_attribute_names"]
-        assert attr_calls, "list_tempo_attribute_names was not in tools_called"
-        args = attr_calls[0].args
-        assert args.get("datasourceUid") == "tempo", (
-            f"Expected datasourceUid='tempo', got {args.get('datasourceUid')!r}"
-        )
-
-        assert_mcp_eval(
-            prompt,
-            final_content,
-            tools_called,
-            mcp_server,
-            "Does the response list available span attributes, or accurately report that none were returned?",
-            expected_tools="list_tempo_attribute_names",
-        )

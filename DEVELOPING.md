@@ -36,8 +36,7 @@ mise run run-streamable-http # Streamable HTTP mode (with debug logging + metric
 mise run test-unit           # unit tests (no external deps)
 mise run test-integration    # integration tests (requires docker-compose services)
 mise run test-cloud          # cloud tests (requires GRAFANA_SERVICE_ACCOUNT_TOKEN)
-mise run test-python-e2e     # Python E2E tests, no LLM (requires docker-compose + SSE server)
-mise run test-python-llm     # Python LLM evals (as above, plus OpenAI/Anthropic API keys)
+mise run test-python-e2e     # Python E2E tests (requires docker-compose + SSE server)
 ```
 
 ## Linting
