@@ -195,17 +195,19 @@ async def test_generate_and_shorten_explore_deeplink(
 
     deeplink_calls = [tc for tc in tools_called if tc.name == "generate_deeplink"]
     assert deeplink_calls, "Expected LLM to call generate_deeplink"
-    deeplink_args = deeplink_calls[0].args
+    # The prompt says "generate, then shorten", so models may make a plain call
+    # first; judge the call that shortens.
+    shorten_calls = [tc for tc in deeplink_calls if tc.args.get("shorten") is True]
+    assert shorten_calls, (
+        f"Expected a generate_deeplink call with shorten=true, got {[tc.args for tc in deeplink_calls]}"
+    )
+    deeplink_args = shorten_calls[0].args
     assert deeplink_args.get("resourceType") == "explore", (
         f"Expected resourceType explore, got {deeplink_args.get('resourceType')}"
     )
     assert deeplink_args.get("datasourceUid") == "test-uid", (
         f"Expected datasourceUid test-uid, got {deeplink_args.get('datasourceUid')}"
     )
-    assert deeplink_args.get("shorten") is True, (
-        f"Expected shorten=true, got {deeplink_args.get('shorten')}"
-    )
-
     assert "/goto/" in final_content, f"Expected short /goto/ URL in response, got: {final_content}"
 
     assert_mcp_eval(
