@@ -1,5 +1,5 @@
 name: Set up mise
-description: Install the tools pinned in mise.toml, and cache them along with Go, npm and uv downloads.
+description: Install the tools pinned in mise.toml at the digests recorded in mise.lock, and cache them along with Go, npm and uv downloads.
 
 inputs:
   cache:
@@ -14,12 +14,16 @@ inputs:
 runs:
   using: composite
   steps:
+    # --locked installs only the URLs and checksums committed in mise.lock, so
+    # a re-published release asset cannot replace a reviewed binary. mise-action
+    # adds it whenever a lockfile exists; passing it here makes a missing
+    # lockfile fail the job instead.
     - name: Set up mise
       uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       with:
         version: 2026.9.2
         install: true
-        install_args: ${{ inputs.tools }}
+        install_args: --locked ${{ inputs.tools }}
         cache: ${{ inputs.cache == 'true' }}
 
     # mise-action exports the job's token to every later step. Those steps run
