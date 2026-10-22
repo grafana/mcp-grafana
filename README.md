@@ -54,7 +54,7 @@ _The following features are currently available in MCP server. This list is for 
 
 > **Note:** Run panel query tools are **disabled by default**. To enable them, add `runpanelquery` to your `--enabled-tools` flag.
 
-- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides.
+- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides. Infinity panels run when the query uses the `backend` or `jq-backend` parser (Google Sheets queries always do); the default `simple` parser and the UQL and GROQ parsers work only in the browser.
 
 #### Context Window Management
 
@@ -314,8 +314,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `user_info`                         | User                      | Current identity, capabilities, and accessible organizations                                                                                                  | None                                                                                                                                                                                                                                                                                | —                                                             |
 | `search_dashboards`                 | Search                    | Search for dashboards by query, folder UID, tag, or starred                                                                                                   | `dashboards:read`, `folders:read`                                                                                                                                                                                                                                                   | `dashboards:*` or `dashboards:uid:abc123`                     |
 | `search_folders`                    | Search                    | Search for folders by title                                                                                                                                   | `folders:read`                                                                                                                                                                                                                                                                      | `folders:*` or `folders:uid:xyz789`                           |
-| `get_dashboard_by_uid`              | Dashboard                 | Get a dashboard by uid, optionally a saved version                                                                                                            | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
-| `list_dashboard_versions`           | Dashboard                 | List saved versions of a dashboard (version, author, time, message)                                                                                           | `dashboards:read`                                                                                                                                                                                                                                                                   | `dashboards:uid:abc123`                                       |
+| `get_dashboard_by_uid`              | Dashboard                 | Get a dashboard by uid, optionally a saved version                                                                                                            | `dashboard.grafana.app/dashboards:get`, `dashboards:read`, `dashboards:write`                                                                                                                                                                                                       | `dashboards:uid:abc123`                                       |
+| `list_dashboard_versions`           | Dashboard                 | List saved versions of a dashboard (version, author, time, message)                                                                                           | `dashboards:read`, `dashboards:write`                                                                                                                                                                                                                                               | `dashboards:uid:abc123`                                       |
 | `update_dashboard`                  | Dashboard                 | Update or create a new dashboard                                                                                                                              | `dashboard.grafana.app/dashboards:create`, `dashboard.grafana.app/dashboards:get`, `dashboard.grafana.app/dashboards:update`, `dashboards:create`, `dashboards:read`, `dashboards:write`, `folders:read`                                                                            | `dashboards:*`, `folders:*` or `folders:uid:xyz789`           |
 | `get_dashboard_panel_queries`       | Dashboard                 | Get panel title, queries, datasource UID and type from a dashboard                                                                                            | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
 | `run_panel_query`                   | RunPanelQuery*            | Execute one or more dashboard panel queries                                                                                                                   | `dashboard.grafana.app/dashboards:get`, `dashboards:read`, `datasources:query`, `datasources:read`                                                                                                                                                                                  | `dashboards:uid:*`, `datasources:uid:*`                       |
@@ -390,11 +390,11 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `agento11y_manage_eval_collections` | Agent Observability*      | Manage saved conversations and the collections that group them (list, get, save, create, update, delete, add and remove members)                              | `grafana-agento11y-app.conversations:read`, `grafana-agento11y-app.data:read`, `plugins.app:access`; with writes enabled also `grafana-agento11y-app.eval:write`                                                                                                                    | N/A                                                           |
 | `agento11y_manage_experiments`      | Agent Observability*      | Read offline experiments, their trials, scores, artifact metadata, and filter facets; update and cancel an experiment                                         | `grafana-agento11y-app.conversations:read`, `grafana-agento11y-app.data:read`, `plugins.app:access`; with writes enabled also `grafana-agento11y-app.eval:write`                                                                                                                    | N/A                                                           |
 | `agento11y_manage_test_suites`      | Agent Observability*      | Manage the test suites that offline experiments run against, their versions, and their test cases (list, get, create, update, draft, publish, upsert, delete) | `grafana-agento11y-app.conversations:read`, `grafana-agento11y-app.data:read`, `plugins.app:access`; with writes enabled also `grafana-agento11y-app.eval:write`                                                                                                                    | N/A                                                           |
-| `ask_assistant`                     | Assistant*                | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)                                                                | `plugins.app:access`                                                                                                                                                                                                                                                                | Plugin-specific scopes                                        |
+| `ask_assistant`                     | Assistant*                | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)                                                                | `grafana-assistant-app.chats:access`, `plugins.app:access`                                                                                                                                                                                                                          | Plugin-specific scopes                                        |
 | `generate_deeplink`                 | Navigation                | Generate accurate deeplink URLs for Grafana resources                                                                                                         | None                                                                                                                                                                                                                                                                                | N/A                                                           |
 | `get_annotations`                   | Annotations               | Fetch annotations with filters                                                                                                                                | `annotations:read`                                                                                                                                                                                                                                                                  | `annotations:*` or `annotations:id:123`                       |
 | `create_annotation`                 | Annotations               | Create a new annotation (standard or Graphite format)                                                                                                         | `annotations:create`                                                                                                                                                                                                                                                                | `annotations:*`                                               |
-| `update_annotation`                 | Annotations               | Update specific fields of an annotation (partial update)                                                                                                      | `annotations:write`                                                                                                                                                                                                                                                                 | `annotations:*`                                               |
+| `update_annotation`                 | Annotations               | Update specific fields of an annotation (partial update)                                                                                                      | `annotations:read`, `annotations:write`                                                                                                                                                                                                                                             | `annotations:*`                                               |
 | `delete_annotation`                 | Annotations               | Delete an annotation by ID                                                                                                                                    | `annotations:delete`                                                                                                                                                                                                                                                                | `annotations:*`                                               |
 | `get_annotation_tags`               | Annotations               | List annotation tags with optional filtering                                                                                                                  | `annotations:read`                                                                                                                                                                                                                                                                  | `annotations:*`                                               |
 | `list_snapshots`                    | Snapshot                  | List dashboard snapshots with optional query and limit filters                                                                                                | `snapshots:read`                                                                                                                                                                                                                                                                    | N/A                                                           |
@@ -1473,12 +1473,12 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first 
 
 If you're **adding a new tool**, please [open a tool proposal](https://github.com/grafana/mcp-grafana/issues/new?template=new-tool-proposal.yml) before writing the code. Every default-on tool is sent to the model on every request by every user, so we'd rather discuss the idea than decline a finished pull request. Bug fixes, docs, tests and new parameters on existing tools need no proposal — just send a PR.
 
-This project is written in Go. Install Go following the instructions for your platform.
+This project is written in Go. Tool versions and dev tasks live in `mise.toml`: install [mise](https://mise.jdx.dev/getting-started.html), run `mise install` to get the pinned tools, and `mise tasks` to list the tasks.
 
 To run the server locally in STDIO mode (which is the default for local development), use:
 
 ```bash
-make run
+mise run run
 ```
 
 To run the server locally in SSE mode, use:
@@ -1490,7 +1490,7 @@ go run ./cmd/mcp-grafana --transport sse
 You can also run the server using the SSE transport inside a custom built Docker image. Just like the published Docker image, this custom image's entrypoint defaults to SSE mode. To build the image, use:
 
 ```
-make build-image
+mise run build-image
 ```
 
 And to run the image in SSE mode (the default), use:
@@ -1512,25 +1512,25 @@ There are three types of tests available:
 1. Unit Tests (no external dependencies required):
 
 ```bash
-make test-unit
+mise run test-unit
 ```
 
 You can also run unit tests with:
 
 ```bash
-make test
+mise run test
 ```
 
 2. Integration Tests (requires docker containers to be up and running):
 
 ```bash
-make test-integration
+mise run test-integration
 ```
 
 3. Cloud Tests (requires cloud Grafana instance and credentials):
 
 ```bash
-make test-cloud
+mise run test-cloud
 ```
 
 > Note: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
@@ -1541,12 +1541,6 @@ More comprehensive integration tests will require a Grafana instance to be runni
 docker-compose up -d
 ```
 
-The integration tests can be run with:
-
-```bash
-make test-all
-```
-
 If you're adding more tools, please add integration tests for them. The existing tests should be a good starting point.
 
 ### Linting
@@ -1554,13 +1548,13 @@ If you're adding more tools, please add integration tests for them. The existing
 To lint the code, run:
 
 ```bash
-make lint
+mise run lint
 ```
 
 This includes a custom linter that checks for unescaped commas in `jsonschema` struct tags. The commas in `description` fields must be escaped with `\\,` to prevent silent truncation. You can run just this linter with:
 
 ```bash
-make lint-jsonschema
+mise run lint-jsonschema
 ```
 
 See the [JSONSchema Linter documentation](internal/linter/jsonschema/README.md) for more details.

@@ -248,6 +248,15 @@ const (
 	LokiGuardrailEnforce = "enforce"
 )
 
+// Loki guardrail behaviours for GrafanaConfig.LokiGuardrailOnEstimateFailure.
+const (
+	// LokiGuardrailFailureAllow runs queries the guardrail could not assess
+	// (default).
+	LokiGuardrailFailureAllow = "allow"
+	// LokiGuardrailFailureBlock rejects queries the guardrail could not assess.
+	LokiGuardrailFailureBlock = "block"
+)
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -321,7 +330,8 @@ type GrafanaConfig struct {
 	// from Loki queries.
 	MaxLokiLogLimit int
 
-	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs.
+	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs
+	// and query_loki_patterns.
 	// One of LokiGuardrailOff (default), LokiGuardrailShadow, or
 	// LokiGuardrailEnforce. Loki does not enforce max_query_bytes_read on log
 	// queries without a line filter, so the guardrail requires selective
@@ -332,12 +342,24 @@ type GrafanaConfig struct {
 	// LokiGuardrailMaxBytes is the maximum number of bytes a single
 	// query_loki_logs call may scan, estimated via Loki's index/stats API
 	// before the query runs. Zero disables the byte-budget check.
+	// query_loki_patterns skips the byte budget: patterns are served by the
+	// pattern ingesters, not from the chunks index/stats measures.
 	LokiGuardrailMaxBytes int64
 
 	// LokiGuardrailMaxRange is the maximum effective time range allowed for
-	// a single query_loki_logs call, including range-vector durations like
+	// a single query_loki_logs or query_loki_patterns call, including
+	// range-vector durations like
 	// [30d]. Zero disables the range check.
 	LokiGuardrailMaxRange time.Duration
+
+	// LokiGuardrailOnEstimateFailure says what the guardrail does when it
+	// cannot reach a verdict: the query has no stream selector it understands,
+	// or Loki's index/stats estimate failed. LokiGuardrailFailureAllow (the
+	// default, also for "") runs the query; LokiGuardrailFailureBlock rejects
+	// it with a tool error in enforce mode, for autonomous callers. Block only
+	// applies to native Loki: on VictoriaLogs, brace-less LogsQL is the normal
+	// shape and is always run.
+	LokiGuardrailOnEstimateFailure string
 
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server
@@ -1757,6 +1779,7 @@ var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) co
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
+	rejectIncidentErrorStatuses(client)
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
@@ -1780,6 +1803,7 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
+	rejectIncidentErrorStatuses(client)
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }

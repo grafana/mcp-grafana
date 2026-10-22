@@ -14,16 +14,21 @@ dependencies = []
 [dependency-groups]
 dev = [
     "anyio>=4.9.0",
-    "deepeval>=1.0.0",
     "httpx>=0.28",
     "jsonschema>=4.23",
-    "litellm>=1.105.1,<1.106",
     "mcp>=2.3,<3",
     "pytest>=9.0.3",
-    "pytest-rerunfailures>=15.0",
-    "python-dotenv>=1.2.2",
 ]
 
-[tool.pytest.ini_options]
-addopts = "-p no:flaky"
-markers = ["llm: drives a real LLM; needs API keys and is non-deterministic"]
+[tool.uv]
+# Skip anything uploaded in the last week, so a compromised release gets
+# yanked before we can resolve it (e.g. litellm 1.107.0, live ~2h).
+exclude-newer = "7 days"
+
+# Exemptions for releases we deliberately want before they're a week old.
+# Each timestamp sits just after the release we want, so later releases
+# still wait. Delete an entry once it's older than the window above.
+[tool.uv.exclude-newer-package]
+certifi = "2026-10-20T03:00:00Z"   # GHSA-6q48-6c7w-9gw2 (critical), 2026.10.19
+httpcore2 = "2026-10-18T17:00:00Z" # keep 2.14.0
+httpx2 = "2026-10-18T17:00:00Z"    # keep 2.14.0

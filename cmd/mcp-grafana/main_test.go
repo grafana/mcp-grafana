@@ -557,9 +557,10 @@ func TestHandleFlagsPostParse(t *testing.T) {
 func TestApplyLokiGuardrailEnv(t *testing.T) {
 	// Flag defaults as registered in addFlags.
 	defaults := grafanaConfig{
-		lokiGuardrailMode:     "off",
-		lokiGuardrailMaxBytes: 100 << 30,
-		lokiGuardrailMaxRange: 24 * time.Hour,
+		lokiGuardrailMode:      "off",
+		lokiGuardrailMaxBytes:  100 << 30,
+		lokiGuardrailMaxRange:  24 * time.Hour,
+		lokiGuardrailOnFailure: "allow",
 	}
 
 	tests := []struct {
@@ -668,6 +669,8 @@ func TestValidateLokiGuardrail(t *testing.T) {
 		{name: "shadow with limits is valid", gc: grafanaConfig{lokiGuardrailMode: "shadow", lokiGuardrailMaxBytes: 100 << 30, lokiGuardrailMaxRange: 24 * time.Hour}},
 		{name: "zero limits disable checks", gc: grafanaConfig{lokiGuardrailMode: "enforce"}},
 		{name: "unknown mode rejected", gc: grafanaConfig{lokiGuardrailMode: "Enforce"}, wantErrSubstr: "invalid Loki guardrail mode"},
+		{name: "block on estimate failure is valid", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailOnFailure: "block"}},
+		{name: "unknown estimate-failure behaviour rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailOnFailure: "deny"}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_ON_ESTIMATE_FAILURE"},
 		{name: "negative max bytes rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxBytes: -1}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_BYTES"},
 		{name: "negative max range rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxRange: -time.Hour}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_RANGE"},
 	}
@@ -1974,4 +1977,15 @@ func TestValidateMountFlags_SSEBasePath(t *testing.T) {
 	err = validateMountFlags("sse", "/my base/", "", "", observability.Config{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), strconv.Quote(sseEndpointPath(normalizeBasePath("/my base/"))))
+}
+
+func TestApplyLokiGuardrailEnvOnEstimateFailure(t *testing.T) {
+	t.Setenv("GRAFANA_LOKI_GUARDRAIL_ON_ESTIMATE_FAILURE", "block")
+	gc := grafanaConfig{lokiGuardrailOnFailure: "allow"}
+	require.NoError(t, gc.applyLokiGuardrailEnv(nil))
+	assert.Equal(t, "block", gc.lokiGuardrailOnFailure)
+
+	gc = grafanaConfig{lokiGuardrailOnFailure: "allow"}
+	require.NoError(t, gc.applyLokiGuardrailEnv(map[string]bool{"loki-guardrail-on-estimate-failure": true}))
+	assert.Equal(t, "allow", gc.lokiGuardrailOnFailure, "an explicit flag wins over the environment")
 }

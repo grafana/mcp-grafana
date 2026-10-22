@@ -38,11 +38,8 @@ jobs:
         with:
           compose-file: "docker-compose.yaml"
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
 
       - name: Wait for Grafana API to be ready
         run: |
@@ -115,7 +112,7 @@ jobs:
           fi
 
       - name: Run integration tests
-        run: make test-integration
+        run: mise run test-integration
 
   test-cloud:
     name: Test Cloud
@@ -130,11 +127,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
 
       - id: get-secrets
         uses: grafana/shared-workflows/actions/get-vault-secrets@2f1ddaf3ce1aa677356243d0dd584be33cfa35e3 # get-vault-secrets/v2.1
@@ -153,4 +147,4 @@ jobs:
           GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).GRAFANA_SERVICE_ACCOUNT_TOKEN }}
           ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
           DATASOURCEDEV_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).DATASOURCEDEV_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
-        run: make test-cloud
+        run: mise run test-cloud

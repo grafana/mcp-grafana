@@ -913,6 +913,9 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(dashboardRead...),
+	// Fetching a saved version uses Grafana's legacy versions API, which
+	// requires dashboards:write, even to read.
+	mcpgrafana.RequiresPermissions("dashboards:write"),
 )
 
 var UpdateDashboard = mcpgrafana.MustTool(

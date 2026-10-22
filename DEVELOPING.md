@@ -2,16 +2,16 @@
 
 ## Prerequisites
 
-- Go (latest stable)
+- [mise](https://mise.jdx.dev/getting-started.html): run `mise install` to get the
+  pinned Go, golangci-lint, Node, uv and other tools from `mise.toml`. `mise tasks`
+  lists every task.
 - Docker and docker-compose (for integration/E2E tests)
-- [uv](https://docs.astral.sh/uv/) (for Python E2E tests)
-- [golangci-lint](https://golangci-lint.run/) (for linting)
 
 ## Building
 
 ```bash
-make build          # builds dist/mcp-grafana
-make build-image    # builds Docker image
+mise run build          # builds dist/mcp-grafana
+mise run build-image    # builds Docker image
 ```
 
 ## Running locally
@@ -19,31 +19,30 @@ make build-image    # builds Docker image
 Start the test services (Grafana, Prometheus, etc.):
 
 ```bash
-make run-test-services
+mise run run-test-services
 ```
 
 Then run the server in your preferred transport mode:
 
 ```bash
-make run                 # stdio mode
-make run-sse             # SSE mode (with debug logging + metrics)
-make run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
+mise run run                 # stdio mode
+mise run run-sse             # SSE mode (with debug logging + metrics)
+mise run run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
 ```
 
 ## Testing
 
 ```bash
-make test-unit           # unit tests (no external deps)
-make test-integration    # integration tests (requires docker-compose services)
-make test-cloud          # cloud tests (requires GRAFANA_SERVICE_ACCOUNT_TOKEN)
-make test-python-e2e     # Python E2E tests, no LLM (requires docker-compose + SSE server)
-make test-python-llm     # Python LLM evals (as above, plus OpenAI/Anthropic API keys)
+mise run test-unit           # unit tests (no external deps)
+mise run test-integration    # integration tests (requires docker-compose services)
+mise run test-cloud          # cloud tests (requires GRAFANA_SERVICE_ACCOUNT_TOKEN)
+mise run test-python-e2e     # Python E2E tests (requires docker-compose + SSE server)
 ```
 
 ## Linting
 
 ```bash
-make lint                # Go lint + JSON schema lint
+mise run lint                # Go lint + JSON schema lint
 ```
 
 ## Publishing a release

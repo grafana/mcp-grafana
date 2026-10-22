@@ -260,7 +260,10 @@ var influxDBExamples = []QueryExample{
 var supportedDatasourceTypes = []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb"}
 
 func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQueryExamplesResult, error) {
+	// Accept plugin IDs such as grafana-clickhouse-datasource, which callers
+	// often pass straight from a datasource's type field.
 	datasourceType := strings.ToLower(args.DatasourceType)
+	datasourceType = strings.TrimSuffix(strings.TrimPrefix(datasourceType, "grafana-"), "-datasource")
 
 	var examples []QueryExample
 	switch datasourceType {

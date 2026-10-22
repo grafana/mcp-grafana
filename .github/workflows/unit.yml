@@ -20,13 +20,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: false
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
       - name: Run linter
-        run: make lint-jsonschema
+        run: mise run lint-jsonschema
 
   gofmt:
     name: Check gofmt
@@ -36,19 +33,10 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: false
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
       - name: Check gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "The following files are not formatted with gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: mise run lint-gofmt
 
   lint-go:
     name: Lint Go
@@ -58,15 +46,20 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.14.0
+          # Use the golangci-lint that mise installed from mise.toml.
+          install-mode: none
+      # lokiguard is a separate Go module, so the run above does not see it.
+      - name: Run golangci-lint (lokiguard)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          install-mode: none
+          working-directory: lokiguard
+          args: --config ../.golangci.yaml
 
   test-unit:
     name: Test Unit
@@ -77,16 +70,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
 
       - name: Run unit tests
-        run: make test-unit
+        run: mise run test-unit
 
-  # Catches forgotten `make build-ui` runs: rebuilds ui/*/dist from source
+  # Catches forgotten `mise run build-ui` runs: rebuilds ui/*/dist from source
   # and fails if it differs from what's checked in.
   build-ui:
     name: Verify UI bundles
@@ -97,15 +87,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: ui/*/package-lock.json
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
 
       - name: Rebuild UI bundles
-        run: make build-ui
+        run: mise run build-ui
 
       - name: Check MCP App UI
         working-directory: ui/mcp-apps
@@ -114,6 +100,6 @@ jobs:
       - name: Fail if UI bundles drifted from sources
         run: |
           if ! git diff --exit-code -- ui; then
-            echo "::error::ui/*/dist is out of sync with sources. Run 'make build-ui' locally and commit."
+            echo "::error::ui/*/dist is out of sync with sources. Run 'mise run build-ui' locally and commit."
             exit 1
           fi

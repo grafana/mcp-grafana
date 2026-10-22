@@ -1,6 +1,6 @@
 module github.com/grafana/mcp-grafana/v2
 
-go 1.26.9
+go 1.26.10
 
 require (
 	connectrpc.com/connect v1.21.1
@@ -13,6 +13,7 @@ require (
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e
 	github.com/grafana/grafana-plugin-sdk-go v0.297.0
 	github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42
+	github.com/grafana/mcp-grafana/lokiguard v0.1.0
 	github.com/grafana/pyroscope/api v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/invopop/jsonschema v0.14.0

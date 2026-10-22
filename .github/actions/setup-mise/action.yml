@@ -1,0 +1,48 @@
+name: Set up mise
+description: Install the tools pinned in mise.toml at the digests recorded in mise.lock, and cache them along with Go, npm and uv downloads.
+
+inputs:
+  cache:
+    description: Cache tools and Go, npm and uv downloads. Turn off in jobs that publish what they build, where a poisoned cache would ship.
+    required: false
+    default: "true"
+  tools:
+    description: Space-separated tools from mise.toml to install. Empty installs them all.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # --locked installs only the URLs and checksums committed in mise.lock, so
+    # a re-published release asset cannot replace a reviewed binary. mise-action
+    # adds it whenever a lockfile exists; passing it here makes a missing
+    # lockfile fail the job instead.
+    - name: Set up mise
+      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      with:
+        version: 2026.9.2
+        install: true
+        install_args: --locked ${{ inputs.tools }}
+        cache: ${{ inputs.cache == 'true' }}
+
+    # mise-action exports the job's token to every later step. Those steps run
+    # PR code (go test, the built binary), and the tools are installed by now.
+    - name: Drop the GitHub token from the environment
+      shell: bash
+      run: echo "MISE_GITHUB_TOKEN=" >> "$GITHUB_ENV"
+
+    # mise-action caches the tools only, so this replaces the setup-go, setup-node
+    # and setup-uv caches. Keyed per job: a shared key would be saved first by the
+    # quickest job, nearly empty, and exact hits never save again.
+    - name: Cache Go, npm and uv downloads
+      if: inputs.cache == 'true'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+          ~/.npm
+          ~/.cache/uv
+        key: deps-${{ runner.os }}-${{ github.job }}-${{ hashFiles('mise.toml', '**/go.sum', 'ui/*/package-lock.json', 'tests/uv.lock') }}
+        restore-keys: deps-${{ runner.os }}-${{ github.job }}-
