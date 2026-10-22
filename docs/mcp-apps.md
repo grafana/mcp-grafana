@@ -66,7 +66,7 @@ npm test
 npm run build
 ```
 
-Run `make build-ui` from the repository root to rebuild all embedded apps. Commit
+Run `mise run build-ui` from the repository root to rebuild all embedded apps. Commit
 the resulting HTML alongside source changes; CI checks bundle drift. The shell
 supports explicit light/dark modes, composable sections, host navigation,
 loading/error feedback and accessible recovery actions.

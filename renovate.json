@@ -42,6 +42,26 @@
             "description": "Automerge patch-level updates",
             "matchUpdateTypes": ["patch", "pin"],
             "automerge": true
+        },
+        {
+            "description": "Bump the go directive in the root go.mod, which Renovate skips by default. lokiguard keeps its own consumer minimum.",
+            "matchManagers": ["gomod"],
+            "matchFileNames": ["go.mod"],
+            "matchDepNames": ["go"],
+            "matchDepTypes": ["golang"],
+            "rangeStrategy": "bump"
+        },
+        {
+            "description": "Bump Go everywhere in one PR: the go.mod directive, mise.toml, and the Dockerfile builder images.",
+            "matchDepNames": ["go", "golang"],
+            "groupName": "go"
+        },
+        {
+            "description": "Patch only for Go in go.mod and mise.toml. A minor in go.mod raises the minimum Go for module consumers. mise.toml builds the release binaries, which stay on 1.26 until golang/go#81199 is fixed (see mise.toml).",
+            "matchManagers": ["gomod", "mise"],
+            "matchDepNames": ["go"],
+            "matchUpdateTypes": ["major", "minor"],
+            "enabled": false
         }
     ]
 }

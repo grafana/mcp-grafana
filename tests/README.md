@@ -25,7 +25,7 @@ Tests use [`uv`] to manage dependencies.
    uv sync --all-groups
    ```
 
-2. Start the docker-compose services (`make run-test-services` from the repo
+2. Start the docker-compose services (`mise run run-test-services` from the repo
    root) and build the binary (`go build -o dist/mcp-grafana ./cmd/mcp-grafana`).
 
 3. For the SSE and streamable-http transports, start the server; from the repo

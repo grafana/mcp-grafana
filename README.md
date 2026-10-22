@@ -1473,12 +1473,12 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first 
 
 If you're **adding a new tool**, please [open a tool proposal](https://github.com/grafana/mcp-grafana/issues/new?template=new-tool-proposal.yml) before writing the code. Every default-on tool is sent to the model on every request by every user, so we'd rather discuss the idea than decline a finished pull request. Bug fixes, docs, tests and new parameters on existing tools need no proposal — just send a PR.
 
-This project is written in Go. Install Go following the instructions for your platform.
+This project is written in Go. Tool versions and dev tasks live in `mise.toml`: install [mise](https://mise.jdx.dev/getting-started.html), run `mise install` to get the pinned tools, and `mise tasks` to list the tasks.
 
 To run the server locally in STDIO mode (which is the default for local development), use:
 
 ```bash
-make run
+mise run run
 ```
 
 To run the server locally in SSE mode, use:
@@ -1490,7 +1490,7 @@ go run ./cmd/mcp-grafana --transport sse
 You can also run the server using the SSE transport inside a custom built Docker image. Just like the published Docker image, this custom image's entrypoint defaults to SSE mode. To build the image, use:
 
 ```
-make build-image
+mise run build-image
 ```
 
 And to run the image in SSE mode (the default), use:
@@ -1512,25 +1512,25 @@ There are three types of tests available:
 1. Unit Tests (no external dependencies required):
 
 ```bash
-make test-unit
+mise run test-unit
 ```
 
 You can also run unit tests with:
 
 ```bash
-make test
+mise run test
 ```
 
 2. Integration Tests (requires docker containers to be up and running):
 
 ```bash
-make test-integration
+mise run test-integration
 ```
 
 3. Cloud Tests (requires cloud Grafana instance and credentials):
 
 ```bash
-make test-cloud
+mise run test-cloud
 ```
 
 > Note: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
@@ -1541,12 +1541,6 @@ More comprehensive integration tests will require a Grafana instance to be runni
 docker-compose up -d
 ```
 
-The integration tests can be run with:
-
-```bash
-make test-all
-```
-
 If you're adding more tools, please add integration tests for them. The existing tests should be a good starting point.
 
 ### Linting
@@ -1554,13 +1548,13 @@ If you're adding more tools, please add integration tests for them. The existing
 To lint the code, run:
 
 ```bash
-make lint
+mise run lint
 ```
 
 This includes a custom linter that checks for unescaped commas in `jsonschema` struct tags. The commas in `description` fields must be escaped with `\\,` to prevent silent truncation. You can run just this linter with:
 
 ```bash
-make lint-jsonschema
+mise run lint-jsonschema
 ```
 
 See the [JSONSchema Linter documentation](internal/linter/jsonschema/README.md) for more details.
