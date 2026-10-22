@@ -4,30 +4,16 @@ import asyncio
 import gc
 import base64
 import httpx
-from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp import ClientSession, StdioServerParameters
 
-load_dotenv()
-
 DEFAULT_GRAFANA_URL = "http://localhost:3000"
 DEFAULT_MCP_URL = "http://localhost:8000"
 DEFAULT_MCP_TRANSPORT = "sse"
 
-# litellm requires provider prefix for Claude models
-models = ["gpt-5.4-mini", "anthropic/claude-sonnet-4-6"]
-
 pytestmark = pytest.mark.anyio
-
-
-def pytest_collection_modifyitems(items):
-    # Anything parametrized over a model drives an LLM: it needs API keys, costs
-    # money and is non-deterministic, so CI runs it separately (`-m llm`).
-    for item in items:
-        if "model" in item.fixturenames:
-            item.add_marker(pytest.mark.llm)
 
 
 @pytest.fixture

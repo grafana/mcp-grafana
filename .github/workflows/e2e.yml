@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   # Calls tools directly over each transport, with no LLM in the loop. Needs no
-  # secrets, so it runs on fork PRs too. LLM evals live in llm-evals.yml.
+  # secrets, so it runs on fork PRs too.
   test-python-e2e:
     name: Python E2E Tests (${{ matrix.transport }})
     runs-on: ubuntu-latest
@@ -63,7 +63,7 @@ jobs:
           MCP_TRANSPORT: ${{ matrix.transport }}
         run: |
           cd tests
-          uv run pytest -m "not llm"
+          uv run pytest
 
       - if: failure() && matrix.transport != 'stdio'
         name: Print MCP logs

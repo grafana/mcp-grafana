@@ -132,16 +132,10 @@ GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud -ru
 """
 
 [tasks.test-python-e2e]
-description = "Run the deterministic Python E2E tests, no LLM involved (start the services and SSE server first with `mise run run-test-services` and `mise run run-sse`)"
+description = "Run the Python E2E tests (start the services and SSE server first with `mise run run-test-services` and `mise run run-sse`)"
 dir = "tests"
 env = { GRAFANA_USERNAME = "admin", GRAFANA_PASSWORD = "admin" }
-run = ["uv sync --all-groups", "uv run pytest -m 'not llm'"]
-
-[tasks.test-python-llm]
-description = "Run the Python LLM evals (as test-python-e2e, plus OPENAI_API_KEY and ANTHROPIC_API_KEY)"
-dir = "tests"
-env = { GRAFANA_USERNAME = "admin", GRAFANA_PASSWORD = "admin" }
-run = ["uv sync --all-groups", "uv run pytest -m llm"]
+run = ["uv sync --all-groups", "uv run pytest"]
 
 [tasks.run-test-services]
 description = "Run the docker-compose services required for the integration and E2E tests"
