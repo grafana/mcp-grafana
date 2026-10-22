@@ -3,6 +3,8 @@ package tools
 import (
 	"fmt"
 	"time"
+
+	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
 )
 
 // preparePanelQueries reuses execution's saved values, formatting and frontend
@@ -35,7 +37,11 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		query := &queries[i]
 		// Frontend macros are not dashboard variables, even when the executor
 		// leaves them intact in the submitted expression.
-		references := substituteGrafanaMacros(variableSearchText(*query), from, to)
+		references, err := substituteInspectionMacros(variableSearchText(*query), query.Datasource.Type, from, to)
+		if err != nil {
+			return nil, err
+		}
+		references = substituteGrafanaMacros(references, from, to)
 		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
 			if warning := allWarnings[variable.Name]; warning != "" {
@@ -45,20 +51,29 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery = substituteInspectionMacros(substituteTemplateVariableValues(query.Query, values), query.Datasource.Type, from, to)
+		query.ProcessedQuery, err = substituteInspectionMacros(substituteTemplateVariableValues(query.Query, values), query.Datasource.Type, from, to)
+		if err != nil {
+			return nil, err
+		}
 		query.Datasource.UID = substituteTemplateVariableValues(query.Datasource.UID, values)
 	}
 	return queries, nil
 }
 
-// CloudWatch and InfluxDB executors forward expressions without expanding
-// frontend time macros. Inspection must preserve the same expression.
-func substituteInspectionMacros(query, datasourceType string, from, to time.Time) string {
+// Inspection uses the executor's macro handling. CloudWatch and InfluxDB
+// forward expressions intact, while ClickHouse uses its SQL dialect.
+func substituteInspectionMacros(query, datasourceType string, from, to time.Time) (string, error) {
 	switch normalizeDatasourceType(datasourceType) {
 	case "cloudwatch", "influxdb":
-		return query
+		return query, nil
+	case "clickhouse":
+		dialect, err := sqldialect.DialectFor(sqldialect.ClickHouseDatasourceType)
+		if err != nil {
+			return "", err
+		}
+		return dialect.SubstituteMacros(query, from, to), nil
 	default:
-		return substituteGrafanaMacros(query, from, to)
+		return substituteGrafanaMacros(query, from, to), nil
 	}
 }
 

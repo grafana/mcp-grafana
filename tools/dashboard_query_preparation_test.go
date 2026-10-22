@@ -87,6 +87,9 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "InfluxQL macro and variable", query: "SELECT mean(value) FROM $choice GROUP BY time($__interval)", current: "cpu", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "influxql"}, want: "SELECT mean(value) FROM cpu GROUP BY time($__interval)", requiredNames: []string{"choice"}},
 			{name: "CloudWatch macro and variable", query: "SELECT $choice, $__interval_ms", current: "CPUUtilization", datasourceType: "cloudwatch", want: "SELECT CPUUtilization, $__interval_ms", requiredNames: []string{"choice"}},
 			{name: "CloudWatch macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", want: "SELECT $__interval_ms"},
+			{name: "ClickHouse interval macros", query: "SELECT $__interval, $__interval_ms, $__interval_s LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 3s, 3000, $__interval_s LIMIT 100"},
+			{name: "ClickHouse time macros", query: "SELECT $__from, $__to FROM logs WHERE $__timeFilter(ts) LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1704067200000, 1704070800000 FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100"},
+			{name: "ClickHouse macro and variable", query: "SELECT $choice, $__interval FROM logs WHERE $__timeFilter(ts) LIMIT 100", current: "value", datasourceType: "grafana-clickhouse-datasource", want: "SELECT value, 3s FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100", requiredNames: []string{"choice"}},
 			{name: "raw inspection", query: "SELECT ${choice:sqlstring}", current: "$__all", raw: true},
 		} {
 			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
