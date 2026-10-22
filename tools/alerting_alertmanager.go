@@ -70,14 +70,32 @@ type SilenceMatcherParam struct {
 	IsEqual *bool  `json:"isEqual,omitempty" jsonschema:"description=Whether the matcher asserts equality (true) or inequality (false). Defaults to true."`
 }
 
+// alertGroupFilterParams contains the list_alert_groups filter fields shared
+// between the read-only and read-write param structs.
+type alertGroupFilterParams struct {
+	Active    *bool    `json:"active,omitempty" jsonschema:"description=Return active alerts. When omitted the API defaults to true. To see only active alerts set active=true and silenced=false and inhibited=false. Only used with 'list_alert_groups'."`
+	Silenced  *bool    `json:"silenced,omitempty" jsonschema:"description=Return silenced alerts. When omitted the API defaults to true. Set to false to exclude silenced alerts. Only used with 'list_alert_groups'."`
+	Inhibited *bool    `json:"inhibited,omitempty" jsonschema:"description=Return inhibited alerts. When omitted the API defaults to true. Set to false to exclude inhibited alerts. Only used with 'list_alert_groups'."`
+	Filter    []string `json:"filter,omitempty" jsonschema:"description=Label matchers to filter alert groups by (e.g. 'severity=critical'). Only used with 'list_alert_groups'."`
+	Receiver  string   `json:"receiver,omitempty" jsonschema:"description=Filter alert groups by receiver name (regular expression). Only used with 'list_alert_groups'."`
+}
+
+func (f alertGroupFilterParams) toGetAlertGroupsOpts() *GetAlertGroupsOpts {
+	return &GetAlertGroupsOpts{
+		Active:    f.Active,
+		Silenced:  f.Silenced,
+		Inhibited: f.Inhibited,
+		Filter:    f.Filter,
+		Receiver:  f.Receiver,
+	}
+}
+
 // ManageAlertmanagerParams is the param struct for the alerting_manage_alertmanager tool.
 type ManageAlertmanagerParams struct {
-	Operation string                `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,enum=create,enum=update,enum=delete,description=The operation to perform: 'list_alert_groups' to list alert groups\\, 'list' to list silences\\, 'get' to retrieve a silence by id\\, 'create' to create a new silence\\, 'update' to modify an existing silence by id\\, 'delete' to expire a silence by id"`
-	Active    *bool                 `json:"active,omitempty" jsonschema:"description=Return active alerts. When omitted the API defaults to true. To see only active alerts set active=true and silenced=false and inhibited=false. Only used with 'list_alert_groups'."`
-	Silenced  *bool                 `json:"silenced,omitempty" jsonschema:"description=Return silenced alerts. When omitted the API defaults to true. Set to false to exclude silenced alerts. Only used with 'list_alert_groups'."`
-	Inhibited *bool                 `json:"inhibited,omitempty" jsonschema:"description=Return inhibited alerts. When omitted the API defaults to true. Set to false to exclude inhibited alerts. Only used with 'list_alert_groups'."`
-	Filter    []string              `json:"filter,omitempty" jsonschema:"description=Label matchers to filter alert groups by (e.g. 'severity=critical'). Only used with 'list_alert_groups'."`
-	Receiver  string                `json:"receiver,omitempty" jsonschema:"description=Filter alert groups by receiver name (regular expression). Only used with 'list_alert_groups'."`
+	Operation string `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,enum=create,enum=update,enum=delete,description=The operation to perform: 'list_alert_groups' to list alert groups\\, 'list' to list silences\\, 'get' to retrieve a silence by id\\, 'create' to create a new silence\\, 'update' to modify an existing silence by id\\, 'delete' to expire a silence by id"`
+
+	alertGroupFilterParams
+
 	SilenceID *string               `json:"silence_id,omitempty" jsonschema:"description=The silence id (required for 'get'\\, 'update' and 'delete')"`
 	RuleUID   *string               `json:"rule_uid,omitempty" jsonschema:"description=Optional: filter listed silences to those scoped to this alert rule UID (matches the __alert_rule_uid__ label). Only used with 'list'."`
 	Matchers  []SilenceMatcherParam `json:"matchers,omitempty" jsonschema:"description=Label matchers. Required (at least one) for 'create' and 'update'. For 'list'\\, used as an optional filter."`
@@ -118,12 +136,10 @@ func (p ManageAlertmanagerParams) validate() error {
 // ManageAlertmanagerReadParams is the param struct for the read-only variant of
 // alerting_manage_alertmanager (list_alert_groups/list/get only).
 type ManageAlertmanagerReadParams struct {
-	Operation string                `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,description=The operation to perform: 'list_alert_groups' to list alert groups\\, 'list' to list silences\\, 'get' to retrieve a silence by id"`
-	Active    *bool                 `json:"active,omitempty" jsonschema:"description=Return active alerts. When omitted the API defaults to true. To see only active alerts set active=true and silenced=false and inhibited=false. Only used with 'list_alert_groups'."`
-	Silenced  *bool                 `json:"silenced,omitempty" jsonschema:"description=Return silenced alerts. When omitted the API defaults to true. Set to false to exclude silenced alerts. Only used with 'list_alert_groups'."`
-	Inhibited *bool                 `json:"inhibited,omitempty" jsonschema:"description=Return inhibited alerts. When omitted the API defaults to true. Set to false to exclude inhibited alerts. Only used with 'list_alert_groups'."`
-	Filter    []string              `json:"filter,omitempty" jsonschema:"description=Label matchers to filter alert groups by (e.g. 'severity=critical'). Only used with 'list_alert_groups'."`
-	Receiver  string                `json:"receiver,omitempty" jsonschema:"description=Filter alert groups by receiver name (regular expression). Only used with 'list_alert_groups'."`
+	Operation string `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,description=The operation to perform: 'list_alert_groups' to list alert groups\\, 'list' to list silences\\, 'get' to retrieve a silence by id"`
+
+	alertGroupFilterParams
+
 	SilenceID *string               `json:"silence_id,omitempty" jsonschema:"description=The silence id (required for 'get')"`
 	RuleUID   *string               `json:"rule_uid,omitempty" jsonschema:"description=Optional: filter listed silences to those scoped to this alert rule UID (matches the __alert_rule_uid__ label). Only used with 'list'."`
 	Matchers  []SilenceMatcherParam `json:"matchers,omitempty" jsonschema:"description=Optional label matchers used to filter listed silences. Only used with 'list'."`
@@ -292,7 +308,8 @@ func derefSilenceStr(v *string) string {
 	return *v
 }
 
-// manageAlertmanagerRead backs the read-only tool variant (list/get only).
+// manageAlertmanagerRead backs the read-only tool variant
+// (list_alert_groups/list/get only).
 func manageAlertmanagerRead(ctx context.Context, args ManageAlertmanagerReadParams) (any, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_manage_alertmanager: %w", err)
@@ -305,13 +322,7 @@ func manageAlertmanagerRead(ctx context.Context, args ManageAlertmanagerReadPara
 
 	switch args.Operation {
 	case "list_alert_groups":
-		return c.GetAlertGroups(ctx, &GetAlertGroupsOpts{
-			Active:    args.Active,
-			Silenced:  args.Silenced,
-			Inhibited: args.Inhibited,
-			Filter:    args.Filter,
-			Receiver:  args.Receiver,
-		})
+		return c.GetAlertGroups(ctx, args.alertGroupFilterParams.toGetAlertGroupsOpts())
 	case "list":
 		return c.listSilences(ctx, buildSilenceFilters(args.RuleUID, args.Matchers))
 	case "get":
@@ -332,13 +343,7 @@ func manageAlertmanagerReadWrite(ctx context.Context, args ManageAlertmanagerPar
 
 	switch args.Operation {
 	case "list_alert_groups":
-		return c.GetAlertGroups(ctx, &GetAlertGroupsOpts{
-			Active:    args.Active,
-			Silenced:  args.Silenced,
-			Inhibited: args.Inhibited,
-			Filter:    args.Filter,
-			Receiver:  args.Receiver,
-		})
+		return c.GetAlertGroups(ctx, args.alertGroupFilterParams.toGetAlertGroupsOpts())
 	case "list":
 		return c.listSilences(ctx, buildSilenceFilters(args.RuleUID, args.Matchers))
 	case "get":
@@ -355,11 +360,11 @@ func manageAlertmanagerReadWrite(ctx context.Context, args ManageAlertmanagerPar
 	return nil, fmt.Errorf("alerting_manage_alertmanager: unknown operation %q", args.Operation)
 }
 
-// silenceRequest performs a JSON HTTP request against the Alertmanager silences
-// API. Unlike makeRequest it accepts any method + body and treats any 2xx as
-// success, decoding the response only when a body is present (DELETE returns 200
-// with an empty body).
-func (c *alertingClient) silenceRequest(ctx context.Context, method, path string, params url.Values, body, out any) error {
+// alertmanagerRequest performs a JSON HTTP request against the Grafana built-in
+// Alertmanager v2 API. Unlike makeRequest it accepts any method + body and
+// treats any 2xx as success, decoding the response only when a body is present
+// (DELETE returns 200 with an empty body).
+func (c *alertingClient) alertmanagerRequest(ctx context.Context, method, path string, params url.Values, body, out any) error {
 	u := c.baseURL.JoinPath(path)
 	if len(params) > 0 {
 		u.RawQuery = params.Encode()
@@ -419,7 +424,7 @@ func (c *alertingClient) listSilences(ctx context.Context, filters []string) (mo
 		params.Add("filter", f)
 	}
 	var out models.GettableSilences
-	if err := c.silenceRequest(ctx, http.MethodGet, alertmanagerBasePath+"/silences", params, nil, &out); err != nil {
+	if err := c.alertmanagerRequest(ctx, http.MethodGet, alertmanagerBasePath+"/silences", params, nil, &out); err != nil {
 		return nil, fmt.Errorf("failed to list silences: %w", err)
 	}
 	return out, nil
@@ -428,7 +433,7 @@ func (c *alertingClient) listSilences(ctx context.Context, filters []string) (mo
 func (c *alertingClient) getSilence(ctx context.Context, id string) (*models.GettableSilence, error) {
 	var out models.GettableSilence
 	path := alertmanagerBasePath + "/silence/" + url.PathEscape(id)
-	if err := c.silenceRequest(ctx, http.MethodGet, path, nil, nil, &out); err != nil {
+	if err := c.alertmanagerRequest(ctx, http.MethodGet, path, nil, nil, &out); err != nil {
 		return nil, fmt.Errorf("failed to get silence %q: %w", id, err)
 	}
 	return &out, nil
@@ -444,7 +449,7 @@ type createSilenceResponse struct {
 
 func (c *alertingClient) createOrUpdateSilence(ctx context.Context, s models.PostableSilence) (*createSilenceResponse, error) {
 	var out createSilenceResponse
-	if err := c.silenceRequest(ctx, http.MethodPost, alertmanagerBasePath+"/silences", nil, s, &out); err != nil {
+	if err := c.alertmanagerRequest(ctx, http.MethodPost, alertmanagerBasePath+"/silences", nil, s, &out); err != nil {
 		return nil, fmt.Errorf("failed to create/update silence: %w", err)
 	}
 	return &out, nil
@@ -452,7 +457,7 @@ func (c *alertingClient) createOrUpdateSilence(ctx context.Context, s models.Pos
 
 func (c *alertingClient) deleteSilence(ctx context.Context, id string) (any, error) {
 	path := alertmanagerBasePath + "/silence/" + url.PathEscape(id)
-	if err := c.silenceRequest(ctx, http.MethodDelete, path, nil, nil, nil); err != nil {
+	if err := c.alertmanagerRequest(ctx, http.MethodDelete, path, nil, nil, nil); err != nil {
 		return nil, fmt.Errorf("failed to delete silence %q: %w", id, err)
 	}
 	return map[string]string{"status": "deleted", "silence_id": id}, nil
@@ -495,7 +500,7 @@ func (c *alertingClient) GetAlertGroups(ctx context.Context, opts *GetAlertGroup
 		params = opts.queryValues()
 	}
 	var out []*models.AlertGroup
-	if err := c.silenceRequest(ctx, http.MethodGet, alertmanagerBasePath+"/alerts/groups", params, nil, &out); err != nil {
+	if err := c.alertmanagerRequest(ctx, http.MethodGet, alertmanagerBasePath+"/alerts/groups", params, nil, &out); err != nil {
 		return nil, fmt.Errorf("failed to get alert groups: %w", err)
 	}
 	return out, nil

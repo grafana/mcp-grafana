@@ -43,11 +43,13 @@ func TestManageAlertmanagerParams_Validate(t *testing.T) {
 			name: "list_alert_groups with all filters is valid",
 			params: ManageAlertmanagerParams{
 				Operation: "list_alert_groups",
-				Active:    boolPtr(true),
-				Silenced:  boolPtr(false),
-				Inhibited: boolPtr(false),
-				Filter:    []string{"severity=critical"},
-				Receiver:  "slack-ops",
+				alertGroupFilterParams: alertGroupFilterParams{
+					Active:    boolPtr(true),
+					Silenced:  boolPtr(false),
+					Inhibited: boolPtr(false),
+					Filter:    []string{"severity=critical"},
+					Receiver:  "slack-ops",
+				},
 			},
 		},
 		{
@@ -381,9 +383,11 @@ func TestManageAlertmanagerReadParams_Validate(t *testing.T) {
 			name: "list_alert_groups with filters is valid",
 			params: ManageAlertmanagerReadParams{
 				Operation: "list_alert_groups",
-				Active:    boolPtr(true),
-				Filter:    []string{"severity=critical"},
-				Receiver:  "oncall-slack",
+				alertGroupFilterParams: alertGroupFilterParams{
+					Active:   boolPtr(true),
+					Filter:   []string{"severity=critical"},
+					Receiver: "oncall-slack",
+				},
 			},
 		},
 		{
@@ -688,6 +692,24 @@ func TestGetAlertGroupsOpts_queryValues(t *testing.T) {
 			require.Equal(t, tc.expected, got)
 		})
 	}
+}
+
+func TestAlertGroupFilterParams_toGetAlertGroupsOpts(t *testing.T) {
+	filters := alertGroupFilterParams{
+		Active:    boolPtr(true),
+		Silenced:  boolPtr(false),
+		Inhibited: boolPtr(false),
+		Filter:    []string{"severity=critical"},
+		Receiver:  "slack-ops",
+	}
+
+	require.Equal(t, &GetAlertGroupsOpts{
+		Active:    boolPtr(true),
+		Silenced:  boolPtr(false),
+		Inhibited: boolPtr(false),
+		Filter:    []string{"severity=critical"},
+		Receiver:  "slack-ops",
+	}, filters.toGetAlertGroupsOpts())
 }
 
 func TestAlertingClient_GetAlertGroups(t *testing.T) {
