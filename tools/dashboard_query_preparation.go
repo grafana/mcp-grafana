@@ -60,11 +60,11 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 	return queries, nil
 }
 
-// Inspection uses the executor's macro handling. CloudWatch and InfluxDB
-// forward expressions intact, while ClickHouse uses its SQL dialect.
+// Inspection uses the executor's macro handling. InfluxDB forwards expressions
+// intact, while ClickHouse uses its SQL dialect.
 func substituteInspectionMacros(query, datasourceType string, from, to time.Time) (string, error) {
 	switch normalizeDatasourceType(datasourceType) {
-	case "cloudwatch", "influxdb":
+	case "influxdb":
 		return query, nil
 	case "clickhouse":
 		dialect, err := sqldialect.DialectFor(sqldialect.ClickHouseDatasourceType)
