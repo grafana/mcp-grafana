@@ -20,6 +20,8 @@ jobs:
     name: LLM Evals
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # Normally ~20m; fail fast rather than burn GitHub's 6h default on a hang.
+    timeout-minutes: 60
     permissions:
       id-token: write
       contents: read

@@ -27,6 +27,11 @@
     "separateMajorMinor": true,
     "packageRules": [
         {
+            "description": "deepeval re-enters the test event loop via nest_asyncio, which spins forever on Python 3.14; hold tests at 3.13 until deepeval drops it",
+            "matchFileNames": ["tests/.python-version"],
+            "allowedVersions": "<3.14"
+        },
+        {
             "description": "Group all non-major updates into a single PR",
             "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
             "groupName": "all non-major dependencies"
