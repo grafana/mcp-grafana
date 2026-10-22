@@ -57,10 +57,9 @@
             "groupName": "go"
         },
         {
-            "description": "Patch only for the go directive: a minor raises the minimum Go for module consumers, so it stays a deliberate change.",
-            "matchManagers": ["gomod"],
+            "description": "Patch only for Go in go.mod and mise.toml. A minor in go.mod raises the minimum Go for module consumers. mise.toml builds the release binaries, which stay on 1.26 until golang/go#81199 is fixed (see mise.toml).",
+            "matchManagers": ["gomod", "mise"],
             "matchDepNames": ["go"],
-            "matchDepTypes": ["golang"],
             "matchUpdateTypes": ["major", "minor"],
             "enabled": false
         }

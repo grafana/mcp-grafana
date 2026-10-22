@@ -9,6 +9,10 @@
 min_version = "2026.9.0"
 
 [tools]
+# Release binaries build with this Go. Pinned to 1.26 until golang/go#81199 is
+# resolved: Go 1.27's crypto/tls adds ML-DSA signature schemes to the
+# ClientHello that cause F5 BIG-IP and Palo Alto Prisma Access TLS terminators
+# to RST the connection. Renovate is limited to patch bumps here for the same reason.
 go = "1.26"
 golangci-lint = "2.14.0"
 goreleaser = "2.18.3"
