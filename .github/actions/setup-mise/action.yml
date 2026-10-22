@@ -6,6 +6,10 @@ inputs:
     description: Cache tools and Go, npm and uv downloads. Turn off in jobs that publish what they build, where a poisoned cache would ship.
     required: false
     default: "true"
+  tools:
+    description: Space-separated tools from mise.toml to install. Empty installs them all.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -15,6 +19,7 @@ runs:
       with:
         version: 2026.9.2
         install: true
+        install_args: ${{ inputs.tools }}
         cache: ${{ inputs.cache == 'true' }}
 
     # mise-action exports the job's token to every later step. Those steps run
