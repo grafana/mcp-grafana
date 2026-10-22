@@ -42,13 +42,14 @@ jobs:
             echo "Release ${GITHUB_REF_NAME}" > /tmp/release-notes.md
           fi
 
-      # Go, goreleaser, cosign, syft and Node, as pinned in mise.toml. Go stays
-      # on 1.26 there until golang/go#81199 is resolved.
+      # Go, goreleaser, cosign, syft and Node, as pinned in mise.toml and
+      # mise.lock. Go stays on 1.26 there until golang/go#81199 is resolved.
       - name: Set up mise
         uses: ./.github/actions/setup-mise
         with:
           # Do not use any caches when creating a release.
           cache: false
+          tools: go goreleaser cosign syft node
 
       - name: Run GoReleaser
         run: goreleaser release --clean --release-notes=/tmp/release-notes.md
@@ -90,6 +91,7 @@ jobs:
         uses: ./.github/actions/setup-mise
         with:
           cache: false
+          tools: go uv
 
       - name: Build wheels
         run: |

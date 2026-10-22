@@ -1,6 +1,9 @@
 # Tool versions and dev tasks. `mise install` sets up the tools, `mise tasks`
 # lists the tasks, `mise run <task>` runs one. https://mise.jdx.dev/
 #
+# mise.lock records the download URL and checksum of each tool, and CI installs
+# with --locked. Run `mise lock` after changing a version here.
+#
 # Not pinned here on purpose:
 # - Go's minimum lives in go.mod; GOTOOLCHAIN downloads it if the go below is older.
 # - Python is pinned in tests/.python-version, and uv installs it.
@@ -13,13 +16,13 @@ min_version = "2026.9.0"
 # resolved: Go 1.27's crypto/tls adds ML-DSA signature schemes to the
 # ClientHello that cause F5 BIG-IP and Palo Alto Prisma Access TLS terminators
 # to RST the connection. Renovate is limited to patch bumps here for the same reason.
-go = "1.26"
+go = "1.26.10"
 golangci-lint = "2.14.0"
 goreleaser = "2.18.3"
 # Used by goreleaser in release.yml: cosign signs the checksums, syft writes SBOMs.
 cosign = "3.0.6"
 syft = "1.54.0"
-node = "24"
+node = "24.21.0"
 uv = "0.13.4"
 "github:sd2k/mcp-tokens" = "0.2.5"
 
