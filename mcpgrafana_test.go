@@ -2816,3 +2816,28 @@ func TestEnvIgnoresUnsubstitutedMCPBPlaceholders(t *testing.T) {
 		assert.Equal(t, int64(0), orgIdFromEnv(logger))
 	})
 }
+
+// Discovery forwards tools/list unchanged and leaves Grafana client setup idle.
+func TestGrafanaContextMiddlewareSkipsDiscovery(t *testing.T) {
+	var calls int32
+	grafana := newTestHTTPServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		http.Error(w, "backend down", http.StatusInternalServerError)
+	})
+	t.Setenv("GRAFANA_URL", grafana.URL)
+
+	ctx := context.Background()
+	req := &mcp.ListToolsRequest{Params: &mcp.ListToolsParams{}}
+	want := &mcp.ListToolsResult{}
+	next := func(gotCtx context.Context, method string, gotReq mcp.Request) (mcp.Result, error) {
+		assert.Equal(t, ctx, gotCtx)
+		assert.Equal(t, "tools/list", method)
+		assert.Same(t, req, gotReq)
+		return want, nil
+	}
+
+	res, err := GrafanaContextMiddleware(ComposedHTTPContextFunc(GrafanaConfig{}))(next)(ctx, "tools/list", req)
+	require.NoError(t, err)
+	assert.Same(t, want, res)
+	assert.Zero(t, atomic.LoadInt32(&calls))
+}
