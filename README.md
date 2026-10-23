@@ -54,7 +54,7 @@ _The following features are currently available in MCP server. This list is for 
 
 > **Note:** Run panel query tools are **disabled by default**. To enable them, add `runpanelquery` to your `--enabled-tools` flag.
 
-- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides. Infinity panels run when the query uses the `backend` or `jq-backend` parser (Google Sheets queries always do); the default `simple` parser and the UQL and GROQ parsers work only in the browser.
+- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides. Infinity panels run when the query uses the `backend` or `jq-backend` parser (Google Sheets queries always do); the default `simple` parser and the UQL and GROQ parsers work only in the browser. Neo4j panels run their Cypher query through the datasource plugin.
 
 #### Context Window Management
 
