@@ -959,6 +959,9 @@ type panelQuery struct {
 	Datasource        datasourceInfo         `json:"datasource"`
 	RefID             string                 `json:"refId,omitempty"`
 	RequiredVariables []VariableInfo         `json:"requiredVariables,omitempty"`
+
+	// Keep expression target dependencies without exposing another response field.
+	rawTarget map[string]interface{}
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {

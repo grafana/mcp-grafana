@@ -47,6 +47,9 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			datasource        string
 			sourceCurrent     string
 			raw, defaultRange bool
+			datasourceType    string
+			targetFields      map[string]interface{}
+			requiredNames     []string
 		}{
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "multi-value glob", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, want: "SELECT '{east,west}'"},
@@ -76,6 +79,17 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "datasource variable", query: "SELECT 1", datasource: "$source", want: "SELECT 1"},
 			{name: "All datasource variable", query: "SELECT 1", datasource: "$source", sourceCurrent: "$__all", all: true},
 			{name: "All datasource override", query: "SELECT 1", datasource: "$source", sourceCurrent: "$__all", overrides: map[string]string{"source": "postgres-uid"}, want: "SELECT 1"},
+			{name: "All SQL location", query: "SELECT 1", current: "$__all", targetFields: map[string]interface{}{"location": "$choice"}, datasourceType: "grafana-bigquery-datasource", all: true},
+			{name: "All nested target", query: "SELECT 1", current: "$__all", targetFields: map[string]interface{}{"connectionArgs": map[string]interface{}{"project": "$choice"}}, datasourceType: "grafana-bigquery-datasource", all: true},
+			{name: "SQL location override", query: "SELECT 1", current: "$__all", targetFields: map[string]interface{}{"location": "$choice"}, datasourceType: "grafana-bigquery-datasource", overrides: map[string]string{"choice": "us-east1"}, want: "SELECT 1"},
+			{name: "InfluxQL macros", query: "SELECT mean(value) FROM cpu GROUP BY time($__interval)", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "influxql"}, want: "SELECT mean(value) FROM cpu GROUP BY time($__interval)"},
+			{name: "Flux macros", query: "from(bucket: \"metrics\") |> aggregateWindow(every: ${__interval}, fn: mean)", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "flux"}, want: "from(bucket: \"metrics\") |> aggregateWindow(every: ${__interval}, fn: mean)"},
+			{name: "InfluxQL macro and variable", query: "SELECT mean(value) FROM $choice GROUP BY time($__interval)", current: "cpu", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "influxql"}, want: "SELECT mean(value) FROM cpu GROUP BY time($__interval)", requiredNames: []string{"choice"}},
+			{name: "CloudWatch macro and variable", query: "SELECT $choice, $__interval_ms", current: "CPUUtilization", datasourceType: "cloudwatch", want: "SELECT CPUUtilization, 36000", requiredNames: []string{"choice"}},
+			{name: "CloudWatch macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", want: "SELECT 36000"},
+			{name: "ClickHouse interval macros", query: "SELECT $__interval, $__interval_ms, $__interval_s LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 3s, 3000, $__interval_s LIMIT 100"},
+			{name: "ClickHouse time macros", query: "SELECT $__from, $__to FROM logs WHERE $__timeFilter(ts) LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1704067200000, 1704070800000 FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100"},
+			{name: "ClickHouse macro and variable", query: "SELECT $choice, $__interval FROM logs WHERE $__timeFilter(ts) LIMIT 100", current: "value", datasourceType: "grafana-clickhouse-datasource", want: "SELECT value, 3s FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100", requiredNames: []string{"choice"}},
 			{name: "raw inspection", query: "SELECT ${choice:sqlstring}", current: "$__all", raw: true},
 		} {
 			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
@@ -101,7 +115,22 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 				if kind == "Textbox" {
 					kind = "Text"
 				}
-				ds := map[string]interface{}{"uid": "postgres-uid", "type": "postgres"}
+				datasourceType := tc.datasourceType
+				if datasourceType == "" {
+					datasourceType = "postgres"
+				}
+				expressionField := "rawSql"
+				switch datasourceType {
+				case "influxdb":
+					expressionField = "query"
+				case "cloudwatch":
+					expressionField = "expression"
+				}
+				target := map[string]interface{}{expressionField: tc.query}
+				for key, value := range tc.targetFields {
+					target[key] = value
+				}
+				ds := map[string]interface{}{"uid": "postgres-uid", "type": datasourceType}
 				panelUID := "postgres-uid"
 				if tc.datasource != "" {
 					panelUID = tc.datasource
@@ -109,17 +138,19 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 				db := map[string]interface{}{
 					"templating": map[string]interface{}{"list": []interface{}{variable}},
 					"panels": []interface{}{map[string]interface{}{
-						"id": float64(1), "datasource": map[string]interface{}{"uid": panelUID, "type": "postgres"},
-						"targets": []interface{}{map[string]interface{}{"refId": "A", "rawSql": tc.query, "datasource": map[string]interface{}{"uid": panelUID}}},
+						"id": float64(1), "datasource": map[string]interface{}{"uid": panelUID, "type": datasourceType},
+						"targets": []interface{}{target},
 					}},
 				}
+				target["refId"] = "A"
+				target["datasource"] = map[string]interface{}{"uid": panelUID}
 				if v2 {
 					db = map[string]interface{}{
 						"variables": []interface{}{map[string]interface{}{"kind": kind + "Variable", "spec": variable}},
 						"elements": map[string]interface{}{"panel": map[string]interface{}{"kind": "Panel", "spec": map[string]interface{}{
 							"id": float64(1), "data": map[string]interface{}{"spec": map[string]interface{}{"queries": []interface{}{
 								map[string]interface{}{"spec": map[string]interface{}{"refId": "A", "query": map[string]interface{}{
-									"group": "postgres", "datasource": map[string]interface{}{"name": panelUID}, "spec": map[string]interface{}{"rawSql": tc.query},
+									"group": datasourceType, "datasource": map[string]interface{}{"name": panelUID}, "spec": target,
 								}}},
 							}}},
 						}}},
@@ -158,7 +189,11 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 						queryCalls++
 						var payload map[string]interface{}
 						require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-						submitted = safeString(safeArray(payload, "queries")[0].(map[string]interface{}), "rawSql")
+						submittedTarget := safeArray(payload, "queries")[0].(map[string]interface{})
+						submitted = safeString(submittedTarget, expressionField)
+						if tc.name == "SQL location override" {
+							assert.Equal(t, "us-east1", submittedTarget["location"])
+						}
 						frames := data.Frames{data.NewFrame("", data.NewField("value", nil, []int64{1}))}
 						_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: frames}}})
 					default:
@@ -186,6 +221,12 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 				queries, err := GetDashboardPanelQueriesTool(ctx, args)
 				require.NoError(t, err)
 				require.Len(t, queries, 1)
+				encoded, err := json.Marshal(queries[0])
+				require.NoError(t, err)
+				var publicQuery map[string]interface{}
+				require.NoError(t, json.Unmarshal(encoded, &publicQuery))
+				assert.NotContains(t, publicQuery, "target", "expression targets keep their existing response shape")
+				assert.NotContains(t, publicQuery, "rawTarget")
 				assert.Zero(t, queryCalls, "inspection must not execute option queries")
 				assert.Zero(t, metadataCalls, "inspection must not resolve datasource types via the API")
 				if tc.raw {
@@ -211,11 +252,18 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 					require.Len(t, queries[0].RequiredVariables, 1)
 					assert.Equal(t, tc.defaultValue, queries[0].RequiredVariables[0].DefaultValue)
 				}
-				if tc.name == "time macros" || tc.defaultRange {
-					assert.Empty(t, queries[0].RequiredVariables, "resolved frontend macros are not dashboard variables")
+				if strings.Contains(tc.name, "macros") || tc.defaultRange {
+					assert.Empty(t, queries[0].RequiredVariables, "frontend macros are not dashboard variables")
+				}
+				if tc.requiredNames != nil {
+					var names []string
+					for _, variable := range queries[0].RequiredVariables {
+						names = append(names, variable.Name)
+					}
+					assert.ElementsMatch(t, tc.requiredNames, names)
 				}
 				assert.Equal(t, tc.want, queries[0].ProcessedQuery)
-				assert.Equal(t, datasourceInfo{UID: "postgres-uid", Type: "postgres"}, queries[0].Datasource)
+				assert.Equal(t, datasourceInfo{UID: "postgres-uid", Type: datasourceType}, queries[0].Datasource)
 				result, err := runPanelQuery(ctx, RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1}, Variables: tc.overrides, Start: args.Start, End: args.End})
 				require.NoError(t, err)
 				require.Empty(t, result.Errors)
