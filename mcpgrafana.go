@@ -1038,10 +1038,10 @@ var ExtractGrafanaInfoFromEnv StdioContextFunc = func(ctx context.Context) conte
 }
 
 // httpContextFunc extracts or modifies the context for HTTP-based transports
-// (SSE and streamable HTTP). In the go-sdk, it is invoked per JSON-RPC call
-// (via GrafanaContextMiddleware reading Request.GetExtra().Header), not once
-// per connection, so request-scoped auth/org headers are honored even when
-// multiple calls share one underlying session.
+// (SSE and streamable HTTP). GrafanaContextMiddleware runs it for each
+// tools/call, reading Request.GetExtra().Header, and not for discovery
+// methods. It is not once per connection, so request-scoped auth and org
+// headers still apply when several tool calls share a session.
 type httpContextFunc func(ctx context.Context, req *http.Request) context.Context
 
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts request-scoped Grafana configuration from HTTP headers.
@@ -1848,28 +1848,33 @@ func ComposeHTTPContextFuncs(funcs ...httpContextFunc) httpContextFunc {
 	}
 }
 
-// GrafanaContextMiddleware returns an mcp.Middleware that runs httpFn on
-// every incoming JSON-RPC call for HTTP-based transports (streamable HTTP
-// and SSE), synthesizing a minimal *http.Request from the call's headers
-// so the existing httpContextFunc family is reused unchanged.
+// GrafanaContextMiddleware returns an mcp.Middleware for the HTTP transports
+// (streamable HTTP and SSE). It runs httpFn only for tools/call, synthesizing
+// a minimal *http.Request from that call's headers so the existing
+// httpContextFunc family is reused unchanged. Every other method, including
+// initialize, notifications/initialized, ping, tools/list, resources/list,
+// resources/templates/list, resources/read, and prompts/list, is forwarded to
+// next with the original context and request, preserving next's result and
+// error. Discovery is server metadata: it must not construct Grafana clients
+// or require a configured instance or organization.
 //
-// This replaces the per-transport context-func hooks from mark3labs' SDK
-// with a single hook that runs per call. When Extra.Header is populated
-// (streamable HTTP POSTs, SSE message POSTs that forward headers), per-call
-// auth/org-ID isolation is preserved. When headers are absent (SSE message
-// POSTs from clients that don't forward headers), the httpContextFunc still
-// runs with an empty header set, falling back to environment-variable config
-// so tool handlers always have a valid GrafanaConfig/client.
+// On tools/call, populated Extra.Header values (streamable HTTP POSTs, and SSE
+// message POSTs that forward headers) keep per-call auth and org isolation.
+// When headers are absent, httpFn still runs with an empty header set and
+// falls back to environment-variable config, so tool handlers receive a
+// GrafanaConfig and client. The call context is attached to the synthesized
+// request: GrafanaURLOverrideMiddleware passes the authorized target on that
+// context, and the go-sdk derives the handler context from the HTTP request.
 //
-// This middleware is registered only on HTTP transports (SSE, streamable
-// HTTP) — never on stdio, which sets up its context once at startup via
-// ComposedStdioContextFunc. It runs httpFn on every call: when the transport
-// provides HTTP headers (streamable HTTP), they are forwarded for per-call
-// auth/org isolation; when it does not (SSE message POSTs), httpFn runs
-// with an empty header set and falls back to environment-variable config.
+// Registered only on HTTP transports — never on stdio, which sets up its
+// context once at startup via ComposedStdioContextFunc. This replaces the
+// per-transport context-func hooks from mark3labs' SDK.
 func GrafanaContextMiddleware(httpFn httpContextFunc) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
 			var header http.Header
 			if extra := req.GetExtra(); extra != nil && extra.Header != nil {
 				header = extra.Header
