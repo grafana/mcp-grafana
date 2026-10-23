@@ -43,28 +43,28 @@ func TestSuggestLokiOTelLabelConfigDefaults(t *testing.T) {
 	})
 	require.NoError(t, err)
 	processor := decodeOTelProcessor(t, result.YAML, "transform/enforce_labels")
-	assert.Equal(t, "propagate", processor.ErrorMode)
-	require.Len(t, processor.Groups, 1)
-	assert.Equal(t, "resource", processor.Groups[0].Context)
-	assert.Equal(t, []string{`keep_keys(attributes, ["deployment.environment.name", "service.name"])`}, processor.Groups[0].Statements)
+	assert.Equal(t, "ignore", processor.ErrorMode)
+	assert.Empty(t, processor.Groups)
 	notes := strings.Join(result.Notes, "\n")
-	for _, want := range []string{"service.pipelines.logs.processors", "contrib", "structured metadata", "does not configure Loki index labels", "limits_config.otlp_config.resource_attributes", "action: index_label", "ignore_defaults", "service.name", "service_name", "normalizeLogLevel"} {
+	for _, want := range []string{"service.pipelines.logs.processors", "contrib", "structured metadata", "does not configure Loki index labels", "kept unchanged", "v3.5.0", "service.name", "service_name", "normalizeLogLevel", "Additional indexed attribute", "default limit of 15", "error_mode is ignore"} {
 		assert.Contains(t, notes, want)
 	}
 }
 
 func TestSuggestLokiOTelLabelConfigUnionAndStability(t *testing.T) {
 	firstArgs := SuggestLokiOTelLabelConfigParams{
-		ApprovedLabels: []string{"z", "service.name", "z"},
-		RequiredLabels: []string{"team", "service.name", "team", "a"},
-		ProcessorName:  "transform/custom-logs.v2",
+		ApprovedLabels:  []string{"z", "service.name", "z"},
+		RequiredLabels:  []string{"team", "service.name", "team", "a"},
+		ProcessorName:   "transform/custom-logs.v2",
+		OtherAttributes: "drop",
 	}
 	first, err := suggestLokiOTelLabelConfig(t.Context(), firstArgs)
 	require.NoError(t, err)
 	second, err := suggestLokiOTelLabelConfig(t.Context(), SuggestLokiOTelLabelConfigParams{
-		ApprovedLabels: []string{"service.name", "z"},
-		RequiredLabels: []string{"a", "team", "service.name"},
-		ProcessorName:  firstArgs.ProcessorName,
+		ApprovedLabels:  []string{"service.name", "z"},
+		RequiredLabels:  []string{"a", "team", "service.name"},
+		ProcessorName:   firstArgs.ProcessorName,
+		OtherAttributes: "drop",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, first, second)
@@ -75,7 +75,7 @@ func TestSuggestLokiOTelLabelConfigUnionAndStability(t *testing.T) {
 		`set(attributes["service.name"], "unknown") where attributes["service.name"] == nil or attributes["service.name"] == ""`,
 		`set(attributes["team"], "unknown") where attributes["team"] == nil or attributes["team"] == ""`,
 		`keep_keys(attributes, ["a", "service.name", "team", "z"])`,
-	}, processor.Groups[0].Statements)
+	}, append(processor.Groups[0].Statements, processor.Groups[1].Statements...))
 }
 
 func TestSuggestLokiOTelLabelConfigNormalization(t *testing.T) {
@@ -84,14 +84,13 @@ func TestSuggestLokiOTelLabelConfigNormalization(t *testing.T) {
 	})
 	require.NoError(t, err)
 	processor := decodeOTelProcessor(t, result.YAML, "transform")
-	require.Len(t, processor.Groups, 2)
-	assert.Equal(t, "resource", processor.Groups[0].Context)
-	assert.Equal(t, "log", processor.Groups[1].Context)
-	require.Len(t, processor.Groups[1].Statements, 4)
+	require.Len(t, processor.Groups, 1)
+	assert.Equal(t, "log", processor.Groups[0].Context)
+	require.Len(t, processor.Groups[0].Statements, 4)
 
 	stringLiteral := regexp.MustCompile(`"(?:\\.|[^"\\])*"`)
 	patterns := map[string]*regexp.Regexp{}
-	for _, statement := range processor.Groups[1].Statements {
+	for _, statement := range processor.Groups[0].Statements {
 		assert.True(t, strings.HasPrefix(statement, `replace_pattern(attributes["level"], `))
 		assert.True(t, strings.HasSuffix(statement, ` where IsString(attributes["level"])`))
 		literals := stringLiteral.FindAllString(statement, -1)
@@ -136,6 +135,15 @@ func TestSuggestLokiOTelLabelConfigInvalidInputs(t *testing.T) {
 		{"empty attribute", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{""}}, "approvedLabels"},
 		{"blank attribute", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name", " \n\t"}}, "approvedLabels"},
 		{"blank required", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, RequiredLabels: []string{"\t"}}, "requiredLabels"},
+		{"invalid mode", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, OtherAttributes: "remove"}, "otherAttributes"},
+		{"blank metadata", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, MetadataAttributes: []string{" "}}, "metadataAttributes"},
+		{"blank drop", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, DropAttributes: []string{""}}, "dropAttributes"},
+		{"blank index", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, LokiIndexLabels: []string{""}}, "lokiIndexLabels"},
+		{"approved metadata conflict", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, MetadataAttributes: []string{"service.name"}}, "both"},
+		{"required metadata conflict", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, RequiredLabels: []string{"team"}, MetadataAttributes: []string{"team"}}, "both"},
+		{"approved drop conflict", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, DropAttributes: []string{"service.name"}}, "both"},
+		{"required drop conflict", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, RequiredLabels: []string{"team"}, DropAttributes: []string{"team"}}, "both"},
+		{"metadata drop conflict", SuggestLokiOTelLabelConfigParams{ApprovedLabels: []string{"service.name"}, MetadataAttributes: []string{"pod"}, DropAttributes: []string{"pod"}}, "both"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := suggestLokiOTelLabelConfig(t.Context(), tc.args)
@@ -154,6 +162,79 @@ func TestSuggestLokiOTelLabelConfigInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestSuggestLokiOTelLabelConfigPolicies(t *testing.T) {
+	for _, mode := range []string{"keep", "metadata", "drop"} {
+		t.Run(mode, func(t *testing.T) {
+			result, err := suggestLokiOTelLabelConfig(t.Context(), SuggestLokiOTelLabelConfigParams{
+				ApprovedLabels: []string{"service.name"}, RequiredLabels: []string{"team"},
+				MetadataAttributes: []string{"k8s.pod.name", "k8s.pod.name"},
+				DropAttributes:     []string{"secret", "secret"}, OtherAttributes: mode,
+			})
+			require.NoError(t, err)
+			processor := decodeOTelProcessor(t, result.YAML, "transform/enforce_labels")
+			assert.Equal(t, "ignore", processor.ErrorMode)
+			require.Len(t, processor.Groups, 3)
+			assert.Equal(t, "resource", processor.Groups[0].Context)
+			assert.Equal(t, "log", processor.Groups[1].Context)
+			assert.Equal(t, "resource", processor.Groups[2].Context)
+			moves := processor.Groups[1].Statements
+			assert.Equal(t, `set(cache["label_metadata"], resource.attributes)`, moves[0])
+			assert.Equal(t, `merge_maps(attributes, cache["label_metadata"], "insert")`, moves[len(moves)-1])
+			if mode == "metadata" {
+				assert.Equal(t, []string{
+					`set(cache["label_metadata"], resource.attributes)`,
+					`delete_key(cache["label_metadata"], "service.name")`,
+					`delete_key(cache["label_metadata"], "team")`,
+					`delete_key(cache["label_metadata"], "secret")`,
+					`merge_maps(attributes, cache["label_metadata"], "insert")`,
+				}, moves)
+			} else {
+				assert.Contains(t, moves, `keep_keys(cache["label_metadata"], ["k8s.pod.name"])`)
+			}
+			if mode == "keep" {
+				assert.Equal(t, []string{`delete_key(attributes, "k8s.pod.name")`, `delete_key(attributes, "secret")`}, processor.Groups[2].Statements)
+			} else {
+				assert.Equal(t, []string{`keep_keys(attributes, ["service.name", "team"])`}, processor.Groups[2].Statements)
+			}
+			assert.Contains(t, strings.Join(result.Notes, "\n"), "existing log values")
+		})
+	}
+}
+
+func TestSuggestLokiOTelLabelConfigIndexGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		indexes []string
+		want    string
+		absent  string
+	}{
+		{"defaults", nil, `Additional indexed attribute "deployment.environment"`, "supplied lokiIndexLabels"},
+		{"custom", []string{"service.name", "team", "custom.index", "custom.index"}, `Additional indexed attribute "custom.index"`, "assumes Loki v3.5.0 defaults"},
+		{"empty", []string{}, `Intended label "service.name" is not in the effective`, "Additional indexed attribute"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := suggestLokiOTelLabelConfig(t.Context(), SuggestLokiOTelLabelConfigParams{
+				ApprovedLabels: []string{"service.name", "team"}, LokiIndexLabels: tc.indexes,
+			})
+			require.NoError(t, err)
+			notes := strings.Join(result.Notes, "\n")
+			assert.Contains(t, notes, tc.want)
+			assert.NotContains(t, notes, tc.absent)
+			if tc.name == "custom" {
+				assert.NotContains(t, notes, `Intended label "team"`)
+			}
+		})
+	}
+	result, err := suggestLokiOTelLabelConfig(t.Context(), SuggestLokiOTelLabelConfigParams{
+		ApprovedLabels: []string{"service_name"}, OtherAttributes: "metadata",
+	})
+	require.NoError(t, err)
+	notes := strings.Join(result.Notes, "\n")
+	assert.Contains(t, notes, `Attribute "service_name" may be Loki-normalized`)
+	assert.NotContains(t, notes, "Additional indexed attribute")
+	assert.NotContains(t, notes, "High-cardinality index candidate")
+}
+
 func TestSuggestLokiOTelLabelConfigEscaping(t *testing.T) {
 	for _, name := range []string{
 		`a"], "injected") where true //`,
@@ -164,13 +245,13 @@ func TestSuggestLokiOTelLabelConfigEscaping(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			result, err := suggestLokiOTelLabelConfig(t.Context(), SuggestLokiOTelLabelConfigParams{
 				ApprovedLabels: []string{name}, RequiredLabels: []string{name},
+				OtherAttributes: "drop",
 			})
 			require.NoError(t, err)
 			processor := decodeOTelProcessor(t, result.YAML, "transform/enforce_labels")
-			require.Len(t, processor.Groups, 1)
-			require.Len(t, processor.Groups[0].Statements, 2)
+			require.Len(t, processor.Groups, 2)
 			// Collector resolves $$ to a literal $ before parsing OTTL.
-			statements := processor.Groups[0].Statements
+			statements := append(processor.Groups[0].Statements, processor.Groups[1].Statements...)
 			for _, statement := range statements {
 				assert.NotContains(t, statement, "\n", "attribute newlines must remain inside an escaped string")
 			}
@@ -232,7 +313,7 @@ func TestSuggestLokiOTelLabelConfigMCP(t *testing.T) {
 	var result SuggestLokiOTelLabelConfigResult
 	require.NoError(t, json.Unmarshal([]byte(text.Text), &result))
 	processor := decodeOTelProcessor(t, result.YAML, "transform/enforce_labels")
-	assert.Len(t, processor.Groups, 2)
+	assert.Len(t, processor.Groups, 1)
 
 	called, err = session.CallTool(ctx, &mcp.CallToolParams{
 		Name: tool.Name, Arguments: map[string]any{"approvedLabels": []string{}},

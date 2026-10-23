@@ -347,7 +347,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_loki_patterns`               | Loki                      | Query detected log patterns to identify common structures                                                                                                     | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:loki-uid`                                    |
 | `analyze_loki_labels`               | Loki                      | Audit a Loki label strategy (live or static) and optionally diagnose query performance                                                                        | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:loki-uid`                                    |
 | `suggest_loki_alloy_label_config`   | Config                    | Generate an Alloy `loki.process` snippet enforcing approved labels                                                                                            | None                                                                                                                                                                                                                                                                                | N/A                                                           |
-| `suggest_loki_otel_label_config`    | Config                    | Generate OpenTelemetry Collector contrib transform YAML enforcing a logs resource attribute allowlist                                                         | None                                                                                                                                                                                                                                                                                | N/A                                                           |
+| `suggest_loki_otel_label_config`    | Config                    | Generate OpenTelemetry Collector transforms to preserve, move, or drop resource attributes, with Loki index guidance                                            | None                                                                                                                                                                                                                                                                                | N/A                                                           |
 | `query_influxdb`                    | InfluxDB*                 | Query InfluxDB using InfluxQL (v1) or Flux (v2)                                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:influxdb-uid`                                |
 | `list_sql_databases`                | SQL*                      | List databases, schemas, or catalogs from a SQL datasource                                                                                                    | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_sql_tables`                   | SQL*                      | List tables in a SQL datasource                                                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
@@ -431,19 +431,51 @@ The `get_tempo_trace` tool displays an interactive trace viewer in compatible MC
 
 The `config` tool category includes `suggest_loki_otel_label_config`. Supply
 `approvedLabels` using native OTel resource attribute names, such as `service.name`
-(not Loki's normalized `service_name`). Optional `requiredLabels` are added to the
-allowlist and get `"unknown"` when missing or empty. `normalizeLogLevel` normalizes
-the log record `level` attribute, not resource attributes or `severity_text`.
+(not Loki's normalized `service_name`). These describe intended index labels;
+they do not configure Loki indexing. Optional `requiredLabels` remain resource
+attributes and get `"unknown"` when missing or empty.
+
+Unspecified resource attributes are preserved by default. Use `otherAttributes`
+to choose how attributes outside `approvedLabels` and `requiredLabels` are handled:
+
+| Value | Behavior |
+| --- | --- |
+| `keep` (default) | Preserve resource attributes unless explicitly moved or dropped. |
+| `metadata` | Copy other resource attributes to every log record, then remove the resource originals. |
+| `drop` | Delete other resource attributes, except those explicitly moved to metadata first. |
+
+`metadataAttributes` selects individual resource attributes to move to log
+attributes, where Loki normally stores them as structured metadata. Existing log
+values win on key collisions; resource originals are removed only after all
+records have been processed. `dropAttributes` explicitly deletes resource
+attributes. Approved or required attributes cannot also be moved or dropped, and
+the metadata and drop lists must not overlap. Explicit actions take precedence
+over `otherAttributes`. Existing log and scope attributes are not filtered.
+
+Optional `lokiIndexLabels` describes the **complete effective** resource index
+list, including custom indexed attributes. It replaces the assumed Loki v3.5.0
+defaults for guidance only; an explicit empty list means none. Returned notes
+identify intended labels that will not be indexed under that assumption and
+additional resource attributes that remain eligible for indexing when present.
+Defaults are not necessarily recommendations: `k8s.pod.name` and
+`service.instance.id` are high-cardinality candidates to move to metadata.
+Server and tenant overrides may differ. See Loki's
+[label defaults](https://grafana.com/docs/loki/latest/get-started/labels/) and
+[label best practices](https://grafana.com/docs/loki/latest/get-started/labels/bp-labels/).
+
+`normalizeLogLevel` normalizes only the log record `level` attribute, not resource
+attributes or `severity_text`, and does not promote it to an index label.
 
 The returned `yaml` defines the Collector contrib processor
 `transform/enforce_labels` (override with `processorName: "transform/custom"`).
 Merge it into your Collector configuration and add the processor to
-`service.pipelines.logs.processors` before exporting logs to Loki.
-**This removes all unapproved resource attributes, including structured metadata;
-it does not select Loki index labels.** Configure Loki's
-`limits_config.otlp_config.resource_attributes` separately with `action: index_label`
-for the desired resource attributes, reviewing default index labels and
-`ignore_defaults` as needed. Log record and scope attributes are not filtered.
+`service.pipelines.logs.processors` before the `otlphttp` exporter to Loki's `/otlp`
+endpoint. Loki must allow structured metadata (enabled by default in Loki 3.0+).
+**No Loki-side YAML is generated.** The processor uses `error_mode: ignore`:
+failed statements are logged and skipped. Moves and removals are not transactional
+or fail-closed, so failures can leave attributes intact or lose values if a copy
+fails before cleanup. Loki log-attribute drop rules can discard moved metadata;
+per-line metadata limits still apply.
 
 ## CLI Flags Reference
 
