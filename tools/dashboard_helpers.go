@@ -250,13 +250,14 @@ func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 func extractQueryExpression(target map[string]interface{}) string {
 	// Try common query field names
 	queryFields := []string{
-		"expr",       // Prometheus
-		"query",      // Loki, ClickHouse, generic
-		"expression", // CloudWatch
-		"rawSql",     // SQL databases
-		"rawSQL",     // Athena (grafana-athena-datasource)
-		"rawQuery",   // Some datasources
-		"target",     // Graphite metric path
+		"expr",        // Prometheus
+		"query",       // Loki, ClickHouse, generic
+		"expression",  // CloudWatch
+		"rawSql",      // SQL databases
+		"rawSQL",      // Athena (grafana-athena-datasource)
+		"rawQuery",    // Some datasources
+		"target",      // Graphite metric path
+		"cypherQuery", // Neo4j
 	}
 
 	for _, field := range queryFields {
