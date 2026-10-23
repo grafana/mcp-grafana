@@ -118,6 +118,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
 - `--enable-query`: Keep the raw-SQL query tools registered under `--disable-write` (refer to the following section).
+- `--read-only-datasource-credentials`: Annotate the raw-SQL query tools and the read-only `grafana_api_request` as read-only and non-destructive (refer to the following section).
 - `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, or `generate_deeplink`. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
@@ -183,6 +184,8 @@ The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/qu
 The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. Read-only mode removes them along with the other write tools.
 
 `--enable-query` puts them back. Use it when the datasource credentials are known to be read-only and you want query execution in an otherwise read-only server. It doesn't re-enable any other write tool, and it has no effect alongside `--disable-query`, which always wins.
+
+The tools it keeps — `query_sql`, `query_influxdb`, and `grafana_api_request` with its POST to `/api/ds/query` — stay annotated as destructive, because the server cannot see the credentials. MCP clients that gate on that hint ask for approval before every call, which blocks unattended agents. `--read-only-datasource-credentials` declares that every datasource's credentials are read-only and annotates those tools read-only and non-destructive. It registers no tool by itself, and it leaves the unrestricted `grafana_api_request` of a writable server destructive, since that one writes through Grafana's own API.
 
 | Flags | Safe query tools | Raw-SQL query tools |
 | --- | --- | --- |

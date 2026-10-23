@@ -316,9 +316,13 @@ var DescribeSQLTable = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
-func AddSQLTools(s *mcp.Server, enableQueryTools bool) {
+func AddSQLTools(s *mcp.Server, enableQueryTools, readOnlyCredentials bool) {
 	if enableQueryTools {
-		QuerySQL.Register(s)
+		querySQL := QuerySQL
+		if readOnlyCredentials {
+			querySQL = QuerySQL.AsReadOnly()
+		}
+		querySQL.Register(s)
 	}
 	ListSQLDatabases.Register(s)
 	ListSQLTables.Register(s)

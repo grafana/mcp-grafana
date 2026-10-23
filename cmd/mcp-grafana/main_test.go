@@ -1414,6 +1414,47 @@ func TestProcessTools_EnableQueryIsAliasForEnableWriteTools(t *testing.T) {
 	assert.Equal(t, viaEnableQuery, viaWriteTools)
 }
 
+// rawQueryToolNames pass queries through unfiltered, so their annotations
+// depend on whether the operator declared the datasource credentials read-only.
+var rawQueryToolNames = append(append([]string{}, mutatingQueryToolNames...), "grafana_api_request")
+
+func TestProcessTools_RawQueryToolsAreDestructiveByDefault(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{write: true, enableQuery: true})
+	for _, name := range rawQueryToolNames {
+		require.Contains(t, listed, name)
+		assert.False(t, listed[name].Annotations.ReadOnlyHint, "%s should not be annotated read-only", name)
+		require.NotNil(t, listed[name].Annotations.DestructiveHint)
+		assert.True(t, *listed[name].Annotations.DestructiveHint, "%s should be annotated destructive", name)
+	}
+}
+
+func TestProcessTools_ReadOnlyDatasourceCredentialsAnnotatesRawQueryTools(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{write: true, enableQuery: true, readOnlyDatasourceCredentials: true})
+	for _, name := range rawQueryToolNames {
+		require.Contains(t, listed, name)
+		assert.True(t, listed[name].Annotations.ReadOnlyHint, "%s should be annotated read-only", name)
+		require.NotNil(t, listed[name].Annotations.DestructiveHint)
+		assert.False(t, *listed[name].Annotations.DestructiveHint, "%s should not be annotated destructive", name)
+	}
+	assert.NotContains(t, listed, "update_dashboard", "the flag must not re-enable write tools")
+}
+
+// Without --disable-write, grafana_api_request reaches every Grafana endpoint
+// with Grafana's own credentials, which the flag says nothing about.
+func TestProcessTools_ReadOnlyDatasourceCredentialsKeepsUnrestrictedAPIRequestDestructive(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{readOnlyDatasourceCredentials: true})
+	require.Contains(t, listed, "grafana_api_request")
+	assert.True(t, *listed["grafana_api_request"].Annotations.DestructiveHint)
+	require.Contains(t, listed, "query_sql")
+	assert.True(t, listed["query_sql"].Annotations.ReadOnlyHint)
+}
+
+func TestProcessTools_ReadOnlyDatasourceCredentialsAloneRegistersNothing(t *testing.T) {
+	readOnly := registerAllCategories(t, disabledTools{write: true})
+	declared := registerAllCategories(t, disabledTools{write: true, readOnlyDatasourceCredentials: true})
+	assert.Equal(t, readOnly, declared, "the flag only changes annotations")
+}
+
 func TestProcessTools_EnableWriteToolsRestoresWritableDeeplink(t *testing.T) {
 	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "generate_deeplink"})
 	require.Contains(t, listed, "generate_deeplink")

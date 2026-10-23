@@ -652,3 +652,17 @@ func TestConvertTool_UnmarshalTypeMismatchReturnsToolErrorNotProtocolError(t *te
 	require.NotNil(t, result)
 	assert.True(t, result.IsError, "an argument type mismatch must surface as a structured tool error")
 }
+
+func TestAsReadOnly(t *testing.T) {
+	original := MustTool("raw_query", "demo", testToolHandler,
+		WithReadOnlyHintAnnotation(false), WithDestructiveHintAnnotation(true), WithTitleAnnotation("Raw query"))
+
+	readOnly := original.AsReadOnly()
+
+	assert.True(t, readOnly.Tool.Annotations.ReadOnlyHint)
+	require.NotNil(t, readOnly.Tool.Annotations.DestructiveHint)
+	assert.False(t, *readOnly.Tool.Annotations.DestructiveHint)
+	assert.Equal(t, "Raw query", readOnly.Tool.Annotations.Title, "other annotations are kept")
+	assert.False(t, original.Tool.Annotations.ReadOnlyHint, "the shared tool definition must not change")
+	assert.True(t, *original.Tool.Annotations.DestructiveHint, "the shared tool definition must not change")
+}
