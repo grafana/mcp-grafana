@@ -472,6 +472,8 @@ github.com/grafana/amixr-api-go-client v0.0.30 h1:f4FaLiFZDCTTSIL77ZMjxHj0ubMvSA
 github.com/grafana/amixr-api-go-client v0.0.30/go.mod h1:hVoEV9w0xwx73j8ypmrxGDM/oIWeK8zgK5zbTd3kfJk=
 github.com/grafana/amixr-api-go-client v0.0.32 h1:laJUR86c24DmvEucSxsgQxEJpF8tEe3UR89hCsuStj0=
 github.com/grafana/amixr-api-go-client v0.0.32/go.mod h1:hVoEV9w0xwx73j8ypmrxGDM/oIWeK8zgK5zbTd3kfJk=
+github.com/grafana/amixr-api-go-client v0.0.33 h1:Tc+V73xOQN/35Cp8SfURhKEJP+3k8xKp5I1birNanXY=
+github.com/grafana/amixr-api-go-client v0.0.33/go.mod h1:hpfhBBGV/cf5uWWGlfJdoUlPKM7OGUVcBGtkre0AlO8=
 github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e h1:P/SerquhsX/4a3kreHR5mrJmohlWRqaxei/ZUSA6zkA=
 github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e/go.mod h1:sMcpxegie6TcvI6eVm+MbNneNC249GGWRcEO1M+UfSE=
 github.com/grafana/grafana-plugin-sdk-go v0.296.5 h1:86zOFJV6mSSYMPvcug6X4TlrrPm77q+PQH2VYGVV5ME=
