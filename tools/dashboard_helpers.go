@@ -224,6 +224,7 @@ func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 		pq := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
+			rawTarget:  queryTargetFields(target),
 			Datasource: dsInfo,
 			RefID:      refID,
 		}
@@ -395,19 +396,19 @@ func isEmptyTargetValue(val interface{}) bool {
 	}
 }
 
-// variableSearchText returns the text of a panel query to scan for template
-// variable references: the expression when there is one, otherwise the target's
-// JSON, which catches variables used inside structured fields such as a
-// CloudWatch dimension of "$instance".
+// variableSearchText includes both the expression and target fields, since
+// expression queries can also reference variables in location or dimensions.
+// rawTarget preserves those fields without changing the public response shape.
 func variableSearchText(pq panelQuery) string {
-	if pq.Query != "" {
+	target := pq.rawTarget
+	if target == nil {
+		target = pq.Target
+	}
+	encoded, err := json.Marshal(target)
+	if err != nil {
 		return pq.Query
 	}
-	encoded, err := json.Marshal(pq.Target)
-	if err != nil {
-		return ""
-	}
-	return string(encoded)
+	return pq.Query + " " + string(encoded)
 }
 
 // variableRegex matches Grafana template variable patterns
