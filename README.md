@@ -818,6 +818,8 @@ Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception
      uvx mcp-grafana
      ```
 
+     Wheels built from this branch support Python 3.9+ and bundle the Go server with a dependency-free Python launcher. The existing PyPI 2.1.1 wheels still require Python 3.10+; on Python 3.9, install a wheel built with `bash scripts/build-python-wheels.sh 2.1.1` or downloaded from the Python wheel compatibility workflow. Standalone Go binaries do not require Python.
+
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 
      **Important**: The Docker image's entrypoint is configured to run the MCP server in SSE mode by default, but most users will want to use STDIO mode for direct integration with AI assistants like Claude Desktop:
@@ -1533,7 +1535,7 @@ make test-integration
 make test-cloud
 ```
 
-> Note: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
+> Note: Cloud tests are not run automatically in this fork. Run them manually with credentials for the configured Grafana Cloud test environments.
 
 More comprehensive integration tests will require a Grafana instance to be running locally on port 3000; you can start one with Docker Compose:
 

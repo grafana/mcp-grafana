@@ -8,7 +8,7 @@ Please read the section below before writing a new tool. It will save you time, 
 
 Every tool in the default set is sent to the model on **every request, by every user, forever**. A tool's name, description and JSON schema are spent out of a context budget that users also want to spend on their actual data.
 
-That makes a new tool different from most contributions: it isn't free to add and then ignore. A tool nobody uses still costs everybody. This is a real, measured constraint, not a stylistic preference — CI reports the token cost of every PR, and shrinking the server is an [open request from users](https://github.com/grafana/mcp-grafana/issues/569).
+That makes a new tool different from most contributions: it isn't free to add and then ignore. A tool nobody uses still costs everybody. This is a real, measured constraint, not a stylistic preference — local token-cost commands let you measure changes, and shrinking the server is an [open request from users](https://github.com/grafana/mcp-grafana/issues/569).
 
 So the interesting question is never only "does this work?" It's "**should everyone pay for this?**" — and there are three possible answers.
 
@@ -73,11 +73,7 @@ A PR that is easy to generate can still be expensive to review. The proposal ste
 
 ## Measuring the token cost
 
-CI runs a **Token Analysis** check on every pull request, including from forks. It compares your branch against the branch you're merging into and fails above a 5% increase.
-
-To see the numbers, open that check's run and read its summary — you'll get the baseline, the new total, the change, and a per-tool breakdown of what was added or modified. It isn't posted as a comment, so it's worth knowing where to look.
-
-If you want the number before you push, or you're weighing two designs against each other:
+Token-cost comparison is a manual check in this fork, not an automated CI gate. To compare your branch against a baseline, or weigh two designs against each other:
 
 ```bash
 make token-baseline   # once, on your base branch
@@ -104,7 +100,7 @@ Run `make lint` and `make test-unit` before pushing. The specifics:
 - **Query tools must respect `--disable-query`.** Any tool that executes a query against a datasource must disappear when query execution is disabled. Take the `enableQueryTools` parameter in your category's `Add*Tools` function, and leave metadata and discovery tools registered unconditionally. If the tool passes the query through unfiltered — raw SQL, InfluxQL — it can write, so it counts as a write tool too: add its category to `mutatingQueryCategories` in `cmd/mcp-grafana/main.go` so `--disable-write` removes it.
 - **New tools declare their RBAC permissions** with `mcpgrafana.RequiresPermissions(...)` on the `MustTool` call (see `tools/rbac.go` for shared groups such as `datasourceQuery`), and **need a row in the README's tool table** with the category and required scopes. The permissions column is generated: run `go test ./cmd/mcp-grafana -run TestReadmeToolPermissions -update-readme`.
 
-The checks that must pass to merge are `license/cla`, `Test Unit`, `Test Integration`, `Lint Go`, `Lint JSON Schemas`, `docker` and `docker-alpine`. `Test Cloud` and the Python E2E suites are informational — `Test Cloud` cannot pass from a fork at all, because it needs credentials, so please don't worry about it being red.
+The checks that must pass to merge are `license/cla`, `Test Unit`, `Test Integration`, `Lint Go`, `Lint JSON Schemas`, `docker` and `docker-alpine`. The Python E2E suites also run in CI. Cloud tests and token-cost analysis remain available as manual commands but are not automated CI checks in this fork.
 
 ## What you can expect from us
 

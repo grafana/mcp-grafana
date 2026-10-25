@@ -88,7 +88,7 @@ make test-integration
 make test-cloud
 ```
 
-**Note**: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
+**Note**: Cloud tests are not run automatically in this fork. Run them manually with credentials for the configured Grafana Cloud test environments.
 
 For the full integration suite, start the supporting services first (Grafana and its dependencies on port 3000):
 

@@ -9,6 +9,8 @@ on:
   pull_request:
     branches:
       - main
+      # Exercise the unchanged Docker builds against the pinned release baseline.
+      - baseline/v2.1.1
   release:
     types: [published]
 
