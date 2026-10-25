@@ -158,6 +158,8 @@ class InstalledWheelTests(unittest.TestCase):
                     self.assertTrue(output.strip(), "Launcher produced no output")
                     if flag == "--help":
                         self.assertIn("transport", output)
+                    else:
+                        self.assertEqual(output.strip(), self.distribution.version)
 
     def test_stdio_protocol(self):
         for command in self.commands:

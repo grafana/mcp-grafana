@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   wheels:
-    name: Wheel / ${{ matrix.os }} / Python 3.9 + 3.13
+    name: Wheel / ${{ matrix.os }} / Python 3.9 + 3.13 + 3.14
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -38,16 +38,16 @@ jobs:
 
       - name: Build one host wheel with the modern build interpreter
         run: |
-          bash scripts/build-python-wheels.sh 2.1.1.dev0 \
+          bash scripts/build-python-wheels.sh 2.1.1 \
             --platforms "$(go env GOOS)-$(go env GOARCH)" \
             --output-dir dist/python-wheels
 
-      # Reuse the same wheel in both interpreters, without another Go build or
-      # artifact transfer. A failed version does not skip the other version.
-      - name: Install and test on Python 3.9 and 3.13
+      # Reuse the same wheel without another Go build or artifact transfer.
+      # A failed version does not skip the remaining versions.
+      - name: Install and test on Python 3.9, 3.13 and 3.14
         run: |
           status=0
-          for version in 3.9 3.13; do
+          for version in 3.9 3.13 3.14; do
             echo "::group::Python $version"
             (
               venv=".venv-wheel-$version"
@@ -66,3 +66,11 @@ jobs:
             echo "::endgroup::"
           done
           exit "$status"
+
+      - name: Upload verified wheel
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mcp-grafana-2.1.1-python39-${{ runner.os }}-${{ runner.arch }}
+          path: dist/python-wheels/*.whl
+          if-no-files-found: error
+          retention-days: 14

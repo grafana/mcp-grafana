@@ -818,7 +818,7 @@ Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception
      uvx mcp-grafana
      ```
 
-     The platform wheels support Python 3.9+ and bundle the Go server with a dependency-free Python launcher. Standalone Go binaries do not require Python.
+     Wheels built from this branch support Python 3.9+ and bundle the Go server with a dependency-free Python launcher. The existing PyPI 2.1.1 wheels still require Python 3.10+; on Python 3.9, install a wheel built with `bash scripts/build-python-wheels.sh 2.1.1` or downloaded from the Python wheel compatibility workflow. Standalone Go binaries do not require Python.
 
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 

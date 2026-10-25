@@ -17,6 +17,7 @@ exec uvx --python 3.13 --from "go-to-wheel @ git+https://github.com/sd2k/go-to-w
   --package-path ./cmd/mcp-grafana \
   --name mcp-grafana \
   --version "$VERSION" \
+  --set-version-var github.com/grafana/mcp-grafana/v2.version \
   --description "Grafana MCP server - interact with Grafana via the Model Context Protocol" \
   --url "https://github.com/grafana/mcp-grafana" \
   --license Apache-2.0 \
