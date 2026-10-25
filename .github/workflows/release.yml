@@ -115,17 +115,7 @@ jobs:
       - name: Build wheels
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          # TODO: switch to `uvx go-to-wheel` once --package-path and binary compression are released
-          # (see https://github.com/simonw/go-to-wheel/pull/5 and https://github.com/simonw/go-to-wheel/pull/7)
-          uvx --from "go-to-wheel @ git+https://github.com/sd2k/go-to-wheel@e7a9fe44440039a9709c3deee2f9fa6cad0411fd" \
-            go-to-wheel . \
-            --package-path ./cmd/mcp-grafana \
-            --name mcp-grafana \
-            --version "$VERSION" \
-            --description "Grafana MCP server - interact with Grafana via the Model Context Protocol" \
-            --url "https://github.com/grafana/mcp-grafana" \
-            --license Apache-2.0 \
-            --readme README.md
+          bash scripts/build-python-wheels.sh "$VERSION"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

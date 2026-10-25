@@ -818,6 +818,8 @@ Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception
      uvx mcp-grafana
      ```
 
+     The platform wheels support Python 3.9+ and bundle the Go server with a dependency-free Python launcher. Standalone Go binaries do not require Python.
+
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 
      **Important**: The Docker image's entrypoint is configured to run the MCP server in SSE mode by default, but most users will want to use STDIO mode for direct integration with AI assistants like Claude Desktop:
