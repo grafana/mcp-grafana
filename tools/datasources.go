@@ -375,7 +375,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 			result.Health = health
 		}
 
-		grafanaURL := c.PublicURL
+		grafanaURL := mcpgrafana.GrafanaPublicURL(ctx)
 		if grafanaURL == "" {
 			grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
 		}

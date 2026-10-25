@@ -57,11 +57,11 @@ type TimeRange struct {
 }
 
 func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
-	// Prefer the public URL from the Grafana client (fetched from /api/frontend/settings),
-	// falling back to the configured URL if the client is not available or has no public URL.
+	// Prefer the public URL from /api/frontend/settings (fetched on first use),
+	// falling back to the configured URL if there is no client or no public URL.
 	var baseURL string
-	if gc := mcpgrafana.GrafanaClientFromContext(ctx); gc != nil && gc.PublicURL != "" {
-		baseURL = strings.TrimRight(gc.PublicURL, "/")
+	if publicURL := mcpgrafana.GrafanaPublicURL(ctx); publicURL != "" {
+		baseURL = strings.TrimRight(publicURL, "/")
 	} else {
 		config := mcpgrafana.GrafanaConfigFromContext(ctx)
 		baseURL = config.URL
@@ -71,7 +71,7 @@ func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable")
 	}
 
-	// Validate baseURL because gc.PublicURL is populated from Grafana's
+	// Validate baseURL because the public URL is populated from Grafana's
 	// /api/frontend/settings appUrl response, which is not covered by the
 	// configured URL validation. A misconfigured Grafana can return a malformed appUrl that flows into deeplink construction
 	// (e.g. http://%gg/d/<uid>) unless checked here.

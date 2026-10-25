@@ -1190,6 +1190,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 
 	if transport == "sse" || transport == "streamable-http" {
 		checkCallerAuthPolicy(transport, addr, callerToken, slog.Default())
+		mcpgrafana.WarnIfOrgIDUnset(slog.Default())
 		if gc.AllowGrafanaURLOverride && len(gc.AllowedGrafanaURLs) == 0 {
 			slog.Error("SECURITY: unrestricted Grafana URL overrides are enabled. Every MCP caller can make requests to arbitrary HTTP(S) targets reachable by this server, including internal services. Use an authenticating proxy that authorizes targets and supplies matching tokens, and restrict outbound network access. An allowlist alone is not a substitute for these controls.")
 		}
