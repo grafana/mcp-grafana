@@ -25,7 +25,7 @@ Fixes #
 | --- | --- | --- |
 | `` | new / changed | default-on / opt-in category |
 
-**Token cost:** <!-- From the Token Analysis check's run summary, or `make token-check` locally. Please paste the change if this adds a default-on tool — it's the most useful number for reviewing the proposal. -->
+**Token cost:** <!-- From `make token-check` locally. Please paste the change if this adds a default-on tool — it's the most useful number for reviewing the proposal. -->
 
 **Why not extend an existing tool?** <!-- Only needed for new tools. -->
 
@@ -51,6 +51,6 @@ so anything that helps them reproduce your setup is genuinely useful.
 <!--
 Note on CI: workflow runs on fork PRs need manual maintainer approval, on every
 push. If your checks look stuck, they're waiting on us, not on you.
-`Test Cloud` and the Python E2E suites are informational and cannot pass from a
-fork — a red mark there is expected and won't block your merge.
+The Python E2E suites run without Grafana Cloud credentials. Cloud tests and
+token-cost analysis are manual-only in this fork, not automated CI checks.
 -->
