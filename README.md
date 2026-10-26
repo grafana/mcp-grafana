@@ -435,6 +435,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
 - `--base-path`: Base path for the SSE/streamable-http server. `/healthz` and `/metrics` are always served at the server root, not under this prefix — they're internal-only endpoints for probes and scrapers, and keeping them off the application prefix makes it easier to expose the API through a reverse proxy without also exposing them
 - `--endpoint-path`: Endpoint path for the streamable-http server, appended to `--base-path` - default: `/mcp`
+- `--sse-keepalive`: Interval between ping requests sent to each SSE client, so reverse proxies and load balancers do not close an idle event stream (which ends the session). Set it below the proxy's idle timeout, e.g. `30s` behind ingress-nginx's default 60s `proxy-read-timeout`. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum `1s` - default: `0` (disabled). Only applies to `--transport sse`
 - `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it
 
