@@ -1637,9 +1637,18 @@ func TestValidateSSEKeepAlive(t *testing.T) {
 	assert.NoError(t, validateSSEKeepAlive(0), "0 disables keepalive")
 	assert.NoError(t, validateSSEKeepAlive(30*time.Second))
 
+	assert.NoError(t, validateSSEKeepAlive(time.Second), "the minimum is allowed")
+
 	err := validateSSEKeepAlive(-time.Second)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--sse-keepalive")
+
+	// A typo like 1ms would disconnect every client almost at once.
+	for _, d := range []time.Duration{time.Millisecond, 100 * time.Microsecond, 999 * time.Millisecond} {
+		err := validateSSEKeepAlive(d)
+		require.Error(t, err, d)
+		assert.Contains(t, err.Error(), "at least 1s")
+	}
 }
 
 func TestEffectiveSSEKeepAlive(t *testing.T) {
@@ -1655,6 +1664,13 @@ func TestEffectiveSSEKeepAlive(t *testing.T) {
 // receives from the server on the event stream.
 func connectSSEPingCounter(t *testing.T, s *mcp.Server) *atomic.Int32 {
 	t.Helper()
+	return connectSSEPingCounterWithDelay(t, s, 0)
+}
+
+// connectSSEPingCounterWithDelay is connectSSEPingCounter, but the client
+// waits firstPingDelay before answering the first ping.
+func connectSSEPingCounterWithDelay(t *testing.T, s *mcp.Server, firstPingDelay time.Duration) *atomic.Int32 {
+	t.Helper()
 	srv := httptest.NewServer(mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return s }, nil))
 	t.Cleanup(srv.Close)
 
@@ -1662,8 +1678,8 @@ func connectSSEPingCounter(t *testing.T, s *mcp.Server) *atomic.Int32 {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
 	client.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if method == "ping" {
-				pings.Add(1)
+			if method == "ping" && pings.Add(1) == 1 && firstPingDelay > 0 {
+				time.Sleep(firstPingDelay)
 			}
 			return next(ctx, method, req)
 		}
@@ -1687,6 +1703,16 @@ func TestNewServer_SSEKeepAlive(t *testing.T) {
 
 		assert.Eventually(t, func() bool { return pings.Load() >= 2 }, 5*time.Second, 20*time.Millisecond,
 			"expected at least two keepalive pings")
+	})
+
+	t.Run("one slow ping reply does not close the session", func(t *testing.T) {
+		s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, newTestObservability(t), usage, "", interval)
+		// The first reply misses its interval/2 deadline. With a failure
+		// threshold of 1 the server would close the session and stop pinging.
+		pings := connectSSEPingCounterWithDelay(t, s, interval)
+
+		assert.Eventually(t, func() bool { return pings.Load() >= 3 }, 5*time.Second, 20*time.Millisecond,
+			"expected pings to continue after one missed reply")
 	})
 
 	t.Run("disabled sends no pings", func(t *testing.T) {

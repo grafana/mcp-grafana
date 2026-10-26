@@ -66,7 +66,7 @@ Reverse proxies and load balancers close connections that stay idle longer than 
 mcp-grafana -t sse --sse-keepalive 30s
 ```
 
-A client that doesn't answer a ping within half the interval is disconnected. The flag has no effect on the stdio and streamable-http transports.
+A client is disconnected after 3 pings in a row go unanswered for half the interval each, so one slow reply doesn't end the session. The interval must be at least `1s`. The flag has no effect on the stdio and streamable-http transports.
 
 ## Next steps
 

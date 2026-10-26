@@ -582,6 +582,16 @@ func appendInstructions(base, extra string) string {
 	return base
 }
 
+// sseKeepAliveFailureThreshold is how many keepalive pings in a row a client
+// may miss before its session is closed. go-sdk closes on the first miss by
+// default, so one slow reply would end a session the pings exist to keep.
+const sseKeepAliveFailureThreshold = 3
+
+// minSSEKeepAlive is the shortest --sse-keepalive accepted. Each ping must be
+// answered within half the interval, so a tiny value (a typo like 1ms)
+// would disconnect clients almost at once.
+const minSSEKeepAlive = time.Second
+
 // keepAlive is the interval between pings the server sends to each connected
 // client; 0 disables them. run() passes a non-zero value only for the SSE
 // transport (see effectiveSSEKeepAlive).
@@ -589,8 +599,9 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)
 
 	s := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: mcpgrafana.Version()}, &mcp.ServerOptions{
-		Instructions: instructions,
-		KeepAlive:    keepAlive,
+		Instructions:              instructions,
+		KeepAlive:                 keepAlive,
+		KeepAliveFailureThreshold: sseKeepAliveFailureThreshold,
 	})
 
 	dt.processTools(s)
@@ -922,10 +933,14 @@ func effectiveMetricsEnabled(transport string, metricsEnabled bool) bool {
 	return metricsEnabled && transport != "stdio"
 }
 
-// validateSSEKeepAlive rejects a negative --sse-keepalive. 0 disables pings.
+// validateSSEKeepAlive rejects a negative --sse-keepalive, or one below
+// minSSEKeepAlive. 0 disables pings.
 func validateSSEKeepAlive(interval time.Duration) error {
 	if interval < 0 {
 		return fmt.Errorf("invalid --sse-keepalive %s: must be >= 0 (0 disables keepalive pings)", interval)
+	}
+	if interval > 0 && interval < minSSEKeepAlive {
+		return fmt.Errorf("invalid --sse-keepalive %s: must be 0 (disabled) or at least %s", interval, minSSEKeepAlive)
 	}
 	return nil
 }
@@ -1185,10 +1200,11 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	usage := usagestats.New(us)
 	usage.Disclose()
 
-	if sseKeepAlive > 0 && transport != "sse" {
+	keepAlive := effectiveSSEKeepAlive(transport, sseKeepAlive)
+	if keepAlive != sseKeepAlive {
 		slog.Warn("--sse-keepalive only applies to the SSE transport; ignoring it", "transport", transport)
 	}
-	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend, effectiveSSEKeepAlive(transport, sseKeepAlive))
+	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend, keepAlive)
 	usage.SetNativeTools(nativeToolNames(dt))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1288,7 +1304,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using SSE transport",
-			"version", mcpgrafana.Version(), "address", addr, "ssePath", ssePath, "keepAlive", sseKeepAlive, "metrics", obs.MetricsEnabled)
+			"version", mcpgrafana.Version(), "address", addr, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, httpSrv, "SSE", tls.certFile, tls.keyFile)
 
 	case "streamable-http":
@@ -1344,7 +1360,7 @@ func main() {
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server. /healthz and /metrics are always served at the root, not under this prefix")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server, appended to --base-path")
-	sseKeepAlive := flag.Duration("sse-keepalive", 0, "Interval between ping requests sent to each SSE client, so reverse proxies and load balancers do not close an idle event stream (and the session with it). Set it below the proxy's idle timeout, e.g. 30s behind ingress-nginx's default 60s proxy-read-timeout. A client that does not answer a ping within half the interval is disconnected. Accepts Go duration strings. 0 (the default) disables pings. Only applies to --transport sse.")
+	sseKeepAlive := flag.Duration("sse-keepalive", 0, "Interval between ping requests sent to each SSE client, so reverse proxies and load balancers do not close an idle event stream (and the session with it). Set it below the proxy's idle timeout, e.g. 30s behind ingress-nginx's default 60s proxy-read-timeout. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum 1s. 0 (the default) disables pings. Only applies to --transport sse.")
 	_ = flag.Int("session-idle-timeout-minutes", 30, "Deprecated: the official go-sdk manages sessions internally. This flag is ignored.")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
