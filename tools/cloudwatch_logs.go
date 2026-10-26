@@ -36,16 +36,17 @@ type QueryCloudWatchLogsParams struct {
 	QueryString   string   `json:"queryString" jsonschema:"required,description=CloudWatch Logs Insights query (e.g. 'fields @timestamp\\, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20')"`
 	Start         string   `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string   `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
-	Limit         int      `json:"limit,omitempty" jsonschema:"description=Maximum number of rows to return (default: 100\\, max: 1000). Applied to the result; a 'limit' clause in the query limits rows server-side."`
+	Limit         int      `json:"limit,omitempty" jsonschema:"description=Maximum number of rows to return (default: 100\\, max: 1000)"`
 }
 
 // CloudWatchLogsQueryResult represents the result of a CloudWatch Logs Insights query
 type CloudWatchLogsQueryResult struct {
 	// Logs holds one map per result row, keyed by field name (e.g. @timestamp, @message).
-	Logs       []map[string]string `json:"logs"`
-	TotalFound int                 `json:"totalFound"`
-	Status     string              `json:"status"`
-	Hints      []string            `json:"hints,omitempty"`
+	Logs []map[string]string `json:"logs"`
+	// TotalFound is the number of records the query matched, which can exceed len(Logs).
+	TotalFound int      `json:"totalFound"`
+	Status     string   `json:"status"`
+	Hints      []string `json:"hints,omitempty"`
 }
 
 // ListCloudWatchLogGroupsParams defines the parameters for listing CloudWatch log groups
@@ -61,7 +62,6 @@ type ListCloudWatchLogGroupFieldsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
 	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
 	LogGroupName  string `json:"logGroupName" jsonschema:"required,description=The log group name to list fields for"`
-	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring."`
 }
 
 // cloudWatchNamedItem is the shape returned by the log-groups and
@@ -120,9 +120,6 @@ func listCloudWatchLogGroupFields(ctx context.Context, args ListCloudWatchLogGro
 	params := url.Values{}
 	params.Set("region", args.Region)
 	params.Set("logGroupName", args.LogGroupName)
-	if args.AccountId != "" {
-		params.Set("accountId", args.AccountId)
-	}
 
 	bodyBytes, err := client.fetchResource(ctx, args.DatasourceUID, "log-group-fields", params)
 	if err != nil {
@@ -169,26 +166,23 @@ func queryCloudWatchLogs(ctx context.Context, args QueryCloudWatchLogsParams) (*
 		}
 	}
 
+	args.Limit = min(args.Limit, MaxCloudWatchLogsLimit)
+	if args.Limit <= 0 {
+		args.Limit = DefaultCloudWatchLogsLimit
+	}
+
 	frames, err := client.runLogsQuery(ctx, args, fromTime, toTime, cloudWatchLogsQueryTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	limit := args.Limit
-	if limit <= 0 {
-		limit = DefaultCloudWatchLogsLimit
-	}
-	if limit > MaxCloudWatchLogsLimit {
-		limit = MaxCloudWatchLogsLimit
-	}
-
-	return parseLogsFrames(frames, limit), nil
+	return parseLogsFrames(frames, args.Limit), nil
 }
 
 // runLogsQuery starts a Logs Insights query and polls for its results with
 // exponential backoff until it completes, fails, or timeout elapses.
-func (c *cloudWatchClient) runLogsQuery(ctx context.Context, args QueryCloudWatchLogsParams, from, to time.Time, timeout time.Duration) (data.Frames, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+func (c *cloudWatchClient) runLogsQuery(parent context.Context, args QueryCloudWatchLogsParams, from, to time.Time, timeout time.Duration) (data.Frames, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	query := map[string]interface{}{
@@ -203,6 +197,10 @@ func (c *cloudWatchClient) runLogsQuery(ctx context.Context, args QueryCloudWatc
 		"region":        args.Region,
 		"queryString":   args.QueryString,
 		"logGroupNames": args.LogGroupNames,
+		// Limit server-side: Grafana re-sorts result rows by ascending time, so
+		// truncating afterwards would keep the oldest rows rather than the
+		// query's own sort order.
+		"limit":         args.Limit,
 		"id":            "",
 		"intervalMs":    1,
 		"maxDataPoints": 1,
@@ -221,12 +219,13 @@ func (c *cloudWatchClient) runLogsQuery(ctx context.Context, args QueryCloudWatc
 		return nil, errors.New("no queryId found in StartQuery response")
 	}
 
+	finished := false
 	defer func() {
-		if ctx.Err() == nil {
+		if finished {
 			return
 		}
-		// We gave up on a query that's still running in CloudWatch; stop it so it
-		// doesn't keep holding one of the account's concurrent query slots.
+		// We gave up on a query that may still be running in CloudWatch; stop it
+		// so it doesn't keep holding one of the account's concurrent query slots.
 		stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stopCancel()
 		query["subtype"] = "StopQuery"
@@ -238,12 +237,13 @@ func (c *cloudWatchClient) runLogsQuery(ctx context.Context, args QueryCloudWatc
 	delete(query, "queryString")
 	delete(query, "logGroupNames")
 	delete(query, "maxDataPoints")
+	delete(query, "limit")
 
 	interval := 200 * time.Millisecond
 	for {
 		resp, err := doDSQuery(ctx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
 		if err != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return nil, fmt.Errorf("CloudWatch Logs query timed out after %s", timeout)
 			}
 			return nil, fmt.Errorf("polling CloudWatch Logs query results: %w", err)
@@ -255,15 +255,17 @@ func (c *cloudWatchClient) runLogsQuery(ctx context.Context, args QueryCloudWatc
 
 		switch status := logsQueryStatus(frames); status {
 		case "Complete":
+			finished = true
 			return frames, nil
 		case "Running", "Scheduled", "":
 		default:
+			finished = true
 			return nil, fmt.Errorf("CloudWatch Logs query finished with status %s", status)
 		}
 
 		select {
 		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return nil, fmt.Errorf("CloudWatch Logs query timed out after %s", timeout)
 			}
 			return nil, ctx.Err()
@@ -327,7 +329,7 @@ func parseLogsFrames(frames data.Frames, limit int) *CloudWatchLogsQueryResult {
 
 	for _, frame := range frames {
 		rowCount := frame.Rows()
-		result.TotalFound += rowCount
+		result.TotalFound += max(rowCount, recordsMatched(frame))
 		for row := 0; row < rowCount && len(result.Logs) < limit; row++ {
 			entry := make(map[string]string, len(frame.Fields))
 			for _, field := range frame.Fields {
@@ -345,6 +347,20 @@ func parseLogsFrames(frames data.Frames, limit int) *CloudWatchLogsQueryResult {
 	}
 
 	return result
+}
+
+// recordsMatched returns the "Records matched" query statistic the CloudWatch
+// plugin attaches to result frames, or 0 if it is absent.
+func recordsMatched(frame *data.Frame) int {
+	if frame.Meta == nil {
+		return 0
+	}
+	for _, stat := range frame.Meta.Stats {
+		if stat.DisplayName == "Records matched" {
+			return int(stat.Value)
+		}
+	}
+	return 0
 }
 
 // formatLogValue renders a field value as a string, with times as RFC3339 UTC.
@@ -378,7 +394,7 @@ func generateCloudWatchLogsEmptyResultHints() []string {
 // QueryCloudWatchLogs is a tool for executing CloudWatch Logs Insights queries via Grafana
 var QueryCloudWatchLogs = mcpgrafana.MustTool(
 	"query_cloudwatch_logs",
-	`Run a CloudWatch Logs Insights query against one or more log groups via Grafana and return the result rows. Requires region. Waits up to 30s for the query to complete.
+	`Run a CloudWatch Logs Insights query against one or more log groups via Grafana and return the result rows. Requires region. Waits up to 30s for the query to complete. Rows are returned in ascending time order.
 
 Query examples:
 - fields @timestamp, @message | sort @timestamp desc | limit 20

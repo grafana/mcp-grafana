@@ -647,6 +647,7 @@ When `--disable-query` is enabled, the following tools are not registered:
 
 **CloudWatch Tools:**
 - `query_cloudwatch`
+- `query_cloudwatch_logs`
 
 **Google Cloud Logging Tools:**
 - `query_cloud_logging`

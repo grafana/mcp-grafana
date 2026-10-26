@@ -50,12 +50,15 @@ func TestParseLogsFrames(t *testing.T) {
 		data.NewField("@ptr", nil, []string{"p1", "p2", "p3"}),
 		data.NewField("__log__grafana_internal__", nil, []string{"a", "b", "c"}),
 	)
-	frame.Meta = &data.FrameMeta{Custom: map[string]interface{}{"Status": "Complete"}}
+	frame.Meta = &data.FrameMeta{
+		Custom: map[string]interface{}{"Status": "Complete"},
+		Stats:  []data.QueryStat{{FieldConfig: data.FieldConfig{DisplayName: "Records matched"}, Value: 5000}},
+	}
 
 	result := parseLogsFrames(data.Frames{frame}, 2)
 
 	assert.Equal(t, "Complete", result.Status)
-	assert.Equal(t, 3, result.TotalFound, "totalFound counts all rows, not just the returned ones")
+	assert.Equal(t, 5000, result.TotalFound, "totalFound reports records matched, not rows returned")
 	require.Len(t, result.Logs, 2)
 	assert.Equal(t, map[string]string{
 		"@timestamp": "2024-01-15T10:00:00Z",
@@ -121,6 +124,7 @@ func TestRunLogsQuery(t *testing.T) {
 		Region:        "us-east-1",
 		LogGroupNames: []string{"app"},
 		QueryString:   "fields @message",
+		Limit:         100,
 	}
 	now := time.Now()
 
@@ -136,8 +140,11 @@ func TestRunLogsQuery(t *testing.T) {
 
 		require.Len(t, *queries, 3, "a completed query is not stopped")
 		start, poll := (*queries)[0], (*queries)[1]
+		_, pollHasLimit := poll["limit"]
+		assert.False(t, pollHasLimit)
 		assert.Equal(t, "fields @message", start["queryString"])
 		assert.Equal(t, []any{"app"}, start["logGroupNames"])
+		assert.Equal(t, float64(100), start["limit"])
 		assert.Equal(t, "GetQueryResults", poll["subtype"])
 		assert.Equal(t, "qid-1", poll["queryId"])
 	})
@@ -162,6 +169,28 @@ func TestRunLogsQuery(t *testing.T) {
 		last := (*queries)[len(*queries)-1]
 		assert.Equal(t, "StopQuery", last["subtype"], "a timed-out query is stopped")
 		assert.Equal(t, "qid-1", last["queryId"])
+	})
+
+	t.Run("poll error stops the query", func(t *testing.T) {
+		var subtypes []any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var payload struct {
+				Queries []map[string]any `json:"queries"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			subtypes = append(subtypes, payload.Queries[0]["subtype"])
+			if payload.Queries[0]["subtype"] == "GetQueryResults" {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":{"A":{"frames":[{"schema":{"fields":[{"name":"queryId","type":"string","typeInfo":{"frame":"string"}}]},"data":{"values":[["qid-1"]]}}]}}}`))
+		}))
+		defer server.Close()
+		client := &cloudWatchClient{httpClient: server.Client(), baseURL: server.URL}
+
+		_, err := client.runLogsQuery(context.Background(), args, now.Add(-time.Hour), now, 5*time.Second)
+		require.Error(t, err)
+		assert.Equal(t, []any{"StartQuery", "GetQueryResults", "StopQuery"}, subtypes)
 	})
 
 	t.Run("query error", func(t *testing.T) {
