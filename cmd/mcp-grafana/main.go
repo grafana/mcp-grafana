@@ -582,11 +582,26 @@ func appendInstructions(base, extra string) string {
 	return base
 }
 
-func newServer(serverName string, dt disabledTools, obs *observability.Observability, usage *usagestats.Reporter, instructionsAppend string) *mcp.Server {
+// sseKeepAliveFailureThreshold is how many keepalive pings in a row a client
+// may miss before its session is closed. go-sdk closes on the first miss by
+// default, so one slow reply would end a session the pings exist to keep.
+const sseKeepAliveFailureThreshold = 3
+
+// minSSEKeepAlive is the shortest --sse-keepalive accepted. Each ping must be
+// answered within half the interval, so a tiny value (a typo like 1ms)
+// would disconnect clients almost at once.
+const minSSEKeepAlive = time.Second
+
+// keepAlive is the interval between pings the server sends to each connected
+// client; 0 disables them. run() passes a non-zero value only for the SSE
+// transport (see effectiveSSEKeepAlive).
+func newServer(serverName string, dt disabledTools, obs *observability.Observability, usage *usagestats.Reporter, instructionsAppend string, keepAlive time.Duration) *mcp.Server {
 	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)
 
 	s := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: mcpgrafana.Version()}, &mcp.ServerOptions{
-		Instructions: instructions,
+		Instructions:              instructions,
+		KeepAlive:                 keepAlive,
+		KeepAliveFailureThreshold: sseKeepAliveFailureThreshold,
 	})
 
 	dt.processTools(s)
@@ -918,6 +933,28 @@ func effectiveMetricsEnabled(transport string, metricsEnabled bool) bool {
 	return metricsEnabled && transport != "stdio"
 }
 
+// validateSSEKeepAlive rejects a negative --sse-keepalive, or one below
+// minSSEKeepAlive. 0 disables pings.
+func validateSSEKeepAlive(interval time.Duration) error {
+	if interval < 0 {
+		return fmt.Errorf("invalid --sse-keepalive %s: must be >= 0 (0 disables keepalive pings)", interval)
+	}
+	if interval > 0 && interval < minSSEKeepAlive {
+		return fmt.Errorf("invalid --sse-keepalive %s: must be 0 (disabled) or at least %s", interval, minSSEKeepAlive)
+	}
+	return nil
+}
+
+// effectiveSSEKeepAlive returns the ping interval the MCP server is built with.
+// Pings exist to stop reverse proxies from closing the SSE transport's idle
+// event stream, which deletes the session, so other transports ignore the flag.
+func effectiveSSEKeepAlive(transport string, interval time.Duration) time.Duration {
+	if transport != "sse" {
+		return 0
+	}
+	return interval
+}
+
 // nativeToolNames is the set of tool names the server registered itself. It
 // bounds the tool names the usage-statistics reporter may emit, so it must be
 // taken before any proxied tool is registered: those names come from a remote
@@ -1095,7 +1132,7 @@ func validateMountFlags(transport, basePath, endpointPath, healthzAddress string
 	return nil
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, us usagestats.Config, healthzAddress, instructionsAppend string) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, us usagestats.Config, healthzAddress, instructionsAppend string, sseKeepAlive time.Duration) error {
 	// --base-path feeds every mux pattern, so normalize it once here and let
 	// every mux mount read the same value. main() has already rejected values
 	// these mounts could not serve.
@@ -1163,7 +1200,11 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	usage := usagestats.New(us)
 	usage.Disclose()
 
-	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend)
+	keepAlive := effectiveSSEKeepAlive(transport, sseKeepAlive)
+	if keepAlive != sseKeepAlive {
+		slog.Warn("--sse-keepalive only applies to the SSE transport; ignoring it", "transport", transport)
+	}
+	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend, keepAlive)
 	usage.SetNativeTools(nativeToolNames(dt))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1263,7 +1304,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using SSE transport",
-			"version", mcpgrafana.Version(), "address", addr, "ssePath", ssePath, "metrics", obs.MetricsEnabled)
+			"version", mcpgrafana.Version(), "address", addr, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, httpSrv, "SSE", tls.certFile, tls.keyFile)
 
 	case "streamable-http":
@@ -1319,6 +1360,7 @@ func main() {
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server. /healthz and /metrics are always served at the root, not under this prefix")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server, appended to --base-path")
+	sseKeepAlive := flag.Duration("sse-keepalive", 0, "Interval between ping requests sent to each SSE client, so reverse proxies and load balancers do not close an idle event stream (and the session with it). Set it below the proxy's idle timeout, e.g. 30s behind ingress-nginx's default 60s proxy-read-timeout. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum 1s. 0 (the default) disables pings. Only applies to --transport sse.")
 	_ = flag.Int("session-idle-timeout-minutes", 30, "Deprecated: the official go-sdk manages sessions internally. This flag is ignored.")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
@@ -1414,6 +1456,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	if err := validateSSEKeepAlive(*sseKeepAlive); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	socks5Proxy, err := socks5ProxyFromEnv()
 	if err != nil {
@@ -1486,7 +1532,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, usageStats, *healthzAddress, *instructionsAppend); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, usageStats, *healthzAddress, *instructionsAppend, *sseKeepAlive); err != nil {
 		slog.Error("Fatal error", "error", err)
 		os.Exit(1)
 	}

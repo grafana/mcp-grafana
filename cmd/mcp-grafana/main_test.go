@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1063,7 +1064,7 @@ func TestValidateServerName(t *testing.T) {
 
 func TestNewServer_DefaultServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "mcp-grafana", name)
@@ -1071,7 +1072,7 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 
 func TestNewServer_CustomServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s := newServer("my-custom-server", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+	s := newServer("my-custom-server", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-server", name)
@@ -1080,9 +1081,9 @@ func TestNewServer_CustomServerName(t *testing.T) {
 func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 	obs := newTestObservability(t)
 
-	sAlpha := newServer("instance-alpha", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+	sAlpha := newServer("instance-alpha", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
 
-	sBeta := newServer("instance-beta", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+	sBeta := newServer("instance-beta", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
 
 	nameAlpha := getServerNameFromInitialize(t, sAlpha)
 	nameBeta := getServerNameFromInitialize(t, sBeta)
@@ -1094,7 +1095,7 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 
 func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
 	obs := newTestObservability(t)
-	s := newServer("my-custom-instance", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+	s := newServer("my-custom-instance", disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-instance", name)
@@ -1528,7 +1529,7 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 // error (-32603) with a bare Go unmarshal message. See issue #830.
 func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
 	obs := newTestObservability(t)
-	s := newServer(defaultServerName, disabledTools{enabledTools: "datasource"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+	s := newServer(defaultServerName, disabledTools{enabledTools: "datasource"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
 
 	session := connectTestClient(t, s)
 
@@ -1635,12 +1636,103 @@ func TestEffectiveMetricsEnabled(t *testing.T) {
 	assert.False(t, effectiveMetricsEnabled("streamable-http", false))
 }
 
+func TestValidateSSEKeepAlive(t *testing.T) {
+	assert.NoError(t, validateSSEKeepAlive(0), "0 disables keepalive")
+	assert.NoError(t, validateSSEKeepAlive(30*time.Second))
+
+	assert.NoError(t, validateSSEKeepAlive(time.Second), "the minimum is allowed")
+
+	err := validateSSEKeepAlive(-time.Second)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--sse-keepalive")
+
+	// A typo like 1ms would disconnect every client almost at once.
+	for _, d := range []time.Duration{time.Millisecond, 100 * time.Microsecond, 999 * time.Millisecond} {
+		err := validateSSEKeepAlive(d)
+		require.Error(t, err, d)
+		assert.Contains(t, err.Error(), "at least 1s")
+	}
+}
+
+func TestEffectiveSSEKeepAlive(t *testing.T) {
+	assert.Equal(t, 30*time.Second, effectiveSSEKeepAlive("sse", 30*time.Second))
+	assert.Zero(t, effectiveSSEKeepAlive("sse", 0))
+	// Only the SSE transport's idle event stream needs pings to survive a proxy.
+	assert.Zero(t, effectiveSSEKeepAlive("streamable-http", 30*time.Second))
+	assert.Zero(t, effectiveSSEKeepAlive("stdio", 30*time.Second))
+}
+
+// connectSSEPingCounter serves s over the SSE transport, the way run() does
+// for --transport sse, and connects a client that counts the ping requests it
+// receives from the server on the event stream.
+func connectSSEPingCounter(t *testing.T, s *mcp.Server) *atomic.Int32 {
+	t.Helper()
+	return connectSSEPingCounterWithDelay(t, s, 0)
+}
+
+// connectSSEPingCounterWithDelay is connectSSEPingCounter, but the client
+// waits firstPingDelay before answering the first ping.
+func connectSSEPingCounterWithDelay(t *testing.T, s *mcp.Server, firstPingDelay time.Duration) *atomic.Int32 {
+	t.Helper()
+	srv := httptest.NewServer(mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return s }, nil))
+	t.Cleanup(srv.Close)
+
+	var pings atomic.Int32
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	client.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "ping" && pings.Add(1) == 1 && firstPingDelay > 0 {
+				time.Sleep(firstPingDelay)
+			}
+			return next(ctx, method, req)
+		}
+	})
+	session, err := client.Connect(context.Background(), &mcp.SSEClientTransport{Endpoint: srv.URL}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	return &pings
+}
+
+// TestNewServer_SSEKeepAlive covers issue #1365: with --sse-keepalive set, the
+// server pings SSE clients so an idle event stream is never idle long enough
+// for a reverse proxy to close it.
+func TestNewServer_SSEKeepAlive(t *testing.T) {
+	const interval = 200 * time.Millisecond
+	usage := usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled})
+
+	t.Run("enabled sends pings on the SSE stream", func(t *testing.T) {
+		s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, newTestObservability(t), usage, "", interval)
+		pings := connectSSEPingCounter(t, s)
+
+		assert.Eventually(t, func() bool { return pings.Load() >= 2 }, 5*time.Second, 20*time.Millisecond,
+			"expected at least two keepalive pings")
+	})
+
+	t.Run("one slow ping reply does not close the session", func(t *testing.T) {
+		s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, newTestObservability(t), usage, "", interval)
+		// The first reply misses its interval/2 deadline. With a failure
+		// threshold of 1 the server would close the session and stop pinging.
+		pings := connectSSEPingCounterWithDelay(t, s, interval)
+
+		assert.Eventually(t, func() bool { return pings.Load() >= 3 }, 5*time.Second, 20*time.Millisecond,
+			"expected pings to continue after one missed reply")
+	})
+
+	t.Run("disabled sends no pings", func(t *testing.T) {
+		s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, newTestObservability(t), usage, "", 0)
+		pings := connectSSEPingCounter(t, s)
+
+		time.Sleep(3 * interval)
+		assert.Zero(t, pings.Load(), "no pings expected when keepalive is disabled")
+	})
+}
+
 // TestListToolsResult_ReturnsTools verifies that tools/list returns the
 // expected tools via the go-sdk. The mark3labs-specific resultType/cacheScope/
 // ttlMs fields (#1140) are handled natively by the go-sdk's Cacheable struct.
 func TestListToolsResult_ReturnsTools(t *testing.T) {
 	obs := newTestObservability(t)
-	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "")
+	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
 
 	session := connectTestClient(t, s)
 	result, err := session.ListTools(context.Background(), nil)
