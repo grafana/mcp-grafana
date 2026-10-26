@@ -134,7 +134,7 @@ func TestRunLogsQuery(t *testing.T) {
 		result := parseLogsFrames(frames, 100)
 		assert.Equal(t, []map[string]string{{"@message": "hello"}}, result.Logs)
 
-		require.Len(t, *queries, 3)
+		require.Len(t, *queries, 3, "a completed query is not stopped")
 		start, poll := (*queries)[0], (*queries)[1]
 		assert.Equal(t, "fields @message", start["queryString"])
 		assert.Equal(t, []any{"app"}, start["logGroupNames"])
@@ -152,12 +152,16 @@ func TestRunLogsQuery(t *testing.T) {
 	})
 
 	t.Run("times out", func(t *testing.T) {
-		server, _ := fakeLogsServer(t, "Running")
+		server, queries := fakeLogsServer(t, "Running")
 		client := &cloudWatchClient{httpClient: server.Client(), baseURL: server.URL}
 
 		_, err := client.runLogsQuery(context.Background(), args, now.Add(-time.Hour), now, 500*time.Millisecond)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "timed out")
+
+		last := (*queries)[len(*queries)-1]
+		assert.Equal(t, "StopQuery", last["subtype"], "a timed-out query is stopped")
+		assert.Equal(t, "qid-1", last["queryId"])
 	})
 
 	t.Run("query error", func(t *testing.T) {

@@ -221,6 +221,18 @@ func (c *cloudWatchClient) runLogsQuery(ctx context.Context, args QueryCloudWatc
 		return nil, errors.New("no queryId found in StartQuery response")
 	}
 
+	defer func() {
+		if ctx.Err() == nil {
+			return
+		}
+		// We gave up on a query that's still running in CloudWatch; stop it so it
+		// doesn't keep holding one of the account's concurrent query slots.
+		stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stopCancel()
+		query["subtype"] = "StopQuery"
+		_, _ = doDSQuery(stopCtx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
+	}()
+
 	query["subtype"] = "GetQueryResults"
 	query["queryId"] = queryID
 	delete(query, "queryString")
@@ -385,7 +397,7 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 // ListCloudWatchLogGroups is a tool for listing CloudWatch log groups
 var ListCloudWatchLogGroups = mcpgrafana.MustTool(
 	"list_cloudwatch_log_groups",
-	"List CloudWatch log group names, optionally filtered by name prefix. Requires region. Supports cross-account monitoring via optional accountId parameter.",
+	"List CloudWatch log group names, optionally filtered by name prefix. Returns at most 50 log groups; use prefix to narrow larger accounts. Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchLogGroups,
 	mcpgrafana.WithTitleAnnotation("List CloudWatch log groups"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
