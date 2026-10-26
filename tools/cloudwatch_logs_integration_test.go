@@ -38,7 +38,7 @@ func TestCloudWatchLogsIntegration_QueryLogs(t *testing.T) {
 	result, err := queryCloudWatchLogs(ctx, QueryCloudWatchLogsParams{
 		DatasourceUID: cloudwatchTestDatasourceUID,
 		Region:        "us-east-1",
-		LogGroupNames: []string{"test-application-logs"},
+		LogGroups:     []string{"test-application-logs"},
 		QueryString:   "fields @timestamp, @message | sort @timestamp desc | limit 5",
 		// Events are seeded when LocalStack starts, which may be well before the test runs.
 		Start: "now-7d",
@@ -59,7 +59,7 @@ func TestCloudWatchLogsIntegration_QueryMissingLogGroup(t *testing.T) {
 	_, err := queryCloudWatchLogs(ctx, QueryCloudWatchLogsParams{
 		DatasourceUID: cloudwatchTestDatasourceUID,
 		Region:        "us-east-1",
-		LogGroupNames: []string{"nonexistent-log-group"},
+		LogGroups:     []string{"nonexistent-log-group"},
 		QueryString:   "fields @message",
 		Start:         "now-1h",
 	})

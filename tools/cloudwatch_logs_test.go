@@ -18,25 +18,31 @@ import (
 
 func TestParseCloudWatchNamedItems(t *testing.T) {
 	t.Run("log groups", func(t *testing.T) {
-		result, err := parseCloudWatchNamedItems([]byte(`[{"value":{"arn":"arn:aws:logs:us-east-1:123:log-group:/ecs/prod","name":"/ecs/prod"},"accountId":"123"},{"value":{"arn":"x","name":"/ecs/staging"}}]`))
+		result, err := parseCloudWatchNamedItems([]byte(`[{"value":{"arn":"arn:aws:logs:us-east-1:123:log-group:/ecs/prod","name":"/ecs/prod"},"accountId":"123"},{"value":{"arn":"x","name":"/ecs/staging"}}]`), false)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"/ecs/prod", "/ecs/staging"}, result)
 	})
 
 	t.Run("log group fields", func(t *testing.T) {
-		result, err := parseCloudWatchNamedItems([]byte(`[{"value":{"name":"@timestamp","percent":100}},{"value":{"name":"level","percent":50}}]`))
+		result, err := parseCloudWatchNamedItems([]byte(`[{"value":{"name":"@timestamp","percent":100}},{"value":{"name":"level","percent":50}}]`), false)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"@timestamp", "level"}, result)
 	})
 
+	t.Run("log group ARNs", func(t *testing.T) {
+		result, err := parseCloudWatchNamedItems([]byte(`[{"value":{"arn":"arn:aws:logs:us-east-1:123:log-group:/ecs/prod:*","name":"/ecs/prod"},"accountId":"123"}]`), true)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"arn:aws:logs:us-east-1:123:log-group:/ecs/prod"}, result)
+	})
+
 	t.Run("empty", func(t *testing.T) {
-		result, err := parseCloudWatchNamedItems([]byte(`[]`))
+		result, err := parseCloudWatchNamedItems([]byte(`[]`), false)
 		require.NoError(t, err)
 		assert.Empty(t, result)
 	})
 
 	t.Run("invalid JSON", func(t *testing.T) {
-		_, err := parseCloudWatchNamedItems([]byte(`not json`))
+		_, err := parseCloudWatchNamedItems([]byte(`not json`), false)
 		require.Error(t, err)
 	})
 }
@@ -92,6 +98,33 @@ func TestLogsQueryStatus(t *testing.T) {
 	assert.Equal(t, "", logsQueryStatus(nil))
 }
 
+func TestCloudWatchLogGroupsQueryField(t *testing.T) {
+	t.Run("names", func(t *testing.T) {
+		field, value, err := cloudWatchLogGroupsQueryField([]string{"/ecs/prod", "/ecs/staging"})
+		require.NoError(t, err)
+		assert.Equal(t, "logGroupNames", field)
+		assert.Equal(t, []string{"/ecs/prod", "/ecs/staging"}, value)
+	})
+
+	t.Run("ARNs", func(t *testing.T) {
+		field, value, err := cloudWatchLogGroupsQueryField([]string{
+			"arn:aws:logs:us-east-1:123:log-group:/ecs/prod:*",
+			"arn:aws:logs:us-east-1:456:log-group:audit",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "logGroups", field)
+		assert.Equal(t, []map[string]string{
+			{"arn": "arn:aws:logs:us-east-1:123:log-group:/ecs/prod", "name": "/ecs/prod"},
+			{"arn": "arn:aws:logs:us-east-1:456:log-group:audit", "name": "audit"},
+		}, value)
+	})
+
+	t.Run("mixed", func(t *testing.T) {
+		_, _, err := cloudWatchLogGroupsQueryField([]string{"/ecs/prod", "arn:aws:logs:us-east-1:456:log-group:audit"})
+		require.Error(t, err)
+	})
+}
+
 // fakeLogsServer serves /api/ds/query for StartQuery and GetQueryResults,
 // returning the given GetQueryResults statuses in order (the last repeats).
 func fakeLogsServer(t *testing.T, statuses ...string) (*httptest.Server, *[]map[string]any) {
@@ -122,7 +155,7 @@ func TestRunLogsQuery(t *testing.T) {
 	args := QueryCloudWatchLogsParams{
 		DatasourceUID: "cw",
 		Region:        "us-east-1",
-		LogGroupNames: []string{"app"},
+		LogGroups:     []string{"app"},
 		QueryString:   "fields @message",
 		Limit:         100,
 	}
