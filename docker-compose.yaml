@@ -82,7 +82,7 @@ services:
       retries: 10
 
   provisioning-repo-seed:
-    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
+    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
     depends_on:
       grafana:
         condition: service_healthy
@@ -95,7 +95,7 @@ services:
   # Seeds a secondary org + dashboard on both Grafana instances for the
   # orgId-parameter integration tests (see tools/orgid_integration_test.go).
   orgs-seed:
-    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
+    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
     depends_on:
       grafana:
         condition: service_healthy
@@ -180,7 +180,7 @@ services:
       retries: 10
 
   elasticsearch-seed:
-    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
+    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -203,7 +203,7 @@ services:
       retries: 10
 
   opensearch-seed:
-    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
+    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
     depends_on:
       opensearch:
         condition: service_healthy
@@ -223,7 +223,7 @@ services:
       retries: 15
 
   quickwit-seed:
-    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
+    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
     depends_on:
       quickwit:
         condition: service_healthy
@@ -248,7 +248,7 @@ services:
       retries: 5
 
   influxdb:
-    image: influxdb:2.9@sha256:cdd3dbdea45c2f43513abd06ee9644b6e05d2354a2b93ca829c9f07d716eaaac
+    image: influxdb:2.9@sha256:8f106f7ff12659c5e367b99f8a0e7d14cbd4e6ca1f2914094062db6a9813d9c2
     ports:
       - "8086:8086"
     environment:
@@ -265,7 +265,7 @@ services:
       retries: 10
 
   influxdb-seed:
-    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
+    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
     depends_on:
       influxdb:
         condition: service_healthy
@@ -288,7 +288,7 @@ services:
       retries: 5
 
   mysql:
-    image: mysql:26.7@sha256:893418c8a7a34c60d2d961cc30ef136095da141478562ed2101ae3f5faba9c3f
+    image: mysql:26.7@sha256:625f74ddf93652d9d0f8d4ea7d741b9189554a5e96d27bb770abd0902d89c6e3
     environment:
       MYSQL_ROOT_PASSWORD: rootroot
       MYSQL_DATABASE: test
@@ -303,7 +303,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    image: postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: test
