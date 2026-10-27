@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	"github.com/grafana/pyroscope/api/gen/proto/go/querier/v1/querierv1connect"
@@ -405,6 +406,102 @@ type seriesResponse struct {
 	Series    []rawSeries       `json:"series"`
 	TimeRange map[string]string `json:"time_range"`
 	StepSecs  float64           `json:"step_seconds"`
+	// Unit is the unit Grafana reports for the values, e.g. "cores" or
+	// "binBps" for cumulative profile types, which it converts to a rate.
+	Unit string `json:"unit,omitempty"`
+}
+
+// seriesFramesToResponse converts the "series" frames Grafana's Pyroscope
+// datasource returns (one per series, with a time and a value field) into a
+// seriesResponse. Exemplar and annotation frames are skipped.
+func seriesFramesToResponse(frames data.Frames, start, end time.Time, step float64) *seriesResponse {
+	res := buildSeriesResponse(nil, start, end, step)
+	for _, frame := range frames {
+		if frame.Name != "series" {
+			continue
+		}
+		timeIdx, valueIdx := findTimeAndValueFields(frame.Fields)
+		if timeIdx == -1 || valueIdx == -1 {
+			continue
+		}
+		points := make([][2]float64, 0, frame.Rows())
+		for i := 0; i < frame.Rows(); i++ {
+			ts, tsOk := toMillis(frame.At(timeIdx, i))
+			val, valOk := toFloat(frame.At(valueIdx, i))
+			if tsOk && valOk {
+				points = append(points, [2]float64{float64(ts), val})
+			}
+		}
+		if len(points) == 0 {
+			continue
+		}
+		valueField := frame.Fields[valueIdx]
+		labels := map[string]string(valueField.Labels)
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		if valueField.Config != nil && res.Unit == "" {
+			res.Unit = valueField.Config.Unit
+		}
+		res.Series = append(res.Series, rawSeries{Labels: labels, Points: points})
+	}
+	return res
+}
+
+// pyroscopeDSQuery runs one Pyroscope query of the given queryType
+// ("profile" or "metrics") through Grafana's /api/ds/query endpoint, so it
+// goes through the query service and shows up in its query log.
+func pyroscopeDSQuery(ctx context.Context, uid, queryType, profileType, matchers string, groupBy []string, start, end time.Time, step float64) (data.Frames, error) {
+	httpClient, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := map[string]interface{}{
+		"refId":         "A",
+		"datasource":    map[string]string{"uid": uid, "type": "grafana-pyroscope-datasource"},
+		"queryType":     queryType,
+		"profileTypeId": profileType,
+		"labelSelector": matchers,
+		"groupBy":       nonNilStrings(groupBy),
+	}
+	if step > 0 {
+		// The datasource uses max(intervalMs, the datasource's minStep) as
+		// the series step.
+		query["intervalMs"] = step * 1000
+		query["maxDataPoints"] = int64(math.Ceil(end.Sub(start).Seconds()/step)) + 1
+	}
+	resp, err := doDSQuery(ctx, httpClient, baseURL, dsQueryPayload(start, end, query))
+	if err != nil {
+		return nil, err
+	}
+	r, ok := resp.Responses["A"]
+	if !ok {
+		return nil, nil
+	}
+	if r.Error != nil {
+		return nil, r.Error
+	}
+	return r.Frames, nil
+}
+
+// pyroscopeDSProfileTable fetches the merged flame graph through
+// /api/ds/query and renders it with buildProfileTable.
+func pyroscopeDSProfileTable(ctx context.Context, uid, profileType, matchers string, start, end time.Time, maxRows int) (string, error) {
+	frames, err := pyroscopeDSQuery(ctx, uid, "profile", profileType, matchers, nil, start, end, 0)
+	if err != nil {
+		return "", err
+	}
+	for _, frame := range frames {
+		if frame.Meta == nil || frame.Meta.PreferredVisualization != data.VisTypeFlameGraph {
+			continue
+		}
+		nodes, err := flameFrameNodes(frame)
+		if err != nil {
+			return "", err
+		}
+		return buildProfileTable(nodes, sampleUnitFromProfileType(profileType), maxRows)
+	}
+	return buildProfileTable(nil, "", maxRows)
 }
 
 func buildSeriesResponse(series []*typesv1.Series, start, end time.Time, step float64) *seriesResponse {
@@ -462,7 +559,96 @@ func (c *pyroscopeClient) ProfileTable(ctx context.Context, profileType, matcher
 	if err != nil {
 		return "", err
 	}
-	return buildProfileTable(res.Msg.Flamegraph, sampleUnitFromProfileType(profileType), maxRows)
+	return buildProfileTable(flameGraphNodes(res.Msg.Flamegraph), sampleUnitFromProfileType(profileType), maxRows)
+}
+
+// flameNode is one node of a merged flame graph. Parents precede their
+// children, and the root (the synthetic "total" node) has parent -1.
+type flameNode struct {
+	name   string
+	total  int64
+	self   int64
+	parent int
+}
+
+// flameGraphNodes flattens a Pyroscope flame graph. Its levels encode nodes as
+// [xOffset, total, self, nameIndex] quads with delta-encoded offsets (see
+// NewFlameGraph in pyroscope's pkg/model); a node's parent is the node on the
+// level above whose span covers its offset.
+func flameGraphNodes(fg *querierv1.FlameGraph) []flameNode {
+	if fg == nil {
+		return nil
+	}
+	type span struct {
+		x, total int64
+		idx      int
+	}
+	var nodes []flameNode
+	var parents []span
+	for _, level := range fg.Levels {
+		vals := level.Values
+		spans := make([]span, 0, len(vals)/4)
+		var offset int64
+		p := 0
+		for i := 0; i+3 < len(vals); i += 4 {
+			x := vals[i] + offset
+			offset = x + vals[i+1]
+			n := flameNode{total: vals[i+1], self: vals[i+2], parent: -1}
+			if name := vals[i+3]; name >= 0 && int(name) < len(fg.Names) {
+				n.name = fg.Names[name]
+			}
+			if len(parents) > 0 {
+				for p < len(parents)-1 && parents[p].x+parents[p].total <= x {
+					p++
+				}
+				n.parent = parents[p].idx
+			}
+			spans = append(spans, span{x: x, total: n.total, idx: len(nodes)})
+			nodes = append(nodes, n)
+		}
+		parents = spans
+	}
+	return nodes
+}
+
+// flameFrameNodes reads the flame graph frame Grafana's Pyroscope datasource
+// returns from /api/ds/query: one row per node in depth-first order, with
+// level, value (total), self and an enum label field.
+func flameFrameNodes(frame *data.Frame) ([]flameNode, error) {
+	level, _ := frame.FieldByName("level")
+	value, _ := frame.FieldByName("value")
+	self, _ := frame.FieldByName("self")
+	label, _ := frame.FieldByName("label")
+	if level == nil || value == nil || self == nil || label == nil {
+		return nil, fmt.Errorf("unexpected Pyroscope flame graph frame: want level, value, self and label fields")
+	}
+	var names []string
+	if c := label.Config; c != nil && c.TypeConfig != nil && c.TypeConfig.Enum != nil {
+		names = c.TypeConfig.Enum.Text
+	}
+	int64At := func(f *data.Field, i int) int64 {
+		v, _ := f.At(i).(int64)
+		return v
+	}
+
+	nodes := make([]flameNode, 0, frame.Rows())
+	var stack []int // stack[l] is the index of the latest node at level l
+	for i := 0; i < frame.Rows(); i++ {
+		lvl := int(int64At(level, i))
+		if lvl < 0 || lvl > len(stack) {
+			return nil, fmt.Errorf("invalid Pyroscope flame graph frame: row %d is at level %d after level %d", i, lvl, len(stack)-1)
+		}
+		n := flameNode{total: int64At(value, i), self: int64At(self, i), parent: -1}
+		if idx, ok := label.At(i).(data.EnumItemIndex); ok && int(idx) < len(names) {
+			n.name = names[idx]
+		}
+		if lvl > 0 {
+			n.parent = stack[lvl-1]
+		}
+		stack = append(stack[:lvl], len(nodes))
+		nodes = append(nodes, n)
+	}
+	return nodes, nil
 }
 
 // The profile type ID has the form <name>:<sample type>:<sample unit>:<period type>:<period unit>.
@@ -478,75 +664,50 @@ func sampleUnitFromProfileType(profileType string) string {
 // in the style of `pprof -top`: flat (self) and cumulative values per
 // fully-qualified function name, ranked by flat.
 //
-// Flame graph levels encode nodes as [xOffset, total, self, nameIndex] quads
-// with delta-encoded offsets (see NewFlameGraph in pyroscope's pkg/model).
-// Level 0 is the synthetic root ("total"); sub-threshold subtrees are
+// nodes[0] is the synthetic root ("total"); sub-threshold subtrees are
 // collapsed server-side into explicit "other" nodes.
-func buildProfileTable(fg *querierv1.FlameGraph, unit string, maxRows int) (string, error) {
-	if fg == nil || fg.Total == 0 || len(fg.Levels) == 0 {
+func buildProfileTable(nodes []flameNode, unit string, maxRows int) (string, error) {
+	if len(nodes) == 0 || nodes[0].total == 0 {
 		return "", fmt.Errorf("pyroscope API returned a empty profile")
 	}
-	total := fg.Total
+	total := nodes[0].total
 
-	type fgNode struct {
-		x      int64
-		total  int64
-		name   int64
-		parent int
-	}
-
-	flat := make([]int64, len(fg.Names))
-	cum := make([]int64, len(fg.Names))
+	stats := map[string]*functionStat{}
 	var truncated int64
-
-	levels := make([][]fgNode, len(fg.Levels))
-	for li, level := range fg.Levels {
-		vals := level.Values
-		nodes := make([]fgNode, 0, len(vals)/4)
-		var offset int64
-		parentIdx := 0
-		for i := 0; i+3 < len(vals); i += 4 {
-			x := vals[i] + offset
-			offset = x + vals[i+1]
-			n := fgNode{x: x, total: vals[i+1], name: vals[i+3]}
-			self := vals[i+2]
-			if li > 0 && len(levels[li-1]) > 0 {
-				parents := levels[li-1]
-				for parentIdx < len(parents)-1 && parents[parentIdx].x+parents[parentIdx].total <= n.x {
-					parentIdx++
-				}
-				n.parent = parentIdx
-
-				if int(n.name) < len(fg.Names) && fg.Names[n.name] == truncatedFunctionName {
-					truncated += self
-				} else {
-					flat[n.name] += self
-					// Count total only at the outermost occurrence of the
-					// function so recursion isn't double-counted.
-					recursive := false
-					for pl, p := li-1, n.parent; pl > 0; pl-- {
-						if levels[pl][p].name == n.name {
-							recursive = true
-							break
-						}
-						p = levels[pl][p].parent
-					}
-					if !recursive {
-						cum[n.name] += n.total
-					}
-				}
-			}
-			nodes = append(nodes, n)
-		}
-		levels[li] = nodes
-	}
-
-	list := make([]*functionStat, 0, len(fg.Names))
-	for i, name := range fg.Names {
-		if i == 0 || (flat[i] == 0 && cum[i] == 0) {
+	for _, n := range nodes {
+		if n.parent < 0 {
 			continue
 		}
-		list = append(list, &functionStat{name: name, flat: flat[i], cum: cum[i]})
+		if n.name == truncatedFunctionName {
+			truncated += n.self
+			continue
+		}
+		s := stats[n.name]
+		if s == nil {
+			s = &functionStat{name: n.name}
+			stats[n.name] = s
+		}
+		s.flat += n.self
+		// Count total only at the outermost occurrence of the function so
+		// recursion isn't double-counted.
+		recursive := false
+		for p := n.parent; p >= 0 && nodes[p].parent >= 0; p = nodes[p].parent {
+			if nodes[p].name == n.name {
+				recursive = true
+				break
+			}
+		}
+		if !recursive {
+			s.cum += n.total
+		}
+	}
+
+	list := make([]*functionStat, 0, len(stats))
+	for _, s := range stats {
+		if s.flat == 0 && s.cum == 0 {
+			continue
+		}
+		list = append(list, s)
 	}
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].flat != list[j].flat {
@@ -629,7 +790,8 @@ shows WHEN consumption spiked. Use query_type="both" for complete analysis in on
 
 query_type options (extends Grafana's PyroscopeQueryType):
 - "profile": returns profile data (shape controlled by format)
-- "metrics": returns time-series data points
+- "metrics": returns time-series data points; for cumulative profile types (e.g. CPU time, allocations) each point is a
+  per-second rate over its step, in the reported unit (e.g. "cores" for CPU time)
 - "both" (default): returns both profile and metrics in one response
 
 format options (shape of the profile data):
@@ -707,6 +869,9 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 
 	wantProfile := queryType == "profile" || queryType == "both"
 	wantMetrics := queryType == "metrics" || queryType == "both"
+	// Grafana before 9.0 has no uid-based /api/ds/query, so queries there
+	// stay on the datasource proxy.
+	_, _, legacy := fallbackProxyBases(ctx, args.DataSourceUID)
 
 	result := make(map[string]any)
 	result["query_type"] = queryType
@@ -716,6 +881,8 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 		var profile string
 		var profileErr error
 		if format == "dot" {
+			// /api/ds/query has no DOT rendering, so the call graph still
+			// comes from the datasource proxy.
 			var res string
 			res, profileErr = client.Render(ctx, &renderRequest{
 				ProfileType: args.ProfileType,
@@ -728,8 +895,10 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 			if profileErr == nil {
 				profile = cleanupDotProfile(res)
 			}
-		} else {
+		} else if legacy {
 			profile, profileErr = client.ProfileTable(ctx, args.ProfileType, matchers, start, end, maxNodes)
+		} else {
+			profile, profileErr = pyroscopeDSProfileTable(ctx, args.DataSourceUID, args.ProfileType, matchers, start, end, maxNodes)
 		}
 		if profileErr != nil {
 			// Single-type query: propagate error so MCP framework sets IsError=true.
@@ -749,21 +918,33 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 			step = math.Max(end.Sub(start).Seconds()/50.0, 15.0)
 		}
 
-		seriesRes, metricsErr := client.SelectSeries(ctx, connect.NewRequest(&querierv1.SelectSeriesRequest{
-			ProfileTypeID: args.ProfileType,
-			LabelSelector: matchers,
-			Start:         start.UnixMilli(),
-			End:           end.UnixMilli(),
-			GroupBy:       args.GroupBy,
-			Step:          step,
-		}))
+		var metrics *seriesResponse
+		var metricsErr error
+		if legacy {
+			var seriesRes *connect.Response[querierv1.SelectSeriesResponse]
+			seriesRes, metricsErr = client.SelectSeries(ctx, connect.NewRequest(&querierv1.SelectSeriesRequest{
+				ProfileTypeID: args.ProfileType,
+				LabelSelector: matchers,
+				Start:         start.UnixMilli(),
+				End:           end.UnixMilli(),
+				GroupBy:       args.GroupBy,
+				Step:          step,
+			}))
+			if metricsErr == nil {
+				metrics = buildSeriesResponse(seriesRes.Msg.Series, start, end, step)
+			}
+		} else {
+			var frames data.Frames
+			frames, metricsErr = pyroscopeDSQuery(ctx, args.DataSourceUID, "metrics", args.ProfileType, matchers, args.GroupBy, start, end, step)
+			metrics = seriesFramesToResponse(frames, start, end, step)
+		}
 		if metricsErr != nil {
 			if queryType == "metrics" {
 				return "", fmt.Errorf("failed to fetch metrics: %w", metricsErr)
 			}
 			result["metrics"] = map[string]string{"error": metricsErr.Error()}
 		} else {
-			result["metrics"] = buildSeriesResponse(seriesRes.Msg.Series, start, end, step)
+			result["metrics"] = metrics
 		}
 	}
 
