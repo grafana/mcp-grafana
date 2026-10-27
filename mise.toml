@@ -9,7 +9,7 @@
 # - Python is pinned in tests/.python-version, and uv installs it.
 # - The Dockerfile base images are bumped by Renovate separately.
 
-min_version = "2026.9.0"
+min_version = "2026.9.5"
 
 [tools]
 # Release binaries build with this Go. Pinned to 1.26 until golang/go#81199 is
