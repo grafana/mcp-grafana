@@ -300,14 +300,7 @@ func describeSQLTableHandler(ctx context.Context, args sql.DescribeSQLTableParam
 
 var QuerySQL = mcpgrafana.MustTool(
 	"query_sql",
-	`Query a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery) via Grafana.
-For BigQuery use qualified project.dataset.table references; the datasource project controls billing.
-
-Supports datasource-specific macros: $__timeFilter(column), $__from/$__to, $__interval, ${varname}
-
-Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
-
-Example: SELECT timestamp, message FROM logs WHERE $__timeFilter(timestamp) LIMIT 100`,
+	"Query ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, or BigQuery via Grafana. Supports datasource-specific time macros and template variables. BigQuery requires qualified project.dataset.table references; billing uses the datasource project.",
 	querySQLHandler,
 	mcpgrafana.WithTitleAnnotation("Query SQL"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
@@ -319,7 +312,7 @@ Example: SELECT timestamp, message FROM logs WHERE $__timeFilter(timestamp) LIMI
 
 var ListSQLDatabases = mcpgrafana.MustTool(
 	"list_sql_databases",
-	"List databases, schemas, or catalogs from a supported SQL datasource. Returns the organizational units (databases, schemas, or catalogs) that contain tables. For Athena: omit catalog to list catalogs, or pass catalog to list databases in it. For BigQuery: returns datasets in the database project (or datasource default project).",
+	"List databases, schemas, or catalogs. Athena: omit catalog to list catalogs; set it to list databases. BigQuery: list datasets in database (project), defaulting to datasource config.",
 	listSQLDatabasesHandler,
 	mcpgrafana.WithTitleAnnotation("List SQL databases"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -331,7 +324,7 @@ var ListSQLDatabases = mcpgrafana.MustTool(
 
 var ListSQLTables = mcpgrafana.MustTool(
 	"list_sql_tables",
-	"List tables from a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Returns table names, schemas, and metadata. BigQuery returns names only and requires schema (dataset); database is the project.",
+	"List SQL tables and available metadata. BigQuery returns table/view names only; schema is the required dataset and database is the project.",
 	listSQLTablesHandler,
 	mcpgrafana.WithTitleAnnotation("List SQL tables"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -343,7 +336,7 @@ var ListSQLTables = mcpgrafana.MustTool(
 
 var DescribeSQLTable = mcpgrafana.MustTool(
 	"describe_sql_table",
-	"Get column schema for a table in a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Returns column names and types. BigQuery requires schema (dataset); database is the project. Includes column descriptions and nested field paths when available.",
+	"Describe SQL columns: names, types, and available metadata. BigQuery includes nested field paths and descriptions; schema is the required dataset and database is the project.",
 	describeSQLTableHandler,
 	mcpgrafana.WithTitleAnnotation("Describe SQL table"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
