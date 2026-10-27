@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 const (
@@ -23,41 +23,44 @@ const (
 	interactiveLearningCacheTTL = 5 * time.Minute
 )
 
-type interactiveLearningEntry struct {
-	available bool
-	expires   time.Time
-}
+// interactiveLearningCacheSize bounds how many availability answers are kept.
+const interactiveLearningCacheSize = 1024
 
 // interactiveLearningCache maps fallbackProxyIDKey results to whether the
 // Interactive Learning plugin is installed and enabled for that URL, org and
-// credential.
-var interactiveLearningCache sync.Map
+// credential. Entries expire after interactiveLearningCacheTTL and the least
+// recently used ones are evicted beyond interactiveLearningCacheSize.
+var interactiveLearningCache = expirable.NewLRU[string, bool](interactiveLearningCacheSize, nil, interactiveLearningCacheTTL)
 
 // interactiveLearningAvailable reports whether the Interactive Learning plugin
 // is installed and enabled. Any failure counts as unavailable: a hint is an
 // extra, so it must never cost the caller an error or point at a missing page.
+// Only definite answers are cached (a settings response that parses, or a 404
+// for a plugin that is not installed); request errors, timeouts, other
+// statuses and unparseable bodies are not, so a transient failure does not
+// suppress hints for the whole TTL.
 func interactiveLearningAvailable(ctx context.Context, cfg mcpgrafana.GrafanaConfig) bool {
 	key := fallbackProxyIDKey(ctx, "plugin", interactiveLearningPluginID)
-	if v, ok := interactiveLearningCache.Load(key); ok {
-		if e := v.(interactiveLearningEntry); time.Now().Before(e.expires) {
-			return e.available
-		}
+	if available, ok := interactiveLearningCache.Get(key); ok {
+		return available
 	}
 
-	available := false
 	body, status, err := grafanaPluginRequest(ctx, cfg, http.MethodGet, "/api/plugins/"+interactiveLearningPluginID+"/settings", nil)
-	if err == nil && status == http.StatusOK {
-		var settings pluginSettingsResponse
-		if json.Unmarshal(body, &settings) == nil {
-			available = settings.Enabled
-		}
+	if err != nil {
+		return false
 	}
-
-	interactiveLearningCache.Store(key, interactiveLearningEntry{
-		available: available,
-		expires:   time.Now().Add(interactiveLearningCacheTTL),
-	})
-	return available
+	switch status {
+	case http.StatusOK:
+		var settings pluginSettingsResponse
+		if json.Unmarshal(body, &settings) != nil {
+			return false
+		}
+		interactiveLearningCache.Add(key, settings.Enabled)
+		return settings.Enabled
+	case http.StatusNotFound:
+		interactiveLearningCache.Add(key, false)
+	}
+	return false
 }
 
 // interactiveLearningHint returns a pointer to Grafana's My Learning page, or

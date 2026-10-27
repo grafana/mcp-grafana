@@ -37,7 +37,7 @@ func interactiveLearningServer(t *testing.T, pluginStatus int, pluginEnabled boo
 	}))
 	t.Cleanup(func() {
 		server.Close()
-		interactiveLearningCache.Clear()
+		interactiveLearningCache.Purge()
 	})
 	return server
 }
@@ -142,7 +142,7 @@ func newNotFoundServer(t *testing.T, lookupStatus, pluginStatus int, pluginEnabl
 	}))
 	t.Cleanup(func() {
 		s.Close()
-		interactiveLearningCache.Clear()
+		interactiveLearningCache.Purge()
 	})
 	return s
 }
@@ -226,4 +226,61 @@ func TestDatasourceNotFound_InteractiveLearningHint(t *testing.T) {
 			assert.NotContains(t, err.Error(), "My Learning")
 		})
 	}
+}
+
+func TestInteractiveLearningAvailable_Caching(t *testing.T) {
+	newServer := func(t *testing.T, handler func(w http.ResponseWriter, n int)) (*httptest.Server, *int) {
+		t.Helper()
+		var mu sync.Mutex
+		count := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			count++
+			n := count
+			mu.Unlock()
+			handler(w, n)
+		}))
+		t.Cleanup(func() {
+			server.Close()
+			interactiveLearningCache.Purge()
+		})
+		return server, &count
+	}
+
+	t.Run("failure is not cached", func(t *testing.T) {
+		server, count := newServer(t, func(w http.ResponseWriter, n int) {
+			if n == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"enabled": true}`))
+		})
+		ctx := mockDatasourcesCtx(server)
+		cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+		assert.False(t, interactiveLearningAvailable(ctx, cfg))
+		assert.True(t, interactiveLearningAvailable(ctx, cfg))
+		assert.Equal(t, 2, *count)
+	})
+
+	t.Run("not found is cached", func(t *testing.T) {
+		server, count := newServer(t, func(w http.ResponseWriter, n int) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+		ctx := mockDatasourcesCtx(server)
+		cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+		assert.False(t, interactiveLearningAvailable(ctx, cfg))
+		assert.False(t, interactiveLearningAvailable(ctx, cfg))
+		assert.Equal(t, 1, *count)
+	})
+
+	t.Run("bad JSON is not cached", func(t *testing.T) {
+		server, count := newServer(t, func(w http.ResponseWriter, n int) {
+			_, _ = w.Write([]byte("not json"))
+		})
+		ctx := mockDatasourcesCtx(server)
+		cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+		assert.False(t, interactiveLearningAvailable(ctx, cfg))
+		assert.False(t, interactiveLearningAvailable(ctx, cfg))
+		assert.Equal(t, 2, *count)
+	})
 }
