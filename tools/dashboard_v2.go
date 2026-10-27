@@ -341,9 +341,9 @@ func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInf
 	info.RawTarget = target
 
 	// CloudWatch and Infinity panels use structured targets rather than string expressions
-	info.Query = extractQueryExpression(target)
+	info.Query = panelQueryExpression(target, info.DatasourceType)
 	if info.Query == "" && !usesStructuredTarget(info.DatasourceType) {
-		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target, cypherQuery)")
+		return nil, errNoQueryExpression
 	}
 
 	return info, nil

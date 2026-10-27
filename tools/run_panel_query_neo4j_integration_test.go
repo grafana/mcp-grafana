@@ -3,7 +3,11 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -20,8 +24,30 @@ const (
 	neo4jIntegrationDashboardUID  = "neo4j-panel-test"
 )
 
+// neo4jPluginInstalled reports whether Grafana has the Neo4j plugin. GF_INSTALL_PLUGINS
+// installs it in the background after Grafana starts, so it can lag behind the health check.
+func neo4jPluginInstalled(ctx context.Context) bool {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL+"/api/plugins/"+Neo4jDatasourceType+"/settings", nil)
+	if err != nil {
+		return false
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	} else if cfg.BasicAuth != nil {
+		password, _ := cfg.BasicAuth.Password()
+		req.SetBasicAuth(cfg.BasicAuth.Username(), password)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode == http.StatusOK
+}
+
 // createNeo4jTestDatasource adds a Neo4j datasource pointing at the compose neo4j service
-// and removes it when the test ends. The plugin is installed via GF_INSTALL_PLUGINS.
+// and removes it when the test ends.
 func createNeo4jTestDatasource(t *testing.T) {
 	t.Helper()
 	ctx := newTestContext()
@@ -30,7 +56,7 @@ func createNeo4jTestDatasource(t *testing.T) {
 	_, err := c.Datasources.AddDataSource(&models.AddDataSourceCommand{
 		Name:   "Neo4j Panel Query Test",
 		UID:    neo4jIntegrationDatasourceUID,
-		Type:   "kniepdennis-neo4j-datasource",
+		Type:   Neo4jDatasourceType,
 		Access: models.DsAccess("proxy"),
 		JSONData: models.JSON(map[string]interface{}{
 			"url":      "neo4j://neo4j:7687",
@@ -58,8 +84,9 @@ func neo4jTestPanel(id int, title, cypher string) map[string]interface{} {
 	}
 }
 
-// createNeo4jTestDashboard creates a dashboard with Neo4j panels and removes it when the test ends.
-func createNeo4jTestDashboard(t *testing.T) {
+// createNeo4jTestDashboard creates a dashboard with Neo4j panels and removes it when the test
+// ends. label is unique per run, so a write that is ever accepted cannot leak into later runs.
+func createNeo4jTestDashboard(t *testing.T, label string) {
 	t.Helper()
 	ctx := newTestContext()
 
@@ -68,8 +95,9 @@ func createNeo4jTestDashboard(t *testing.T) {
 		"title": "Neo4j Panel Query Integration Test",
 		"panels": []interface{}{
 			neo4jTestPanel(1, "Generated rows", "UNWIND range(1, ${rows}) AS n RETURN n"),
-			neo4jTestPanel(2, "Write attempt", "CREATE (x:McpGrafanaTest) RETURN x"),
-			neo4jTestPanel(3, "Written nodes", "MATCH (x:McpGrafanaTest) RETURN count(x) AS nodes"),
+			neo4jTestPanel(2, "Write attempt", fmt.Sprintf("CREATE (x:%s) RETURN x", label)),
+			neo4jTestPanel(3, "Written nodes", fmt.Sprintf("MATCH (x:%s) RETURN count(x) AS nodes", label)),
+			neo4jTestPanel(4, "Time range", "UNWIND [$__from, ${__to}] AS t RETURN t"),
 		},
 		"templating": map[string]interface{}{
 			"list": []interface{}{
@@ -95,53 +123,98 @@ func createNeo4jTestDashboard(t *testing.T) {
 	})
 }
 
-// neo4jRowCount returns the number of rows in the first frame of refId A.
-func neo4jRowCount(t *testing.T, results interface{}) int {
-	t.Helper()
+// neo4jColumn returns the first column of refId A's first frame.
+func neo4jColumn(results interface{}) ([]interface{}, error) {
 	responses, ok := results.(backend.Responses)
-	require.True(t, ok, "expected backend.Responses, got %T", results)
-	require.NotEmpty(t, responses["A"].Frames)
-	return responses["A"].Frames[0].Rows()
+	if !ok {
+		return nil, fmt.Errorf("expected backend.Responses, got %T", results)
+	}
+	frames := responses["A"].Frames
+	if len(frames) == 0 || frames[0] == nil || len(frames[0].Fields) == 0 {
+		return nil, fmt.Errorf("refId A has no fields")
+	}
+	field := frames[0].Fields[0]
+	values := make([]interface{}, field.Len())
+	for i := range values {
+		values[i], _ = field.ConcreteAt(i)
+	}
+	return values, nil
+}
+
+// requireNeo4jColumn runs one panel and returns its first column, failing on any error.
+func requireNeo4jColumn(t *testing.T, params RunPanelQueryParams) (*PanelQueryResult, []interface{}) {
+	t.Helper()
+	result, err := runPanelQuery(newTestContext(), params)
+	require.NoError(t, err)
+	require.Empty(t, result.Errors)
+	require.Len(t, params.PanelIDs, 1)
+	panel := result.Results[params.PanelIDs[0]]
+	require.NotNil(t, panel)
+	column, err := neo4jColumn(panel.Results)
+	require.NoError(t, err)
+	return panel, column
 }
 
 func TestRunPanelQuery_Neo4j_E2E(t *testing.T) {
-	createNeo4jTestDatasource(t)
-	createNeo4jTestDashboard(t)
 	ctx := newTestContext()
+	require.Eventually(t, func() bool { return neo4jPluginInstalled(ctx) }, 2*time.Minute, 2*time.Second,
+		"Grafana has no %s plugin; check the plugin install in the Grafana logs", Neo4jDatasourceType)
+
+	label := fmt.Sprintf("McpGrafanaTest%d", time.Now().UnixNano())
+	createNeo4jTestDatasource(t)
+	createNeo4jTestDashboard(t, label)
 
 	// CI waits for Grafana only; Neo4j may still be starting.
 	require.Eventually(t, func() bool {
 		result, err := runPanelQuery(ctx, RunPanelQueryParams{DashboardUID: neo4jIntegrationDashboardUID, PanelIDs: []int{1}})
-		return err == nil && len(result.Errors) == 0
-	}, 2*time.Minute, 2*time.Second, "neo4j did not become ready")
+		if err != nil || len(result.Errors) > 0 || result.Results[1] == nil {
+			return false
+		}
+		column, err := neo4jColumn(result.Results[1].Results)
+		return err == nil && len(column) == 3
+	}, 2*time.Minute, 2*time.Second, "neo4j did not return rows")
 
 	t.Run("cypher panel with variable override", func(t *testing.T) {
-		result, err := runPanelQuery(ctx, RunPanelQueryParams{
+		panel, column := requireNeo4jColumn(t, RunPanelQueryParams{
 			DashboardUID: neo4jIntegrationDashboardUID,
 			PanelIDs:     []int{1},
 			Variables:    map[string]string{"rows": "5"},
 		})
-		require.NoError(t, err)
-		require.Empty(t, result.Errors)
-		require.Contains(t, result.Results, 1)
-		panel := result.Results[1]
-		assert.Equal(t, "neo4j", normalizeDatasourceType(panel.DatasourceType))
+		assert.Equal(t, Neo4jDatasourceType, panel.DatasourceType)
 		assert.Equal(t, "UNWIND range(1, 5) AS n RETURN n", panel.Query)
-		assert.Equal(t, 5, neo4jRowCount(t, panel.Results))
+		assert.Len(t, column, 5)
+	})
+
+	t.Run("time range macros", func(t *testing.T) {
+		start := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		end := start.Add(time.Hour)
+		panel, column := requireNeo4jColumn(t, RunPanelQueryParams{
+			DashboardUID: neo4jIntegrationDashboardUID,
+			PanelIDs:     []int{4},
+			Start:        start.Format(time.RFC3339),
+			End:          end.Format(time.RFC3339),
+		})
+		from, to := strconv.FormatInt(start.UnixMilli(), 10), strconv.FormatInt(end.UnixMilli(), 10)
+		assert.Equal(t, "UNWIND ["+from+", "+to+"] AS t RETURN t", panel.Query)
+		require.Len(t, column, 2)
+		assert.EqualValues(t, start.UnixMilli(), column[0])
+		assert.EqualValues(t, end.UnixMilli(), column[1])
 	})
 
 	t.Run("write query is rejected", func(t *testing.T) {
 		result, err := runPanelQuery(ctx, RunPanelQueryParams{
 			DashboardUID: neo4jIntegrationDashboardUID,
-			PanelIDs:     []int{2, 3},
+			PanelIDs:     []int{2},
 		})
 		require.NoError(t, err)
 		require.Contains(t, result.Errors, 2)
 		assert.Contains(t, result.Errors[2], "Neo.ClientError.Statement.AccessMode", "the plugin runs Cypher in read access mode")
-		require.Contains(t, result.Results, 3)
-		responses := result.Results[3].Results.(backend.Responses)
-		nodes, ok := responses["A"].Frames[0].Fields[0].ConcreteAt(0)
-		require.True(t, ok)
-		assert.EqualValues(t, 0, nodes, "no node was created")
+
+		_, column := requireNeo4jColumn(t, RunPanelQueryParams{
+			DashboardUID: neo4jIntegrationDashboardUID,
+			PanelIDs:     []int{3},
+		})
+		require.Len(t, column, 1)
+		assert.EqualValues(t, 0, column[0], "no node was created")
 	})
 }
