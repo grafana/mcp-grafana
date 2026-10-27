@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -57,21 +59,29 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 	switch ds.Type {
 	case "stackdriver":
 		return newCloudMonitoringBackend(ctx, ds, proj)
-	case victoriaMetricsDatasourceType:
-		return newVictoriaMetricsBackend(ctx, uid, ds)
 	case "tempo":
 		return nil, fmt.Errorf("datasource %s is of type %q, which is not a supported Prometheus-compatible datasource", uid, ds.Type)
 	default:
-		// For prometheus, thanos, cortex, mimir, and any other Prometheus-compatible datasource,
-		// use the native Prometheus client via the datasource proxy.
+		// For prometheus, thanos, cortex, mimir, VictoriaMetrics and any other
+		// Prometheus-compatible datasource.
 		return newPrometheusBackend(ctx, uid, ds)
 	}
 }
 
-// prometheusBackend wraps the Prometheus client library, talking to the
-// datasource via Grafana's datasource proxy (/api/datasources/uid/{uid}/resources).
+// prometheusBackend runs queries through Grafana's /api/ds/query endpoint, so
+// they go through the query service and show up in its query log. Discovery
+// calls (labels, metric names, metadata) use the Prometheus client library via
+// the datasource resources/proxy routes.
 type prometheusBackend struct {
 	api promv1.API
+
+	httpClient *http.Client
+	baseURL    string
+	dsUID      string
+	dsType     string
+	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
+	// accept datasource UIDs; queries there stay on the proxy.
+	legacy bool
 }
 
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
@@ -130,10 +140,102 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("creating Prometheus client: %w", err)
 	}
 
-	return &prometheusBackend{api: promv1.NewAPI(c)}, nil
+	httpClient, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dsUID := ds.UID
+	if dsUID == "" {
+		dsUID = uid
+	}
+
+	return &prometheusBackend{
+		api:        promv1.NewAPI(c),
+		httpClient: httpClient,
+		baseURL:    baseURL,
+		dsUID:      dsUID,
+		dsType:     ds.Type,
+		legacy:     legacyMode,
+	}, nil
 }
 
+// Query executes a PromQL query via Grafana's /api/ds/query endpoint.
 func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
+	if b.legacy {
+		return b.queryViaProxy(ctx, expr, queryType, start, end, stepSeconds)
+	}
+	if queryType != "instant" && queryType != "range" {
+		return nil, nil, fmt.Errorf("invalid query type: %s", queryType)
+	}
+
+	if start.IsZero() && end.IsZero() {
+		end = time.Now()
+	}
+	if start.IsZero() {
+		start = end
+	}
+	if end.Before(start) {
+		end = start
+	}
+
+	step := stepSeconds
+	if step == 0 {
+		step = 60
+	}
+
+	datasource := map[string]string{"uid": b.dsUID}
+	if b.dsType != "" {
+		datasource["type"] = b.dsType
+	}
+	query := map[string]interface{}{
+		"refId":      "A",
+		"datasource": datasource,
+		"expr":       expr,
+		"instant":    queryType == "instant",
+		"range":      queryType == "range",
+		"interval":   fmt.Sprintf("%ds", step),
+		"intervalMs": int64(step) * 1000,
+		// Without this Grafana assumes 100 points and widens the step to
+		// fit; 11000 is Prometheus' own per-series limit.
+		"maxDataPoints": 11000,
+	}
+
+	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, end, query))
+	if err != nil {
+		return nil, nil, fmt.Errorf("querying Prometheus %s: %w", queryType, err)
+	}
+
+	v, err := framesToPrometheusValue(resp, queryType)
+	if err != nil {
+		return nil, nil, err
+	}
+	return v, frameWarnings(resp), nil
+}
+
+// frameWarnings collects the warnings Grafana attaches to response frames as
+// notices (e.g. partial responses from a Thanos store), deduplicated because
+// Grafana copies each warning onto every frame.
+func frameWarnings(resp *backend.QueryDataResponse) promv1.Warnings {
+	var warnings promv1.Warnings
+	seen := map[string]bool{}
+	for _, r := range resp.Responses {
+		for _, frame := range r.Frames {
+			if frame.Meta == nil {
+				continue
+			}
+			for _, n := range frame.Meta.Notices {
+				if n.Severity == data.NoticeSeverityWarning && !seen[n.Text] {
+					seen[n.Text] = true
+					warnings = append(warnings, n.Text)
+				}
+			}
+		}
+	}
+	return warnings
+}
+
+// queryViaProxy queries the Prometheus HTTP API through the datasource proxy.
+func (b *prometheusBackend) queryViaProxy(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
 	switch queryType {
 	case "range":
 		step := time.Duration(stepSeconds) * time.Second

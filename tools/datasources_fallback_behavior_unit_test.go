@@ -3,12 +3,16 @@
 package tools
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,6 +109,15 @@ func newFakeGrafana(profile legacyProfile) *fakeGrafana {
 				},
 				"defaultDatasource": "Prometheus"
 			}`))
+
+		case path == "/api/ds/query":
+			// Prometheus queries on deployments with uid-based routes.
+			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{
+				"A": backend.DataResponse{Frames: data.Frames{data.NewFrame("",
+					data.NewField("Time", nil, []time.Time{time.Unix(1700000000, 0)}),
+					data.NewField("Value", nil, []float64{42}),
+				)}},
+			}})
 
 		case strings.HasPrefix(path, "/api/datasources/proxy/uid/"):
 			if profile.uidProxyStatus != 0 {
@@ -206,13 +219,14 @@ func TestQueryPrometheus_NumericRoutesDisabled(t *testing.T) {
 	assert.True(t, strings.HasPrefix(data[1], "/api/datasources/proxy/uid/prometheus/"), "got %q", data[1])
 }
 
-// When the metadata API is accessible, behavior must be identical to upstream:
-// uid-based routes only, and the frontend-settings fallback never engages.
+// When the metadata API is accessible, queries go through /api/ds/query and
+// the frontend-settings fallback never engages.
 func TestQueryPrometheus_ModernPathUnchanged(t *testing.T) {
 	f := newFakeGrafana(legacyProfiles["modern"])
 	defer f.Close()
 
 	assert.Contains(t, instantQuery(t, f), "42")
+	assert.Contains(t, f.recordedPaths(), "/api/ds/query", "modern path must query through /api/ds/query")
 
 	for _, p := range f.recordedPaths() {
 		assert.NotEqual(t, "/api/frontend/settings", p, "modern path must not consult frontend settings")
