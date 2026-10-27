@@ -1,14 +1,19 @@
+//go:build unit
+
 package tools
 
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,49 +21,33 @@ import (
 // --- parseGraphiteTime ---
 
 func TestParseGraphiteTime(t *testing.T) {
+	now := time.Now()
 	tests := []struct {
 		name  string
 		input string
-		want  string
+		want  time.Time
+		delta time.Duration
 	}{
-		{
-			name:  "empty string passes through",
-			input: "",
-			want:  "",
-		},
-		{
-			name:  "now passes through",
-			input: "now",
-			want:  "now",
-		},
-		{
-			name:  "relative -1h passes through",
-			input: "-1h",
-			want:  "-1h",
-		},
-		{
-			name:  "relative -24h passes through",
-			input: "-24h",
-			want:  "-24h",
-		},
-		{
-			name:  "RFC3339 is converted to unix timestamp",
-			input: "2024-01-01T00:00:00Z",
-			want:  "1704067200",
-		},
-		{
-			name:  "unknown format passes through",
-			input: "12:00_20240101",
-			want:  "12:00_20240101",
-		},
+		{name: "empty uses default", input: "", want: now.Add(-time.Hour), delta: time.Minute},
+		{name: "now", input: "now", want: now, delta: time.Minute},
+		{name: "graphite hours", input: "-24h", want: now.Add(-24 * time.Hour), delta: time.Minute},
+		{name: "graphite minutes", input: "-5min", want: now.Add(-5 * time.Minute), delta: time.Minute},
+		{name: "graphite long unit", input: "-2weeks", want: now.Add(-14 * 24 * time.Hour), delta: time.Minute},
+		{name: "grafana relative", input: "now-30m", want: now.Add(-30 * time.Minute), delta: time.Minute},
+		{name: "RFC3339", input: "2024-01-01T00:00:00Z", want: time.Unix(1704067200, 0)},
+		{name: "unix seconds", input: "1704067200", want: time.Unix(1704067200, 0)},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := parseGraphiteTime(tc.input)
-			assert.Equal(t, tc.want, got)
+			got, err := parseGraphiteTime(tc.input, "-1h", parseStartTime)
+			require.NoError(t, err)
+			assert.WithinDuration(t, tc.want, got, tc.delta)
 		})
 	}
+
+	_, err := parseGraphiteTime("noon+yesterday", "-1h", parseStartTime)
+	assert.Error(t, err)
 }
 
 // --- parseGraphiteDatapoints ---
@@ -118,89 +107,112 @@ func TestParseGraphiteDatapoints(t *testing.T) {
 	})
 }
 
-// --- queryGraphite handler (via doGet) ---
+// --- queryGraphite via /api/ds/query ---
 
-func TestQueryGraphite_DoGet_ParsesRenderResponse(t *testing.T) {
-	renderResp := []graphiteRawSeries{
-		{
-			Target: "servers.web01.cpu.load5",
-			Datapoints: [][]json.RawMessage{
-				{json.RawMessage("0.5"), json.RawMessage("1704067200")},
-				{json.RawMessage("null"), json.RawMessage("1704067260")},
-				{json.RawMessage("1.2"), json.RawMessage("1704067320")},
-			},
-		},
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/render", r.URL.Path)
-		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "servers.web01.cpu.load5", r.URL.Query().Get("target"))
-		assert.Equal(t, "json", r.URL.Query().Get("format"))
+// graphiteDSQueryStub answers /api/ds/query with the given frames for refId A
+// (or no result at all when frames is nil), and records the payload it received.
+func graphiteDSQueryStub(frames data.Frames) (*httptest.Server, *map[string]interface{}) {
+	payload := &map[string]interface{}{}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(renderResp)
-	}))
-	t.Cleanup(ts.Close)
+		switch r.URL.Path {
+		case "/api/datasources/uid/graphite":
+			_, _ = io.WriteString(w, `{"uid":"graphite","type":"graphite"}`)
+		case "/api/ds/query":
+			_ = json.NewDecoder(r.Body).Decode(payload)
+			resp := backend.QueryDataResponse{Responses: backend.Responses{}}
+			if frames != nil {
+				resp.Responses["A"] = backend.DataResponse{Frames: frames}
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		default:
+			http.NotFound(w, r)
+		}
+	})), payload
+}
 
-	client := &GraphiteClient{
-		httpClient: http.DefaultClient,
-		baseURL:    ts.URL,
+// graphiteFrame builds a frame shaped like the ones Grafana's Graphite
+// datasource returns: one per series, values 60s apart from 1704067200.
+func graphiteFrame(target string, tags data.Labels, values ...*float64) *data.Frame {
+	times := make([]time.Time, len(values))
+	for i := range values {
+		times[i] = time.Unix(1704067200+int64(i)*60, 0)
 	}
+	return data.NewFrame("",
+		data.NewField("time", nil, times),
+		data.NewField("value", tags, values).SetConfig(&data.FieldConfig{DisplayNameFromDS: target}),
+	)
+}
 
-	params := url.Values{}
-	params.Set("target", "servers.web01.cpu.load5")
-	params.Set("from", "-1h")
-	params.Set("until", "now")
-	params.Set("format", "json")
+func TestQueryGraphite_ConvertsFrames(t *testing.T) {
+	v1, v2 := 0.5, 1.2
+	server, payload := graphiteDSQueryStub(data.Frames{
+		graphiteFrame("alias(servers.web01.cpu.load5)", data.Labels{"name": "servers.web01.cpu.load5"}, &v1, nil, &v2),
+	})
+	t.Cleanup(server.Close)
 
-	data, err := client.doGet(context.Background(), "/render", params)
+	result, err := queryGraphite(enforceTestCtx(server, false), QueryGraphiteParams{
+		DatasourceUID: "graphite",
+		Target:        "servers.web01.cpu.load5",
+		From:          "2024-01-01T00:00:00Z",
+		Until:         "2024-01-01T01:00:00Z",
+	})
 	require.NoError(t, err)
+	assert.Nil(t, result.Hints)
+	assert.Equal(t, []*GraphiteSeries{{
+		Target: "alias(servers.web01.cpu.load5)",
+		Tags:   map[string]string{"name": "servers.web01.cpu.load5"},
+		Datapoints: []GraphiteDatapoint{
+			{Value: &v1, Timestamp: 1704067200},
+			{Value: nil, Timestamp: 1704067260},
+			{Value: &v2, Timestamp: 1704067320},
+		},
+	}}, result.Series)
 
-	var series []graphiteRawSeries
-	require.NoError(t, json.Unmarshal(data, &series))
-	require.Len(t, series, 1)
-	assert.Equal(t, "servers.web01.cpu.load5", series[0].Target)
+	assert.Equal(t, "1704067200000", (*payload)["from"])
+	assert.Equal(t, "1704070800000", (*payload)["to"])
+	queries := (*payload)["queries"].([]interface{})
+	require.Len(t, queries, 1)
+	q := queries[0].(map[string]interface{})
+	assert.Equal(t, "servers.web01.cpu.load5", q["target"])
+	assert.Equal(t, map[string]interface{}{"uid": "graphite", "type": "graphite"}, q["datasource"])
+	// One point per second of the range, so Graphite never consolidates.
+	assert.Equal(t, float64(3600), q["maxDataPoints"])
+}
 
-	pts := parseGraphiteDatapoints(series[0].Datapoints)
-	require.Len(t, pts, 3)
-	require.NotNil(t, pts[0].Value)
-	assert.InDelta(t, 0.5, *pts[0].Value, 1e-9)
-	assert.Nil(t, pts[1].Value)
-	require.NotNil(t, pts[2].Value)
-	assert.InDelta(t, 1.2, *pts[2].Value, 1e-9)
+func TestQueryGraphite_PassesMaxDataPoints(t *testing.T) {
+	server, payload := graphiteDSQueryStub(nil)
+	t.Cleanup(server.Close)
+
+	_, err := queryGraphite(enforceTestCtx(server, false), QueryGraphiteParams{
+		DatasourceUID: "graphite", Target: "a.b", MaxDataPoints: 50,
+	})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, float64(50), q["maxDataPoints"])
+}
+
+func TestGraphiteFramesToSeries_Error(t *testing.T) {
+	_, err := graphiteFramesToSeries(&backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.ErrDataResponse(backend.StatusBadRequest, "request failed with error: bad target"),
+	}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bad target")
 }
 
 func TestQueryGraphite_EmptyResult_HasHints(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
-	}))
-	t.Cleanup(ts.Close)
+	server, _ := graphiteDSQueryStub(nil)
+	t.Cleanup(server.Close)
 
-	client := &GraphiteClient{
-		httpClient: http.DefaultClient,
-		baseURL:    ts.URL,
-	}
-
-	ctx := context.Background()
-	data, err := client.doGet(ctx, "/render", nil)
-	require.NoError(t, err)
-
-	var rawSeries []graphiteRawSeries
-	require.NoError(t, json.Unmarshal(data, &rawSeries))
-	assert.Empty(t, rawSeries)
-
-	// Simulate the handler building hints for an empty result
-	hints := GenerateEmptyResultHints(HintContext{
-		DatasourceType: GraphiteDatasourceType,
-		Query:          "nonexistent.metric.*",
-		StartTime:      time.Now().Add(-time.Hour),
-		EndTime:        time.Now(),
+	result, err := queryGraphite(enforceTestCtx(server, false), QueryGraphiteParams{
+		DatasourceUID: "graphite", Target: "nonexistent.metric.*",
 	})
-	require.NotNil(t, hints)
-	assert.NotEmpty(t, hints.Summary)
-	assert.NotEmpty(t, hints.PossibleCauses)
-	assert.NotEmpty(t, hints.SuggestedActions)
+	require.NoError(t, err)
+	assert.Empty(t, result.Series)
+	require.NotNil(t, result.Hints)
+	assert.NotEmpty(t, result.Hints.Summary)
+	assert.NotEmpty(t, result.Hints.PossibleCauses)
+	assert.NotEmpty(t, result.Hints.SuggestedActions)
 }
 
 // --- listGraphiteMetrics handler ---
@@ -457,105 +469,44 @@ func TestComputeSeriesDensity_LongestGapInMiddle(t *testing.T) {
 	assert.Equal(t, int64(1704067440), *s.LastSeen)
 }
 
-// --- query_graphite_density full-flow via client ---
+// --- query_graphite_density full-flow via /api/ds/query ---
 
 func TestQueryGraphiteDensity_AllNullCluster(t *testing.T) {
 	// Primary use-case: wildcard target where every node is all-null.
-	// Verifies that the raw-series path returns fillRatio=0 and lastSeen=nil
-	// for every series.
-	rawResp := []graphiteRawSeries{
-		{
-			Target: "obox-cl1.sys.sessions",
-			Datapoints: [][]json.RawMessage{
-				{json.RawMessage("null"), json.RawMessage("1704067200")},
-				{json.RawMessage("null"), json.RawMessage("1704067260")},
-				{json.RawMessage("null"), json.RawMessage("1704067320")},
-			},
-		},
-		{
-			Target: "obox-cl2.sys.sessions",
-			Datapoints: [][]json.RawMessage{
-				{json.RawMessage("null"), json.RawMessage("1704067200")},
-				{json.RawMessage("null"), json.RawMessage("1704067260")},
-				{json.RawMessage("null"), json.RawMessage("1704067320")},
-			},
-		},
-	}
+	server, _ := graphiteDSQueryStub(data.Frames{
+		graphiteFrame("obox-cl1.sys.sessions", nil, nil, nil, nil),
+		graphiteFrame("obox-cl2.sys.sessions", nil, nil, nil, nil),
+	})
+	t.Cleanup(server.Close)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(rawResp)
-	}))
-	t.Cleanup(ts.Close)
-
-	client := &GraphiteClient{httpClient: http.DefaultClient, baseURL: ts.URL}
-
-	params := url.Values{}
-	params.Set("target", "obox-cl*.sys.sessions")
-	params.Set("from", "-1h")
-	params.Set("until", "now")
-	params.Set("format", "json")
-
-	data, err := client.doGet(context.Background(), "/render", params)
+	result, err := queryGraphiteDensity(enforceTestCtx(server, false), QueryGraphiteDensityParams{
+		DatasourceUID: "graphite", Target: "obox-cl*.sys.sessions",
+	})
 	require.NoError(t, err)
-
-	var raw []graphiteRawSeries
-	require.NoError(t, json.Unmarshal(data, &raw))
-	require.Len(t, raw, 2)
-
-	for _, rs := range raw {
-		pts := parseGraphiteDatapoints(rs.Datapoints)
-		s := computeSeriesDensity(rs.Target, pts)
-		assert.InDelta(t, 0.0, s.FillRatio, 1e-9, "series %s", rs.Target)
-		assert.Equal(t, 0, s.NonNullPoints, "series %s", rs.Target)
-		assert.Nil(t, s.LastSeen, "series %s", rs.Target)
+	require.Len(t, result.Series, 2)
+	for _, s := range result.Series {
+		assert.InDelta(t, 0.0, s.FillRatio, 1e-9, "series %s", s.Target)
+		assert.Equal(t, 0, s.NonNullPoints, "series %s", s.Target)
+		assert.Nil(t, s.LastSeen, "series %s", s.Target)
 	}
 }
 
 func TestQueryGraphiteDensity_MixedCluster(t *testing.T) {
 	v5, v6 := 5.0, 6.0
-	rawResp := []graphiteRawSeries{
-		{
-			Target: "obox-cl1.sys.sessions",
-			Datapoints: [][]json.RawMessage{
-				{json.RawMessage("null"), json.RawMessage("1704067200")},
-				{json.RawMessage("null"), json.RawMessage("1704067260")},
-				{json.RawMessage("null"), json.RawMessage("1704067320")},
-			},
-		},
-		{
-			Target: "obox-cl2.sys.sessions",
-			Datapoints: [][]json.RawMessage{
-				{json.RawMessage("5.0"), json.RawMessage("1704067200")},
-				{json.RawMessage("null"), json.RawMessage("1704067260")},
-				{json.RawMessage("6.0"), json.RawMessage("1704067320")},
-			},
-		},
-	}
-	_ = v5
-	_ = v6
+	server, _ := graphiteDSQueryStub(data.Frames{
+		graphiteFrame("obox-cl1.sys.sessions", nil, nil, nil, nil),
+		graphiteFrame("obox-cl2.sys.sessions", nil, &v5, nil, &v6),
+	})
+	t.Cleanup(server.Close)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(rawResp)
-	}))
-	t.Cleanup(ts.Close)
-
-	client := &GraphiteClient{httpClient: http.DefaultClient, baseURL: ts.URL}
-
-	params := url.Values{}
-	params.Set("target", "obox-cl*.sys.sessions")
-	params.Set("format", "json")
-
-	data, err := client.doGet(context.Background(), "/render", params)
+	result, err := queryGraphiteDensity(enforceTestCtx(server, false), QueryGraphiteDensityParams{
+		DatasourceUID: "graphite", Target: "obox-cl*.sys.sessions",
+	})
 	require.NoError(t, err)
-
-	var raw []graphiteRawSeries
-	require.NoError(t, json.Unmarshal(data, &raw))
-	require.Len(t, raw, 2)
+	require.Len(t, result.Series, 2)
 
 	// cl1: all null
-	s1 := computeSeriesDensity(raw[0].Target, parseGraphiteDatapoints(raw[0].Datapoints))
+	s1 := result.Series[0]
 	assert.Equal(t, "obox-cl1.sys.sessions", s1.Target)
 	assert.InDelta(t, 0.0, s1.FillRatio, 1e-9)
 	assert.Equal(t, 3, s1.TotalPoints)
@@ -564,7 +515,7 @@ func TestQueryGraphiteDensity_MixedCluster(t *testing.T) {
 	assert.Equal(t, int64(180), s1.LongestGapSec)
 
 	// cl2: mixed
-	s2 := computeSeriesDensity(raw[1].Target, parseGraphiteDatapoints(raw[1].Datapoints))
+	s2 := result.Series[1]
 	assert.Equal(t, "obox-cl2.sys.sessions", s2.Target)
 	assert.InDelta(t, 2.0/3.0, s2.FillRatio, 1e-9)
 	assert.Equal(t, 3, s2.TotalPoints)

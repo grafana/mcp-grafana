@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,6 +26,10 @@ const (
 type GraphiteClient struct {
 	httpClient *http.Client
 	baseURL    string
+	uid        string
+	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
+	// accept datasource UIDs; render queries there stay on the proxy.
+	legacy bool
 }
 
 func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error) {
@@ -65,7 +71,11 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 	}
 
 	client := &http.Client{Transport: rt}
-	return &GraphiteClient{httpClient: client, baseURL: baseURL}, nil
+	dsUID := ds.UID
+	if dsUID == "" {
+		dsUID = uid
+	}
+	return &GraphiteClient{httpClient: client, baseURL: baseURL, uid: dsUID, legacy: legacyMode}, nil
 }
 
 // doGet performs a GET request to the Graphite API via the Grafana proxy
@@ -144,31 +154,148 @@ func parseGraphiteDatapoints(raw [][]json.RawMessage) []GraphiteDatapoint {
 	return pts
 }
 
-// parseGraphiteTime converts a time string to a value Graphite's render API
-// accepts for its `from`/`until` parameters.
+var graphiteRelativeTime = regexp.MustCompile(`^-(\d+)([a-z]+)$`)
+
+// graphiteUnits maps Graphite relative-time unit prefixes to gtime units, in
+// the order Graphite matches them ("min" before "mon", both before "m").
+var graphiteUnits = [][2]string{{"s", "s"}, {"min", "m"}, {"h", "h"}, {"d", "d"}, {"w", "w"}, {"mon", "M"}, {"y", "y"}}
+
+// parseGraphiteTime resolves a from/until value to an absolute time. It
+// accepts Graphite relative times ("-1h", "-5min", "-2weeks"), Unix seconds,
+// and everything parseStartTime/parseEndTime accept (RFC3339, "now",
+// "now-1h"). Empty returns the default.
+func parseGraphiteTime(s, def string, parse func(string) (time.Time, error)) (time.Time, error) {
+	if s == "" {
+		s = def
+	}
+	if secs, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return time.Unix(secs, 0), nil
+	}
+	if m := graphiteRelativeTime.FindStringSubmatch(s); m != nil {
+		for _, u := range graphiteUnits {
+			if strings.HasPrefix(m[2], u[0]) {
+				s = "now-" + m[1] + u[1]
+				break
+			}
+		}
+	}
+	return parse(s)
+}
+
+// graphiteRender evaluates target over [from, until] and returns one series
+// per resolved metric. It runs through Grafana's /api/ds/query endpoint so
+// the query shows up in the query service's log, except on Grafana before
+// 9.0, where it calls the render API through the datasource proxy.
 //
-//   - Empty string → returned as-is (caller should supply a default).
-//   - Graphite relative formats ("-1h", "-24h", "now", …) → passed through unchanged.
-//   - RFC 3339 strings → converted to a Unix timestamp (integer seconds).
-func parseGraphiteTime(s string) string {
-	if s == "" || s == "now" || strings.HasPrefix(s, "-") {
-		return s
-	}
-	t, err := time.Parse(time.RFC3339, s)
+// maxDataPoints defaults to one point per second of the range so Graphite
+// never consolidates; Grafana otherwise asks for 100 points.
+func graphiteRender(ctx context.Context, uid, target, fromStr, untilStr string, maxDataPoints int) ([]*GraphiteSeries, time.Time, time.Time, error) {
+	from, err := parseGraphiteTime(fromStr, "-1h", parseStartTime)
 	if err != nil {
-		// Unknown format — pass through and let Graphite decide.
-		return s
+		return nil, from, time.Time{}, fmt.Errorf("parsing from: %w", err)
 	}
-	return strconv.FormatInt(t.Unix(), 10)
+	until, err := parseGraphiteTime(untilStr, "now", parseEndTime)
+	if err != nil {
+		return nil, from, until, fmt.Errorf("parsing until: %w", err)
+	}
+	if maxDataPoints <= 0 {
+		maxDataPoints = max(int(until.Sub(from)/time.Second), 1)
+	}
+
+	client, err := newGraphiteClient(ctx, uid)
+	if err != nil {
+		return nil, from, until, fmt.Errorf("creating graphite client: %w", err)
+	}
+
+	if client.legacy {
+		params := url.Values{}
+		params.Set("target", target)
+		params.Set("from", strconv.FormatInt(from.Unix(), 10))
+		params.Set("until", strconv.FormatInt(until.Unix(), 10))
+		params.Set("format", "json")
+		params.Set("maxDataPoints", strconv.Itoa(maxDataPoints))
+		data, err := client.doGet(ctx, "/render", params)
+		if err != nil {
+			return nil, from, until, fmt.Errorf("querying graphite render API: %w", err)
+		}
+		var rawSeries []graphiteRawSeries
+		if err := json.Unmarshal(data, &rawSeries); err != nil {
+			return nil, from, until, fmt.Errorf("parsing graphite render response: %w", err)
+		}
+		series := make([]*GraphiteSeries, 0, len(rawSeries))
+		for _, rs := range rawSeries {
+			series = append(series, &GraphiteSeries{Target: rs.Target, Tags: rs.Tags, Datapoints: parseGraphiteDatapoints(rs.Datapoints)})
+		}
+		return series, from, until, nil
+	}
+
+	httpClient, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, from, until, err
+	}
+	query := map[string]interface{}{
+		"refId":         "A",
+		"datasource":    map[string]string{"uid": client.uid, "type": GraphiteDatasourceType},
+		"target":        target,
+		"maxDataPoints": maxDataPoints,
+	}
+	resp, err := doDSQuery(ctx, httpClient, baseURL, dsQueryPayload(from, until, query))
+	if err != nil {
+		return nil, from, until, fmt.Errorf("querying graphite: %w", err)
+	}
+	series, err := graphiteFramesToSeries(resp)
+	return series, from, until, err
+}
+
+// graphiteFramesToSeries converts the frames Grafana's Graphite datasource
+// returns (one per series: a time field and a nullable value field whose
+// labels are the series tags and whose display name is the target) back
+// into GraphiteSeries.
+func graphiteFramesToSeries(resp *backend.QueryDataResponse) ([]*GraphiteSeries, error) {
+	series := []*GraphiteSeries{}
+	r, ok := resp.Responses["A"]
+	if !ok {
+		return series, nil
+	}
+	if r.Error != nil {
+		return nil, fmt.Errorf("querying graphite: %s", r.Error.Error())
+	}
+	for _, frame := range r.Frames {
+		timeIdx, valueIdx := findTimeAndValueFields(frame.Fields)
+		if timeIdx == -1 || valueIdx == -1 {
+			continue
+		}
+		field := frame.Fields[valueIdx]
+		s := &GraphiteSeries{Target: field.Name, Datapoints: make([]GraphiteDatapoint, 0, frame.Rows())}
+		if field.Config != nil && field.Config.DisplayNameFromDS != "" {
+			s.Target = field.Config.DisplayNameFromDS
+		}
+		if len(field.Labels) > 0 {
+			s.Tags = map[string]string(field.Labels)
+		}
+		for i := 0; i < frame.Rows(); i++ {
+			ms, ok := toMillis(frame.At(timeIdx, i))
+			if !ok {
+				continue
+			}
+			dp := GraphiteDatapoint{Timestamp: ms / 1000}
+			if v, ok := toFloat(frame.At(valueIdx, i)); ok {
+				dp.Value = &v
+			}
+			s.Datapoints = append(s.Datapoints, dp)
+		}
+		series = append(series, s)
+	}
+	return series, nil
 }
 
 // QueryGraphiteParams defines the parameters for querying a Graphite datasource.
 type QueryGraphiteParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Graphite datasource to query"`
 	Target        string `json:"target" jsonschema:"required,description=The Graphite target expression to evaluate (e.g. 'servers.web*.cpu.load5'\\, 'sumSeries(app.*.requests)'\\, 'seriesByTag(\\'name=cpu.load\\')')"`
-	From          string `json:"from,omitempty" jsonschema:"description=Start of the time range. Accepts RFC3339 (e.g. '2024-01-01T00:00:00Z') or Graphite relative times (e.g. '-1h'\\, '-24h'). Defaults to '-1h'."`
-	Until         string `json:"until,omitempty" jsonschema:"description=End of the time range. Accepts RFC3339 or Graphite relative times (e.g. 'now'). Defaults to 'now'."`
-	MaxDataPoints int    `json:"maxDataPoints,omitempty" jsonschema:"description=Optional maximum number of data points per series. Graphite consolidates data when the requested range exceeds this value."`
+	From          string `json:"from,omitempty" jsonschema:"description=Start of the time range. Accepts RFC3339 (e.g. '2024-01-01T00:00:00Z')\\, Unix seconds\\, or relative times (e.g. '-1h'\\, '-24h'\\, 'now-1h'). Defaults to '-1h'."`
+	Until         string `json:"until,omitempty" jsonschema:"description=End of the time range. Accepts RFC3339\\, Unix seconds\\, or relative times (e.g. 'now'). Defaults to 'now'."`
+	MaxDataPoints int    `json:"maxDataPoints,omitempty" jsonschema:"description=Optional maximum number of data points per series. Graphite consolidates data when the requested range exceeds this value. Defaults to returning the stored resolution."`
 }
 
 // QueryGraphiteResult wraps a Graphite render query result with optional hints.
@@ -178,62 +305,18 @@ type QueryGraphiteResult struct {
 }
 
 func queryGraphite(ctx context.Context, args QueryGraphiteParams) (*QueryGraphiteResult, error) {
-	client, err := newGraphiteClient(ctx, args.DatasourceUID)
+	series, from, until, err := graphiteRender(ctx, args.DatasourceUID, args.Target, args.From, args.Until, args.MaxDataPoints)
 	if err != nil {
-		return nil, fmt.Errorf("creating graphite client: %w", err)
-	}
-
-	from := args.From
-	if from == "" {
-		from = "-1h"
-	}
-	until := args.Until
-	if until == "" {
-		until = "now"
-	}
-
-	params := url.Values{}
-	params.Set("target", args.Target)
-	params.Set("from", parseGraphiteTime(from))
-	params.Set("until", parseGraphiteTime(until))
-	params.Set("format", "json")
-	if args.MaxDataPoints > 0 {
-		params.Set("maxDataPoints", strconv.Itoa(args.MaxDataPoints))
-	}
-
-	data, err := client.doGet(ctx, "/render", params)
-	if err != nil {
-		return nil, fmt.Errorf("querying graphite render API: %w", err)
-	}
-
-	var rawSeries []graphiteRawSeries
-	if err := json.Unmarshal(data, &rawSeries); err != nil {
-		return nil, fmt.Errorf("parsing graphite render response: %w", err)
-	}
-
-	series := make([]*GraphiteSeries, 0, len(rawSeries))
-	for _, rs := range rawSeries {
-		series = append(series, &GraphiteSeries{
-			Target:     rs.Target,
-			Tags:       rs.Tags,
-			Datapoints: parseGraphiteDatapoints(rs.Datapoints),
-		})
+		return nil, err
 	}
 
 	result := &QueryGraphiteResult{Series: series}
 	if len(series) == 0 {
-		var startTime, endTime time.Time
-		if t, err := time.Parse(time.RFC3339, args.From); err == nil {
-			startTime = t
-		}
-		if t, err := time.Parse(time.RFC3339, args.Until); err == nil {
-			endTime = t
-		}
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: GraphiteDatasourceType,
 			Query:          args.Target,
-			StartTime:      startTime,
-			EndTime:        endTime,
+			StartTime:      from,
+			EndTime:        until,
 		})
 	}
 	return result, nil
@@ -437,8 +520,8 @@ func computeSeriesDensity(target string, pts []GraphiteDatapoint) *GraphiteSerie
 type QueryGraphiteDensityParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Graphite datasource to query"`
 	Target        string `json:"target" jsonschema:"required,description=Graphite target expression; supports wildcards (e.g. 'obox-cl*.sys.sessions')"`
-	From          string `json:"from,omitempty" jsonschema:"description=Start of the time range. Accepts RFC3339 or Graphite relative times (e.g. '-1h'). Defaults to '-1h'."`
-	Until         string `json:"until,omitempty" jsonschema:"description=End of the time range. Accepts RFC3339 or Graphite relative times (e.g. 'now'). Defaults to 'now'."`
+	From          string `json:"from,omitempty" jsonschema:"description=Start of the time range. Accepts RFC3339\\, Unix seconds\\, or relative times (e.g. '-1h'\\, 'now-1h'). Defaults to '-1h'."`
+	Until         string `json:"until,omitempty" jsonschema:"description=End of the time range. Accepts RFC3339\\, Unix seconds\\, or relative times (e.g. 'now'). Defaults to 'now'."`
 }
 
 // GraphiteSeriesDensity holds data-density statistics for a single Graphite series.
@@ -468,43 +551,16 @@ type QueryGraphiteDensityResult struct {
 }
 
 func queryGraphiteDensity(ctx context.Context, args QueryGraphiteDensityParams) (*QueryGraphiteDensityResult, error) {
-	client, err := newGraphiteClient(ctx, args.DatasourceUID)
+	series, _, _, err := graphiteRender(ctx, args.DatasourceUID, args.Target, args.From, args.Until, 0)
 	if err != nil {
-		return nil, fmt.Errorf("creating graphite client: %w", err)
-	}
-
-	from := parseGraphiteTime(args.From)
-	if from == "" {
-		from = "-1h"
-	}
-	until := parseGraphiteTime(args.Until)
-	if until == "" {
-		until = "now"
-	}
-
-	rawParams := url.Values{}
-	rawParams.Set("target", args.Target)
-	rawParams.Set("from", from)
-	rawParams.Set("until", until)
-	rawParams.Set("format", "json")
-
-	rawData, err := client.doGet(ctx, "/render", rawParams)
-	if err != nil {
-		return nil, fmt.Errorf("querying graphite render API: %w", err)
-	}
-
-	var rawSeries []graphiteRawSeries
-	if err := json.Unmarshal(rawData, &rawSeries); err != nil {
-		return nil, fmt.Errorf("parsing graphite render response: %w", err)
+		return nil, err
 	}
 
 	result := &QueryGraphiteDensityResult{
-		Series: make([]*GraphiteSeriesDensity, 0, len(rawSeries)),
+		Series: make([]*GraphiteSeriesDensity, 0, len(series)),
 	}
-	for _, rs := range rawSeries {
-		pts := parseGraphiteDatapoints(rs.Datapoints)
-		stats := computeSeriesDensity(rs.Target, pts)
-		result.Series = append(result.Series, stats)
+	for _, s := range series {
+		result.Series = append(result.Series, computeSeriesDensity(s.Target, s.Datapoints))
 	}
 	return result, nil
 }
