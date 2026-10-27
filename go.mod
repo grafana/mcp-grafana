@@ -1,6 +1,6 @@
 module github.com/grafana/mcp-grafana/v2
 
-go 1.26.10
+go 1.27.3
 
 require (
 	connectrpc.com/connect v1.21.1
