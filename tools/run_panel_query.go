@@ -338,6 +338,10 @@ type templateVariableValues map[string][]string
 // formatters follow Grafana's formatting syntax; unknown formatters fall back
 // to Grafana's glob representation.
 func substituteTemplateVariableValues(query string, variables templateVariableValues) string {
+	return substituteTemplateVariableValuesWithFormatter(query, variables, formatTemplateVariable)
+}
+
+func substituteTemplateVariableValuesWithFormatter(query string, variables templateVariableValues, formatter func([]string, string) string) string {
 	for name, values := range variables {
 		variableRe := regexp.MustCompile(fmt.Sprintf(
 			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
@@ -348,7 +352,7 @@ func substituteTemplateVariableValues(query string, variables templateVariableVa
 			if !hasFormat {
 				return firstTemplateVariableValue(values)
 			}
-			return formatTemplateVariable(values, format)
+			return formatter(values, format)
 		})
 	}
 	return query

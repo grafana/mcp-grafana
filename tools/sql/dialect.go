@@ -47,6 +47,7 @@ type QuerySQLParams struct {
 	Schema                     string            `json:"schema,omitempty" jsonschema:"description=Schema override (Snowflake\\, PostgreSQL\\, MSSQL). Defaults to datasource config."`
 	Catalog                    string            `json:"catalog,omitempty" jsonschema:"description=Data catalog override (Athena only). Defaults to datasource config."`
 	Region                     string            `json:"region,omitempty" jsonschema:"description=AWS region override (Athena only). Defaults to datasource config."`
+	Location                   string            `json:"location,omitempty" jsonschema:"description=BigQuery processing location (e.g. US or europe-west1). Defaults to datasource config."`
 	ResultReuseEnabled         bool              `json:"resultReuseEnabled,omitempty" jsonschema:"description=Enable Athena query result reuse. Requires Athena engine version 3."`
 	ResultReuseMaxAgeInMinutes int               `json:"resultReuseMaxAgeInMinutes,omitempty" jsonschema:"description=Max age in minutes for reused Athena results. Only applies when resultReuseEnabled is true."`
 }
@@ -54,8 +55,8 @@ type QuerySQLParams struct {
 // ListSQLTablesParams are the parameters for the list_sql_tables tool.
 type ListSQLTablesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource."`
-	Database      string `json:"database,omitempty" jsonschema:"description=Database name to filter tables. Behavior varies by datasource type."`
-	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name to filter tables (Snowflake\\, PostgreSQL\\, MSSQL)."`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name to filter tables; BigQuery project (defaults to datasource defaultProject)."`
+	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name to filter tables (Snowflake\\, PostgreSQL\\, MSSQL); required dataset for BigQuery."`
 	Catalog       string `json:"catalog,omitempty" jsonschema:"description=Data catalog name (Athena only)."`
 	Region        string `json:"region,omitempty" jsonschema:"description=AWS region override (Athena only)."`
 }
@@ -64,8 +65,8 @@ type ListSQLTablesParams struct {
 type DescribeSQLTableParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource."`
 	Table         string `json:"table" jsonschema:"required,description=Table name to describe."`
-	Database      string `json:"database,omitempty" jsonschema:"description=Database name. Behavior varies by datasource type."`
-	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name (Snowflake\\, PostgreSQL\\, MSSQL)."`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name; BigQuery project (defaults to datasource defaultProject)."`
+	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name (Snowflake\\, PostgreSQL\\, MSSQL); required dataset for BigQuery."`
 	Catalog       string `json:"catalog,omitempty" jsonschema:"description=Data catalog name (Athena only)."`
 	Region        string `json:"region,omitempty" jsonschema:"description=AWS region override (Athena only)."`
 }
@@ -74,7 +75,7 @@ type DescribeSQLTableParams struct {
 type ListSQLDatabasesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the SQL datasource."`
 	Catalog       string `json:"catalog,omitempty" jsonschema:"description=Catalog name. For Athena: when empty returns catalogs; when set returns databases in that catalog."`
-	Database      string `json:"database,omitempty" jsonschema:"description=Database name. For Snowflake: when set returns schemas in that database."`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name. For Snowflake: when set returns schemas in that database. For BigQuery: project to list datasets from; defaults to datasource config."`
 	Region        string `json:"region,omitempty" jsonschema:"description=AWS region override (Athena)."`
 }
 
