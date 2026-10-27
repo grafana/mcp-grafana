@@ -845,6 +845,18 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			expected: "rate(requests[36s])",
 		},
 		{
+			name:     "auto",
+			query:    `count_over_time({job="x"}[$__auto])`,
+			duration: time.Hour,
+			expected: `count_over_time({job="x"}[36s])`,
+		},
+		{
+			name:     "auto_braced",
+			query:    `count_over_time({job="x"}[${__auto}])`,
+			duration: time.Hour,
+			expected: `count_over_time({job="x"}[36s])`,
+		},
+		{
 			name:     "interval_ms",
 			query:    "timestamp(up) - $__interval_ms",
 			duration: time.Hour,

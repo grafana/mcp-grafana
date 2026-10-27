@@ -4,6 +4,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -114,6 +115,47 @@ func createMacroTestDashboard(t *testing.T) string {
 					map[string]interface{}{
 						"refId": "A",
 						"expr":  `rate({container=~".+"}[${__rate_interval}])`,
+					},
+				},
+			},
+			// Panel 7: Loki metric query with $__auto, the step Grafana fills in
+			map[string]interface{}{
+				"id":    float64(7),
+				"title": "Loki $__auto",
+				"type":  "timeseries",
+				"datasource": map[string]interface{}{
+					"type": "loki",
+					"uid":  "loki",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId": "A",
+						"expr":  `count_over_time({container=~".+"}[$__auto])`,
+					},
+				},
+			},
+			// Panel 8: the "default" datasource reference
+			map[string]interface{}{
+				"id":         float64(8),
+				"title":      "Default datasource",
+				"type":       "timeseries",
+				"datasource": map[string]interface{}{"uid": "default"},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId": "A",
+						"expr":  "up",
+					},
+				},
+			},
+			// Panel 9: no datasource at all, which Grafana also treats as default
+			map[string]interface{}{
+				"id":    float64(9),
+				"title": "No datasource",
+				"type":  "timeseries",
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId": "A",
+						"expr":  "up",
 					},
 				},
 			},
@@ -234,6 +276,34 @@ func TestRunPanelQuery_MacroSubstitution_E2E(t *testing.T) {
 		assert.Empty(t, result.Errors)
 		assert.NotNil(t, result.Results[6].Results)
 	})
+
+	t.Run("loki panel with $__auto macro", func(t *testing.T) {
+		result, err := runPanelQuery(ctx, RunPanelQueryParams{
+			DashboardUID: uid,
+			PanelIDs:     []int{7},
+			Start:        "now-1h",
+			End:          "now",
+		})
+		require.NoError(t, err)
+		assert.Empty(t, result.Errors)
+		require.Contains(t, result.Results, 7)
+	})
+
+	for _, panelID := range []int{8, 9} {
+		t.Run(fmt.Sprintf("panel %d resolves the default datasource", panelID), func(t *testing.T) {
+			result, err := runPanelQuery(ctx, RunPanelQueryParams{
+				DashboardUID: uid,
+				PanelIDs:     []int{panelID},
+				Start:        "now-1h",
+				End:          "now",
+			})
+			require.NoError(t, err)
+			assert.Empty(t, result.Errors)
+			require.Contains(t, result.Results, panelID)
+			assert.Equal(t, "prometheus", result.Results[panelID].DatasourceUID)
+			assert.Equal(t, "prometheus", result.Results[panelID].DatasourceType)
+		})
+	}
 
 	t.Run("multiple panels in one call", func(t *testing.T) {
 		result, err := runPanelQuery(ctx, RunPanelQueryParams{
