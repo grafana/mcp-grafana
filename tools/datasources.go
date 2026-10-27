@@ -69,20 +69,9 @@ type ListDatasourcesResult struct {
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	var list models.DataSourceList
-	resp, err := c.Datasources.GetDataSourcesWithParams(
-		datasources.NewGetDataSourcesParamsWithContext(ctx),
-	)
-	if err == nil {
-		list = resp.Payload
-	} else if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
-		// The datasources API is not accessible to this token (e.g. it
-		// requires Org Admin before Grafana 9.0); fall back to frontend settings
-		// (see datasources_fallback.go).
-		list = fb
-	} else {
-		return nil, fmt.Errorf("list datasources: %w", err)
+	list, err := fetchDatasourceList(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Filter by type and/or name if specified
@@ -123,6 +112,38 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 		Total:       total,
 		HasMore:     hasMore,
 	}, nil
+}
+
+// fetchDatasourceList returns every datasource visible to the caller.
+func fetchDatasourceList(ctx context.Context) (models.DataSourceList, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
+	if err == nil {
+		return resp.Payload, nil
+	}
+	if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
+		// The datasources API is not accessible to this token (e.g. it
+		// requires Org Admin before Grafana 9.0); fall back to frontend settings
+		// (see datasources_fallback.go).
+		return fb, nil
+	}
+	return nil, fmt.Errorf("list datasources: %w", err)
+}
+
+// getDefaultDatasource returns the organization's default datasource.
+func getDefaultDatasource(ctx context.Context) (*models.DataSourceListItemDTO, error) {
+	list, err := fetchDatasourceList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, ds := range list {
+		if ds.IsDefault {
+			return ds, nil
+		}
+	}
+	return nil, errors.New("no default datasource is configured")
 }
 
 type CreateDatasourceParams struct {

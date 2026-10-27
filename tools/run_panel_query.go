@@ -217,6 +217,17 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		}
 	}
 
+	// Grafana resolves the "default" datasource reference to the org's default
+	// datasource; it is not a real UID the datasource API knows about.
+	if datasourceUID == "default" {
+		ds, err := getDefaultDatasource(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("resolving default datasource: %w", err)
+		}
+		datasourceUID = ds.UID
+		datasourceType = ""
+	}
+
 	// Resolve the datasource type authoritatively from its UID whenever the
 	// caller overrode the datasource, or when we don't yet have a type. The
 	// datasource's real type — not a caller-supplied one — decides which
@@ -979,6 +990,11 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	query = strings.ReplaceAll(query, "${__interval}", intervalStr)
 	query = strings.ReplaceAll(query, "$__interval", intervalStr)
 
+	// $__auto - Grafana fills this in with the step for range queries, which
+	// is all run_panel_query issues.
+	query = strings.ReplaceAll(query, "${__auto}", intervalStr)
+	query = strings.ReplaceAll(query, "$__auto", intervalStr)
+
 	return query
 }
 
@@ -1196,7 +1212,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval), and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcpgrafana.WithTitleAnnotation("Run panel query"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
