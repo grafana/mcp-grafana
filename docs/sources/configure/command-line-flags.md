@@ -170,7 +170,7 @@ The following tools are not registered when the flag is set:
 - Elasticsearch and OpenSearch, Quickwit: `query_elasticsearch`, `query_quickwit`
 - SQL datasources: `query_sql`, `query_influxdb`
 - Graphite: `query_graphite`, `query_graphite_density`
-- CloudWatch: `query_cloudwatch`
+- CloudWatch: `query_cloudwatch`, `query_cloudwatch_logs`
 - Google Cloud Logging: `query_cloud_logging`
 - Pyroscope: `query_pyroscope`
 - Panels: `run_panel_query`

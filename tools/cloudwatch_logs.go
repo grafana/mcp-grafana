@@ -1,0 +1,478 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+)
+
+const (
+	// DefaultCloudWatchLogsLimit is the default number of log rows to return
+	DefaultCloudWatchLogsLimit = 100
+
+	// MaxCloudWatchLogsLimit is the maximum number of log rows that can be requested
+	MaxCloudWatchLogsLimit = 1000
+
+	// cloudWatchLogsQueryTimeout bounds how long we poll for a Logs Insights query to complete
+	cloudWatchLogsQueryTimeout = 30 * time.Second
+
+	// cloudWatchLogsMaxPollInterval caps the exponential backoff between polls
+	cloudWatchLogsMaxPollInterval = 2 * time.Second
+)
+
+// QueryCloudWatchLogsParams defines the parameters for a CloudWatch Logs Insights query
+type QueryCloudWatchLogsParams struct {
+	DatasourceUID string   `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource to query."`
+	Region        string   `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	LogGroups     []string `json:"logGroups" jsonschema:"required,description=Log groups to query: either all names (e.g. [\"/aws/lambda/my-function\"]) or all ARNs. ARNs are required for log groups in linked source accounts when querying from a monitoring account."`
+	QueryString   string   `json:"queryString" jsonschema:"required,description=CloudWatch Logs Insights query (e.g. 'fields @timestamp\\, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20')"`
+	Start         string   `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
+	End           string   `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
+	Limit         int      `json:"limit,omitempty" jsonschema:"description=Maximum number of rows to return (default: 100\\, max: 1000)"`
+}
+
+// CloudWatchLogsQueryResult represents the result of a CloudWatch Logs Insights query
+type CloudWatchLogsQueryResult struct {
+	// Logs holds one map per result row, keyed by field name (e.g. @timestamp, @message).
+	Logs []map[string]string `json:"logs"`
+	// TotalFound is the number of records the query matched, which can exceed len(Logs).
+	TotalFound int      `json:"totalFound"`
+	Status     string   `json:"status"`
+	Hints      []string `json:"hints,omitempty"`
+}
+
+// ListCloudWatchLogGroupsParams defines the parameters for listing CloudWatch log groups
+type ListCloudWatchLogGroupsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
+	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	Prefix        string `json:"prefix,omitempty" jsonschema:"description=Only return log groups whose name starts with this prefix"`
+	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to filter log groups from a specific source account\\, or 'all' for all linked accounts. When set\\, log group ARNs are returned instead of names."`
+}
+
+// ListCloudWatchLogGroupFieldsParams defines the parameters for listing fields in a log group
+type ListCloudWatchLogGroupFieldsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
+	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	LogGroupName  string `json:"logGroupName" jsonschema:"required,description=The log group name to list fields for"`
+}
+
+// cloudWatchNamedItem is the shape returned by the log-groups and
+// log-group-fields resource APIs: [{"value": {"name": "...", "arn": "..."}}]
+type cloudWatchNamedItem struct {
+	Value struct {
+		Name string `json:"name"`
+		ARN  string `json:"arn"`
+	} `json:"value"`
+}
+
+// parseCloudWatchNamedItems extracts value.name from a log-groups or
+// log-group-fields response, or value.arn (without the trailing ":*") if useARN is set.
+func parseCloudWatchNamedItems(bodyBytes []byte, useARN bool) ([]string, error) {
+	var items []cloudWatchNamedItem
+	if err := json.Unmarshal(bodyBytes, &items); err != nil {
+		return nil, err
+	}
+
+	result := make([]string, len(items))
+	for i, item := range items {
+		result[i] = item.Value.Name
+		if useARN {
+			result[i] = strings.TrimSuffix(item.Value.ARN, ":*")
+		}
+	}
+	return result, nil
+}
+
+// cloudWatchLogGroupsQueryField builds the log group selection for a Logs
+// Insights query. Names go in logGroupNames. ARNs go in logGroups, which a
+// monitoring account needs to reach log groups in linked source accounts;
+// there the plugin ignores entries without an ARN, so names and ARNs can't be mixed.
+func cloudWatchLogGroupsQueryField(logGroups []string) (string, interface{}, error) {
+	var arns int
+	for _, lg := range logGroups {
+		if strings.HasPrefix(lg, "arn:") {
+			arns++
+		}
+	}
+	switch arns {
+	case 0:
+		return "logGroupNames", logGroups, nil
+	case len(logGroups):
+	default:
+		return "", nil, errors.New("logGroups must be either all names or all ARNs")
+	}
+
+	selection := make([]map[string]string, len(logGroups))
+	for i, arn := range logGroups {
+		arn = strings.TrimSuffix(arn, ":*")
+		name := arn
+		if _, after, ok := strings.Cut(arn, ":log-group:"); ok {
+			name = after
+		}
+		selection[i] = map[string]string{"arn": arn, "name": name}
+	}
+	return "logGroups", selection, nil
+}
+
+// listCloudWatchLogGroups lists available CloudWatch log groups
+func listCloudWatchLogGroups(ctx context.Context, args ListCloudWatchLogGroupsParams) ([]string, error) {
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("region", args.Region)
+	if args.Prefix != "" {
+		params.Set("logGroupNamePrefix", args.Prefix)
+	}
+	if args.AccountId != "" {
+		params.Set("accountId", args.AccountId)
+	}
+
+	bodyBytes, err := client.fetchResource(ctx, args.DatasourceUID, "log-groups", params)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseCloudWatchNamedItems(bodyBytes, args.AccountId != "")
+}
+
+// listCloudWatchLogGroupFields lists discovered fields for a CloudWatch log group
+func listCloudWatchLogGroupFields(ctx context.Context, args ListCloudWatchLogGroupFieldsParams) ([]string, error) {
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("region", args.Region)
+	params.Set("logGroupName", args.LogGroupName)
+
+	bodyBytes, err := client.fetchResource(ctx, args.DatasourceUID, "log-group-fields", params)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseCloudWatchNamedItems(bodyBytes, false)
+}
+
+// queryCloudWatchLogs executes a CloudWatch Logs Insights query via Grafana.
+// Logs Insights is asynchronous: StartQuery returns a query ID, and
+// GetQueryResults is polled until the query completes.
+func queryCloudWatchLogs(ctx context.Context, args QueryCloudWatchLogsParams) (*CloudWatchLogsQueryResult, error) {
+	if len(args.LogGroups) == 0 {
+		return nil, errors.New("at least one log group is required")
+	}
+
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	now := time.Now()
+	fromTime := now.Add(-1 * time.Hour)
+	toTime := now
+
+	if args.Start != "" {
+		parsed, err := parseStartTime(args.Start)
+		if err != nil {
+			return nil, fmt.Errorf("parsing start time: %w", err)
+		}
+		if !parsed.IsZero() {
+			fromTime = parsed
+		}
+	}
+
+	if args.End != "" {
+		parsed, err := parseEndTime(args.End)
+		if err != nil {
+			return nil, fmt.Errorf("parsing end time: %w", err)
+		}
+		if !parsed.IsZero() {
+			toTime = parsed
+		}
+	}
+
+	args.Limit = min(args.Limit, MaxCloudWatchLogsLimit)
+	if args.Limit <= 0 {
+		args.Limit = DefaultCloudWatchLogsLimit
+	}
+
+	frames, err := client.runLogsQuery(ctx, args, fromTime, toTime, cloudWatchLogsQueryTimeout)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseLogsFrames(frames, args.Limit), nil
+}
+
+// runLogsQuery starts a Logs Insights query and polls for its results with
+// exponential backoff until it completes, fails, or timeout elapses.
+func (c *cloudWatchClient) runLogsQuery(parent context.Context, args QueryCloudWatchLogsParams, from, to time.Time, timeout time.Duration) (data.Frames, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	logGroupsField, logGroups, err := cloudWatchLogGroupsQueryField(args.LogGroups)
+	if err != nil {
+		return nil, err
+	}
+
+	query := map[string]interface{}{
+		"datasource": map[string]string{
+			"uid":  args.DatasourceUID,
+			"type": CloudWatchDatasourceType,
+		},
+		"refId":        "A",
+		"type":         "logAction",
+		"subtype":      "StartQuery",
+		"queryMode":    "Logs",
+		"region":       args.Region,
+		"queryString":  args.QueryString,
+		logGroupsField: logGroups,
+		// Limit server-side: Grafana re-sorts result rows by ascending time, so
+		// truncating afterwards would keep the oldest rows rather than the
+		// query's own sort order.
+		"limit":         args.Limit,
+		"id":            "",
+		"intervalMs":    1,
+		"maxDataPoints": 1,
+	}
+
+	resp, err := doDSQuery(ctx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
+	if err != nil {
+		return nil, fmt.Errorf("starting CloudWatch Logs query: %w", err)
+	}
+	frames, err := logsQueryFrames(resp)
+	if err != nil {
+		return nil, fmt.Errorf("starting CloudWatch Logs query: %w", err)
+	}
+	queryID := logsQueryID(frames)
+	if queryID == "" {
+		return nil, errors.New("no queryId found in StartQuery response")
+	}
+
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		// We gave up on a query that may still be running in CloudWatch; stop it
+		// so it doesn't keep holding one of the account's concurrent query slots.
+		stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stopCancel()
+		query["subtype"] = "StopQuery"
+		_, _ = doDSQuery(stopCtx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
+	}()
+
+	query["subtype"] = "GetQueryResults"
+	query["queryId"] = queryID
+	delete(query, "queryString")
+	delete(query, logGroupsField)
+	delete(query, "maxDataPoints")
+	delete(query, "limit")
+
+	interval := 200 * time.Millisecond
+	for {
+		resp, err := doDSQuery(ctx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
+		if err != nil {
+			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("CloudWatch Logs query timed out after %s", timeout)
+			}
+			return nil, fmt.Errorf("polling CloudWatch Logs query results: %w", err)
+		}
+		frames, err := logsQueryFrames(resp)
+		if err != nil {
+			return nil, err
+		}
+
+		switch status := logsQueryStatus(frames); status {
+		case "Complete":
+			finished = true
+			return frames, nil
+		case "Running", "Scheduled", "":
+		default:
+			finished = true
+			return nil, fmt.Errorf("CloudWatch Logs query finished with status %s", status)
+		}
+
+		select {
+		case <-ctx.Done():
+			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("CloudWatch Logs query timed out after %s", timeout)
+			}
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+		interval = min(interval*2, cloudWatchLogsMaxPollInterval)
+	}
+}
+
+// logsQueryFrames returns the frames for refId A, or that query's error.
+func logsQueryFrames(resp *backend.QueryDataResponse) (data.Frames, error) {
+	r, ok := resp.Responses["A"]
+	if !ok {
+		return nil, errors.New("no result for query refId A")
+	}
+	if r.Error != nil {
+		return nil, fmt.Errorf("query error: %w", r.Error)
+	}
+	return r.Frames, nil
+}
+
+// logsQueryID finds the queryId field the CloudWatch plugin returns from StartQuery.
+func logsQueryID(frames data.Frames) string {
+	for _, frame := range frames {
+		for _, field := range frame.Fields {
+			if field.Name == "queryId" && field.Len() > 0 {
+				if v, ok := field.ConcreteAt(0); ok {
+					if s, ok := v.(string); ok {
+						return s
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// logsQueryStatus reads the query status from frame metadata, which the
+// CloudWatch plugin sets as {"Status": "Complete"} on GetQueryResults frames.
+func logsQueryStatus(frames data.Frames) string {
+	for _, frame := range frames {
+		if frame.Meta == nil {
+			continue
+		}
+		if custom, ok := frame.Meta.Custom.(map[string]interface{}); ok {
+			if s, ok := custom["Status"].(string); ok {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// parseLogsFrames converts GetQueryResults frames into rows, keeping at most
+// limit rows and dropping Grafana-internal fields such as @ptr.
+func parseLogsFrames(frames data.Frames, limit int) *CloudWatchLogsQueryResult {
+	result := &CloudWatchLogsQueryResult{
+		Logs:   []map[string]string{},
+		Status: logsQueryStatus(frames),
+	}
+
+	for _, frame := range frames {
+		rowCount := frame.Rows()
+		result.TotalFound += max(rowCount, recordsMatched(frame))
+		for row := 0; row < rowCount && len(result.Logs) < limit; row++ {
+			entry := make(map[string]string, len(frame.Fields))
+			for _, field := range frame.Fields {
+				if field.Name == "@ptr" || strings.HasSuffix(field.Name, "__grafana_internal__") {
+					continue
+				}
+				entry[field.Name] = formatLogValue(field, row)
+			}
+			result.Logs = append(result.Logs, entry)
+		}
+	}
+
+	if result.TotalFound == 0 {
+		result.Hints = generateCloudWatchLogsEmptyResultHints()
+	}
+
+	return result
+}
+
+// recordsMatched returns the "Records matched" query statistic the CloudWatch
+// plugin attaches to result frames, or 0 if it is absent.
+func recordsMatched(frame *data.Frame) int {
+	if frame.Meta == nil {
+		return 0
+	}
+	for _, stat := range frame.Meta.Stats {
+		if stat.DisplayName == "Records matched" {
+			return int(stat.Value)
+		}
+	}
+	return 0
+}
+
+// formatLogValue renders a field value as a string, with times as RFC3339 UTC.
+func formatLogValue(field *data.Field, row int) string {
+	v, ok := field.ConcreteAt(row)
+	if !ok {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case time.Time:
+		return val.UTC().Format(time.RFC3339Nano)
+	default:
+		return fmt.Sprint(val)
+	}
+}
+
+// generateCloudWatchLogsEmptyResultHints generates helpful hints when a Logs Insights query returns no rows
+func generateCloudWatchLogsEmptyResultHints() []string {
+	return []string{
+		"No log data found. Possible reasons:",
+		"- Log group name may be incorrect - use list_cloudwatch_log_groups to discover available groups",
+		"- Field names may be wrong - use list_cloudwatch_log_group_fields to see the fields in a log group",
+		"- Filter may be too restrictive - try a broader filter or remove it",
+		"- Region may be incorrect - verify the log group exists in the specified region",
+		"- Time range may have no log events - try extending with start=\"now-6h\"",
+	}
+}
+
+// QueryCloudWatchLogs is a tool for executing CloudWatch Logs Insights queries via Grafana
+var QueryCloudWatchLogs = mcpgrafana.MustTool(
+	"query_cloudwatch_logs",
+	`Run a CloudWatch Logs Insights query against one or more log groups via Grafana and return the result rows. Requires region. Waits up to 30s for the query to complete. Rows are returned in ascending time order.
+
+Query examples:
+- fields @timestamp, @message | sort @timestamp desc | limit 20
+- filter @message like /error/i | stats count() by bin(5m)
+
+Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
+	queryCloudWatchLogs,
+	mcpgrafana.WithTitleAnnotation("Query CloudWatch Logs"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+// ListCloudWatchLogGroups is a tool for listing CloudWatch log groups
+var ListCloudWatchLogGroups = mcpgrafana.MustTool(
+	"list_cloudwatch_log_groups",
+	"List CloudWatch log group names, optionally filtered by name prefix. Returns at most 50 log groups; use prefix to narrow larger accounts. Requires region. Supports cross-account monitoring via optional accountId parameter, which returns log group ARNs.",
+	listCloudWatchLogGroups,
+	mcpgrafana.WithTitleAnnotation("List CloudWatch log groups"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+// ListCloudWatchLogGroupFields is a tool for listing fields in a CloudWatch log group
+var ListCloudWatchLogGroupFields = mcpgrafana.MustTool(
+	"list_cloudwatch_log_group_fields",
+	"List the fields discovered in a CloudWatch log group, for use in Logs Insights queries. Requires region.",
+	listCloudWatchLogGroupFields,
+	mcpgrafana.WithTitleAnnotation("List CloudWatch log group fields"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)

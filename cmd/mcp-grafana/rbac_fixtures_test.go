@@ -320,6 +320,9 @@ var rbacFixtures = map[string]rbacFixture{
 	"list_cloudwatch_metrics":          {skip: skipNoCloudWatch},
 	"list_cloudwatch_dimensions":       {skip: skipNoCloudWatch},
 	"list_cloudwatch_dimension_values": {skip: skipNoCloudWatch},
+	"query_cloudwatch_logs":            {skip: skipNoCloudWatch},
+	"list_cloudwatch_log_groups":       {skip: skipNoCloudWatch},
+	"list_cloudwatch_log_group_fields": {skip: skipNoCloudWatch},
 
 	"query_cloud_logging":         {skip: skipNoCloudLogging},
 	"list_cloud_logging_projects": {skip: skipNoCloudLogging},

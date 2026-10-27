@@ -113,7 +113,7 @@ var categoryDescriptionNoQuery = map[string]string{
 	"prometheus":   "Prometheus: Retrieve metric metadata and explore metric names and label names/values. Query execution is disabled.",
 	"loki":         "Loki: Retrieve log metadata and index stats, explore label names/values, and audit label strategy. Log query execution is disabled.",
 	"pyroscope":    "Pyroscope: Explore profile types and label names/values. Query execution is disabled.",
-	"cloudwatch":   "CloudWatch: List AWS CloudWatch namespaces, metrics, and dimensions. Query execution is disabled.",
+	"cloudwatch":   "CloudWatch: List AWS CloudWatch namespaces, metrics, dimensions, and log groups. Query execution is disabled.",
 	"cloudlogging": "Google Cloud Logging: List GCP projects, log buckets, and views. Query execution is disabled.",
 	"sql":          "SQL: List tables and describe table schemas in SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Query execution is disabled.",
 	"graphite":     "Graphite: List Graphite metrics and tags. Query execution is disabled.",
