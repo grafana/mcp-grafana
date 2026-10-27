@@ -120,6 +120,7 @@ func newQuickwitTestServer(t *testing.T, dsQuery, msearch http.HandlerFunc) *qui
 	return &quickwitBackend{
 		httpClient:      server.Client(),
 		baseURL:         server.URL + "/proxy",
+		dsQueryClient:   server.Client(),
 		grafanaURL:      server.URL,
 		dsUID:           "qw",
 		configuredIndex: "test-logs",

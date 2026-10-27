@@ -28,6 +28,7 @@ const quickwitDatasourceType = "quickwit-quickwit-datasource"
 type quickwitBackend struct {
 	httpClient            *http.Client
 	baseURL               string
+	dsQueryClient         *http.Client
 	grafanaURL            string
 	dsUID                 string
 	legacy                bool
@@ -67,14 +68,20 @@ func indexFromQuickwitDataSource(ds *models.DataSource) string {
 }
 
 func newQuickwitBackend(ctx context.Context, ds *models.DataSource) (*quickwitBackend, error) {
-	httpClient, grafanaURL, err := newDSQueryHTTPClient(ctx)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom transport: %w", err)
+	}
+	dsQueryClient, grafanaURL, err := newDSQueryHTTPClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 	_, _, legacy := fallbackProxyBases(ctx, ds.UID)
 
 	return &quickwitBackend{
-		httpClient:      httpClient,
+		httpClient:      &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
+		dsQueryClient:   dsQueryClient,
 		baseURL:         fmt.Sprintf("%s/api/datasources/proxy/uid/%s", grafanaURL, ds.UID),
 		grafanaURL:      grafanaURL,
 		dsUID:           ds.UID,
@@ -171,7 +178,7 @@ func (b *quickwitBackend) searchViaDSQuery(ctx context.Context, query string, st
 		"bucketAggs": []interface{}{},
 	})
 
-	resp, err := doDSQuery(ctx, b.httpClient, b.grafanaURL, payload)
+	resp, err := doDSQuery(ctx, b.dsQueryClient, b.grafanaURL, payload)
 	if err != nil {
 		return nil, err
 	}
