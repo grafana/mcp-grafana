@@ -138,6 +138,51 @@ func TestTempoSearch(t *testing.T) {
 	assert.Equal(t, "application/vnd.grafana.llm", capturedAccept)
 }
 
+func TestTempoSearch_LimitAndDedupe(t *testing.T) {
+	var capturedQuery url.Values
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"traces":[{"traceID":"abc123",` +
+			`"spanSet":{"spans":[{"spanID":"s1"}],"matched":1},` +
+			`"spanSets":[{"spans":[{"spanID":"s1"}],"matched":1}]}],` +
+			`"metrics":{"inspectedBytes":"100","completedJobs":1,"totalJobs":1470}}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
+		"datasourceUid": "test-tempo",
+		"query":         `{ }`,
+		"limit":         1,
+		"spss":          5,
+	}))
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	assert.Equal(t, "1", capturedQuery.Get("limit"))
+	assert.Equal(t, "5", capturedQuery.Get("spss"))
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	assert.Equal(t, 1, strings.Count(text, `"spanID":"s1"`), "spans should not be duplicated: %s", text)
+	assert.NotContains(t, text, `"spanSet":`)
+	assert.Contains(t, text, `"inspectedBytes":"100"`)
+	assert.Contains(t, text, "Partial results: the search stopped after 1 of 1470 jobs because it reached the limit of 1 traces")
+}
+
+func TestTidyTempoSearchResults(t *testing.T) {
+	t.Run("complete searches get no note", func(t *testing.T) {
+		out := tidyTempoSearchResults(`{"traces":[],"metrics":{"completedJobs":3,"totalJobs":3}}`, 20)
+		assert.NotContains(t, out, "note")
+	})
+	t.Run("incomplete jobs below the limit", func(t *testing.T) {
+		out := tidyTempoSearchResults(`{"traces":[{"traceID":"a"}],"metrics":{"completedJobs":2,"totalJobs":3}}`, 20)
+		assert.Contains(t, out, "only 2 of 3 search jobs completed")
+	})
+	t.Run("unparseable body passes through", func(t *testing.T) {
+		assert.Equal(t, "not json", tidyTempoSearchResults("not json", 20))
+	})
+}
+
 func TestTempoSearch_DefaultTimeBounds(t *testing.T) {
 	var capturedQuery url.Values
 
