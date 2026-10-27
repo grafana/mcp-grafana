@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -228,6 +229,8 @@ type SearchTempoTracesParams struct {
 	Query         string `json:"query" jsonschema:"required,description=TraceQL query string"`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
 	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
+	Limit         int    `json:"limit,omitempty" jsonschema:"default=20,description=Maximum number of traces to return"`
+	Spss          int    `json:"spss,omitempty" jsonschema:"default=3,description=Maximum number of matching spans to return per span set"`
 }
 
 type QueryTempoMetricsParams struct {
@@ -280,6 +283,14 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 
 	params := url.Values{}
 	params.Set("q", args.Query)
+	limit := tempoDefaultSearchLimit
+	if args.Limit > 0 {
+		limit = args.Limit
+	}
+	params.Set("limit", strconv.Itoa(limit))
+	if args.Spss > 0 {
+		params.Set("spss", strconv.Itoa(args.Spss))
+	}
 
 	params, err = tempoDefaultTimeBoundsSeconds(params, args.Start, args.End)
 	if err != nil {
@@ -291,7 +302,47 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
-	return tempoToolResult(body, "search-results", "json"), nil
+	return tempoToolResult(tidyTempoSearchResults(body, limit), "search-results", "json"), nil
+}
+
+// tempoDefaultSearchLimit matches Tempo's own default search limit.
+const tempoDefaultSearchLimit = 20
+
+// tidyTempoSearchResults drops each trace's deprecated spanSet field, which
+// Tempo still sends as a copy of the first entry in spanSets, and adds a note
+// when the search did not run every job. Bodies it cannot parse are returned
+// unchanged.
+func tidyTempoSearchResults(body string, limit int) string {
+	var resp struct {
+		Traces  []map[string]json.RawMessage `json:"traces"`
+		Metrics map[string]json.RawMessage   `json:"metrics,omitempty"`
+		Note    string                       `json:"note,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return body
+	}
+	for _, trace := range resp.Traces {
+		if _, ok := trace["spanSets"]; ok {
+			delete(trace, "spanSet")
+		}
+	}
+
+	var completed, total int
+	_ = json.Unmarshal(resp.Metrics["completedJobs"], &completed)
+	_ = json.Unmarshal(resp.Metrics["totalJobs"], &total)
+	if completed < total {
+		if len(resp.Traces) >= limit {
+			resp.Note = fmt.Sprintf("Partial results: the search stopped after %d of %d jobs because it reached the limit of %d traces. Raise limit or narrow the query or time range to see more matches.", completed, total, limit)
+		} else {
+			resp.Note = fmt.Sprintf("Partial results: only %d of %d search jobs completed, so some matching traces may be missing.", completed, total)
+		}
+	}
+
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return body
+	}
+	return string(out)
 }
 
 func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.CallToolResult, error) {
