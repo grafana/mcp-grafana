@@ -7,6 +7,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -283,6 +284,12 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "infinity":
 		// Pass the resolved type through, so a renamed or forked plugin ID reaches Grafana as declared.
 		results, target, err = executeInfinityPanelQuery(ctx, datasourceUID, datasourceType, panelData, params.Start, params.End, templateVariables)
+	case Neo4jDatasourceType:
+		results, target, err = executeStructuredPanelQuery(ctx, datasourceUID, Neo4jDatasourceType, panelData, params.Start, params.End, templateVariables)
+		if err == nil {
+			// Report the Cypher that ran, with macros substituted as well as variables.
+			query = safeString(target, "cypherQuery")
+		}
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
@@ -486,11 +493,11 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	}
 
 	// Try to get query expression - different datasources use different field names
-	query := extractQueryExpression(target)
+	query := panelQueryExpression(target, info.DatasourceType)
 
 	// CloudWatch and Infinity panels use structured targets rather than string expressions
 	if query == "" && !usesStructuredTarget(info.DatasourceType) {
-		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
+		return nil, errNoQueryExpression
 	}
 	info.Query = query
 
@@ -700,13 +707,30 @@ func executeStructuredPanelQuery(ctx context.Context, datasourceUID, datasourceT
 	return results, target, err
 }
 
-// substituteGrafanaMacrosInMap applies substituteGrafanaMacros to every string in target,
+// timeRangeMacroRe matches $__from, $__to, ${__from} and ${__to} as whole tokens, so
+// plugin-side macros such as $__fromTime and formatted forms such as ${__from:date} are kept.
+var timeRangeMacroRe = regexp.MustCompile(`\$\{__(from|to)\}|\$__(from|to)\b`)
+
+// substituteStructuredTargetMacros applies substituteGrafanaMacros and replaces $__from and
+// $__to with the range bounds in epoch milliseconds, as Grafana's frontend does before it
+// sends a structured target to /api/ds/query.
+func substituteStructuredTargetMacros(s string, start, end time.Time) string {
+	s = substituteGrafanaMacros(s, start, end)
+	return timeRangeMacroRe.ReplaceAllStringFunc(s, func(match string) string {
+		if strings.Contains(match, "from") {
+			return strconv.FormatInt(start.UnixMilli(), 10)
+		}
+		return strconv.FormatInt(end.UnixMilli(), 10)
+	})
+}
+
+// substituteGrafanaMacrosInMap applies substituteStructuredTargetMacros to every string in target,
 // which must already be a private deep copy (substituteTemplateVariablesInMapWithValues).
 func substituteGrafanaMacrosInMap(target map[string]interface{}, start, end time.Time) {
 	for k, v := range target {
 		switch val := v.(type) {
 		case string:
-			target[k] = substituteGrafanaMacros(val, start, end)
+			target[k] = substituteStructuredTargetMacros(val, start, end)
 		case map[string]interface{}:
 			substituteGrafanaMacrosInMap(val, start, end)
 		case []interface{}:
@@ -719,7 +743,7 @@ func substituteGrafanaMacrosInSlice(slice []interface{}, start, end time.Time) {
 	for i, v := range slice {
 		switch val := v.(type) {
 		case string:
-			slice[i] = substituteGrafanaMacros(val, start, end)
+			slice[i] = substituteStructuredTargetMacros(val, start, end)
 		case map[string]interface{}:
 			substituteGrafanaMacrosInMap(val, start, end)
 		case []interface{}:
@@ -731,6 +755,16 @@ func substituteGrafanaMacrosInSlice(slice []interface{}, start, end time.Time) {
 // InfinityDatasourceType is the plugin ID of the Infinity datasource (yesoreyeram-infinity-datasource),
 // which fetches JSON, CSV, XML, GraphQL or HTML from a URL or inline content.
 const InfinityDatasourceType = "yesoreyeram-infinity-datasource"
+
+// panelQueryExpression returns the query string of a panel target. Neo4j targets are read
+// from cypherQuery directly, so a leftover field such as query (copied or migrated panels)
+// cannot stand in for the Cypher that runs.
+func panelQueryExpression(target map[string]interface{}, datasourceType string) string {
+	if normalizeDatasourceType(datasourceType) == Neo4jDatasourceType {
+		return safeString(target, "cypherQuery")
+	}
+	return extractQueryExpression(target)
+}
 
 // usesStructuredTarget reports whether a datasource keeps its query in structured
 // target fields rather than in a string expression such as expr or rawSql.
@@ -807,6 +841,12 @@ func executeInfinityPanelQuery(ctx context.Context, datasourceUID, datasourceTyp
 	}
 	return executeStructuredPanelQuery(ctx, datasourceUID, datasourceType, panelData, start, end, variables)
 }
+
+// Neo4jDatasourceType is the plugin ID of the Neo4j datasource (kniepdennis-neo4j-datasource),
+// which runs the Cypher query in the target's cypherQuery field. Only this plugin is routed:
+// run_panel_query is read-only because this plugin opens its Neo4j sessions in read access
+// mode, which another Neo4j plugin need not do.
+const Neo4jDatasourceType = "kniepdennis-neo4j-datasource"
 
 // executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
 // panel's queryType field tells us which dialect to use (influxql vs flux);
@@ -1157,6 +1197,11 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- The URL or inline content may have returned no rows for these variables - the query field shows the substituted URL",
 			"- root_selector may not match the response shape - verify it against a sample response in the panel editor",
 		)
+	case Neo4jDatasourceType:
+		hints = append(hints,
+			"- The MATCH pattern, labels or property filters may not match any nodes for these variables - the query field shows the substituted Cypher",
+			"- The datasource may point at a different Neo4j database than the panel expects - check the database setting in the datasource",
+		)
 	case "cloudwatch":
 		hints = append(hints,
 			"- Namespace or metric name may be incorrect - use list_cloudwatch_namespaces and list_cloudwatch_metrics to discover available options",
@@ -1212,7 +1257,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcpgrafana.WithTitleAnnotation("Run panel query"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

@@ -3,7 +3,7 @@ services:
     image: ${GRAFANA_IMAGE:-grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f}
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,googlecloud-logging-datasource,elasticsearch 12.6.2
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,googlecloud-logging-datasource,elasticsearch 12.6.2,kniepdennis-neo4j-datasource 1.3.2
       GF_PLUGINS_PREINSTALL_SYNC: quickwit-quickwit-datasource@0.6.0@https://github.com/quickwit-oss/quickwit-datasource/releases/download/v0.6.0/quickwit-quickwit-datasource-0.6.0.zip
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
@@ -316,6 +316,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Neo4j for run_panel_query. The tests query generated rows (UNWIND), so no
+  # seed data is needed; Grafana reaches it over the compose network only.
+  neo4j:
+    image: neo4j:5.26.32-community@sha256:a5928aad5b98f7dd8c971b89e47e448a8773890ea6e4045e56ba58f50e54bfd7
+    environment:
+      NEO4J_AUTH: neo4j/mcptests-password
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p mcptests-password 'RETURN 1'"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
 
   graphite:
     image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe

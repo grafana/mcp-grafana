@@ -245,20 +245,24 @@ func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 	return queries
 }
 
-// extractQueryExpression extracts the query string from a target
-// Different datasources store queries in different fields
-func extractQueryExpression(target map[string]interface{}) string {
-	// Try common query field names
-	queryFields := []string{
-		"expr",       // Prometheus
-		"query",      // Loki, ClickHouse, generic
-		"expression", // CloudWatch
-		"rawSql",     // SQL databases
-		"rawSQL",     // Athena (grafana-athena-datasource)
-		"rawQuery",   // Some datasources
-		"target",     // Graphite metric path
-	}
+// queryFields are the target fields that hold a query string, in lookup order.
+// Different datasources store queries in different fields.
+var queryFields = []string{
+	"expr",        // Prometheus
+	"query",       // Loki, ClickHouse, generic
+	"expression",  // CloudWatch
+	"rawSql",      // SQL databases
+	"rawSQL",      // Athena (grafana-athena-datasource)
+	"rawQuery",    // Some datasources
+	"target",      // Graphite metric path
+	"cypherQuery", // Neo4j
+}
 
+// errNoQueryExpression reports a target without a query string in any of queryFields.
+var errNoQueryExpression = fmt.Errorf("could not extract query from panel target (checked: %s)", strings.Join(queryFields, ", "))
+
+// extractQueryExpression extracts the query string from a target
+func extractQueryExpression(target map[string]interface{}) string {
 	for _, field := range queryFields {
 		if val := safeString(target, field); val != "" {
 			return val
