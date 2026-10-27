@@ -12,18 +12,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestTempoGetTraceStatelessStreamableHTTP(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
-	body := `{"trace":` + string(traceJSON) + `}`
 	requests := 0
 	grafana, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		assert.Equal(t, tempoAcceptLLM, r.Header.Get("Accept"))
-		_, _ = w.Write([]byte(body))
+		writeTraceFrameResponse(t, w, testTraceData("stack"))
 	})
 	defer cleanup()
 	base := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: grafana.URL})
@@ -49,7 +44,7 @@ func TestTempoGetTraceStatelessStreamableHTTP(t *testing.T) {
 	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "get_tempo_trace", Arguments: map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, `"traceId":"`+testTraceID+`"`)
 	assert.Equal(t, "trace", result.Meta["type"])
 	assert.Equal(t, "json", result.Meta["encoding"])
 	assert.Equal(t, 1, requests)

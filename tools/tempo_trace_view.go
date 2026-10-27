@@ -62,6 +62,12 @@ func enrichTempoTrace(ctx context.Context, args GetTempoTraceParams, body string
 	if err != nil {
 		return
 	}
+	setTraceViewContent(ctx, args, spans, raw)
+}
+
+// setTraceViewContent attaches the trace viewer's structured content to raw
+// when it fits the size limit.
+func setTraceViewContent(ctx context.Context, args GetTempoTraceParams, spans []TraceSpan, raw *mcp.CallToolResult) {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := ""
 	if deeplinkResolvesInRenderOrg(ctx, config.OrgID) {

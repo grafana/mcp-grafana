@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -51,11 +54,9 @@ func TestRenderTraceToolDefinition(t *testing.T) {
 	assert.Contains(t, schema.Properties, "focus_span_id")
 }
 
-func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
+func TestRenderTraceFetchesThroughAuthenticatedDSQuery(t *testing.T) {
 	stacktrace := strings.Repeat("at payment.authorize (payment.go:42)\n", 128)
 	traceData := testTraceData(stacktrace)
-	traceJSON, err := protojson.Marshal(traceData)
-	require.NoError(t, err)
 
 	var requestedPath, authorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,10 +71,7 @@ func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
 		}
 		requestedPath = r.URL.Path
 		authorization = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]json.RawMessage{
-			"trace": traceJSON,
-		}))
+		writeTraceFrameResponse(t, w, traceData)
 	}))
 	t.Cleanup(server.Close)
 
@@ -93,7 +91,7 @@ func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
 		FocusSpanID:   &focusSpanID,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "/api/datasources/proxy/uid/tempo-main/api/v2/traces/"+testTraceID, requestedPath)
+	assert.Equal(t, "/api/ds/query", requestedPath)
 	assert.Equal(t, "Bearer test-token", authorization)
 
 	structured, ok := result.StructuredContent.(TraceViewResult)
@@ -136,9 +134,6 @@ func TestRenderTraceFetchesThroughAuthenticatedGrafanaProxy(t *testing.T) {
 }
 
 func TestRenderTraceFetchesWithUserScopedAuthentication(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
-
 	var accessToken, idToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/datasources/uid/tempo-main" {
@@ -147,14 +142,14 @@ func TestRenderTraceFetchesWithUserScopedAuthentication(t *testing.T) {
 		}
 		accessToken = r.Header.Get("X-Access-Token")
 		idToken = r.Header.Get("X-Grafana-Id")
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]json.RawMessage{"trace": traceJSON}))
+		writeTraceFrameResponse(t, w, testTraceData("stack"))
 	}))
 	t.Cleanup(server.Close)
 
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{
 		URL: server.URL, AccessToken: "user-access-token", IDToken: "user-id-token",
 	})
-	_, err = callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	_, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
 	require.NoError(t, err)
 	assert.Equal(t, "user-access-token", accessToken)
 	assert.Equal(t, "user-id-token", idToken)
@@ -181,14 +176,12 @@ func TestTraceExploreURLStripsCredentialsAndUsesLegacyState(t *testing.T) {
 }
 
 func TestRenderTraceOmitsLinkWhenPublicURLInvalid(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/datasources/uid/tempo-main" {
 			writeTempoDatasource(t, w)
 			return
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]json.RawMessage{"trace": traceJSON}))
+		writeTraceFrameResponse(t, w, testTraceData("stack"))
 	}))
 	t.Cleanup(server.Close)
 	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
@@ -203,8 +196,6 @@ func TestRenderTraceOmitsLinkWhenPublicURLInvalid(t *testing.T) {
 }
 
 func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/datasources/uid/tempo-main":
@@ -212,8 +203,8 @@ func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
 		case "/api/user":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"orgId":3}`)
-		case "/api/datasources/proxy/uid/tempo-main/api/v2/traces/" + testTraceID:
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]json.RawMessage{"trace": traceJSON}))
+		case "/api/ds/query":
+			writeTraceFrameResponse(t, w, testTraceData("stack"))
 		default:
 			t.Errorf("unexpected request: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -231,15 +222,12 @@ func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
 }
 
 func TestRenderTraceMissingFocusPreservesTrace(t *testing.T) {
-	traceData := testTraceData("stack")
-	traceJSON, err := protojson.Marshal(traceData)
-	require.NoError(t, err)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/datasources/uid/tempo-main" {
 			writeTempoDatasource(t, w)
 			return
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]json.RawMessage{"trace": traceJSON}))
+		writeTraceFrameResponse(t, w, testTraceData("stack"))
 	}))
 	t.Cleanup(server.Close)
 
@@ -348,6 +336,70 @@ func testTraceData(stacktrace string) *tracepb.TracesData {
 			},
 		}},
 	}}}
+}
+
+// testTraceFrame builds the frame Grafana's Tempo datasource returns for a
+// trace-by-ID query: one row per span.
+func testTraceFrame(trace *tracepb.TracesData) *data.Frame {
+	keyValues := func(attrs []*commonpb.KeyValue) json.RawMessage {
+		kvs := []map[string]any{}
+		for _, a := range attrs {
+			kvs = append(kvs, map[string]any{"key": a.Key, "value": anyValue(a.Value)})
+		}
+		b, _ := json.Marshal(kvs)
+		return b
+	}
+	frame := data.NewFrame("Trace",
+		data.NewField("traceID", nil, []string{}),
+		data.NewField("spanID", nil, []string{}),
+		data.NewField("parentSpanID", nil, []string{}),
+		data.NewField("operationName", nil, []string{}),
+		data.NewField("serviceName", nil, []string{}),
+		data.NewField("kind", nil, []string{}),
+		data.NewField("statusCode", nil, []int64{}),
+		data.NewField("statusMessage", nil, []string{}),
+		data.NewField("instrumentationLibraryName", nil, []string{}),
+		data.NewField("instrumentationLibraryVersion", nil, []string{}),
+		data.NewField("traceState", nil, []string{}),
+		data.NewField("serviceTags", nil, []json.RawMessage{}),
+		data.NewField("startTime", nil, []float64{}),
+		data.NewField("duration", nil, []float64{}),
+		data.NewField("logs", nil, []json.RawMessage{}),
+		data.NewField("references", nil, []json.RawMessage{}),
+		data.NewField("tags", nil, []json.RawMessage{}),
+	)
+	frame.SetMeta(&data.FrameMeta{Custom: map[string]any{"partial": false, "message": ""}})
+	for _, rs := range trace.ResourceSpans {
+		resource := keyValues(rs.Resource.GetAttributes())
+		service := attributeString(attributesToMap(rs.Resource.GetAttributes()), "service.name")
+		for _, ss := range rs.ScopeSpans {
+			for _, span := range ss.Spans {
+				logs := []map[string]any{}
+				for _, e := range span.Events {
+					logs = append(logs, map[string]any{"timestamp": float64(e.TimeUnixNano) / 1e6, "name": e.Name, "fields": keyValues(e.Attributes)})
+				}
+				logsJSON, _ := json.Marshal(logs)
+				parent := ""
+				if len(span.ParentSpanId) > 0 {
+					parent = fmt.Sprintf("%x", span.ParentSpanId)
+				}
+				frame.AppendRow(fmt.Sprintf("%x", span.TraceId), fmt.Sprintf("%x", span.SpanId), parent, span.Name, service,
+					"server", int64(span.Status.GetCode()), span.Status.GetMessage(), ss.Scope.GetName(), ss.Scope.GetVersion(), "",
+					resource, float64(span.StartTimeUnixNano)/1e6, float64(span.EndTimeUnixNano-span.StartTimeUnixNano)/1e6,
+					json.RawMessage(logsJSON), json.RawMessage("[]"), keyValues(span.Attributes))
+			}
+		}
+	}
+	return frame
+}
+
+// writeTraceFrameResponse answers an /api/ds/query request with the trace's frame.
+func writeTraceFrameResponse(t *testing.T, w http.ResponseWriter, trace *tracepb.TracesData) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{testTraceFrame(trace)}},
+	}}))
 }
 
 func stringAttribute(key, value string) *commonpb.KeyValue {

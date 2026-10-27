@@ -18,9 +18,21 @@ const (
 	tempoAcceptLLM = "application/vnd.grafana.llm"
 )
 
+// tempoBackend runs search, metrics and trace-by-ID queries through Grafana's
+// /api/ds/query endpoint, so they go through the query service and show up in
+// its query log. Trace diffs and attribute discovery call Tempo's HTTP API
+// through the datasource proxy, as do queries on Grafana releases whose Tempo
+// datasource cannot run them (see useDSQuery).
 type tempoBackend struct {
 	httpClient *http.Client
 	baseURL    string
+
+	dsQueryClient *http.Client
+	grafanaURL    string
+	dsUID         string
+	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
+	// accept datasource UIDs; queries there stay on the proxy.
+	legacy bool
 }
 
 func newTempoBackend(ctx context.Context, datasourceUID string) (*tempoBackend, error) {
@@ -31,10 +43,19 @@ func newTempoBackend(ctx context.Context, datasourceUID string) (*tempoBackend, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
+	dsQueryClient, grafanaURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	_, _, legacy := fallbackProxyBases(ctx, datasourceUID)
 
 	return &tempoBackend{
-		httpClient: &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
-		baseURL:    proxyURL,
+		httpClient:    &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
+		baseURL:       proxyURL,
+		dsQueryClient: dsQueryClient,
+		grafanaURL:    grafanaURL,
+		dsUID:         datasourceUID,
+		legacy:        legacy,
 	}, nil
 }
 
@@ -283,12 +304,33 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
-	params := url.Values{}
-	params.Set("q", args.Query)
 	limit := tempoDefaultSearchLimit
 	if args.Limit > 0 {
 		limit = args.Limit
 	}
+
+	if backend.useDSQuery(ctx, tempoDSQuerySearchSince) {
+		from, to, err := tempoTimeRange(args.Start, args.End)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		query := map[string]any{"queryType": "traceql", "query": args.Query, "limit": limit, "tableType": "raw"}
+		if args.Spss > 0 {
+			query["spss"] = args.Spss
+		}
+		frames, err := backend.dsQuery(ctx, from, to, query)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		body, err := tempoRawSearchResponse(frames)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		return tempoToolResult(tidyTempoSearchResults(body, limit), "search-results", "json"), nil
+	}
+
+	params := url.Values{}
+	params.Set("q", args.Query)
 	params.Set("limit", strconv.Itoa(limit))
 	if args.Spss > 0 {
 		params.Set("spss", strconv.Itoa(args.Spss))
@@ -311,32 +353,30 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 const tempoDefaultSearchLimit = 20
 
 // tidyTempoSearchResults drops each trace's deprecated spanSet field, which
-// Tempo still sends as a copy of the first entry in spanSets, and adds a note
-// when the search did not run every job. Bodies it cannot parse are returned
-// unchanged.
+// Tempo still sends as a copy of the first entry in spanSets, flattens
+// attribute lists into objects, and adds a note when the search did not run
+// every job. Bodies it cannot parse are returned unchanged.
 func tidyTempoSearchResults(body string, limit int) string {
-	var resp struct {
-		Traces  []map[string]json.RawMessage `json:"traces"`
-		Metrics map[string]json.RawMessage   `json:"metrics,omitempty"`
-		Note    string                       `json:"note,omitempty"`
-	}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+	var resp map[string]any
+	if err := unmarshalTempoJSON(json.RawMessage(body), &resp); err != nil || resp == nil {
 		return body
 	}
-	for _, trace := range resp.Traces {
-		if _, ok := trace["spanSets"]; ok {
-			delete(trace, "spanSet")
+	traces, _ := resp["traces"].([]any)
+	for _, trace := range traces {
+		if t, ok := trace.(map[string]any); ok && t["spanSets"] != nil {
+			delete(t, "spanSet")
 		}
 	}
+	flattenTempoAttributes(resp)
 
-	var completed, total int
-	_ = json.Unmarshal(resp.Metrics["completedJobs"], &completed)
-	_ = json.Unmarshal(resp.Metrics["totalJobs"], &total)
+	metrics, _ := resp["metrics"].(map[string]any)
+	completed, _ := toFloat(metrics["completedJobs"])
+	total, _ := toFloat(metrics["totalJobs"])
 	if completed < total {
-		if len(resp.Traces) >= limit {
-			resp.Note = fmt.Sprintf("Partial results: the search stopped after %d of %d jobs because it reached the limit of %d traces. Raise limit or narrow the query or time range to see more matches.", completed, total, limit)
+		if len(traces) >= limit {
+			resp["note"] = fmt.Sprintf("Partial results: the search stopped after %d of %d jobs because it reached the limit of %d traces. Raise limit or narrow the query or time range to see more matches.", int(completed), int(total), limit)
 		} else {
-			resp.Note = fmt.Sprintf("Partial results: only %d of %d search jobs completed, so some matching traces may be missing.", completed, total)
+			resp["note"] = fmt.Sprintf("Partial results: only %d of %d search jobs completed, so some matching traces may be missing.", int(completed), int(total))
 		}
 	}
 
@@ -353,17 +393,36 @@ func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
+	queryType := args.Type
+	if queryType == "" {
+		queryType = "range"
+	}
+
+	if backend.useDSQuery(ctx, tempoDSQueryMetricsSince) {
+		if queryType != "instant" && queryType != "range" {
+			return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid type %q: must be 'instant' or 'range'", queryType)), nil
+		}
+		from, to, err := tempoTimeRange(args.Start, args.End)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		frames, err := backend.dsQuery(ctx, from, to, map[string]any{"queryType": "traceql", "query": args.Query, "metricsQueryType": queryType})
+		if err != nil {
+			return mcpgrafana.NewToolResultError(annotateTraceQLParseError(err.Error())), nil
+		}
+		out, err := json.Marshal(map[string]any{"series": tempoMetricsFromFrames(frames, queryType == "instant")})
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		return tempoToolResult(string(out), "metrics-"+queryType, "json"), nil
+	}
+
 	params := url.Values{}
 	params.Set("q", args.Query)
 
 	params, err = tempoDefaultTimeBoundsNanos(params, args.Start, args.End)
 	if err != nil {
 		return mcpgrafana.NewToolResultError(err.Error()), nil
-	}
-
-	queryType := args.Type
-	if queryType == "" {
-		queryType = "range"
 	}
 
 	var endpoint string
@@ -421,6 +480,32 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 	if err != nil {
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
+
+	if !backend.legacy {
+		// Zero bounds make Tempo look the trace up across all time.
+		from, to := time.UnixMilli(0), time.UnixMilli(0)
+		if start != nil {
+			from, to = time.Unix(0, *start), time.Unix(0, *end)
+		}
+		frames, err := backend.dsQuery(ctx, from, to, map[string]any{"queryType": "traceId", "query": args.TraceID})
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		trace, spans, err := tempoTraceFromFrames(args.TraceID, frames)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		out, err := json.Marshal(trace)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		result := tempoToolResult(string(out), "trace", "json")
+		if spans != nil {
+			setTraceViewContent(ctx, args, spans, result)
+		}
+		return result, nil
+	}
+
 	var query url.Values
 	if start != nil {
 		// Tempo's trace-by-ID endpoint takes unix seconds; round end up so the range stays inclusive.
@@ -765,7 +850,7 @@ func tempoToolResult(body string, contentType string, encoding string) *mcp.Call
 
 var SearchTempoTracesTool = mcpgrafana.MustTool(
 	"search_tempo_traces",
-	"Search for traces using TraceQL queries",
+	"Search for traces using TraceQL queries. Returns matching traces with their matched span sets; each attributes field is an object mapping attribute names to values.",
 	searchTempoTraces,
 	mcpgrafana.WithTitleAnnotation("Search Tempo traces"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -777,7 +862,7 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
-	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
+	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead. Returns each series with its labels and either its samples and exemplars (range) or a single value (instant).",
 	queryTempoMetrics,
 	mcpgrafana.WithTitleAnnotation("Query Tempo metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -789,7 +874,7 @@ var QueryTempoMetricsTool = mcpgrafana.MustTool(
 
 var GetTempoTraceTool = mcpgrafana.MustTool(
 	"get_tempo_trace",
-	"Retrieve a specific trace by ID",
+	"Retrieve a specific trace by ID. Returns its spans grouped by service and resource, with span attributes, events and links.",
 	getTempoTrace,
 	mcpgrafana.WithUIResource(mcpgrafana.TraceViewerResourceURI),
 	mcpgrafana.WithTitleAnnotation("Get Tempo trace"),
@@ -848,9 +933,11 @@ var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions(), // embedded docs
 )
 
-// AddTempoTools registers all Tempo tools on the MCP server. Tools call
-// Tempo's REST API through the Grafana datasource proxy. The TraceQL docs
-// tool returns static reference material inlined in the binary.
+// AddTempoTools registers all Tempo tools on the MCP server. Search, metrics
+// and trace-by-ID queries go through Grafana's /api/ds/query endpoint; trace
+// diffs and attribute discovery call Tempo's REST API through the Grafana
+// datasource proxy. The TraceQL docs tool returns static reference material
+// inlined in the binary.
 func AddTempoTools(s *mcp.Server, enableQueryTools bool) {
 	if !enableQueryTools {
 		return
