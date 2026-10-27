@@ -82,7 +82,7 @@ services:
       retries: 10
 
   provisioning-repo-seed:
-    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       grafana:
         condition: service_healthy
@@ -95,7 +95,7 @@ services:
   # Seeds a secondary org + dashboard on both Grafana instances for the
   # orgId-parameter integration tests (see tools/orgid_integration_test.go).
   orgs-seed:
-    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       grafana:
         condition: service_healthy
@@ -123,7 +123,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -141,7 +141,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:2.4.0@sha256:b7e62699a27463aa3533efe3f88c320da594da495731fd6eabca6f44f92cdd7b
+    image: grafana/pyroscope:2.4.1@sha256:8ade8d37ac58c20aca0054360fbcdef956a8242f48ad68e0ec67757f21d48e28
     ports:
       - 4040:4040
 
@@ -180,7 +180,7 @@ services:
       retries: 10
 
   elasticsearch-seed:
-    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -203,7 +203,7 @@ services:
       retries: 10
 
   opensearch-seed:
-    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       opensearch:
         condition: service_healthy
@@ -212,7 +212,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   quickwit:
-    image: quickwit/quickwit:v0.9.1@sha256:3e0f079eb57dd5563f36a457e9a7a2963ff882316d6c77e3180ac3c59767a68f
+    image: quickwit/quickwit:v0.9.3@sha256:7c3f5061ea7c00921205c295833f152871d057ec1a9e4c9b1d36131dacc420bd
     command: ["run"]
     ports:
       - "7280:7280"
@@ -223,7 +223,7 @@ services:
       retries: 15
 
   quickwit-seed:
-    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       quickwit:
         condition: service_healthy
@@ -248,7 +248,7 @@ services:
       retries: 5
 
   influxdb:
-    image: influxdb:2.9@sha256:8f106f7ff12659c5e367b99f8a0e7d14cbd4e6ca1f2914094062db6a9813d9c2
+    image: influxdb:2.9@sha256:cdd3dbdea45c2f43513abd06ee9644b6e05d2354a2b93ca829c9f07d716eaaac
     ports:
       - "8086:8086"
     environment:
@@ -265,7 +265,7 @@ services:
       retries: 10
 
   influxdb-seed:
-    image: curlimages/curl:8.23.0@sha256:11e64e28c5f58c8d93ee95fcf22ac055f48b0bc440e0ce7d8013bbb5ad6aa8ac
+    image: curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06
     depends_on:
       influxdb:
         condition: service_healthy
@@ -288,7 +288,7 @@ services:
       retries: 5
 
   mysql:
-    image: mysql:26.7@sha256:625f74ddf93652d9d0f8d4ea7d741b9189554a5e96d27bb770abd0902d89c6e3
+    image: mysql:26.10@sha256:f51c9c01c16b0eb5d81bb70ab7e7fcb3b96abc6a54114be3a94e8e569cae7815
     environment:
       MYSQL_ROOT_PASSWORD: rootroot
       MYSQL_DATABASE: test
@@ -303,7 +303,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: test
