@@ -320,7 +320,7 @@ services:
   # Neo4j for run_panel_query. The tests query generated rows (UNWIND), so no
   # seed data is needed; Grafana reaches it over the compose network only.
   neo4j:
-    image: neo4j:5-community@sha256:7ba1704c1dd16680637a60140f2151bfcd072f5706119391004efbfffe3dcd69
+    image: neo4j:5.26.32-community@sha256:a5928aad5b98f7dd8c971b89e47e448a8773890ea6e4045e56ba58f50e54bfd7
     environment:
       NEO4J_AUTH: neo4j/mcptests-password
     healthcheck:
