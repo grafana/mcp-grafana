@@ -217,6 +217,9 @@ func framesToDocuments(frames data.Frames, timeField string) ([]ElasticsearchDoc
 					} else if ts, ok := val.(string); ok {
 						doc.Timestamp = ts
 						doc.Source[key] = ts
+					} else {
+						// e.g. epoch milliseconds; keep the value rather than dropping it.
+						doc.Source[key] = val
 					}
 				} else if strings.HasPrefix(key, "_") {
 					// Skip unknown `_` prefixed metadata fields
