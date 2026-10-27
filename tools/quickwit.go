@@ -7,19 +7,30 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const quickwitDatasourceType = "quickwit-quickwit-datasource"
 
+// quickwitBackend searches a Quickwit datasource. Lucene searches on the
+// configured index run through Grafana's /api/ds/query endpoint so they show
+// up in Grafana's query log. Query DSL JSON, a narrower index than the
+// configured one, and Grafana before 9.0 stay on the datasource proxy's
+// _msearch, because the plugin's query model can't express them. Index
+// metadata lookups always use the proxy.
 type quickwitBackend struct {
 	httpClient            *http.Client
 	baseURL               string
+	grafanaURL            string
+	dsUID                 string
+	legacy                bool
 	configuredIndex       string
 	timeField             string
 	timestampOutputFormat string
@@ -56,17 +67,18 @@ func indexFromQuickwitDataSource(ds *models.DataSource) string {
 }
 
 func newQuickwitBackend(ctx context.Context, ds *models.DataSource) (*quickwitBackend, error) {
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	proxyURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), ds.UID)
-
-	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	httpClient, grafanaURL, err := newDSQueryHTTPClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create custom transport: %w", err)
+		return nil, err
 	}
+	_, _, legacy := fallbackProxyBases(ctx, ds.UID)
 
 	return &quickwitBackend{
-		httpClient:      &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
-		baseURL:         proxyURL,
+		httpClient:      httpClient,
+		baseURL:         fmt.Sprintf("%s/api/datasources/proxy/uid/%s", grafanaURL, ds.UID),
+		grafanaURL:      grafanaURL,
+		dsUID:           ds.UID,
+		legacy:          legacy,
 		configuredIndex: indexFromQuickwitDataSource(ds),
 	}, nil
 }
@@ -106,6 +118,10 @@ func (b *quickwitBackend) Search(ctx context.Context, index, query string, start
 		return nil, err
 	}
 
+	if !b.legacy && resolvedIndex == b.configuredIndex && !isQueryDSL(query) {
+		return b.searchViaDSQuery(ctx, query, startTime, endTime, limit)
+	}
+
 	searchQuery := esSearchQuery{
 		query:      query,
 		startTime:  startTime,
@@ -115,6 +131,105 @@ func (b *quickwitBackend) Search(ctx context.Context, index, query string, start
 		sortFormat: quickwitTimestampSortFormat(b.timestampOutputFormat),
 	}.build()
 	return executeMSearch(ctx, b.httpClient, buildURL(b.baseURL, "_elastic/_msearch"), resolvedIndex, searchQuery, b.timeField)
+}
+
+// isQueryDSL reports whether query is Elasticsearch Query DSL JSON rather
+// than a Lucene string, using the same test as esSearchQuery.
+func isQueryDSL(query string) bool {
+	var parsed map[string]interface{}
+	return json.Unmarshal([]byte(query), &parsed) == nil
+}
+
+// searchViaDSQuery runs a Lucene search through /api/ds/query using the
+// plugin's raw_document metric. The plugin always searches the datasource's
+// configured index and sorts by its timestamp field, newest first.
+func (b *quickwitBackend) searchViaDSQuery(ctx context.Context, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error) {
+	// /api/ds/query needs both bounds; an unset bound means unbounded.
+	from := time.Unix(0, 0)
+	if !startTime.IsZero() {
+		from = startTime
+	}
+	to := time.Now()
+	if !endTime.IsZero() {
+		to = endTime
+	}
+
+	payload := dsQueryPayload(from, to, map[string]interface{}{
+		"refId": "A",
+		"datasource": map[string]interface{}{
+			"uid":  b.dsUID,
+			"type": quickwitDatasourceType,
+		},
+		"query": query,
+		"metrics": []map[string]interface{}{
+			{
+				"id":       "1",
+				"type":     "raw_document",
+				"settings": map[string]interface{}{"size": strconv.Itoa(limit)},
+			},
+		},
+		"bucketAggs": []interface{}{},
+	})
+
+	resp, err := doDSQuery(ctx, b.httpClient, b.grafanaURL, payload)
+	if err != nil {
+		return nil, err
+	}
+	result, ok := resp.Responses["A"]
+	if !ok {
+		return nil, fmt.Errorf("no result found for refId A")
+	}
+	if result.Error != nil {
+		return nil, fmt.Errorf("quickwit query error: %s", result.Error)
+	}
+	return quickwitFramesToDocuments(result.Frames, b.configuredIndex, b.timeField)
+}
+
+// quickwitFramesToDocuments converts the plugin's raw_document frame, a single
+// column holding each hit's _source as JSON, into documents.
+func quickwitFramesToDocuments(frames data.Frames, index, timeField string) ([]ElasticsearchDocument, error) {
+	documents := []ElasticsearchDocument{}
+	for _, frame := range frames {
+		if len(frame.Fields) == 0 {
+			continue
+		}
+		for i := 0; i < frame.Rows(); i++ {
+			var raw []byte
+			switch v := frame.At(0, i).(type) {
+			case json.RawMessage:
+				raw = v
+			case *json.RawMessage:
+				if v == nil {
+					continue
+				}
+				raw = *v
+			default:
+				return nil, fmt.Errorf("unexpected raw_document value type %T", v)
+			}
+			var source map[string]interface{}
+			if err := json.Unmarshal(raw, &source); err != nil {
+				return nil, fmt.Errorf("decoding document: %w", err)
+			}
+			documents = append(documents, ElasticsearchDocument{
+				Index:     index,
+				Source:    source,
+				Timestamp: quickwitTimestamp(source[timeField]),
+			})
+		}
+	}
+	return documents, nil
+}
+
+// quickwitTimestamp formats a document's timestamp the same way executeMSearch
+// does: strings as-is, numbers as epoch milliseconds.
+func quickwitTimestamp(v interface{}) string {
+	switch ts := v.(type) {
+	case string:
+		return ts
+	case float64:
+		return time.UnixMilli(int64(ts)).UTC().Format(time.RFC3339Nano)
+	}
+	return ""
 }
 
 func (b *quickwitBackend) ensureTimestampInfo(ctx context.Context, index string) error {
