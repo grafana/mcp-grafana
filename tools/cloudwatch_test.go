@@ -3,7 +3,10 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -553,4 +556,32 @@ func TestGenerateCloudWatchEmptyResultHints(t *testing.T) {
 	assert.Contains(t, hintsStr, "list_cloudwatch_namespaces")
 	assert.Contains(t, hintsStr, "list_cloudwatch_metrics")
 	assert.Contains(t, hintsStr, "list_cloudwatch_dimensions")
+}
+
+func TestCloudWatchClient_QuerySendsPercentileStatistic(t *testing.T) {
+	var gotQuery map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Queries []map[string]any `json:"queries"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		require.Len(t, payload.Queries, 1)
+		gotQuery = payload.Queries[0]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":{}}`))
+	}))
+	defer server.Close()
+
+	client := &cloudWatchClient{httpClient: server.Client(), baseURL: server.URL}
+	now := time.Now()
+	_, err := client.query(context.Background(), CloudWatchQueryParams{
+		DatasourceUID: "cw",
+		Namespace:     "AWS/ApplicationELB",
+		MetricName:    "TargetResponseTime",
+		Statistic:     "p99.9",
+		Region:        "us-east-1",
+	}, now.Add(-time.Hour), now)
+	require.NoError(t, err)
+
+	assert.Equal(t, "p99.9", gotQuery["statistic"])
 }

@@ -76,13 +76,15 @@ func listDashboardVersions(ctx context.Context, args ListDashboardVersionsParams
 
 var ListDashboardVersions = mcpgrafana.MustTool(
 	"list_dashboard_versions",
-	"List saved versions of a Grafana dashboard. Returns compact metadata: version number, author, timestamp, and save message. Use get_dashboard_by_uid with version to fetch a snapshot.",
+	"List saved versions of a Grafana dashboard. Returns compact metadata: version number, author, timestamp, and save message. A version number can be passed to the dashboard fetch to load that snapshot.",
 	listDashboardVersions,
 	mcpgrafana.WithTitleAnnotation("List dashboard versions"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Grafana's legacy versions API requires dashboards:write, even to read.
+	mcpgrafana.RequiresPermissions("dashboards:read", "dashboards:write"),
 )
 
 // fetchDashboardVersion uses Grafana's legacy versions API because dashboard

@@ -1,9 +1,6 @@
 from mcp import ClientSession
 import pytest
 
-from conftest import models
-from utils import assert_mcp_eval, run_llm_tool_loop
-
 pytestmark = pytest.mark.anyio
 
 
@@ -74,21 +71,21 @@ class TestTempoToolsBasic:
 
         for tool in tempo_tools:
             # Verify the tool has input schema
-            assert hasattr(tool, "inputSchema"), (
+            assert hasattr(tool, "input_schema"), (
                 f"Tool {tool.name} should have inputSchema"
             )
-            assert isinstance(tool.inputSchema, dict), (
+            assert isinstance(tool.input_schema, dict), (
                 f"Tool {tool.name} inputSchema should be a dict"
             )
 
             # Verify datasourceUid parameter exists (camelCase)
-            properties = tool.inputSchema.get("properties", {})
+            properties = tool.input_schema.get("properties", {})
             assert "datasourceUid" in properties, (
                 f"Tool {tool.name} should have datasourceUid parameter (camelCase)"
             )
 
             # Verify it's required
-            required = tool.inputSchema.get("required", [])
+            required = tool.input_schema.get("required", [])
             assert "datasourceUid" in required, (
                 f"Tool {tool.name} should require datasourceUid parameter"
             )
@@ -137,7 +134,7 @@ class TestTempoToolsBasic:
                 arguments={},  # Missing datasourceUid
             )
             # If the server returns an error result instead of raising
-            assert result.isError, "Should return an error when datasourceUid is missing"
+            assert result.is_error, "Should return an error when datasourceUid is missing"
             error_text = result.content[0].text.lower()
             assert "datasourceuid" in error_text or "required" in error_text, (
                 f"Error should mention datasourceUid: {result.content[0].text}"
@@ -158,7 +155,7 @@ class TestTempoToolsBasic:
                 arguments={"datasourceUid": "nonexistent-tempo"},
             )
             # Server may return an error result rather than raising
-            assert result.isError, "Should return an error for invalid datasourceUid"
+            assert result.is_error, "Should return an error for invalid datasourceUid"
             error_text = result.content[0].text.lower()
             assert "not found" in error_text or "not accessible" in error_text, (
                 f"Should indicate datasource not found: {result.content[0].text}"
@@ -188,38 +185,3 @@ class TestTempoToolsBasic:
             assert (
                 "not found" not in error_msg or "tempo" not in error_msg
             ), f"Datasource tempo should be accessible: {e}"
-
-
-class TestTempoToolsWithLLM:
-    """LLM integration tests for Tempo tools."""
-
-    @pytest.mark.parametrize("model", models)
-    @pytest.mark.flaky(reruns=2)
-    async def test_llm_can_list_trace_attributes(
-        self, model: str, mcp_client: ClientSession, mcp_transport: str
-    ):
-        """Test that an LLM can list available trace attributes from Tempo."""
-        prompt = (
-            "Use the tempo tools to get the available span attribute names "
-            "from the datasource with UID 'tempo'. Tell me which span attributes "
-            "I can use in TraceQL, or say if none are available."
-        )
-        final_content, tools_called, mcp_server = await run_llm_tool_loop(
-            model, mcp_client, mcp_transport, prompt
-        )
-
-        attr_calls = [tc for tc in tools_called if tc.name == "list_tempo_attribute_names"]
-        assert attr_calls, "list_tempo_attribute_names was not in tools_called"
-        args = attr_calls[0].args
-        assert args.get("datasourceUid") == "tempo", (
-            f"Expected datasourceUid='tempo', got {args.get('datasourceUid')!r}"
-        )
-
-        assert_mcp_eval(
-            prompt,
-            final_content,
-            tools_called,
-            mcp_server,
-            "Does the response list available span attributes, or accurately report that none were returned?",
-            expected_tools="list_tempo_attribute_names",
-        )

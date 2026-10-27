@@ -24,21 +24,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
         with:
-          go-version: "1.26"
           # Caching a build that feeds a release artifact is a cache-poisoning
           # risk, as in the release workflow.
           cache: false
 
       # Only the binaries the bundle needs, including the universal macOS build.
+      # Pin the version to the latest v* tag: goreleaser otherwise picks module
+      # tags like lokiguard/v0.1.0, and the slash puts the bundle under a subdir.
       - name: Build binaries
-        uses: goreleaser/goreleaser-action@01cbe076be10ba0af7b0b9319ac490a93d3d2fcd
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: build --snapshot --clean --id mcpb
+        run: |
+          GORELEASER_CURRENT_TAG=$(git describe --tags --abbrev=0 --match 'v*')
+          export GORELEASER_CURRENT_TAG
+          goreleaser build --snapshot --clean --id mcpb
 
       # Packing is the check: it validates the manifest, asserts the macOS binary
       # carries both architectures, and fails if the server reports no tools.

@@ -94,7 +94,9 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	}
 	url := grafanaURL + primaryBase
 
-	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
+	// A nil base selects cfg.HTTPTransport(), so an embedder's BaseTransport
+	// (tracing, connection pooling, limits) applies here as for other tools.
+	rt, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
@@ -119,6 +121,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
 	}
 
+	rt = &prometheusResponseLimitTransport{underlying: rt}
 	c, err := api.NewClient(api.Config{
 		Address:      url,
 		RoundTripper: &prometheusMetricNamesTransport{underlying: rt},
@@ -134,7 +137,7 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 	switch queryType {
 	case "range":
 		step := time.Duration(stepSeconds) * time.Second
-		result, warnings, err := b.api.QueryRange(ctx, expr, promv1.Range{
+		result, warnings, _, err := b.api.QueryRange(ctx, expr, promv1.Range{
 			Start: start,
 			End:   end,
 			Step:  step,
@@ -144,7 +147,7 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 		}
 		return result, warnings, nil
 	case "instant":
-		result, warnings, err := b.api.Query(ctx, expr, end)
+		result, warnings, _, err := b.api.Query(ctx, expr, end)
 		if err != nil {
 			return nil, nil, fmt.Errorf("querying Prometheus instant: %w", promErrorWithDetail(err))
 		}
@@ -155,7 +158,7 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 }
 
 func (b *prometheusBackend) LabelNames(ctx context.Context, matchers []string, start, end time.Time) ([]string, error) {
-	names, _, err := b.api.LabelNames(ctx, matchers, start, end)
+	names, _, _, err := b.api.LabelNames(ctx, matchers, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus label names: %w", promErrorWithDetail(err))
 	}
@@ -167,7 +170,7 @@ func (b *prometheusBackend) LabelNames(ctx context.Context, matchers []string, s
 }
 
 func (b *prometheusBackend) LabelValues(ctx context.Context, labelName string, matchers []string, start, end time.Time) ([]string, error) {
-	values, _, err := b.api.LabelValues(ctx, labelName, matchers, start, end)
+	values, _, _, err := b.api.LabelValues(ctx, labelName, matchers, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus label values: %w", promErrorWithDetail(err))
 	}
@@ -186,7 +189,7 @@ func (b *prometheusBackend) MetricNames(ctx context.Context, re *regexp.Regexp, 
 		// The non-empty matcher keeps regexes like ".*" valid as a series selector.
 		matchers = []string{fmt.Sprintf(`{__name__!="",__name__=~%q}`, pattern)}
 	}
-	values, _, err := b.api.LabelValues(ctx, "__name__", matchers, start, end, promv1.WithLimit(uint64(limit)))
+	values, _, _, err := b.api.LabelValues(ctx, "__name__", matchers, start, end, promv1.WithLimit(uint64(limit)))
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", promErrorWithDetail(err))
 	}

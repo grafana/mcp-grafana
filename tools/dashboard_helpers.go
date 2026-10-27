@@ -183,9 +183,7 @@ func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 }
 
 // extractPanelQueries extracts all queries from a panel.
-// When dashboardVars is non-nil, performs variable analysis and substitution,
-// populating ProcessedQuery and RequiredVariables fields.
-func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
@@ -226,6 +224,7 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 		pq := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
+			rawTarget:  queryTargetFields(target),
 			Datasource: dsInfo,
 			RefID:      refID,
 		}
@@ -240,38 +239,30 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 			pq.Target = queryTargetFields(target)
 		}
 
-		// Only do variable processing when dashboardVars is provided
-		if dashboardVars != nil {
-			// A structured target has nothing runnable to substitute into, but it
-			// can still reference variables (a CloudWatch dimension of
-			// "$instance", say), so report those as required too.
-			pq.RequiredVariables = findVariablesInQuery(variableSearchText(pq), dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			pq.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			pq.Datasource = dsInfo
-		}
-
 		queries = append(queries, pq)
 	}
 
 	return queries
 }
 
-// extractQueryExpression extracts the query string from a target
-// Different datasources store queries in different fields
-func extractQueryExpression(target map[string]interface{}) string {
-	// Try common query field names
-	queryFields := []string{
-		"expr",       // Prometheus
-		"query",      // Loki, ClickHouse, generic
-		"expression", // CloudWatch
-		"rawSql",     // SQL databases
-		"rawSQL",     // Athena (grafana-athena-datasource)
-		"rawQuery",   // Some datasources
-		"target",     // Graphite metric path
-	}
+// queryFields are the target fields that hold a query string, in lookup order.
+// Different datasources store queries in different fields.
+var queryFields = []string{
+	"expr",        // Prometheus
+	"query",       // Loki, ClickHouse, generic
+	"expression",  // CloudWatch
+	"rawSql",      // SQL databases
+	"rawSQL",      // Athena (grafana-athena-datasource)
+	"rawQuery",    // Some datasources
+	"target",      // Graphite metric path
+	"cypherQuery", // Neo4j
+}
 
+// errNoQueryExpression reports a target without a query string in any of queryFields.
+var errNoQueryExpression = fmt.Errorf("could not extract query from panel target (checked: %s)", strings.Join(queryFields, ", "))
+
+// extractQueryExpression extracts the query string from a target
+func extractQueryExpression(target map[string]interface{}) string {
 	for _, field := range queryFields {
 		if val := safeString(target, field); val != "" {
 			return val
@@ -409,31 +400,24 @@ func isEmptyTargetValue(val interface{}) bool {
 	}
 }
 
-// variableSearchText returns the text of a panel query to scan for template
-// variable references: the expression when there is one, otherwise the target's
-// JSON, which catches variables used inside structured fields such as a
-// CloudWatch dimension of "$instance".
+// variableSearchText includes both the expression and target fields, since
+// expression queries can also reference variables in location or dimensions.
+// rawTarget preserves those fields without changing the public response shape.
 func variableSearchText(pq panelQuery) string {
-	if pq.Query != "" {
+	target := pq.rawTarget
+	if target == nil {
+		target = pq.Target
+	}
+	encoded, err := json.Marshal(target)
+	if err != nil {
 		return pq.Query
 	}
-	encoded, err := json.Marshal(pq.Target)
-	if err != nil {
-		return ""
-	}
-	return string(encoded)
+	return pq.Query + " " + string(encoded)
 }
 
 // variableRegex matches Grafana template variable patterns
-// Matches: $varname, ${varname}, ${varname:option}, [[varname]]
-var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}|\$([a-zA-Z_][a-zA-Z0-9_]*)|\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
-
-// Pre-compiled regex patterns for substituteVariables
-var (
-	dollarBraceVarRegex   = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}`)
-	dollarBraceNameRegex  = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)`)
-	doubleBracketVarRegex = regexp.MustCompile(`\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
-)
+// Matches: $varname, ${varname}, ${varname:option}, [[varname]], [[varname:option]]
+var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}|\$([a-zA-Z_][a-zA-Z0-9_]*)|\[\[([a-zA-Z_][a-zA-Z0-9_]*)(?::[^\]]*)?\]\]`)
 
 // findVariablesInQuery extracts all variable references from a query
 func findVariablesInQuery(query string, dashboardVars map[string]VariableInfo, overrides map[string]string) []VariableInfo {
@@ -475,87 +459,4 @@ func findVariablesInQuery(query string, dashboardVars map[string]VariableInfo, o
 	}
 
 	return variables
-}
-
-// buildEffectiveVariables combines dashboard variables with user overrides
-func buildEffectiveVariables(dashboardVars map[string]VariableInfo, overrides map[string]string) map[string]string {
-	effective := make(map[string]string)
-
-	// Start with dashboard variable current values
-	for name, varInfo := range dashboardVars {
-		if varInfo.CurrentValue != "" {
-			effective[name] = varInfo.CurrentValue
-		} else if varInfo.DefaultValue != "" {
-			effective[name] = varInfo.DefaultValue
-		}
-	}
-
-	// Apply overrides
-	for name, value := range overrides {
-		effective[name] = value
-	}
-
-	return effective
-}
-
-// substituteVariables replaces template variables in a query with their values
-func substituteVariables(query string, variables map[string]string) string {
-	result := query
-
-	// Replace ${varname:option} and ${varname} patterns
-	result = dollarBraceVarRegex.ReplaceAllStringFunc(result, func(match string) string {
-		// Extract variable name
-		m := dollarBraceNameRegex.FindStringSubmatch(match)
-		if len(m) > 1 {
-			if val, ok := variables[m[1]]; ok {
-				return val
-			}
-		}
-		return match
-	})
-
-	// Replace $varname patterns (but not ${varname} which was already handled)
-	// Be careful not to match variable names that are part of other words
-	for name, value := range variables {
-		result = replaceSimpleDollarVar(result, name, value)
-	}
-
-	// Replace [[varname]] patterns
-	result = doubleBracketVarRegex.ReplaceAllStringFunc(result, func(match string) string {
-		name := match[2 : len(match)-2]
-		if val, ok := variables[name]; ok {
-			return val
-		}
-		return match
-	})
-
-	return result
-}
-
-// replaceSimpleDollarVar replaces $varName followed by a non-word character or end of string
-func replaceSimpleDollarVar(s, varName, value string) string {
-	prefix := "$" + varName
-	prefixLen := len(prefix)
-
-	var result strings.Builder
-	result.Grow(len(s))
-	i := 0
-	for i < len(s) {
-		if s[i] == '$' && i+prefixLen <= len(s) && s[i:i+prefixLen] == prefix {
-			afterIdx := i + prefixLen
-			if afterIdx == len(s) || !isWordChar(s[afterIdx]) {
-				result.WriteString(value)
-				i = afterIdx
-				continue
-			}
-		}
-		result.WriteByte(s[i])
-		i++
-	}
-	return result.String()
-}
-
-// isWordChar returns true if the byte is a word character [a-zA-Z0-9_]
-func isWordChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }

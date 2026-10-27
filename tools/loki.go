@@ -106,6 +106,9 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	}, nil
 }
 
+// lokiQueryTags is sent as the X-Query-Tags header on every Loki request.
+const lokiQueryTags = "Source=mcp-grafana"
+
 // makeRequest makes an HTTP request to the Loki API and returns the response body
 func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params url.Values) ([]byte, error) {
 	fullURL := buildURL(c.baseURL, urlPath)
@@ -127,6 +130,10 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	// Request categorized labels so Loki returns structured metadata and
 	// parsed labels separately from stream/index labels (Loki >= 3.0).
 	req.Header.Set("X-Loki-Response-Encoding-Flags", "categorize-labels")
+
+	// Tag the request so Loki's query logs and metrics can attribute load to
+	// this server (the tags surface as `source` in Loki's query_tags handling).
+	req.Header.Set("X-Query-Tags", lokiQueryTags)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -248,6 +255,7 @@ var ListLokiLabelNames = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListLokiLabelValuesParams defines the parameters for listing Loki label values
@@ -298,6 +306,7 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // LokiLogStream represents a stream of log entries from Loki (resultType: "streams")
@@ -953,13 +962,14 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. Prefer using `query_loki_stats` first to cheaply check whether a stream contains data (avoiding expensive queries against empty streams) and `list_loki_label_names` / `list_loki_label_values` to verify labels exist before querying. Note: `query_loki_stats` returns approximate storage-level counts, not exact log line counts. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line. If this server enables the Loki cost guardrail, expensive queries are rejected before execution: query cost is bytes SCANNED, determined only by the stream selector and time range — line filters (|=) and parsers (| json) reduce what is returned, not what is scanned. Use a stream selector with at least one selective positive label matcher (never `{}`, `=~\".*\"`/`=~\".+\"`, or negative-only matchers), keep time ranges narrow, and check size with `query_loki_stats` first; rejected queries return rewrite guidance.",
+	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line. Query cost is the bytes scanned, which the index statistics for the stream selector over the same time range estimate before a broad selector or long time range is run. If this server enables the Loki cost guardrail, expensive queries are rejected before execution: query cost is bytes SCANNED, determined only by the stream selector and time range — line filters (|=) and parsers (| json) reduce what is returned, not what is scanned. Use a stream selector with at least one selective positive label matcher (never `{}`, `=~\".*\"`/`=~\".+\"`, or negative-only matchers), keep time ranges narrow; rejected queries return rewrite guidance.",
 	queryLokiLogs,
 	mcpgrafana.WithTitleAnnotation("Query Loki logs"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // fetchStats is a method to fetch stats data from Loki API
@@ -1071,13 +1081,14 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, err
 // QueryLokiStats is a tool for querying stats from Loki
 var QueryLokiStats = mcpgrafana.MustTool(
 	"query_loki_stats",
-	"Retrieves index-level statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). **Important**: the `entries` count reflects storage-level index entries (chunk metadata), NOT the number of individual log lines matching the selector. To count actual matching log lines, use `query_loki_logs` with a `count_over_time()` metric query instead. On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
+	"Retrieves index-level statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). **Important**: the `entries` count reflects storage-level index entries (chunk metadata), NOT the number of individual log lines matching the selector. Counting actual matching log lines requires a `count_over_time()` LogQL metric query. On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. The `bytes` field estimates how much data a log query over the same selector and time range would scan, which is useful to know before running a broad selector or long time range. Defaults to the last hour if the time range is omitted.",
 	queryLokiStats,
 	mcpgrafana.WithTitleAnnotation("Get Loki log statistics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // QueryLokiPatternsParams defines the parameters for querying Loki patterns
@@ -1112,6 +1123,10 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pat
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
+	if err := guardLokiPatterns(ctx, backend, args.LogQL, startTime, endTime); err != nil {
+		return nil, err
+	}
+
 	return backend.QueryPatterns(ctx, args.LogQL, args.Step, startTime, endTime)
 }
 
@@ -1125,6 +1140,7 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddLokiTools registers all Loki tools with the MCP server.

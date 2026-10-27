@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,17 +66,28 @@ func (StringOrSlice) JSONSchema() *jsonschema.Schema {
 type GetPanelImageParams struct {
 	DashboardUID string                   `json:"dashboardUid,omitempty" jsonschema:"description=The UID of a stored dashboard containing the panel. Required unless provisioningPreview is provided."`
 	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
-	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000"`
-	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500"`
+	Width        *int                     `json:"width,omitempty" jsonschema:"description=Positive viewport width in CSS pixels. See tool description for per-view defaults. Capped so width times scale is at most 3000. The renderer may raise values below its configured minimum (1000 by default)."`
+	Height       *int                     `json:"height,omitempty" jsonschema:"description=Positive viewport height in CSS pixels\\, or -1 for full-page rendering. See tool description for per-view defaults. Positive heights are capped so height times scale is at most 3000. The renderer may raise values below its configured minimum (500 by default)."`
 	TimeRange    *RenderTimeRange         `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
 	Variables    map[string]StringOrSlice `json:"variables,omitempty" jsonschema:"description=Dashboard variables to apply. Values can be a single string or an array of strings for multi-value variables (e.g.\\, {\"var-datasource\": \"prometheus\"\\, \"var-instance\": [\"server1\"\\, \"server2\"]})"`
 	Theme        *string                  `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`
-	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 1"`
-	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60"`
+	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Image scale factor. See tool description for default and limits. Higher scales reduce the maximum allowed viewport dimensions."`
+	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60\\, capped at 120"`
 	// ProvisioningPreview renders a dashboard from a provisioning repository
 	// branch that has not yet been merged or applied. Mutually exclusive with
 	// dashboardUid.
 	ProvisioningPreview *ProvisioningPreview `json:"provisioningPreview,omitempty" jsonschema:"description=Render a dashboard from a provisioning repository branch (e.g. a git-sync PR preview). Mutually exclusive with dashboardUid."`
+	// Explore renders an ad-hoc Explore view instead of a stored dashboard.
+	// Mutually exclusive with dashboardUid and provisioningPreview.
+	Explore *RenderExplore `json:"explore,omitempty" jsonschema:"description=Render an ad-hoc Explore view for a datasource and queries instead of a stored dashboard. Mutually exclusive with dashboardUid and provisioningPreview. Requires Grafana 10.2 or later."`
+}
+
+// RenderExplore describes an Explore view to render. The state is encoded the
+// same way as the explore links produced by generate_deeplink; the time range
+// comes from GetPanelImageParams.TimeRange.
+type RenderExplore struct {
+	DatasourceUID string                   `json:"datasourceUid" jsonschema:"required,description=Datasource UID to query"`
+	Queries       []map[string]interface{} `json:"queries,omitempty" jsonschema:"description=List of query objects (e.g. [{\"refId\":\"A\"\\, \"expr\":\"up\"}])"`
 }
 
 type RenderTimeRange struct {
@@ -125,13 +137,9 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("failed to build HTTP transport: %w", err)
 	}
 
-	timeout := 60 * time.Second
-	if args.Timeout != nil && *args.Timeout > 0 {
-		timeout = time.Duration(*args.Timeout) * time.Second
-	}
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   timeout,
+		Timeout:   renderTimeout(args),
 	}
 
 	// Create request
@@ -161,8 +169,11 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	}
 
 	// Read the image data
-	imageData, err := io.ReadAll(resp.Body)
+	imageData, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
+		if errors.Is(err, errResponseBodyTooLarge) {
+			err = fmt.Errorf("%w of %d bytes; try a smaller width, height or scale", errResponseBodyTooLarge, defaultResponseLimitBytes)
+		}
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
 
@@ -198,15 +209,54 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	}, nil
 }
 
+// Upper bounds for caller-supplied render parameters. The dimension cap matches
+// the image renderer's default maximum viewport size.
+const (
+	defaultRenderTimeout   = 60 * time.Second
+	maxRenderTimeoutSecs   = 120
+	maxRenderDimension     = 3000
+	defaultPanelWidth      = 1000
+	defaultPanelHeight     = 750
+	defaultDashboardWidth  = 1200
+	defaultDashboardHeight = 900
+	defaultExploreWidth    = 1000
+	defaultExploreHeight   = 1000
+	defaultRenderScale     = 1
+	maxRenderScale         = 3
+)
+
+func renderTimeout(args GetPanelImageParams) time.Duration {
+	if args.Timeout == nil || *args.Timeout <= 0 {
+		return defaultRenderTimeout
+	}
+	// Clamp before converting so large values cannot overflow the Duration.
+	return time.Duration(min(*args.Timeout, maxRenderTimeoutSecs)) * time.Second
+}
+
 func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (string, error) {
 	// Validate that exactly one source is set.
 	hasUID := args.DashboardUID != ""
 	hasPreview := args.ProvisioningPreview != nil
-	if hasUID == hasPreview {
-		if hasUID {
-			return "", fmt.Errorf("dashboardUid and provisioningPreview are mutually exclusive; pass exactly one")
+	hasExplore := args.Explore != nil
+	sources := 0
+	for _, set := range []bool{hasUID, hasPreview, hasExplore} {
+		if set {
+			sources++
 		}
-		return "", fmt.Errorf("either dashboardUid or provisioningPreview must be set")
+	}
+	if sources != 1 {
+		if sources > 1 {
+			return "", fmt.Errorf("dashboardUid, provisioningPreview and explore are mutually exclusive; pass exactly one")
+		}
+		return "", fmt.Errorf("one of dashboardUid, provisioningPreview or explore must be set")
+	}
+	if hasExplore {
+		if args.Explore.DatasourceUID == "" {
+			return "", fmt.Errorf("explore.datasourceUid is required")
+		}
+		if args.PanelID != nil {
+			return "", fmt.Errorf("panelId cannot be used with explore")
+		}
 	}
 	if hasPreview {
 		if err := validateRepoSlug("provisioningPreview.repo", args.ProvisioningPreview.Repo); err != nil {
@@ -229,7 +279,25 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 	// the same route is used for both since the preview UI handles ?panelId
 	// via the standard kiosk/viewPanel mechanism.
 	var renderPath string
-	if hasPreview {
+	if hasExplore {
+		// The renderer loads /explore in a headless browser, so the state is
+		// encoded exactly as in an explore deeplink.
+		renderPath = "/render/explore"
+		exploreParams, err := buildExploreRenderParams(args)
+		if err != nil {
+			return "", err
+		}
+		for key, values := range exploreParams {
+			for _, v := range values {
+				params.Add(key, v)
+			}
+		}
+		// Newer renderers wait for a "render done" signal that only dashboards
+		// send (behind Grafana's reportRenderBinding flag), so an Explore render
+		// would hang until it times out. Ask them to poll instead; older
+		// renderers ignore the param.
+		params.Set("forcePollingMode", "true")
+	} else if hasPreview {
 		// Repo is a single segment and gets the stricter url.PathEscape (which
 		// also encodes sub-delim characters like @, $, &, ;, =, :). For the
 		// multi-segment file path we use url.URL.EscapedPath() so structural /
@@ -258,27 +326,43 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 			params.Set("panelId", strconv.Itoa(*args.PanelID))
 		}
 	}
-	// Set dimensions
-	width := 1000
-	height := 500
+	// Choose defaults for the view, then apply each caller override independently.
+	width, height, scale := defaultDashboardWidth, defaultDashboardHeight, defaultRenderScale
+	if hasExplore {
+		// Explore shows its query editor above the graph and scrolls inside
+		// its own container (so height=-1 doesn't help); give it room.
+		width, height = defaultExploreWidth, defaultExploreHeight
+	} else if args.PanelID != nil {
+		width, height = defaultPanelWidth, defaultPanelHeight
+	}
 	if args.Width != nil {
+		if *args.Width <= 0 {
+			return "", fmt.Errorf("width must be positive")
+		}
 		width = *args.Width
 	}
 	if args.Height != nil {
+		if *args.Height <= 0 && *args.Height != -1 {
+			return "", fmt.Errorf("height must be positive or -1 for full-page rendering")
+		}
 		height = *args.Height
+	}
+	if args.Scale != nil {
+		scale = min(max(*args.Scale, defaultRenderScale), maxRenderScale)
+	}
+	// Bound device pixels, not just CSS pixels. Full-page height is determined
+	// by the dashboard, so the response byte limit remains necessary too.
+	width = min(width, maxRenderDimension/scale)
+	if height != -1 {
+		height = min(height, maxRenderDimension/scale)
 	}
 	params.Set("width", strconv.Itoa(width))
 	params.Set("height", strconv.Itoa(height))
 
-	// Set scale
-	scale := 1
-	if args.Scale != nil && *args.Scale >= 1 && *args.Scale <= 3 {
-		scale = *args.Scale
-	}
 	params.Set("scale", strconv.Itoa(scale))
 
-	// Add time range
-	if args.TimeRange != nil {
+	// Add time range. Explore carries it inside the pane state instead.
+	if args.TimeRange != nil && !hasExplore {
 		if args.TimeRange.From != "" {
 			params.Set("from", args.TimeRange.From)
 		}
@@ -293,9 +377,11 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 	}
 
 	// Add dashboard variables (supports multi-value via params.Add)
-	for key, values := range args.Variables {
-		for _, v := range values {
-			params.Add(key, v)
+	if !hasExplore {
+		for key, values := range args.Variables {
+			for _, v := range values {
+				params.Add(key, v)
+			}
 		}
 	}
 
@@ -314,6 +400,22 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 	params.Set("kiosk", "true")
 
 	return fmt.Sprintf("%s%s?%s", baseURL, renderPath, params.Encode()), nil
+}
+
+// buildExploreRenderParams returns the Explore URL state for an Explore render
+// or its deeplink, reusing the pane builder behind generate_deeplink.
+func buildExploreRenderParams(args GetPanelImageParams) (url.Values, error) {
+	var tr *TimeRange
+	if args.TimeRange != nil {
+		tr = &TimeRange{From: args.TimeRange.From, To: args.TimeRange.To}
+	}
+	uid := args.Explore.DatasourceUID
+	return buildExplorePanesParams(GenerateDeeplinkParams{
+		ResourceType:  "explore",
+		DatasourceUID: &uid,
+		Queries:       args.Explore.Queries,
+		TimeRange:     tr,
+	})
 }
 
 // deeplinkResolvesInRenderOrg reports whether a dashboard URL carrying no org
@@ -346,6 +448,14 @@ func deeplinkResolvesInRenderOrg(ctx context.Context, renderOrg int64) bool {
 // so the deeplink matches the PNG.
 func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) (string, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
+
+	if args.Explore != nil {
+		params, err := buildExploreRenderParams(args)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s/explore?%s", baseURL, params.Encode()), nil
+	}
 
 	var uid *string
 	if args.DashboardUID != "" {
@@ -396,9 +506,10 @@ func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) (string, e
 
 var GetPanelImage = mcpgrafana.MustTool(
 	"get_panel_image",
-	"Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. "+
-		"Either dashboardUid (for stored dashboards) or provisioningPreview (for dashboards staged on a provisioning repository branch, e.g. a git-sync PR) must be supplied. "+
-		"Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.",
+	"Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. "+
+		"Exactly one of dashboardUid (for stored dashboards), provisioningPreview (for dashboards staged on a provisioning repository branch, e.g. a git-sync PR) or explore (an ad-hoc datasource query rendered in Explore, no saved dashboard needed) must be supplied. "+
+		fmt.Sprintf("Defaults in CSS pixels: panel %dx%d, dashboard %dx%d, Explore %dx%d. Scale defaults to %d for all views and is clamped to %d-%d. Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.",
+			defaultPanelWidth, defaultPanelHeight, defaultDashboardWidth, defaultDashboardHeight, defaultExploreWidth, defaultExploreHeight, defaultRenderScale, defaultRenderScale, maxRenderScale),
 	getPanelImage,
 	mcpgrafana.WithTitleAnnotation("Get panel or dashboard image"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -406,6 +517,10 @@ var GetPanelImage = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("dashboards:read"),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+	// explore renders /explore; provisioningPreview renders a repository preview.
+	mcpgrafana.RequiresPermissions("datasources:explore", "provisioning.repositories:read"),
 )
 
 func AddRenderingTools(s *mcp.Server) {

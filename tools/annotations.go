@@ -62,6 +62,7 @@ var GetAnnotationsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:read"),
 )
 
 // CreateAnnotationInput creates a new annotation, optionally in Graphite format.
@@ -92,7 +93,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		}
 		req := &models.PostGraphiteAnnotationsCmd{
 			What: args.What,
-			When: args.When,
+			When: args.When / 1000, // the Graphite endpoint takes epoch seconds
 			Tags: args.Tags,
 			Data: args.GraphiteData,
 		}
@@ -138,6 +139,7 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:create"),
 )
 
 // UpdateAnnotationInput updates only the provided fields of an annotation (PATCH semantics).
@@ -191,6 +193,10 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Grafana finds the annotation through a search filtered by
+	// annotations:read before checking annotations:write; without read it
+	// answers 404.
+	mcpgrafana.RequiresPermissions("annotations:read", "annotations:write"),
 )
 
 // DeleteAnnotationInput identifies the annotation to delete.
@@ -228,6 +234,7 @@ var DeleteAnnotationTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:delete"),
 )
 
 // GetAnnotationTagsInput defines filters for retrieving annotation tags.
@@ -268,6 +275,7 @@ var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:read"),
 )
 
 func AddAnnotationTools(s *mcp.Server, enableWriteTools bool) {

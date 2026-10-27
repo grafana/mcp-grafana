@@ -50,6 +50,7 @@ var ListPyroscopeLabelNames = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type ListPyroscopeLabelNamesParams struct {
@@ -92,7 +93,7 @@ func listPyroscopeLabelNames(ctx context.Context, args ListPyroscopeLabelNamesPa
 		return nil, fmt.Errorf("failed to call Pyroscope API: %w", err)
 	}
 
-	return res.Msg.Names, nil
+	return nonNilStrings(res.Msg.Names), nil
 }
 
 const listPyroscopeLabelValuesToolPrompt = `
@@ -111,6 +112,7 @@ var ListPyroscopeLabelValues = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type ListPyroscopeLabelValuesParams struct {
@@ -160,7 +162,16 @@ func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValues
 		return nil, fmt.Errorf("failed to call Pyroscope API: %w", err)
 	}
 
-	return res.Msg.Names, nil
+	return nonNilStrings(res.Msg.Names), nil
+}
+
+// nonNilStrings returns s, or an empty slice if s is nil, so that an empty
+// result serialises as [] rather than null.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 const listPyroscopeProfileTypesToolPrompt = `
@@ -179,6 +190,7 @@ var ListPyroscopeProfileTypes = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type ListPyroscopeProfileTypesParams struct {
@@ -634,11 +646,12 @@ var QueryPyroscope = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 type QueryPyroscopeParams struct {
 	DataSourceUID string   `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
-	ProfileType   string   `json:"profile_type" jsonschema:"required,description=The profile type\\, use list_pyroscope_profile_types to discover available types"`
+	ProfileType   string   `json:"profile_type" jsonschema:"required,description=The profile type (e.g. process_cpu:cpu:nanoseconds:cpu:nanoseconds)"`
 	QueryType     string   `json:"query_type,omitempty" jsonschema:"description=Query type: \"profile\" (flamegraph)\\, \"metrics\" (time-series)\\, or \"both\" (default). Use \"both\" for complete analysis"`
 	Format        string   `json:"format,omitempty" jsonschema:"description=Profile output format: \"table\" (default) for a per-function flat/cum table\\, or \"dot\" for a call graph in Graphviz DOT format"`
 	Matchers      string   `json:"matchers,omitempty" jsonschema:"description=Prometheus style matchers (defaults to: {})"`

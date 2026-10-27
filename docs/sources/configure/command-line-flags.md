@@ -30,6 +30,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--address`: Host and port for the SSE or streamable-http server. Default: `localhost:8000`.
 - `--base-path`: Base path for the SSE or streamable-http server. With `--base-path /my-base`, SSE is at `/my-base/sse` and streamable-http at `/my-base/mcp`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers and always stay at the server root, never under this prefix.
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint, appended to `--base-path`. Default: `/mcp`.
+- `--sse-keepalive`: Interval between ping requests the server sends to each SSE client, so a reverse proxy or load balancer doesn't close an idle event stream and end the session. Set it below the proxy's idle timeout, for example, `30s` behind ingress-nginx's default 60-second `proxy-read-timeout`. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum `1s`. Default: `0` (disabled). Applies only to `--transport sse`.
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
 ## Configure HTTP transport security
@@ -118,6 +119,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
 - `--enable-query`: Keep the raw-SQL query tools registered under `--disable-write` (refer to the following section).
+- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, or `generate_deeplink`. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
 - `--disable-quickwit`: Disable Quickwit tools.
@@ -169,7 +171,7 @@ The following tools are not registered when the flag is set:
 - Elasticsearch and OpenSearch, Quickwit: `query_elasticsearch`, `query_quickwit`
 - SQL datasources: `query_sql`, `query_influxdb`
 - Graphite: `query_graphite`, `query_graphite_density`
-- CloudWatch: `query_cloudwatch`
+- CloudWatch: `query_cloudwatch`, `query_cloudwatch_logs`
 - Google Cloud Logging: `query_cloud_logging`
 - Pyroscope: `query_pyroscope`
 - Panels: `run_panel_query`
@@ -210,6 +212,8 @@ The server logs a warning at startup naming each of these that is still enabled.
 ## Run in read-only mode
 
 `--disable-write` prevents write operations to Grafana. Use it with read-only service accounts, safer production assistants, or to avoid accidental changes. It also removes the raw-SQL query tools, which can write through the datasource; refer to the preceding section for `--enable-query`, which keeps them.
+
+In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through `POST /api/short-urls`. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
 
 When enabled, the following writes are disabled:
 

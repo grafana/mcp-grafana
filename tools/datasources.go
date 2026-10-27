@@ -70,20 +70,9 @@ type ListDatasourcesResult struct {
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	var list models.DataSourceList
-	resp, err := c.Datasources.GetDataSourcesWithParams(
-		datasources.NewGetDataSourcesParamsWithContext(ctx),
-	)
-	if err == nil {
-		list = resp.Payload
-	} else if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
-		// The datasources API is not accessible to this token (e.g. it
-		// requires Org Admin before Grafana 9.0); fall back to frontend settings
-		// (see datasources_fallback.go).
-		list = fb
-	} else {
-		return nil, fmt.Errorf("list datasources: %w", err)
+	list, err := fetchDatasourceList(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Filter by type and/or name if specified
@@ -136,6 +125,38 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	return result, nil
 }
 
+// fetchDatasourceList returns every datasource visible to the caller.
+func fetchDatasourceList(ctx context.Context) (models.DataSourceList, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
+	if err == nil {
+		return resp.Payload, nil
+	}
+	if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
+		// The datasources API is not accessible to this token (e.g. it
+		// requires Org Admin before Grafana 9.0); fall back to frontend settings
+		// (see datasources_fallback.go).
+		return fb, nil
+	}
+	return nil, fmt.Errorf("list datasources: %w", err)
+}
+
+// getDefaultDatasource returns the organization's default datasource.
+func getDefaultDatasource(ctx context.Context) (*models.DataSourceListItemDTO, error) {
+	list, err := fetchDatasourceList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, ds := range list {
+		if ds.IsDefault {
+			return ds, nil
+		}
+	}
+	return nil, errors.New("no default datasource is configured")
+}
+
 type CreateDatasourceParams struct {
 	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
 	Type            string         `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
@@ -146,7 +167,7 @@ type CreateDatasourceParams struct {
 	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
 	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
-	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected values from the user."`
+	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=True once the field schema has been retrieved; required to create a schema-backed datasource."`
 }
 
 type CreateDatasourceResult struct {
@@ -173,7 +194,8 @@ func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
 		Message: "No schema is available for this datasource type. " +
 			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
 			"Provide the collected values as top-level arguments — name (required), plus any relevant optional ones such as url, database, basicAuth, isDefault, or withCredentials. " +
-			"Do NOT use the fields map; it applies only to schema-based types.",
+			"Do NOT use the fields map; it applies only to schema-based types. " +
+			"Secrets cannot be set here — direct the user to the Grafana UI for those, and if the user shares a credential in the conversation, remind them to rotate it.",
 	}
 }
 
@@ -385,7 +407,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 			result.Health = health
 		}
 
-		grafanaURL := c.PublicURL
+		grafanaURL := mcpgrafana.GrafanaPublicURL(ctx)
 		if grafanaURL == "" {
 			grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
 		}
@@ -456,28 +478,31 @@ var ListDatasources = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the display name in the top-level name argument, schemaReviewed=true, and the fields map populated with values confirmed by the user. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
+	"Create a datasource in two steps. Called with only the type, it returns the plugin's field schema and creates nothing. Called with the type, the display name in the top-level name argument, schemaReviewed=true, and field values in the fields map, it creates the datasource. The plugin for the type must already be installed. Secrets (passwords, tokens) are not accepted. Returns UID, health check, and a config page link.",
 	createDatasource,
 	mcpgrafana.WithTitleAnnotation("Create datasource"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read", "datasources:create"),
 )
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret datasource fields by UID. Omitted fields are preserved. IMPORTANT: always call this tool twice. First call: provide only the uid — the tool returns the datasource's field schema. After receiving the schema, ask the user which fields they want to change and confirm each new value; do not infer or reset fields the user did not mention. Second call: provide the uid, schemaReviewed=true, and the changed values in the fields map. Returns an update message and a health check. For secrets, direct the user to the Grafana UI.",
+	"Update non-secret datasource fields by UID in two steps. Called with only the uid, it returns the datasource's field schema and changes nothing. Called with the uid, schemaReviewed=true, and the changed values in the fields map, it applies the update. Omitted fields are preserved. Secrets (passwords, tokens) cannot be changed. Returns an update message and a health check.",
 	updateDatasource,
 	mcpgrafana.WithTitleAnnotation("Update datasource"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read", "datasources:write"),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -579,6 +604,7 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 type UpdateDatasourceParams struct {
@@ -591,7 +617,7 @@ type UpdateDatasourceParams struct {
 	IsDefault      *bool                  `json:"isDefault,omitempty" jsonschema:"description=Make this the default datasource"`
 	JSONData       map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; replaces existing jsonData when set"`
 	Fields         map[string]any         `json:"fields,omitempty" jsonschema:"description=Datasource field values to change\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly\\, merging jsonData changes into the existing settings. Only include the fields you want to change. Example: {\"httpMethod\": \"POST\"}."`
-	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected the changes from the user."`
+	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=True once the field schema has been retrieved; required to apply the update."`
 }
 
 type UpdateDatasourceResult struct {
@@ -938,6 +964,7 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.

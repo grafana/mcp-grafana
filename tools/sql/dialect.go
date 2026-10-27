@@ -37,7 +37,7 @@ type QueryRunner interface {
 
 // QuerySQLParams are the parameters for the query_sql tool.
 type QuerySQLParams struct {
-	DatasourceUID              string            `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource. Use list_datasources to find available UIDs."`
+	DatasourceUID              string            `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource."`
 	Query                      string            `json:"query" jsonschema:"required,description=Raw SQL query. Supports datasource-specific macros such as $__timeFilter(column)\\, $__from/$__to\\, $__interval\\, and ${varname} for variable substitution."`
 	Start                      string            `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: 1 hour ago."`
 	End                        string            `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now."`
@@ -167,6 +167,23 @@ func supportedDialectTypes() string {
 // Shared helpers for SQL dialects
 
 var sqlIdentifierRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// grafanaMacroRe matches a whole $__name token. replaceWholeMacros looks the name up, so a
+// macro that merely starts with a substituted name ($__toTime, $__interval_s, $__to_date) is
+// never touched.
+var grafanaMacroRe = regexp.MustCompile(`\$__([a-zA-Z0-9_]+)`)
+
+// replaceWholeMacros substitutes the macros named in values (without the $__ prefix) and
+// leaves every other $__ token for the datasource plugin, which expands its own macros
+// server-side.
+func replaceWholeMacros(query string, values map[string]string) string {
+	return grafanaMacroRe.ReplaceAllStringFunc(query, func(match string) string {
+		if value, ok := values[match[len("$__"):]]; ok {
+			return value
+		}
+		return match
+	})
+}
 
 func ValidateSQLIdentifier(name, field string) error {
 	if name == "" {

@@ -32,13 +32,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
 
+      # The same literal command as the base build below, so both binaries are
+      # built identically.
       - name: Build server
-        run: make build
+        run: go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
       # The baseline is the PR's own base commit, built and counted in this job,
       # so every PR is compared against exactly the branch it merges into.
@@ -51,7 +51,9 @@ jobs:
 
       - name: Build base server
         working-directory: base
-        run: make build
+        # Not `mise run build`: the base may predate mise.toml, and from base/
+        # mise would run the head checkout's task in the head directory.
+        run: go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
       - name: Get secrets
         id: get-secrets
@@ -92,7 +94,7 @@ jobs:
 
       - name: Write job summary
         # Only when the analysis actually measured something, so a failed checkout
-        # or `make build` doesn't render an empty table. A threshold failure still
+        # or a build doesn't render an empty table. A threshold failure still
         # produces counts, so genuine over-budget runs are unaffected.
         if: always() && steps.analyze.outputs.total-tokens != ''
         # Values are passed through the environment rather than interpolated into

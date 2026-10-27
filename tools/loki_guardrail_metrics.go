@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/grafana/mcp-grafana/lokiguard"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -12,23 +13,12 @@ import (
 // matching the convention used by clientCacheMeterName/proxiedToolsMeterName.
 const lokiGuardrailMeterName = "mcp-grafana"
 
-// Guardrail block reason kinds, used as the `reason` attribute on the
-// would_block/blocked counters. Deliberately a closed set: these become
-// Prometheus labels downstream.
-const (
-	guardrailReasonSelector = "selector"
-	guardrailReasonRange    = "range"
-	guardrailReasonBytes    = "bytes"
-)
-
-// Guardrail fail-open causes, used as the `cause` attribute on the fail_open
-// counter. Worth distinguishing: unparseable is a gap in the hand-rolled
-// LogQL scanner (fix the scanner), estimate_failed is a Loki index/stats
-// availability blip (fix nothing, watch the rate).
-const (
-	guardrailCauseUnparseable    = "unparseable"
-	guardrailCauseEstimateFailed = "estimate_failed"
-)
+// The `reason` attribute on the would_block/blocked counters is a
+// lokiguard.Kind (selector, range, bytes) and the `cause` attribute on the
+// fail_open counter is a lokiguard.Cause (unparseable, estimate_failed). Both
+// are closed sets because they become Prometheus labels downstream. With
+// --loki-guardrail-on-estimate-failure=block, a Cause is also used as the
+// `reason` of the blocked/would_block counters.
 
 // Backend attribute values. The byte-budget check only runs on native Loki,
 // so lumping the backends together would make the admitted count misleading.
@@ -47,6 +37,20 @@ type lokiGuardrailMetrics struct {
 	wouldBlock metric.Int64Counter // Failed a check in shadow mode; ran anyway
 	blocked    metric.Int64Counter // Failed a check in enforce mode; rejected
 	failOpen   metric.Int64Counter // Could not be evaluated; admitted
+
+	// estimatedBytes records the index/stats estimate for every query that
+	// has one, including blocked queries, so the distribution can drive the
+	// default budget.
+	estimatedBytes metric.Int64Histogram
+}
+
+// estimatedBytesBuckets are the explicit histogram bucket bounds for
+// mcp.loki_guardrail.estimated_bytes: powers of four from 1 MiB to 4 TiB plus
+// 10 TiB, covering a cheap query to one that would scan a whole large tenant.
+var estimatedBytesBuckets = []float64{
+	1 << 20, 4 << 20, 16 << 20, 64 << 20, 256 << 20,
+	1 << 30, 4 << 30, 16 << 30, 64 << 30, 256 << 30,
+	1 << 40, 4 << 40, 10 << 40,
 }
 
 var (
@@ -92,11 +96,18 @@ func newLokiGuardrailMetrics(mp metric.MeterProvider) lokiGuardrailMetrics {
 		metric.WithUnit("{query}"),
 	)
 
+	estimatedBytes, _ := meter.Int64Histogram("mcp.loki_guardrail.estimated_bytes",
+		metric.WithDescription("Loki index/stats byte estimate for queries the guardrail evaluated, by verdict"),
+		metric.WithUnit("By"),
+		metric.WithExplicitBucketBoundaries(estimatedBytesBuckets...),
+	)
+
 	return lokiGuardrailMetrics{
-		admitted:   admitted,
-		wouldBlock: wouldBlock,
-		blocked:    blocked,
-		failOpen:   failOpen,
+		admitted:       admitted,
+		wouldBlock:     wouldBlock,
+		blocked:        blocked,
+		failOpen:       failOpen,
+		estimatedBytes: estimatedBytes,
 	}
 }
 
@@ -127,6 +138,16 @@ func (m lokiGuardrailMetrics) recordFailOpen(ctx context.Context, backend, cause
 	m.failOpen.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("backend", backend),
 		attribute.String("cause", cause),
+	))
+}
+
+// recordEstimatedBytes records a query's index/stats byte estimate, labelled
+// with the verdict (allow, block, unknown) so the size distribution of blocked
+// queries is visible next to the admitted ones.
+func (m lokiGuardrailMetrics) recordEstimatedBytes(ctx context.Context, backend string, verdict lokiguard.Verdict, bytes int64) {
+	m.estimatedBytes.Record(ctx, bytes, metric.WithAttributes(
+		attribute.String("backend", backend),
+		attribute.String("verdict", verdict.String()),
 	))
 }
 

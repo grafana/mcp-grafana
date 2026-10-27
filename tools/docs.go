@@ -168,6 +168,7 @@ var SearchDocsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
 
 // Get doc
@@ -237,6 +238,7 @@ var GetDocTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
 
 // AddDocsTools registers all documentation tools on the MCP server.

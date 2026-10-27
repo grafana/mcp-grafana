@@ -1,5 +1,5 @@
 # Build stage
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -19,7 +19,7 @@ ARG TARGETOS
 ARG TARGETARCH
 # VERSION is injected by CI on tag builds; when empty, Version() falls back to build info.
 ARG VERSION=""
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -X github.com/grafana/mcp-grafana.version=${VERSION}" -o mcp-grafana ./cmd/mcp-grafana
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -X github.com/grafana/mcp-grafana/v2.version=${VERSION}" -o mcp-grafana ./cmd/mcp-grafana
 
 # Final stage
 FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3

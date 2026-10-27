@@ -25,7 +25,7 @@ type GenerateDeeplinkParams struct {
 	Queries             []map[string]interface{}     `json:"queries,omitempty" jsonschema:"description=List of query objects for explore links (e.g. [{\"refId\":\"A\"\\,\"expr\":\"up\"}])"`
 	QueryParams         map[string]string            `json:"queryParams,omitempty" jsonschema:"description=Additional URL query parameters (for dashboard/panel types)"`
 	TimeRange           *TimeRange                   `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
-	Shorten             bool                         `json:"shorten,omitempty" jsonschema:"description=If true\\, try to shorten the generated URL to /goto/<uid>. If shortening fails\\, return the original deeplink."`
+	Shorten             bool                         `json:"shorten,omitempty" jsonschema:"description=If true\\, try to shorten the generated URL to /goto/<uid>. If shortening fails\\, an error containing the full deeplink is returned."`
 }
 
 // DeeplinkProvisioningPreview identifies a not-yet-applied dashboard inside a
@@ -33,7 +33,7 @@ type GenerateDeeplinkParams struct {
 // that file; pullRequestUrl is read by the preview banner to surface the
 // upstream PR.
 type DeeplinkProvisioningPreview struct {
-	Repo           string `json:"repo" jsonschema:"required,description=Provisioning repository slug. List repositories via list_provisioning_repositories if unknown."`
+	Repo           string `json:"repo" jsonschema:"required,description=Provisioning repository slug (the repository name)."`
 	Path           string `json:"path" jsonschema:"required,description=Path to the dashboard file within the repository\\, relative to its root."`
 	Ref            string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA. Defaults to the repository's main branch when omitted."`
 	PullRequestURL string `json:"pullRequestUrl,omitempty" jsonschema:"description=Upstream pull request URL to surface in Grafana's preview banner."`
@@ -57,11 +57,11 @@ type TimeRange struct {
 }
 
 func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
-	// Prefer the public URL from the Grafana client (fetched from /api/frontend/settings),
-	// falling back to the configured URL if the client is not available or has no public URL.
+	// Prefer the public URL from /api/frontend/settings (fetched on first use),
+	// falling back to the configured URL if there is no client or no public URL.
 	var baseURL string
-	if gc := mcpgrafana.GrafanaClientFromContext(ctx); gc != nil && gc.PublicURL != "" {
-		baseURL = gc.PublicURL
+	if publicURL := mcpgrafana.GrafanaPublicURL(ctx); publicURL != "" {
+		baseURL = strings.TrimRight(publicURL, "/")
 	} else {
 		config := mcpgrafana.GrafanaConfigFromContext(ctx)
 		baseURL = config.URL
@@ -71,7 +71,7 @@ func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable")
 	}
 
-	// Validate baseURL because gc.PublicURL is populated from Grafana's
+	// Validate baseURL because the public URL is populated from Grafana's
 	// /api/frontend/settings appUrl response, which is not covered by the
 	// configured URL validation. A misconfigured Grafana can return a malformed appUrl that flows into deeplink construction
 	// (e.g. http://%gg/d/<uid>) unless checked here.
@@ -177,12 +177,10 @@ func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, 
 
 	shortURL, err := shortenURL(ctx, deeplink)
 	if err != nil {
-		// Compatibility-first behavior: never fail deeplink generation when
-		// short-url creation is unavailable; return the long URL instead.
-		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
-			"failed to shorten generated deeplink; returning full URL",
-			"error", err)
-		return deeplink, nil
+		// Fail visibly: silently returning the long URL hides that the
+		// caller did not get what it asked for. The error carries the full
+		// deeplink so it is still usable.
+		return "", fmt.Errorf("failed to shorten deeplink (full URL: %s): %w", deeplink, err)
 	}
 
 	return shortURL, nil
@@ -315,13 +313,14 @@ func normalizeShortURLWithPublicBase(rawShortURL, publicBaseURL string) (string,
 
 var GenerateDeeplink = mcpgrafana.MustTool(
 	"generate_deeplink",
-	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to also attempt a /goto/<uid> short URL; if shortening fails, the full deeplink is returned.",
+	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to return a /goto/<uid> short URL instead; if shortening fails, an error containing the full deeplink is returned.",
 	generateDeeplink,
 	mcpgrafana.WithTitleAnnotation("Generate navigation deeplink"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // short URLs need no RBAC action
 )
 
 var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
@@ -333,6 +332,7 @@ var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // short URLs need no RBAC action
 )
 
 func AddNavigationTools(s *mcp.Server, enableWriteTools bool) {

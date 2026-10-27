@@ -845,6 +845,18 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			expected: "rate(requests[36s])",
 		},
 		{
+			name:     "auto",
+			query:    `count_over_time({job="x"}[$__auto])`,
+			duration: time.Hour,
+			expected: `count_over_time({job="x"}[36s])`,
+		},
+		{
+			name:     "auto_braced",
+			query:    `count_over_time({job="x"}[${__auto}])`,
+			duration: time.Hour,
+			expected: `count_over_time({job="x"}[36s])`,
+		},
+		{
 			name:     "interval_ms",
 			query:    "timestamp(up) - $__interval_ms",
 			duration: time.Hour,
@@ -1051,10 +1063,10 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			datasourceType: "prometheus",
 			query:          "rate(http_requests[5m])",
 			containsHints: []string{
-				"No data found",
-				"Time range",
+				"Prometheus query returned no data",
+				"time range",
 				"list_prometheus_metric_names",
-				"Label selectors",
+				"target health",
 			},
 		},
 		{
@@ -1062,8 +1074,8 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			datasourceType: "loki",
 			query:          "{job=\"app\"} |= \"error\"",
 			containsHints: []string{
-				"No data found",
-				"Time range",
+				"Loki query returned no log entries",
+				"time range",
 				"list_loki_label_names",
 				"query_loki_stats",
 			},
@@ -1153,6 +1165,46 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			for _, expected := range tt.containsHints {
 				assert.Contains(t, hintsStr, expected)
 			}
+		})
+	}
+}
+
+func TestGeneratePanelQueryHintsGroups(t *testing.T) {
+	for _, tc := range []struct {
+		datasource, query string
+		want              []string
+	}{
+		{
+			datasource: "prometheus",
+			query:      "up",
+			want: []string{
+				"The Prometheus query returned no data for the specified time range.",
+				"Possible causes:",
+				"- The metric, labels, time range or scrape target may have no data.",
+				"Try:",
+				"- Check metrics/labels with list_prometheus_metric_names and list_prometheus_label_values.",
+				"- Expand the time range to the last 6h or 24h.",
+				"- Check scrape target health with up{job=\"...\"}.",
+				"- Query executed: up",
+			},
+		},
+		{
+			datasource: "loki",
+			query:      `{job="app"}`,
+			want: []string{
+				"The Loki query returned no log entries for the specified time range.",
+				"Possible causes:",
+				"- The stream selector, time range or filters may not match available logs.",
+				"Try:",
+				"- Check labels with list_loki_label_names and list_loki_label_values.",
+				"- Check the stream selector with query_loki_stats.",
+				"- Expand the time range to the last 6h or 24h.",
+				`- Query executed: {job="app"}`,
+			},
+		},
+	} {
+		t.Run(tc.datasource, func(t *testing.T) {
+			require.Equal(t, tc.want, generatePanelQueryHints(tc.datasource, tc.query))
 		})
 	}
 }

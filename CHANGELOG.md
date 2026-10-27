@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-10-20
+
+### Fixed
+
+- Classic (v1) dashboards are read and patched as v1 again on Grafana versions whose v1→v2 conversion adds a default grid layout preference, such as Grafana Cloud 13.3. Since v2.1.0, `get_dashboard_by_uid` reported every such dashboard as v2, so `update_dashboard` patches with `$.panels[...]` paths failed, and retrying with v2 paths migrated the dashboard to v2 ([#1369](https://github.com/grafana/mcp-grafana/pull/1369))
+
+## [2.1.0] - 2026-10-20
+
+### Added
+
+- `alerting_rules_write` and `alerting_routing_write` can create Mimir/Cortex or Loki ruler alert rules and Mimir/Cortex Alertmanager receivers with `managed_by: "datasource"`. Grafana-managed creation stays the default. The target datasource comes from `datasource_uid` or, when exactly one compatible datasource exists, is selected automatically; existing rules in the group and the rest of the Alertmanager configuration are preserved ([#1342](https://github.com/grafana/mcp-grafana/pull/1342))
+- `query_prometheus` renders its results as an interactive chart (time series, heatmap, bars, stat or table, chosen from the response shape) in MCP hosts that support MCP Apps. The text output is unchanged ([#1309](https://github.com/grafana/mcp-grafana/pull/1309))
+- Every tool declares the Grafana RBAC actions it needs in its `_meta` (`grafana.com/requiredPermissions`), and the README's permissions column is generated from those declarations, adding 20 missing tools and correcting stale entries ([#1306](https://github.com/grafana/mcp-grafana/pull/1306))
+
+### Fixed
+
+- `update_dashboard` detects v2 dashboards that Grafana still reports as stored at v1, instead of saving them as v1 and silently dropping auto grid, tabs and conditional rendering ([#1357](https://github.com/grafana/mcp-grafana/pull/1357))
+- `query_sql` and `run_panel_query` replace `$__from`, `$__to` and `$__interval` only as whole tokens, so plugin macros such as ClickHouse's `$__fromTime`, `$__toTime` and `$__interval_s` (and tokens like `$__to_date` in other dialects) are no longer corrupted ([#1346](https://github.com/grafana/mcp-grafana/pull/1346))
+- `query_prometheus` returns `endTime is required` or `startTime must be provided when queryType is 'range'` instead of a PromQL parser error when those times are missing ([#1347](https://github.com/grafana/mcp-grafana/pull/1347))
+- `--enable-write-tools=generate_deeplink` now works with `--disable-write`, so `shorten=true` returns a short link ([#1337](https://github.com/grafana/mcp-grafana/pull/1337))
+- `get_panel_image` uses separate default sizes for panels (1000x750), dashboards (1200x900) and Explore (1000x1000) at scale 1, clamps scale to 1-3, and caps each rendered dimension at 3000 pixels ([#1323](https://github.com/grafana/mcp-grafana/pull/1323))
+- Listing datasource-managed (Prometheus, Mimir, Loki) alert rules pages through results and stops once enough matches are found, with a 10 MiB per-page and 30s overall bound, instead of decoding every rule at once ([#1335](https://github.com/grafana/mcp-grafana/pull/1335))
+- Several tool bugs ([#1313](https://github.com/grafana/mcp-grafana/pull/1313)):
+  - `create_annotation` converts Graphite `when` from milliseconds to seconds
+  - `update_dashboard` returns the saved title instead of `null`
+  - Pyroscope label tools return `[]` instead of `null`
+  - `get_tempo_trace` returns a not-found error for unknown trace IDs instead of `{}`
+  - Incident results no longer include empty placeholder assignments
+  - `install_plugin` only suggests creating a datasource for datasource plugins
+- Generic empty-result hints for Prometheus and Loki are shorter, using fewer tokens per empty response ([#1336](https://github.com/grafana/mcp-grafana/pull/1336))
+- The MCP apps no longer ship duplicate `woff` fonts, shrinking the trace viewer by about 19% ([#1312](https://github.com/grafana/mcp-grafana/pull/1312))
+- Docker images report their real version from `--version` ([#1315](https://github.com/grafana/mcp-grafana/pull/1315))
+
+### Changed
+
+- **Breaking:** `list_users_by_org` is paginated, with new `query`, `limit` (default 100, max 1000) and `page` inputs, and returns `{totalCount, page, perPage, orgUsers}` instead of an array of users. Agents pick up the new shape from the tool description and need no changes; only code that parses the tool output directly must read `orgUsers` ([#1313](https://github.com/grafana/mcp-grafana/pull/1313))
+- `generate_deeplink` with `shorten: true` returns an error containing the full link when a short URL cannot be created, instead of silently returning the long URL ([#1313](https://github.com/grafana/mcp-grafana/pull/1313))
+- `grafana_api_request` times out after the Grafana client timeout (10s by default; raise it with `--grafana-timeout`). `get_panel_image` render timeouts default to 60s and are capped at 120s. The client cache is bounded to 1000 entries per client type ([#1315](https://github.com/grafana/mcp-grafana/pull/1315))
+- Prometheus query and metadata responses larger than 10 MiB fail with an error asking you to narrow the query, instead of being read without limit ([#1331](https://github.com/grafana/mcp-grafana/pull/1331))
+
+### Security
+
+- Bump the Go toolchain to 1.26.9, `golang.org/x/net` to v0.60.0 and the builder images to Go 1.27.2 for CVEs ([#1333](https://github.com/grafana/mcp-grafana/pull/1333))
+- Bump vite in the bundled UI apps to remediate a `source-map-js` CVE ([#1332](https://github.com/grafana/mcp-grafana/pull/1332))
+- Releases are signed with keyless cosign: the binaries checksums file, the `.mcpb` bundle and the Docker images, each with SPDX SBOMs ([#1314](https://github.com/grafana/mcp-grafana/pull/1314))
+
+## [2.0.2] - 2026-10-07
+
+### Added
+
+- `get_panel_image` can render an ad-hoc Explore view as a PNG via a new `explore` input (datasource UID and queries), without saving a dashboard first; requires Grafana 10.2+ ([#1298](https://github.com/grafana/mcp-grafana/pull/1298))
+- `update_dashboard` returns an absolute dashboard deeplink in its `url` field, using Grafana's public URL when available ([#1300](https://github.com/grafana/mcp-grafana/pull/1300))
+
+### Fixed
+
+- `query_cloudwatch` accepts percentile statistics such as `p95` and `p99.9`; `statistic` was previously restricted to an enum of basic statistics ([#1299](https://github.com/grafana/mcp-grafana/pull/1299))
+- Tool and parameter descriptions no longer contain model directives or references to other tools, to meet connector directory requirements ([#1304](https://github.com/grafana/mcp-grafana/pull/1304))
+
+## [2.0.1] - 2026-10-06
+
+### Added
+
+- `update_dashboard` now steers models towards schema v2 for new dashboards, keeps existing dashboards in their stored schema, and includes minimal v2 examples (grid and tabs layouts) in its description ([#1294](https://github.com/grafana/mcp-grafana/pull/1294))
+
+### Fixed
+
+- `update_dashboard` no longer silently overwrites a v2 dashboard with a v1 `panels[]` body, which dropped its v2 structure such as tabs; it now returns an error suggesting patches or a v2 body. New v2 dashboards are created at the most stable v2 API version Grafana serves instead of a hardcoded `v2beta1` ([#1275](https://github.com/grafana/mcp-grafana/pull/1275))
+- `run_panel_query` works on schema v2 dashboards instead of failing with `dashboard has no panels` ([#1287](https://github.com/grafana/mcp-grafana/pull/1287))
+- Datasource requests no longer treat an HTML page returned by the fallback `/resources` route (such as Loki's web UI) as success, which caused `invalid character '<'` errors that persisted until restart ([#1295](https://github.com/grafana/mcp-grafana/pull/1295))
+- Tool descriptions no longer show a literal `\,` in place of every comma ([#1296](https://github.com/grafana/mcp-grafana/pull/1296))
+- The trace and panel viewer MCP apps declare `data:` resources in their CSP, so hosts like MCP Inspector no longer block their embedded fonts and images ([#1284](https://github.com/grafana/mcp-grafana/pull/1284))
+
 ## [2.0.0] - 2026-09-29
 
 2.0 moves the server from `mark3labs/mcp-go` to the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk). The major version bump is for the Go library: the SDK's types are part of this module's exported API.
@@ -568,6 +640,11 @@ This is the last 1.x release; the next release will be 2.0.
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[2.1.1]: https://github.com/grafana/mcp-grafana/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/grafana/mcp-grafana/compare/v2.0.2...v2.1.0
+[2.0.2]: https://github.com/grafana/mcp-grafana/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/grafana/mcp-grafana/compare/v2.0.0...v2.0.1
+[2.0.0]: https://github.com/grafana/mcp-grafana/compare/v1.6.3...v2.0.0
 [1.6.3]: https://github.com/grafana/mcp-grafana/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/grafana/mcp-grafana/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/grafana/mcp-grafana/compare/v1.6.0...v1.6.1

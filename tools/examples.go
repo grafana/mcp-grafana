@@ -260,7 +260,10 @@ var influxDBExamples = []QueryExample{
 var supportedDatasourceTypes = []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb"}
 
 func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQueryExamplesResult, error) {
+	// Accept plugin IDs such as grafana-clickhouse-datasource, which callers
+	// often pass straight from a datasource's type field.
 	datasourceType := strings.ToLower(args.DatasourceType)
+	datasourceType = strings.TrimSuffix(strings.TrimPrefix(datasourceType, "grafana-"), "-datasource")
 
 	var examples []QueryExample
 	switch datasourceType {
@@ -288,13 +291,14 @@ func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQuery
 // GetQueryExamples is the MCP tool that provides example queries for each datasource type.
 var GetQueryExamples = mcpgrafana.MustTool(
 	"get_query_examples",
-	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), CloudWatch (metric configurations), and InfluxDB (Flux and InfluxQL). Use this to understand query syntax and common patterns for each datasource. TIP: Use list_datasources to find datasource UIDs, or get_datasource if you know the exact name.",
+	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), CloudWatch (metric configurations), and InfluxDB (Flux and InfluxQL). Use this to understand query syntax and common patterns for each datasource.",
 	getQueryExamples,
 	mcpgrafana.WithTitleAnnotation("Get query examples"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
 
 // AddExamplesTools registers all example-related tools to the MCP server.

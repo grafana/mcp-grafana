@@ -1,49 +1,36 @@
 # Tests
 
-This directory contains an e2e test suite for the Grafana MCP server.
+This directory contains end-to-end tests that run the real `mcp-grafana`
+binary against the docker-compose stack. They call tools directly over the MCP
+protocol and assert on the seeded data, and run on every PR over all three
+transports (`.github/workflows/e2e.yml`).
 
-The test suite evaluates the LLM's ability to use Grafana MCP tools effectively:
+Tests use [`uv`] to manage dependencies.
 
-- **Loki tests**: Evaluates how well the LLM can use Grafana tools to:
-  - Navigate and use available tools
-  - Make appropriate tool calls
-  - Process and present the results in a meaningful way
-  - Evaluating the LLM responses using `deepeval` (GEval), using custom LLM-as-a-Judge approach.
+## Running
 
-The tests are run against two LLM models:
-- GPT-4
-- Claude 3.5 Sonnet
-
-Tests are using [`uv`] to manage dependencies. Install uv following the instructions for your platform.
-
-## Prerequisites
-- Docker installed and running on your system
-- Docker containers for the test environment must be started before running tests
-
-## Setup
-1. Create a virtual environment and install the dependencies:
+1. Install the dependencies:
    ```bash
    uv sync --all-groups
    ```
 
-2. Create a `.env` file with your API keys:
-   ```env
-   OPENAI_API_KEY=sk-...
-   ANTHROPIC_API_KEY=sk-ant-...
-   ```
+2. Start the docker-compose services (`mise run run-test-services` from the repo
+   root) and build the binary (`go build -o dist/mcp-grafana ./cmd/mcp-grafana`).
 
-3. Start the required Docker containers
-
-4. Start the MCP server in SSE mode; from the root of the project:
+3. For the SSE and streamable-http transports, start the server; from the repo
+   root:
    ```bash
-   go run ./cmd/mcp-grafana -t sse --enabled-tools admin,search,dashboard,loki,navigation,rendering,tempo
+   ./dist/mcp-grafana -t sse --enabled-tools search,datasource,incident,prometheus,loki,elasticsearch,influxdb,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,admin,sql,cloudwatch
    ```
+   The stdio transport spawns `../dist/mcp-grafana` itself.
 
-   **Note:** This command enables only the tool categories that are tested in the e2e test suite: `admin` (for admin tests), `search` (for dashboard search), `dashboard`, `loki`, `navigation`, `rendering`, and `tempo` (for Tempo tests). Admin tools are disabled by default, so they must be explicitly included in `--enabled-tools` for admin tests to pass.
-
-5. Run the tests:
+4. Run the E2E tests:
    ```bash
-   uv run pytest
+   GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin MCP_TRANSPORT=sse uv run pytest
    ```
+
+`GRAFANA_URL` (default `http://localhost:3000`), `MCP_GRAFANA_URL` (default
+`http://localhost:8000`) and `MCP_TRANSPORT` (`sse`, `streamable-http` or
+`stdio`) point the tests at a different setup.
 
 [`uv`]: https://docs.astral.sh/uv/

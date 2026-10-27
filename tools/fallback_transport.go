@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"sync"
@@ -121,7 +122,12 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	}
 
 	// A retryable status — try the fallback endpoint (see the type comment
-	// for which statuses are retryable in which mode, and why).
+	// for which statuses are retryable in which mode, and why). Keep the
+	// primary's error body: it is returned if the fallback turns out to be
+	// an HTML page rather than an API answer. A read error is not fatal —
+	// keep whatever was read (possibly nothing) and still try the fallback,
+	// since that body only matters if the fallback is HTML.
+	primaryBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxPrimaryErrorBodyBytes))
 	resp.Body.Close() //nolint:errcheck
 
 	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
@@ -135,6 +141,18 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, retryErr
 	}
 
+	// A datasource API never answers with HTML. A 2xx text/html response is
+	// the upstream's web UI catching an unknown route — Loki, for one, serves
+	// its UI's index.html for any path it does not recognise, which is what a
+	// /resources request for a Loki API path turns into. Treat it as a failed
+	// fallback: return the primary's real error and do not cache the route.
+	if isHTMLResponse(retryResp) {
+		retryResp.Body.Close() //nolint:errcheck
+		resp.Body = io.NopCloser(bytes.NewReader(primaryBody))
+		resp.ContentLength = int64(len(primaryBody))
+		return resp, nil
+	}
+
 	// Only cache the fallback path when the fallback actually returned a
 	// successful (2xx) response.  A 4xx from the fallback means neither path
 	// is working for this particular request; caching it would silently break
@@ -144,6 +162,20 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	}
 
 	return retryResp, nil
+}
+
+// maxPrimaryErrorBodyBytes bounds how much of the primary's error response is
+// kept while the fallback is tried. Error bodies are small; callers only
+// surface the first KiB of them.
+const maxPrimaryErrorBodyBytes = 64 << 10
+
+// isHTMLResponse reports whether resp is a successful text/html response.
+func isHTMLResponse(resp *http.Response) bool {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	return err == nil && mediaType == "text/html"
 }
 
 func (t *datasourceFallbackTransport) fallbackCacheKey(req *http.Request) string {

@@ -55,10 +55,13 @@ func (d *postgresDialect) SubstituteMacros(query string, from, to time.Time) str
 
 	query = strings.ReplaceAll(query, "$__timeFrom()", fmt.Sprintf("'%s'::timestamp", fromStr))
 	query = strings.ReplaceAll(query, "$__timeTo()", fmt.Sprintf("'%s'::timestamp", toStr))
-	query = strings.ReplaceAll(query, "$__from", strconv.FormatInt(fromMillis, 10))
-	query = strings.ReplaceAll(query, "$__to", strconv.FormatInt(toMillis, 10))
-	query = strings.ReplaceAll(query, "$__interval_ms", strconv.FormatInt(intervalSeconds*1000, 10))
-	query = strings.ReplaceAll(query, "$__interval", fmt.Sprintf("%d", intervalSeconds))
+	// Whole-token replacement: $__to must not touch $__toTime or a $__to_date variable.
+	query = replaceWholeMacros(query, map[string]string{
+		"from":        strconv.FormatInt(fromMillis, 10),
+		"to":          strconv.FormatInt(toMillis, 10),
+		"interval_ms": strconv.FormatInt(intervalSeconds*1000, 10),
+		"interval":    fmt.Sprintf("%d", intervalSeconds),
+	})
 
 	return query
 }

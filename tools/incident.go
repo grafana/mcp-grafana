@@ -28,6 +28,7 @@ type IncidentResult struct {
 // newIncidentResult wraps an incident, optionally reading back its custom field
 // values.
 func newIncidentResult(ctx context.Context, c *incident.Client, inc *incident.Incident, includeCustomFields bool) (*IncidentResult, error) {
+	inc.IncidentMembership.Assignments = realAssignments(inc.IncidentMembership.Assignments)
 	result := &IncidentResult{Incident: inc}
 	if !includeCustomFields {
 		return result, nil
@@ -38,6 +39,19 @@ func newIncidentResult(ctx context.Context, c *incident.Client, inc *incident.In
 	}
 	result.CustomFields = customFields
 	return result, nil
+}
+
+// realAssignments drops the zero-value placeholders the Incident API pads
+// incidentMembership.assignments with (it always returns 10 entries, whatever
+// totalAssignments says).
+func realAssignments(assignments []incident.Assignment) []incident.Assignment {
+	kept := make([]incident.Assignment, 0, len(assignments))
+	for _, a := range assignments {
+		if a.RoleID != 0 || a.User.UserID != "" {
+			kept = append(kept, a)
+		}
+	}
+	return kept
 }
 
 type ListIncidentsParams struct {
@@ -142,6 +156,7 @@ var ListIncidents = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentAccess...),
 )
 
 type CreateIncidentParams struct {
@@ -153,7 +168,7 @@ type CreateIncidentParams struct {
 	AttachCaption string                     `json:"attachCaption" jsonschema:"description=The caption of the attachment"`
 	AttachURL     string                     `json:"attachUrl" jsonschema:"description=The URL of the attachment"`
 	Labels        []incident.IncidentLabel   `json:"labels" jsonschema:"description=The labels to add to the incident"`
-	CustomFields  []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set on the new incident. Use list_incident_custom_fields to discover the available fields and their valid values"`
+	CustomFields  []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set on the new incident"`
 }
 
 // createIncident creates an incident and then records any custom field values.
@@ -199,12 +214,13 @@ func createIncident(ctx context.Context, args CreateIncidentParams) (*IncidentRe
 
 var CreateIncident = mcpgrafana.MustTool(
 	"create_incident",
-	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status, labels and custom fields. This tool should be used judiciously and sparingly, and only after confirmation from the user, as it may notify or alarm lots of people.",
+	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status, labels and custom fields. Creating an incident may notify or page many people.",
 	createIncident,
 	mcpgrafana.WithTitleAnnotation("Create incident"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentAccess...),
 )
 
 type AddActivityToIncidentParams struct {
@@ -236,6 +252,7 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentAccess...),
 )
 
 func AddIncidentTools(s *mcp.Server, enableWriteTools bool) {
@@ -276,6 +293,7 @@ var GetIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentAccess...),
 )
 
 type UpdateIncidentParams struct {
@@ -283,7 +301,7 @@ type UpdateIncidentParams struct {
 	Status       string                     `json:"status" jsonschema:"description=The new status of the incident. Valid values: 'active'\\, 'resolved'"`
 	Severity     string                     `json:"severity" jsonschema:"description=The new severity of the incident\\, e.g. 'minor'\\, 'major'\\, 'critical'"`
 	Title        string                     `json:"title" jsonschema:"description=The new title of the incident"`
-	CustomFields []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set. Only the listed fields are changed. Use list_incident_custom_fields to discover the available fields and their valid values"`
+	CustomFields []IncidentCustomFieldInput `json:"customFields" jsonschema:"description=Custom field values to set. Only the listed fields are changed"`
 }
 
 // updateIncident applies the requested changes to an incident.
@@ -367,4 +385,5 @@ var UpdateIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(incidentAccess...),
 )

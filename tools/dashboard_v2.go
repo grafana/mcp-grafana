@@ -83,11 +83,6 @@ func findPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]inter
 
 // getPanelQueriesV2 implements get_dashboard_panel_queries for v2 dashboards.
 func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	var dashboardVars map[string]VariableInfo
-	if args.Variables != nil {
-		dashboardVars = extractDashboardVariablesV2(spec)
-	}
-
 	var panels []map[string]interface{}
 	if args.PanelID != nil {
 		panel, err := findPanelByIDV2(spec, *args.PanelID)
@@ -101,16 +96,16 @@ func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesPa
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		result = append(result, extractPanelQueriesV2(panel, dashboardVars, args.Variables)...)
+		result = append(result, extractPanelQueriesV2(panel)...)
 	}
-	return result, nil
+	return preparePanelQueries(templatingV1FromV2(spec), args, result, extractDashboardVariablesV2(spec))
 }
 
 // extractPanelQueriesV2 extracts all queries from a v2 panel spec. The query
 // string is read from the free-form per-query body (query.spec), reusing the
 // same field-probe as v1; the datasource type is the query `group` and the uid
 // is `datasource.name`.
-func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
@@ -151,6 +146,7 @@ func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[strin
 		result := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
+			rawTarget:  queryTargetFields(safeObject(query, "spec")),
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
 		}
@@ -163,14 +159,6 @@ func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[strin
 				continue
 			}
 			result.Target = queryTargetFields(body)
-		}
-
-		if dashboardVars != nil {
-			result.RequiredVariables = findVariablesInQuery(variableSearchText(result), dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			result.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			result.Datasource = dsInfo
 		}
 
 		queries = append(queries, result)
@@ -304,4 +292,92 @@ func extractVariableSummaryV2(vk map[string]interface{}) VariableSummary {
 		summary.Label = safeString(spec, "label")
 	}
 	return summary
+}
+
+// extractPanelInfoV2 is extractPanelInfo for a v2 panel spec. A v2 query keeps
+// its plugin-specific fields in query.spec, its refId on the PanelQuery and its
+// datasource in query.datasource.name, so RawTarget is a copy of the body plus
+// the refId and datasource the panel query executors read.
+func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
+	info := &panelInfo{
+		ID:    safeInt(panel, "id"),
+		Title: safeString(panel, "title"),
+	}
+
+	var queries []interface{}
+	if data := safeObject(panel, "data"); data != nil {
+		if dataSpec := safeObject(data, "spec"); dataSpec != nil {
+			queries = safeArray(dataSpec, "queries")
+		}
+	}
+	if len(queries) == 0 {
+		return nil, fmt.Errorf("panel has no query targets")
+	}
+	if queryIndex < 0 || queryIndex >= len(queries) {
+		return nil, fmt.Errorf("queryIndex %d out of range (panel has %d queries, valid range: 0-%d)", queryIndex, len(queries), len(queries)-1)
+	}
+
+	pq, _ := queries[queryIndex].(map[string]interface{})
+	pqSpec := safeObject(pq, "spec")
+	query := safeObject(pqSpec, "query")
+	if query == nil {
+		return nil, fmt.Errorf("invalid target format")
+	}
+
+	info.DatasourceType = safeString(query, "group")
+	if ref := safeObject(query, "datasource"); ref != nil {
+		info.DatasourceUID = safeString(ref, "name")
+	}
+	if info.DatasourceUID == "" {
+		return nil, fmt.Errorf("could not determine datasource for panel")
+	}
+
+	target := map[string]interface{}{}
+	for k, v := range safeObject(query, "spec") {
+		target[k] = v
+	}
+	target["refId"] = safeString(pqSpec, "refId")
+	target["datasource"] = map[string]interface{}{"uid": info.DatasourceUID, "type": info.DatasourceType}
+	info.RawTarget = target
+
+	// CloudWatch and Infinity panels use structured targets rather than string expressions
+	info.Query = panelQueryExpression(target, info.DatasourceType)
+	if info.Query == "" && !usesStructuredTarget(info.DatasourceType) {
+		return nil, errNoQueryExpression
+	}
+
+	return info, nil
+}
+
+// templatingV1FromV2 converts a v2 dashboard's variables to the v1
+// `templating.list` shape that run_panel_query reads.
+func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
+	list := []interface{}{}
+	for _, v := range safeArray(spec, "variables") {
+		vk, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		vspec := safeObject(vk, "spec")
+		if vspec == nil {
+			continue
+		}
+
+		variable := map[string]interface{}{}
+		for _, key := range []string{"name", "current", "query"} {
+			if val, ok := vspec[key]; ok {
+				variable[key] = val
+			}
+		}
+		// Only constant and textbox variables need their v1 type: their value
+		// falls back to `query` when no `current` is saved.
+		switch safeString(vk, "kind") {
+		case "ConstantVariable":
+			variable["type"] = "constant"
+		case "TextVariable":
+			variable["type"] = "textbox"
+		}
+		list = append(list, variable)
+	}
+	return map[string]interface{}{"templating": map[string]interface{}{"list": list}}
 }

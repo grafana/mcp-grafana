@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -228,6 +229,8 @@ type SearchTempoTracesParams struct {
 	Query         string `json:"query" jsonschema:"required,description=TraceQL query string"`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
 	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
+	Limit         int    `json:"limit,omitempty" jsonschema:"default=20,description=Maximum number of traces to return"`
+	Spss          int    `json:"spss,omitempty" jsonschema:"default=3,description=Maximum number of matching spans to return per span set"`
 }
 
 type QueryTempoMetricsParams struct {
@@ -280,6 +283,14 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 
 	params := url.Values{}
 	params.Set("q", args.Query)
+	limit := tempoDefaultSearchLimit
+	if args.Limit > 0 {
+		limit = args.Limit
+	}
+	params.Set("limit", strconv.Itoa(limit))
+	if args.Spss > 0 {
+		params.Set("spss", strconv.Itoa(args.Spss))
+	}
 
 	params, err = tempoDefaultTimeBoundsSeconds(params, args.Start, args.End)
 	if err != nil {
@@ -291,7 +302,47 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
-	return tempoToolResult(body, "search-results", "json"), nil
+	return tempoToolResult(tidyTempoSearchResults(body, limit), "search-results", "json"), nil
+}
+
+// tempoDefaultSearchLimit matches Tempo's own default search limit.
+const tempoDefaultSearchLimit = 20
+
+// tidyTempoSearchResults drops each trace's deprecated spanSet field, which
+// Tempo still sends as a copy of the first entry in spanSets, and adds a note
+// when the search did not run every job. Bodies it cannot parse are returned
+// unchanged.
+func tidyTempoSearchResults(body string, limit int) string {
+	var resp struct {
+		Traces  []map[string]json.RawMessage `json:"traces"`
+		Metrics map[string]json.RawMessage   `json:"metrics,omitempty"`
+		Note    string                       `json:"note,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return body
+	}
+	for _, trace := range resp.Traces {
+		if _, ok := trace["spanSets"]; ok {
+			delete(trace, "spanSet")
+		}
+	}
+
+	var completed, total int
+	_ = json.Unmarshal(resp.Metrics["completedJobs"], &completed)
+	_ = json.Unmarshal(resp.Metrics["totalJobs"], &total)
+	if completed < total {
+		if len(resp.Traces) >= limit {
+			resp.Note = fmt.Sprintf("Partial results: the search stopped after %d of %d jobs because it reached the limit of %d traces. Raise limit or narrow the query or time range to see more matches.", completed, total, limit)
+		} else {
+			resp.Note = fmt.Sprintf("Partial results: only %d of %d search jobs completed, so some matching traces may be missing.", completed, total)
+		}
+	}
+
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return body
+	}
+	return string(out)
 }
 
 func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.CallToolResult, error) {
@@ -368,10 +419,32 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 	if err != nil {
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
+	if tempoTraceIsEmpty(body) {
+		return mcpgrafana.NewToolResultError(tempoAPIError(http.StatusNotFound, []byte("trace not found")).Error()), nil
+	}
 
 	result := tempoToolResult(body, "trace", "json")
 	enrichTempoTrace(ctx, args, body, result)
 	return result, nil
+}
+
+// tempoTraceIsEmpty reports whether a /api/v2/traces response holds no trace.
+// Unlike v1 (and the diff endpoint), Tempo's v2 trace-by-ID endpoint answers
+// an unknown ID with 200 and an empty trace: `{}` in the LLM format, or an
+// empty "trace" object in JSON.
+func tempoTraceIsEmpty(body string) bool {
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return false
+	}
+	if len(resp) == 0 {
+		return true
+	}
+	trace, ok := resp["trace"]
+	if !ok {
+		return false
+	}
+	return strings.Join(strings.Fields(string(trace)), "") == "{}"
 }
 
 type traceDiffAPIRequest struct {
@@ -682,17 +755,21 @@ var SearchTempoTracesTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var QueryTempoMetricsTool = mcpgrafana.MustTool(
 	"query_tempo_metrics",
-	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL; call get_tempo_traceql_docs with topic 'metrics' for the reference. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
+	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.",
 	queryTempoMetrics,
 	mcpgrafana.WithTitleAnnotation("Query Tempo metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var GetTempoTraceTool = mcpgrafana.MustTool(
 	"get_tempo_trace",
@@ -703,7 +780,9 @@ var GetTempoTraceTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var DiffTempoTracesTool = mcpgrafana.MustTool(
 	"diff_tempo_traces",
@@ -713,17 +792,21 @@ var DiffTempoTracesTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_names",
-	"List available attribute names for TraceQL queries. Always pass a scope (resource, span, etc.) to avoid very large responses.",
+	"List available attribute names for TraceQL queries. Without a scope (resource, span, etc.) the response can be very large.",
 	listTempoAttributeNames,
 	mcpgrafana.WithTitleAnnotation("List Tempo attribute names"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
 	"list_tempo_attribute_values",
@@ -733,7 +816,9 @@ var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false))
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
 
 var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
 	"get_tempo_traceql_docs",
@@ -744,6 +829,7 @@ var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // embedded docs
 )
 
 // AddTempoTools registers all Tempo tools on the MCP server. Tools call

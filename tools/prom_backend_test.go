@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/stretchr/testify/assert"
@@ -101,6 +102,29 @@ func TestBackendForDatasource_AcceptsPrometheusDatasource(t *testing.T) {
 	backend, err := backendForDatasource(ctx, "prom-uid")
 	require.NoError(t, err)
 	assert.NotNil(t, backend)
+}
+
+func TestNewPrometheusBackend_UsesBaseTransport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	var baseTransportUsed bool
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		URL: server.URL,
+		BaseTransport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			baseTransportUsed = true
+			return http.DefaultTransport.RoundTrip(req)
+		}),
+	})
+
+	backend, err := newPrometheusBackend(ctx, "prom-uid", &models.DataSource{UID: "prom-uid", Type: "prometheus"})
+	require.NoError(t, err)
+	_, _, err = backend.Query(ctx, "up", "instant", time.Time{}, time.Now(), 0)
+	require.NoError(t, err)
+	assert.True(t, baseTransportUsed, "expected BaseTransport to be used as the innermost transport layer")
 }
 
 func TestPrometheusBackendQuery_IncludesErrorBody(t *testing.T) {

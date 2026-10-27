@@ -5,6 +5,9 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -58,7 +61,7 @@ func TestAdminToolsUnit(t *testing.T) {
 		permParams := GetResourcePermissionsParams{Resource: "dashboards", ResourceID: "abc"}
 		descParams := GetResourceDescriptionParams{ResourceType: "folders"}
 
-		// ListUsersByOrgParams should be an empty struct (no parameters required)
+		// ListUsersByOrgParams has only optional parameters
 		assert.IsType(t, ListUsersByOrgParams{}, userParams)
 
 		// ListTeamsParams should have a Query field
@@ -175,4 +178,44 @@ func TestAdminToolsUnit(t *testing.T) {
 			})
 		})
 	})
+}
+
+func TestListUsersByOrg_Pagination(t *testing.T) {
+	cases := []struct {
+		name                     string
+		args                     ListUsersByOrgParams
+		query, perPage, pageWant string
+	}{
+		{"defaults", ListUsersByOrgParams{}, "", "100", "1"},
+		{"explicit", ListUsersByOrgParams{Query: "alice", Limit: 20, Page: 3}, "alice", "20", "3"},
+		{"limit capped", ListUsersByOrgParams{Limit: 5000}, "", "1000", "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/org/users/search", r.URL.Path)
+				q := r.URL.Query()
+				assert.Equal(t, tc.query, q.Get("query"))
+				assert.Equal(t, tc.perPage, q.Get("perpage"))
+				assert.Equal(t, tc.pageWant, q.Get("page"))
+
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"totalCount": 250,
+					"page":       3,
+					"perPage":    20,
+					"orgUsers":   []map[string]any{{"userId": 7, "login": "alice", "role": "Viewer"}},
+				})
+			}))
+			defer server.Close()
+
+			result, err := listUsersByOrg(mockCtxWithClient(server), tc.args)
+			require.NoError(t, err)
+			assert.Equal(t, int64(250), result.TotalCount)
+			assert.Equal(t, int64(3), result.Page)
+			assert.Equal(t, int64(20), result.PerPage)
+			require.Len(t, result.OrgUsers, 1)
+			assert.Equal(t, int64(7), result.OrgUsers[0].UserID)
+		})
+	}
 }
