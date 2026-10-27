@@ -30,7 +30,7 @@ Some tool categories are disabled by default:
 
 - **runpanelquery** – Run dashboard panel queries.
 - **examples** – Query examples for datasource types.
-- **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
+- **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
 - **cloudwatch** – CloudWatch tools.
 - **cloudlogging** – Google Cloud Logging tools (requires the `googlecloud-logging-datasource` plugin, version 1.8.0 or later).
 - **elasticsearch** – Elasticsearch query tool.

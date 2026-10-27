@@ -137,7 +137,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-cloudwatch`: Disable CloudWatch tools.
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools.
 - `--disable-examples`: Disable query examples tools.
-- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
+- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-tempo`: Disable Tempo tracing tools.
