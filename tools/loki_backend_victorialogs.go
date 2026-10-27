@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -23,20 +24,25 @@ const victoriaLogsDatasourceType = "victoriametrics-logs-datasource"
 // label/field discovery when the caller did not narrow the search.
 const victoriaLogsAllQuery = "*"
 
-// victoriaLogsBackend implements lokiBackend by talking to a VictoriaLogs
-// datasource through Grafana's datasource resource proxy. VictoriaLogs
-// exposes the LogsQL HTTP API at /select/logsql/* — the shapes are
-// documented at https://docs.victoriametrics.com/victorialogs/querying/.
+// victoriaLogsBackend implements lokiBackend for a VictoriaLogs datasource.
+// Log queries run through Grafana's /api/ds/query endpoint, so they go
+// through the query service and show up in its query log. Field discovery
+// and stats talk to the LogsQL HTTP API at /select/logsql/* through the
+// datasource proxy — the shapes are documented at
+// https://docs.victoriametrics.com/victorialogs/querying/.
 type victoriaLogsBackend struct {
 	httpClient *http.Client
 	baseURL    string
+
+	dsQueryClient *http.Client
+	dsQueryURL    string
+	dsUID         string
+	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
+	// accept datasource UIDs; queries there stay on the proxy.
+	legacy bool
 }
 
-// newVictoriaLogsBackend constructs the backend. The ds argument is
-// currently unused but accepted to mirror the prom_backend constructor
-// signature and to leave room for per-datasource configuration without
-// churning callers later.
-func newVictoriaLogsBackend(ctx context.Context, uid string, _ *models.DataSource) (*victoriaLogsBackend, error) {
+func newVictoriaLogsBackend(ctx context.Context, uid string, ds *models.DataSource) (*victoriaLogsBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := proxyBase, resourcesBase
@@ -65,9 +71,22 @@ func newVictoriaLogsBackend(ctx context.Context, uid string, _ *models.DataSourc
 		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
 	}
 
+	dsQueryClient, dsQueryURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dsUID := uid
+	if ds != nil && ds.UID != "" {
+		dsUID = ds.UID
+	}
+
 	return &victoriaLogsBackend{
-		httpClient: &http.Client{Transport: rt, Timeout: 30 * time.Second},
-		baseURL:    baseURL,
+		httpClient:    &http.Client{Transport: rt, Timeout: 30 * time.Second},
+		baseURL:       baseURL,
+		dsQueryClient: dsQueryClient,
+		dsQueryURL:    dsQueryURL,
+		dsUID:         dsUID,
+		legacy:        legacyMode,
 	}, nil
 }
 
@@ -223,19 +242,15 @@ func (b *victoriaLogsBackend) QueryLogs(ctx context.Context, p lokiQueryParams) 
 		start, end = anchor, anchor
 	}
 
-	params := url.Values{}
-	params.Set("query", p.Query)
-	addVLTimeRange(params, start, end)
-	if p.Limit > 0 {
-		params.Set("limit", strconv.Itoa(p.Limit))
+	var (
+		entries []LogEntry
+		err     error
+	)
+	if b.legacy {
+		entries, err = b.queryLogsViaProxy(ctx, p.Query, start, end, p.Limit)
+	} else {
+		entries, err = b.queryLogsViaDSQuery(ctx, p.Query, start, end, p.Limit)
 	}
-
-	body, err := b.doRequest(ctx, http.MethodPost, "/select/logsql/query", params)
-	if err != nil {
-		return nil, err
-	}
-
-	entries, err := parseVictoriaLogsNDJSON(body)
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +268,142 @@ func (b *victoriaLogsBackend) QueryLogs(ctx context.Context, p lokiQueryParams) 
 		Entries:    entries,
 		ResultType: "streams",
 	}, nil
+}
+
+// queryLogsViaDSQuery runs the query through Grafana's /api/ds/query
+// endpoint using the victoriametrics-logs-datasource query model.
+func (b *victoriaLogsBackend) queryLogsViaDSQuery(ctx context.Context, query string, start, end time.Time, limit int) ([]LogEntry, error) {
+	if end.IsZero() {
+		end = time.Now()
+	}
+	if start.IsZero() {
+		// The proxy path sent no start, which VictoriaLogs reads as "all time".
+		start = time.Unix(0, 0)
+	}
+
+	q := map[string]interface{}{
+		"refId":      "A",
+		"datasource": map[string]string{"uid": b.dsUID, "type": victoriaLogsDatasourceType},
+		"expr":       query,
+		// "instant" is the plugin's log query type (/select/logsql/query).
+		"queryType": "instant",
+		"maxLines":  limit,
+	}
+
+	// /api/ds/query only takes millisecond bounds, but callers page through
+	// logs with exact nanosecond timestamps. Widen the range to whole
+	// milliseconds (VictoriaLogs ranges are [start, end)) and trim the extra
+	// lines while reading the frame.
+	to := end.Truncate(time.Millisecond)
+	if to.Before(end) {
+		to = to.Add(time.Millisecond)
+	}
+	resp, err := doDSQuery(ctx, b.dsQueryClient, b.dsQueryURL, dsQueryPayload(start, to, q))
+	if err != nil {
+		return nil, fmt.Errorf("querying VictoriaLogs: %w", err)
+	}
+
+	entries := []LogEntry{}
+	r, ok := resp.Responses["A"]
+	if !ok {
+		return entries, nil
+	}
+	if r.Error != nil {
+		return nil, fmt.Errorf("querying VictoriaLogs: %s", r.Error.Error())
+	}
+	for _, frame := range r.Frames {
+		frameEntries, err := vlLogFrameEntries(frame, start, end)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, frameEntries...)
+	}
+	return entries, nil
+}
+
+// vlLogFrameEntries reads the rows of a VictoriaLogs log frame (Time, Line
+// and labels fields) that fall within [start, end). labels holds the record's
+// remaining fields. Plugin v0.30.0 and later keep the raw _stream there;
+// v0.29.0 drops it and adds a hidden streams field instead; earlier releases
+// flatten stream labels and other fields together, so all of them are
+// treated as labels.
+func vlLogFrameEntries(frame *data.Frame, start, end time.Time) ([]LogEntry, error) {
+	timeField, _ := frame.FieldByName("Time")
+	lineField, _ := frame.FieldByName("Line")
+	labelsField, _ := frame.FieldByName("labels")
+	streamsField, _ := frame.FieldByName("streams")
+	if timeField == nil || lineField == nil {
+		return nil, nil
+	}
+
+	entries := make([]LogEntry, 0, frame.Rows())
+	for i := 0; i < frame.Rows(); i++ {
+		v, _ := timeField.ConcreteAt(i)
+		ts, _ := v.(time.Time)
+		if ts.Before(start) || !ts.Before(end) {
+			continue
+		}
+
+		var record map[string]json.RawMessage
+		if err := unmarshalVLJSONField(labelsField, i, &record); err != nil {
+			return nil, fmt.Errorf("parsing VictoriaLogs labels: %w", err)
+		}
+		entry := vlRecordToEntry(record)
+		entry.Timestamp = strconv.FormatInt(ts.UnixNano(), 10)
+		if v, ok := lineField.ConcreteAt(i); ok {
+			entry.Line, _ = v.(string)
+		}
+
+		if _, hasStream := record["_stream"]; !hasStream {
+			if streamsField != nil {
+				var stream map[string]string
+				if err := unmarshalVLJSONField(streamsField, i, &stream); err != nil {
+					return nil, fmt.Errorf("parsing VictoriaLogs streams: %w", err)
+				}
+				if len(stream) > 0 {
+					entry.Labels = stream
+				}
+			} else {
+				entry.Labels, entry.Parsed = entry.Parsed, nil
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// unmarshalVLJSONField decodes row i of a JSON frame field into v. A missing
+// field or null value leaves v untouched.
+// It duplicates unmarshalJSONField from the Loki /api/ds/query change (#1410).
+func unmarshalVLJSONField(f *data.Field, i int, v interface{}) error {
+	if f == nil {
+		return nil
+	}
+	raw, ok := f.ConcreteAt(i)
+	if !ok {
+		return nil
+	}
+	msg, ok := raw.(json.RawMessage)
+	if !ok || len(msg) == 0 {
+		return nil
+	}
+	return json.Unmarshal(msg, v)
+}
+
+// queryLogsViaProxy queries /select/logsql/query through the datasource proxy.
+func (b *victoriaLogsBackend) queryLogsViaProxy(ctx context.Context, query string, start, end time.Time, limit int) ([]LogEntry, error) {
+	params := url.Values{}
+	params.Set("query", query)
+	addVLTimeRange(params, start, end)
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+
+	body, err := b.doRequest(ctx, http.MethodPost, "/select/logsql/query", params)
+	if err != nil {
+		return nil, err
+	}
+	return parseVictoriaLogsNDJSON(body)
 }
 
 // QueryStats approximates Loki's /index/stats by running the selector
@@ -314,10 +465,7 @@ func (b *victoriaLogsBackend) QueryPatterns(ctx context.Context, query, step str
 }
 
 // parseVictoriaLogsNDJSON converts the newline-delimited JSON returned by
-// /select/logsql/query into a slice of LogEntry. Each line is one record;
-// the special fields _time, _msg, and _stream map onto Loki's timestamp/
-// line/labels respectively, while everything else lands in Parsed so the
-// agent still sees parser-extracted fields.
+// /select/logsql/query into a slice of LogEntry. Each line is one record.
 func parseVictoriaLogsNDJSON(body []byte) ([]LogEntry, error) {
 	entries := []LogEntry{}
 	if len(body) == 0 {
@@ -340,44 +488,51 @@ func parseVictoriaLogsNDJSON(body []byte) ([]LogEntry, error) {
 			// metadata that isn't a log record.
 			continue
 		}
-
-		entry := LogEntry{
-			Labels: map[string]string{},
-			Parsed: map[string]string{},
-		}
-
-		for k, raw := range record {
-			var val string
-			if err := json.Unmarshal(raw, &val); err != nil {
-				val = string(raw) // keep non-string values verbatim
-			}
-			switch k {
-			case "_time":
-				entry.Timestamp = vlTimeToNanos(val)
-			case "_msg":
-				entry.Line = val
-			case "_stream":
-				for sk, sv := range parseVLStream(val) {
-					entry.Labels[sk] = sv
-				}
-			default:
-				entry.Parsed[k] = val
-			}
-		}
-
-		if len(entry.Labels) == 0 {
-			entry.Labels = nil
-		}
-		if len(entry.Parsed) == 0 {
-			entry.Parsed = nil
-		}
-		entries = append(entries, entry)
+		entries = append(entries, vlRecordToEntry(record))
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("reading VictoriaLogs response: %w", err)
 	}
 	return entries, nil
+}
+
+// vlRecordToEntry maps one VictoriaLogs record onto a LogEntry: the special
+// fields _time, _msg, and _stream map onto Loki's timestamp/line/labels
+// respectively, while everything else lands in Parsed so the agent still
+// sees parser-extracted fields.
+func vlRecordToEntry(record map[string]json.RawMessage) LogEntry {
+	entry := LogEntry{
+		Labels: map[string]string{},
+		Parsed: map[string]string{},
+	}
+
+	for k, raw := range record {
+		var val string
+		if err := json.Unmarshal(raw, &val); err != nil {
+			val = string(raw) // keep non-string values verbatim
+		}
+		switch k {
+		case "_time":
+			entry.Timestamp = vlTimeToNanos(val)
+		case "_msg":
+			entry.Line = val
+		case "_stream":
+			for sk, sv := range parseVLStream(val) {
+				entry.Labels[sk] = sv
+			}
+		default:
+			entry.Parsed[k] = val
+		}
+	}
+
+	if len(entry.Labels) == 0 {
+		entry.Labels = nil
+	}
+	if len(entry.Parsed) == 0 {
+		entry.Parsed = nil
+	}
+	return entry
 }
 
 // parseVLStream parses VictoriaLogs' _stream value, which is a Loki-shaped
