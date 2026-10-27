@@ -283,6 +283,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "infinity":
 		// Pass the resolved type through, so a renamed or forked plugin ID reaches Grafana as declared.
 		results, target, err = executeInfinityPanelQuery(ctx, datasourceUID, datasourceType, panelData, params.Start, params.End, templateVariables)
+	case "neo4j":
+		// Pass the resolved type through, so the plugin ID reaches Grafana as declared.
+		results, err = executeNeo4jPanelQuery(ctx, datasourceUID, datasourceType, panelData, params.Start, params.End, templateVariables)
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
@@ -490,7 +493,7 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 
 	// CloudWatch and Infinity panels use structured targets rather than string expressions
 	if query == "" && !usesStructuredTarget(info.DatasourceType) {
-		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
+		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target, cypherQuery)")
 	}
 	info.Query = query
 
@@ -808,6 +811,14 @@ func executeInfinityPanelQuery(ctx context.Context, datasourceUID, datasourceTyp
 	return executeStructuredPanelQuery(ctx, datasourceUID, datasourceType, panelData, start, end, variables)
 }
 
+// executeNeo4jPanelQuery runs a Neo4j panel target through Grafana's /api/ds/query endpoint.
+// The target is sent as saved (cypherQuery, Format) with template variables and Grafana macros
+// substituted, so the plugin backend runs the Cypher query.
+func executeNeo4jPanelQuery(ctx context.Context, datasourceUID, datasourceType string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, error) {
+	results, _, err := executeStructuredPanelQuery(ctx, datasourceUID, datasourceType, panelData, start, end, variables)
+	return results, err
+}
+
 // executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
 // panel's queryType field tells us which dialect to use (influxql vs flux);
 // fall back to inference from the datasource if the panel doesn't carry one.
@@ -1083,6 +1094,8 @@ func normalizeDatasourceType(dsType string) string {
 		return "bigquery"
 	case strings.Contains(lower, "infinity"):
 		return "infinity"
+	case strings.Contains(lower, "neo4j"):
+		return "neo4j"
 	default:
 		return lower
 	}
@@ -1157,6 +1170,11 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- The URL or inline content may have returned no rows for these variables - the query field shows the substituted URL",
 			"- root_selector may not match the response shape - verify it against a sample response in the panel editor",
 		)
+	case "neo4j":
+		hints = append(hints,
+			"- The MATCH pattern, labels or property filters may not match any nodes for these variables - the query field shows the substituted Cypher",
+			"- The datasource may point at a different Neo4j database than the panel expects - check the database setting in the datasource",
+		)
 	case "cloudwatch":
 		hints = append(hints,
 			"- Namespace or metric name may be incorrect - use list_cloudwatch_namespaces and list_cloudwatch_metrics to discover available options",
@@ -1212,7 +1230,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcpgrafana.WithTitleAnnotation("Run panel query"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
