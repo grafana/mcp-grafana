@@ -19,11 +19,12 @@ import (
 
 // esStub serves an Elasticsearch plugin of the given version. /api/ds/query
 // answers with a raw_document frame and the proxy with an _msearch response;
-// the last ds/query payload and the routes hit are recorded.
-func esStub(t *testing.T, version string) (*httptest.Server, *map[string]interface{}, *[]string) {
+// the last ds/query payload and the routes hit are recorded. extra is added
+// to the document's fields.
+func esStub(t *testing.T, version, extra string) (*httptest.Server, *map[string]interface{}, *[]string) {
 	payload := &map[string]interface{}{}
 	routes := &[]string{}
-	doc := json.RawMessage(`{"_id":"1","_index":"logs-1","_type":null,"sort":[1718452800000,1],"highlight":null,"@timestamp":1718452800000,"message":"hello"}`)
+	doc := json.RawMessage(`{"_id":"1","_index":"logs-1","_type":null,"sort":[1718452800000,1],"highlight":null,"@timestamp":1718452800000,"message":"hello"` + extra + `}`)
 	frames, err := json.Marshal(&backend.QueryDataResponse{Responses: backend.Responses{
 		"A": {Frames: data.Frames{data.NewFrame("A", data.NewField("A", nil, []*json.RawMessage{&doc}))}},
 	}})
@@ -33,6 +34,7 @@ func esStub(t *testing.T, version string) (*httptest.Server, *map[string]interfa
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/plugins/elasticsearch/settings":
+			*routes = append(*routes, "settings")
 			if version == "" {
 				http.NotFound(w, r)
 				return
@@ -64,7 +66,7 @@ func TestElasticsearchBackendRoutesByPluginVersion(t *testing.T) {
 		{"", "proxy", "proxy"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
-			srv, _, routes := esStub(t, tc.version)
+			srv, _, routes := esStub(t, tc.version, "")
 			defer srv.Close()
 			ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL})
 			b, err := newElasticsearchBackend(ctx, &models.DataSource{UID: "es", Type: elasticsearchDatasourceType})
@@ -77,13 +79,18 @@ func TestElasticsearchBackendRoutesByPluginVersion(t *testing.T) {
 				assert.Equal(t, "2024-06-15T12:00:00Z", docs[0].Timestamp)
 				assert.Equal(t, map[string]interface{}{"@timestamp": float64(1718452800000), "message": "hello"}, docs[0].Source)
 			}
-			assert.Equal(t, []string{tc.lucene, tc.dsl}, *routes)
+			assert.Equal(t, []string{"settings", tc.lucene, tc.dsl}, *routes)
+
+			// The version is cached per Grafana instance, including failed lookups.
+			_, err = newElasticsearchBackend(ctx, &models.DataSource{UID: "es", Type: elasticsearchDatasourceType})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"settings", tc.lucene, tc.dsl}, *routes)
 		})
 	}
 }
 
 func TestElasticsearchBackendDSQueryPayload(t *testing.T) {
-	srv, payload, _ := esStub(t, "12.9.3")
+	srv, payload, _ := esStub(t, "12.9.3", "")
 	defer srv.Close()
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL})
 	b, err := newElasticsearchBackend(ctx, &models.DataSource{UID: "es", Type: elasticsearchDatasourceType})
@@ -115,4 +122,20 @@ func TestElasticsearchBackendDSQueryPayload(t *testing.T) {
 	assert.Equal(t, float64(5), body["size"])
 	assert.Contains(t, q["query"], `"range":{"@timestamp":{"gte":"2024-06-15T00:00:00Z","lte":"2024-06-15T01:00:00Z"}}`)
 	assert.Contains(t, q["query"], `{"term":{"level":"error"}}`)
+}
+
+func TestElasticsearchBackendKeepsSourceSortAndHighlight(t *testing.T) {
+	// Source fields overwrite the plugin's sort and highlight keys, so values
+	// of another shape are real source fields.
+	srv, _, _ := esStub(t, "12.9.3", `,"sort":"asc","highlight":"yes"`)
+	defer srv.Close()
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL})
+	b, err := newElasticsearchBackend(ctx, &models.DataSource{UID: "es", Type: elasticsearchDatasourceType})
+	require.NoError(t, err)
+
+	docs, err := b.Search(ctx, "logs-*", "*", time.Time{}, time.Time{}, 5)
+	require.NoError(t, err)
+	require.Len(t, docs, 1)
+	assert.Equal(t, "asc", docs[0].Source["sort"])
+	assert.Equal(t, "yes", docs[0].Source["highlight"])
 }

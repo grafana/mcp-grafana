@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -122,18 +123,50 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 	}, nil
 }
 
+// esPluginVersions caches elasticsearchPluginVersion results per Grafana
+// instance and credential (see fallbackProxyIDKey). Lookups that fail are
+// cached briefly so they don't add a round trip to every call.
+var esPluginVersions sync.Map
+
+type esPluginVersion struct {
+	major, minor int
+	expires      time.Time
+}
+
+const (
+	esPluginVersionTTL       = time.Hour
+	esPluginVersionFailedTTL = time.Minute
+)
+
 // elasticsearchPluginVersion returns the major and minor version of the
 // installed Elasticsearch plugin, or zeros if it can't be read. Grafana up to
 // 12.4 bundles the plugin with the Grafana version, so those report versions
 // below 12.6 too.
 func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafanaURL string) (major, minor int) {
+	key := fallbackProxyIDKey(ctx, "es-plugin-version", "")
+	if v, ok := esPluginVersions.Load(key); ok && time.Now().Before(v.(esPluginVersion).expires) {
+		return v.(esPluginVersion).major, v.(esPluginVersion).minor
+	}
+	major, minor, ok := fetchElasticsearchPluginVersion(ctx, client, grafanaURL)
+	ttl := esPluginVersionTTL
+	if !ok {
+		ttl = esPluginVersionFailedTTL
+	}
+	esPluginVersions.Store(key, esPluginVersion{major: major, minor: minor, expires: time.Now().Add(ttl)})
+	return major, minor
+}
+
+// fetchElasticsearchPluginVersion reads the plugin version from Grafana.
+// ok is false when the settings can't be read; a version that doesn't parse,
+// such as the empty one Grafana 8 reports, is a successful zero result.
+func fetchElasticsearchPluginVersion(ctx context.Context, client *http.Client, grafanaURL string) (major, minor int, ok bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaURL+"/api/plugins/"+elasticsearchDatasourceType+"/settings", nil)
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var settings struct {
@@ -142,12 +175,12 @@ func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafan
 		} `json:"info"`
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&settings) != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	if _, err := fmt.Sscanf(settings.Info.Version, "%d.%d", &major, &minor); err != nil {
-		return 0, 0
+		return 0, 0, true
 	}
-	return major, minor
+	return major, minor, true
 }
 
 // elasticsearchResponse represents a generic Elasticsearch search response
@@ -238,11 +271,18 @@ func (b *elasticsearchBackend) searchViaDSQuery(ctx context.Context, index strin
 		return nil, err
 	}
 	for i := range docs {
-		// The plugin adds the hit's sort values and highlight next to the
-		// source fields. ponytail: a source field with either name is dropped
-		// too; the frame can't tell them apart.
-		delete(docs[i].Source, "sort")
-		delete(docs[i].Source, "highlight")
+		// The plugin adds the hit's sort values (always an array) and
+		// highlight (null, as we never ask for highlighting) next to the
+		// source fields, and source fields of the same name overwrite them.
+		// So only values of that shape can be the plugin's. ponytail: a source
+		// field that is an array named sort or null named highlight is
+		// dropped too; the frame can't tell them apart.
+		if _, ok := docs[i].Source["sort"].([]interface{}); ok {
+			delete(docs[i].Source, "sort")
+		}
+		if v, ok := docs[i].Source["highlight"]; ok && v == nil {
+			delete(docs[i].Source, "highlight")
+		}
 		if docs[i].Timestamp == "" {
 			docs[i].Timestamp = esTimestamp(docs[i].Source[b.timeField])
 		}
