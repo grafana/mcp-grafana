@@ -25,7 +25,7 @@ const victoriaLogsAllQuery = "*"
 
 // victoriaLogsBackend implements lokiBackend for a VictoriaLogs datasource.
 // Log queries run through Grafana's /api/ds/query endpoint, so they go
-// through the query service and show up in its query log. Field discovery
+// through the query service like Grafana's own queries. Field discovery
 // and stats talk to the LogsQL HTTP API at /select/logsql/* through the
 // datasource proxy — the shapes are documented at
 // https://docs.victoriametrics.com/victorialogs/querying/.
