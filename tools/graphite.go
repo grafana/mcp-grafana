@@ -26,10 +26,6 @@ const (
 type GraphiteClient struct {
 	httpClient *http.Client
 	baseURL    string
-	uid        string
-	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
-	// accept datasource UIDs; render queries there stay on the proxy.
-	legacy bool
 }
 
 func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error) {
@@ -71,11 +67,7 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 	}
 
 	client := &http.Client{Transport: rt}
-	dsUID := ds.UID
-	if dsUID == "" {
-		dsUID = uid
-	}
-	return &GraphiteClient{httpClient: client, baseURL: baseURL, uid: dsUID, legacy: legacyMode}, nil
+	return &GraphiteClient{httpClient: client, baseURL: baseURL}, nil
 }
 
 // doGet performs a GET request to the Graphite API via the Grafana proxy
@@ -123,37 +115,6 @@ type GraphiteSeries struct {
 	Datapoints []GraphiteDatapoint `json:"datapoints"`
 }
 
-// graphiteRawSeries is the wire format for the Graphite render API response.
-// Each datapoint is [value_or_null, unix_timestamp].
-type graphiteRawSeries struct {
-	Target     string              `json:"target"`
-	Tags       map[string]string   `json:"tags,omitempty"`
-	Datapoints [][]json.RawMessage `json:"datapoints"`
-}
-
-// parseGraphiteDatapoints converts the raw render API datapoints to typed values.
-func parseGraphiteDatapoints(raw [][]json.RawMessage) []GraphiteDatapoint {
-	pts := make([]GraphiteDatapoint, 0, len(raw))
-	for _, pair := range raw {
-		if len(pair) < 2 {
-			continue
-		}
-		var ts int64
-		if err := json.Unmarshal(pair[1], &ts); err != nil {
-			continue
-		}
-		var val *float64
-		if string(pair[0]) != "null" {
-			var f float64
-			if err := json.Unmarshal(pair[0], &f); err == nil {
-				val = &f
-			}
-		}
-		pts = append(pts, GraphiteDatapoint{Value: val, Timestamp: ts})
-	}
-	return pts
-}
-
 var graphiteRelativeTime = regexp.MustCompile(`^-(\d+)([a-z]+)$`)
 
 // graphiteUnits maps Graphite relative-time unit prefixes to gtime units, in
@@ -194,8 +155,7 @@ func parseGraphiteTime(s, def string, parse func(string) (time.Time, error)) (ti
 
 // graphiteRender evaluates target over [from, until] and returns one series
 // per resolved metric. It runs through Grafana's /api/ds/query endpoint so
-// the query shows up in the query service's log, except on Grafana before
-// 9.0, where it calls the render API through the datasource proxy.
+// the query shows up in the query service's log.
 //
 // maxDataPoints defaults to one point per second of the range so Graphite
 // never consolidates; Grafana otherwise asks for 100 points.
@@ -215,31 +175,16 @@ func graphiteRender(ctx context.Context, uid, target, fromStr, untilStr string, 
 		maxDataPoints = max(int(until.Sub(from)/time.Second), 1)
 	}
 
-	client, err := newGraphiteClient(ctx, uid)
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, from, until, fmt.Errorf("creating graphite client: %w", err)
+		return nil, from, until, err
 	}
-
-	if client.legacy {
-		params := url.Values{}
-		params.Set("target", target)
-		params.Set("from", strconv.FormatInt(from.Unix(), 10))
-		params.Set("until", strconv.FormatInt(until.Unix(), 10))
-		params.Set("format", "json")
-		params.Set("maxDataPoints", strconv.Itoa(maxDataPoints))
-		data, err := client.doGet(ctx, "/render", params)
-		if err != nil {
-			return nil, from, until, fmt.Errorf("querying graphite render API: %w", err)
-		}
-		var rawSeries []graphiteRawSeries
-		if err := json.Unmarshal(data, &rawSeries); err != nil {
-			return nil, from, until, fmt.Errorf("parsing graphite render response: %w", err)
-		}
-		series := make([]*GraphiteSeries, 0, len(rawSeries))
-		for _, rs := range rawSeries {
-			series = append(series, &GraphiteSeries{Target: rs.Target, Tags: rs.Tags, Datapoints: parseGraphiteDatapoints(rs.Datapoints)})
-		}
-		return series, from, until, nil
+	if ds.Type != GraphiteDatasourceType {
+		return nil, from, until, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, GraphiteDatasourceType)
+	}
+	dsUID := ds.UID
+	if dsUID == "" {
+		dsUID = uid
 	}
 
 	httpClient, baseURL, err := newDSQueryHTTPClient(ctx)
@@ -248,7 +193,7 @@ func graphiteRender(ctx context.Context, uid, target, fromStr, untilStr string, 
 	}
 	query := map[string]interface{}{
 		"refId":         "A",
-		"datasource":    map[string]string{"uid": client.uid, "type": GraphiteDatasourceType},
+		"datasource":    map[string]string{"uid": dsUID, "type": GraphiteDatasourceType},
 		"target":        target,
 		"maxDataPoints": maxDataPoints,
 	}

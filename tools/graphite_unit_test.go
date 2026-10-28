@@ -57,63 +57,6 @@ func TestParseGraphiteTime(t *testing.T) {
 	}
 }
 
-// --- parseGraphiteDatapoints ---
-
-func TestParseGraphiteDatapoints(t *testing.T) {
-	t.Run("normal values", func(t *testing.T) {
-		raw := [][]json.RawMessage{
-			{json.RawMessage("1.5"), json.RawMessage("1704067200")},
-			{json.RawMessage("2.0"), json.RawMessage("1704067260")},
-		}
-		pts := parseGraphiteDatapoints(raw)
-		require.Len(t, pts, 2)
-		require.NotNil(t, pts[0].Value)
-		assert.InDelta(t, 1.5, *pts[0].Value, 1e-9)
-		assert.Equal(t, int64(1704067200), pts[0].Timestamp)
-		require.NotNil(t, pts[1].Value)
-		assert.InDelta(t, 2.0, *pts[1].Value, 1e-9)
-	})
-
-	t.Run("null value becomes nil pointer", func(t *testing.T) {
-		raw := [][]json.RawMessage{
-			{json.RawMessage("null"), json.RawMessage("1704067200")},
-		}
-		pts := parseGraphiteDatapoints(raw)
-		require.Len(t, pts, 1)
-		assert.Nil(t, pts[0].Value)
-		assert.Equal(t, int64(1704067200), pts[0].Timestamp)
-	})
-
-	t.Run("mix of null and non-null values", func(t *testing.T) {
-		raw := [][]json.RawMessage{
-			{json.RawMessage("null"), json.RawMessage("1704067200")},
-			{json.RawMessage("3.14"), json.RawMessage("1704067260")},
-			{json.RawMessage("null"), json.RawMessage("1704067320")},
-		}
-		pts := parseGraphiteDatapoints(raw)
-		require.Len(t, pts, 3)
-		assert.Nil(t, pts[0].Value)
-		require.NotNil(t, pts[1].Value)
-		assert.InDelta(t, 3.14, *pts[1].Value, 1e-9)
-		assert.Nil(t, pts[2].Value)
-	})
-
-	t.Run("empty input returns empty slice", func(t *testing.T) {
-		pts := parseGraphiteDatapoints(nil)
-		assert.Empty(t, pts)
-	})
-
-	t.Run("malformed pairs are skipped", func(t *testing.T) {
-		raw := [][]json.RawMessage{
-			{json.RawMessage("1.0")}, // only one element — no timestamp
-			{json.RawMessage("2.0"), json.RawMessage("1704067200")},
-		}
-		pts := parseGraphiteDatapoints(raw)
-		require.Len(t, pts, 1)
-		assert.Equal(t, int64(1704067200), pts[0].Timestamp)
-	})
-}
-
 // --- queryGraphite via /api/ds/query ---
 
 // graphiteDSQueryStub answers /api/ds/query with the given frames for refId A
