@@ -45,6 +45,7 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.7 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
