@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This file drives real queries through the actual HTTP clients (Prometheus
+// This file drives real requests through the actual HTTP clients (Prometheus
 // client_golang, the native Loki client) against a fake Grafana that mimics
 // how each deployment generation answers the datasource proxy routes. These
 // are behavior-level regression tests: asserting only on the path strings
@@ -33,7 +33,7 @@ import (
 // And on Grafana 13+ the numeric-id routes are disabled by default,
 // answering 404.
 
-const promScalarJSON = `{"status":"success","data":{"resultType":"scalar","result":[1700000000,"42"]}}`
+const promLabelsJSON = `{"status":"success","data":["instance","job"]}`
 const lokiLabelsJSON = `{"status":"success","data":["app","job"]}`
 
 // legacyProfile describes how a Grafana deployment answers each route family.
@@ -88,8 +88,8 @@ func newFakeGrafana(profile legacyProfile) *fakeGrafana {
 		switch {
 		case strings.Contains(path, "/loki/api/v1/labels"):
 			_, _ = w.Write([]byte(lokiLabelsJSON))
-		default: // Prometheus /api/v1/query and friends
-			_, _ = w.Write([]byte(promScalarJSON))
+		default: // Prometheus /api/v1/labels and friends
+			_, _ = w.Write([]byte(promLabelsJSON))
 		}
 	}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func newFakeGrafana(profile legacyProfile) *fakeGrafana {
 			}`))
 
 		case path == "/api/ds/query":
-			// Prometheus queries on deployments with uid-based routes.
+			// Prometheus queries, on every deployment.
 			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{
 				"A": backend.DataResponse{Frames: data.Frames{data.NewFrame("",
 					data.NewField("Time", nil, []time.Time{time.Unix(1700000000, 0)}),
@@ -165,8 +165,8 @@ func newFakeGrafana(profile legacyProfile) *fakeGrafana {
 	return f
 }
 
-// instantQuery runs a real instant query through backendForDatasource and the
-// Prometheus client, returning the flattened result string.
+// instantQuery runs a real instant query through backendForDatasource,
+// returning the flattened result string.
 func instantQuery(t *testing.T, f *fakeGrafana) string {
 	t.Helper()
 	// The transport's fallback cache is keyed by path (not host), so isolate
@@ -184,17 +184,31 @@ func instantQuery(t *testing.T, f *fakeGrafana) string {
 	return result.String()
 }
 
-// On deployments whose metadata API is inaccessible (Grafana before 9.0), a
-// real Prometheus query must succeed by routing through the numeric-id proxy
-// path directly — regardless of which status the deployment answers on the
-// nonexistent uid-based routes (500 on 7.5, 400 on 8.5).
-func TestQueryPrometheus_LegacyDeployments(t *testing.T) {
+// labelNames lists Prometheus label names through backendForDatasource and
+// the Prometheus client, which use the datasource proxy routes.
+func labelNames(t *testing.T, f *fakeGrafana, uid string) []string {
+	t.Helper()
+	// The transport's fallback cache is keyed by path (not host), so isolate
+	// each test from paths cached by earlier ones.
+	resetFallbackCache()
+	names, err := listPrometheusLabelNames(mockDatasourcesCtx(f.Server), ListPrometheusLabelNamesParams{DatasourceUID: uid})
+	require.NoError(t, err)
+	return names
+}
+
+var wantLabels = []string{"instance", "job"}
+
+// On deployments whose metadata API is inaccessible (Grafana before 9.0),
+// Prometheus discovery calls must succeed by routing through the numeric-id
+// proxy path directly — regardless of which status the deployment answers on
+// the nonexistent uid-based routes (500 on 7.5, 400 on 8.5).
+func TestListPrometheusLabelNames_LegacyDeployments(t *testing.T) {
 	for _, name := range []string{"grafana-7.5", "grafana-8.5"} {
 		t.Run(name, func(t *testing.T) {
 			f := newFakeGrafana(legacyProfiles[name])
 			defer f.Close()
 
-			assert.Contains(t, instantQuery(t, f), "42")
+			assert.Equal(t, wantLabels, labelNames(t, f, "prometheus"))
 
 			data := f.dataRequests()
 			require.NotEmpty(t, data)
@@ -204,14 +218,25 @@ func TestQueryPrometheus_LegacyDeployments(t *testing.T) {
 	}
 }
 
-// On a newer Grafana where an RBAC-restricted token cannot read datasource
-// metadata but the numeric-id routes are disabled (404, default since 13.0),
-// the transport must fall back to the uid-based proxy route.
-func TestQueryPrometheus_NumericRoutesDisabled(t *testing.T) {
-	f := newFakeGrafana(legacyProfiles["grafana-13-rbac"])
+// Queries always go through /api/ds/query, even when the datasource was
+// resolved through the frontend-settings fallback.
+func TestQueryPrometheus_FallbackDatasourceUsesDSQuery(t *testing.T) {
+	f := newFakeGrafana(legacyProfiles["grafana-8.5"])
 	defer f.Close()
 
 	assert.Contains(t, instantQuery(t, f), "42")
+	assert.Contains(t, f.recordedPaths(), "/api/ds/query")
+	assert.Empty(t, f.dataRequests(), "queries must not use the proxy routes")
+}
+
+// On a newer Grafana where an RBAC-restricted token cannot read datasource
+// metadata but the numeric-id routes are disabled (404, default since 13.0),
+// the transport must fall back to the uid-based proxy route.
+func TestListPrometheusLabelNames_NumericRoutesDisabled(t *testing.T) {
+	f := newFakeGrafana(legacyProfiles["grafana-13-rbac"])
+	defer f.Close()
+
+	assert.Equal(t, wantLabels, labelNames(t, f, "prometheus"))
 
 	data := f.dataRequests()
 	require.GreaterOrEqual(t, len(data), 2)
@@ -227,6 +252,7 @@ func TestQueryPrometheus_ModernPathUnchanged(t *testing.T) {
 
 	assert.Contains(t, instantQuery(t, f), "42")
 	assert.Contains(t, f.recordedPaths(), "/api/ds/query", "modern path must query through /api/ds/query")
+	assert.Equal(t, wantLabels, labelNames(t, f, "prometheus"))
 
 	for _, p := range f.recordedPaths() {
 		assert.NotEqual(t, "/api/frontend/settings", p, "modern path must not consult frontend settings")
@@ -240,20 +266,12 @@ func TestQueryPrometheus_ModernPathUnchanged(t *testing.T) {
 // then be built from the datasource's *resolved* uid, not the caller's
 // string: on a deployment with the numeric routes disabled,
 // /api/datasources/proxy/uid/{name} would miss.
-func TestQueryPrometheus_NameReferenceUsesResolvedUID(t *testing.T) {
+func TestListPrometheusLabelNames_NameReferenceUsesResolvedUID(t *testing.T) {
 	f := newFakeGrafana(legacyProfiles["grafana-13-rbac"])
 	defer f.Close()
 
-	resetFallbackCache()
-	ctx := mockDatasourcesCtx(f.Server)
-	result, err := queryPrometheus(ctx, QueryPrometheusParams{
-		DatasourceUID: "Prometheus", // the *name*; the uid is "prometheus"
-		Expr:          "time()",
-		QueryType:     "instant",
-		EndTime:       "now",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, result.String(), "42")
+	// The *name*; the uid is "prometheus".
+	assert.Equal(t, wantLabels, labelNames(t, f, "Prometheus"))
 
 	data := f.dataRequests()
 	require.GreaterOrEqual(t, len(data), 2)
@@ -263,22 +281,14 @@ func TestQueryPrometheus_NameReferenceUsesResolvedUID(t *testing.T) {
 }
 
 // Name references are matched case-insensitively, and the routing cache must
-// agree with that: a query referencing the datasource by a differently-cased
+// agree with that: a call referencing the datasource by a differently-cased
 // name has to reach the numeric-id route end to end.
-func TestQueryPrometheus_CaseInsensitiveNameReference(t *testing.T) {
+func TestListPrometheusLabelNames_CaseInsensitiveNameReference(t *testing.T) {
 	f := newFakeGrafana(legacyProfiles["grafana-8.5"])
 	defer f.Close()
 
-	resetFallbackCache()
-	ctx := mockDatasourcesCtx(f.Server)
-	result, err := queryPrometheus(ctx, QueryPrometheusParams{
-		DatasourceUID: "PROMETHEUS", // the name is "Prometheus", the uid "prometheus"
-		Expr:          "time()",
-		QueryType:     "instant",
-		EndTime:       "now",
-	})
-	require.NoError(t, err)
-	assert.Contains(t, result.String(), "42")
+	// The name is "Prometheus", the uid "prometheus".
+	assert.Equal(t, wantLabels, labelNames(t, f, "PROMETHEUS"))
 
 	data := f.dataRequests()
 	require.NotEmpty(t, data)
@@ -290,7 +300,7 @@ func TestQueryPrometheus_CaseInsensitiveNameReference(t *testing.T) {
 // the uid-based route — which answers 400 "id is invalid" on Grafana 8.x —
 // would mask the real error with a routing error, so legacy mode retries on
 // 404 only.
-func TestQueryPrometheus_LegacyRealErrorsNotMasked(t *testing.T) {
+func TestListPrometheusLabelNames_LegacyRealErrorsNotMasked(t *testing.T) {
 	f := newFakeGrafana(legacyProfile{
 		uidProxyStatus:     http.StatusBadRequest,
 		uidProxyBody:       `{"message":"id is invalid"}`,
@@ -301,12 +311,7 @@ func TestQueryPrometheus_LegacyRealErrorsNotMasked(t *testing.T) {
 
 	resetFallbackCache()
 	ctx := mockDatasourcesCtx(f.Server)
-	_, err := queryPrometheus(ctx, QueryPrometheusParams{
-		DatasourceUID: "prometheus",
-		Expr:          "time()",
-		QueryType:     "instant",
-		EndTime:       "now",
-	})
+	_, err := listPrometheusLabelNames(ctx, ListPrometheusLabelNamesParams{DatasourceUID: "prometheus"})
 	require.Error(t, err)
 	// The client surfaces the primary's real status (the response body lands
 	// in the error detail); the essential property is that the 500 from the
@@ -327,32 +332,26 @@ func TestQueryPrometheus_LegacyRealErrorsNotMasked(t *testing.T) {
 // newer-Grafana tenant whose numeric routes are disabled must not pin the
 // uid-based path for a Grafana 8.x tenant sharing the same datasource id —
 // legacy-mode transports therefore bypass the shared cache entirely.
-func TestQueryPrometheus_NoCrossTenantCachePoisoning(t *testing.T) {
+func TestListPrometheusLabelNames_NoCrossTenantCachePoisoning(t *testing.T) {
 	resetFallbackCache()
 
 	// Tenant A: numeric routes disabled; the transport retry lands on the
 	// uid-based route. Before the fix this recorded a fallback cache hit for
-	// the bare path "/api/datasources/proxy/1/api/v1/query".
+	// the bare path "/api/datasources/proxy/1/api/v1/labels".
 	fA := newFakeGrafana(legacyProfiles["grafana-13-rbac"])
 	defer fA.Close()
-	ctxA := mockDatasourcesCtx(fA.Server)
-	resultA, err := queryPrometheus(ctxA, QueryPrometheusParams{
-		DatasourceUID: "prometheus", Expr: "time()", QueryType: "instant", EndTime: "now",
-	})
+	namesA, err := listPrometheusLabelNames(mockDatasourcesCtx(fA.Server), ListPrometheusLabelNamesParams{DatasourceUID: "prometheus"})
 	require.NoError(t, err)
-	assert.Contains(t, resultA.String(), "42")
+	assert.Equal(t, wantLabels, namesA)
 
-	// Tenant B: Grafana 8.5 with the same datasource id. Its query must still
+	// Tenant B: Grafana 8.5 with the same datasource id. Its call must still
 	// go through the numeric primary — a poisoned cache would rewrite it to
 	// the uid route, which answers 400 there.
 	fB := newFakeGrafana(legacyProfiles["grafana-8.5"])
 	defer fB.Close()
-	ctxB := mockDatasourcesCtx(fB.Server)
-	resultB, err := queryPrometheus(ctxB, QueryPrometheusParams{
-		DatasourceUID: "prometheus", Expr: "time()", QueryType: "instant", EndTime: "now",
-	})
+	namesB, err := listPrometheusLabelNames(mockDatasourcesCtx(fB.Server), ListPrometheusLabelNamesParams{DatasourceUID: "prometheus"})
 	require.NoError(t, err)
-	assert.Contains(t, resultB.String(), "42")
+	assert.Equal(t, wantLabels, namesB)
 
 	data := fB.dataRequests()
 	require.NotEmpty(t, data)

@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const victoriaMetricsDatasourceType = "victoriametrics-metrics-datasource"
+
 // fakeVMServer captures the most recent /api/ds/query payload and returns a
 // canned backend.QueryDataResponse so tests can assert payload shape and response decoding
 // independently.

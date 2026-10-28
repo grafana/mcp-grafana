@@ -140,8 +140,9 @@ func TestNewPrometheusBackend_UsesBaseTransport(t *testing.T) {
 	assert.True(t, baseTransportUsed, "expected BaseTransport to be used as the innermost transport layer")
 }
 
-// The Prometheus error body only matters on the proxy path (legacy Grafana).
-func TestPrometheusBackendQuery_IncludesErrorBody(t *testing.T) {
+// The Prometheus error body only matters for discovery calls, which use the
+// Prometheus API through the proxy.
+func TestPrometheusBackendLabelNames_IncludesErrorBody(t *testing.T) {
 	for _, tc := range []struct {
 		name, contentType, body, want string
 		status                        int
@@ -169,7 +170,7 @@ func TestPrometheusBackendQuery_IncludesErrorBody(t *testing.T) {
 			}))
 			defer server.Close()
 
-			_, _, err := newTestPrometheusBackend(t, server).queryViaProxy(context.Background(), "up", "instant", time.Now(), time.Now(), 0)
+			_, err := newTestPrometheusBackend(t, server).LabelNames(context.Background(), nil, time.Now(), time.Now())
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 			var apiErr *promv1.Error
@@ -178,37 +179,85 @@ func TestPrometheusBackendQuery_IncludesErrorBody(t *testing.T) {
 	}
 }
 
-func TestPrometheusBackendQuery_NativeHistogramUsesProxy(t *testing.T) {
-	heatmap := data.NewFrame("",
-		data.NewField("xMax", nil, []time.Time{time.Unix(1700000000, 0)}),
-		data.NewField("yMin", nil, []float64{0}),
-		data.NewField("yMax", nil, []float64{1}),
-		data.NewField("count", nil, []float64{5}),
-		data.NewField("yLayout", nil, []int8{0}),
+// nativeHistogramFrame builds a frame shaped like promlib's heatmap-cells
+// output for a native histogram: one row per bucket, labels on every field.
+func nativeHistogramFrame(labels data.Labels, times []time.Time, lower, upper, count []float64, layout []int8) *data.Frame {
+	f := data.NewFrame("",
+		data.NewField("xMax", labels, times),
+		data.NewField("yMin", labels, lower),
+		data.NewField("yMax", labels, upper),
+		data.NewField("count", labels, count),
+		data.NewField("yLayout", labels, layout),
 	)
-	dsResp, err := json.Marshal(backend.QueryDataResponse{Responses: backend.Responses{
-		"A": backend.DataResponse{Frames: data.Frames{heatmap}},
-	}})
-	require.NoError(t, err)
-	var proxied bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/ds/query" {
-			_, _ = w.Write(dsResp)
-			return
-		}
-		proxied = true
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"h"},"histogram":[1700000000,{"count":"5","sum":"2","buckets":[[0,"0","1","5"]]}]}]}}`))
-	}))
-	t.Cleanup(server.Close)
+	f.SetMeta(&data.FrameMeta{Type: "heatmap-cells"})
+	return f
+}
 
-	v, _, err := newTestPrometheusBackend(t, server).Query(context.Background(), "h", "instant", time.Time{}, time.Unix(1700000000, 0), 0)
-	require.NoError(t, err)
-	assert.True(t, proxied)
-	vec := v.(model.Vector)
-	require.Len(t, vec, 1)
-	require.NotNil(t, vec[0].Histogram)
-	assert.Equal(t, model.FloatString(5), vec[0].Histogram.Count)
+func TestPrometheusBackendQuery_NativeHistograms(t *testing.T) {
+	t1, t2 := time.Unix(1700000000, 0), time.Unix(1700000060, 0)
+	labels := data.Labels{"job": "api"}
+	frames := data.Frames{
+		nativeHistogramFrame(labels,
+			[]time.Time{t1, t1, t2, t2},
+			[]float64{0, 1, 0, 1},
+			[]float64{1, 2, 1, 2},
+			[]float64{3, 4, 5, 6},
+			[]int8{3, 0, 3, 0},
+		),
+		// A float series alongside the histogram.
+		data.NewFrame("",
+			data.NewField("Time", nil, []time.Time{t1, t2}),
+			data.NewField("Value", data.Labels{"job": "float"}, []float64{1, 2}),
+		),
+	}
+	bucket := func(boundaries int32, lo, hi, c float64) *model.HistogramBucket {
+		return &model.HistogramBucket{Boundaries: boundaries, Lower: model.FloatString(lo), Upper: model.FloatString(hi), Count: model.FloatString(c)}
+	}
+	h1 := &model.SampleHistogram{Count: 7, Buckets: model.HistogramBuckets{bucket(3, 0, 1, 3), bucket(0, 1, 2, 4)}}
+	h2 := &model.SampleHistogram{Count: 11, Buckets: model.HistogramBuckets{bucket(3, 0, 1, 5), bucket(0, 1, 2, 6)}}
+
+	for _, queryType := range []string{"instant", "range"} {
+		t.Run(queryType, func(t *testing.T) {
+			fake := newFakeVMServer(t, backend.QueryDataResponse{Responses: backend.Responses{
+				"A": backend.DataResponse{Frames: frames},
+			}})
+			v, warnings, err := newTestPrometheusBackend(t, fake.server).Query(context.Background(), "h", queryType, t1, t2, 60)
+			require.NoError(t, err)
+			assert.Equal(t, promv1.Warnings{nativeHistogramSumWarning}, warnings)
+			assert.False(t, isPrometheusResultEmpty(v))
+
+			if queryType == "instant" {
+				vec := v.(model.Vector)
+				require.Len(t, vec, 2)
+				assert.Equal(t, model.Metric{"job": "float"}, vec[0].Metric)
+				assert.Nil(t, vec[0].Histogram)
+				assert.Equal(t, model.Metric{"job": "api"}, vec[1].Metric)
+				assert.Equal(t, model.TimeFromUnix(t2.Unix()), vec[1].Timestamp)
+				assert.Equal(t, h2, vec[1].Histogram)
+				return
+			}
+			matrix := v.(model.Matrix)
+			require.Len(t, matrix, 2)
+			assert.Len(t, matrix[0].Values, 2)
+			assert.Equal(t, model.Metric{"job": "api"}, matrix[1].Metric)
+			assert.Empty(t, matrix[1].Values)
+			assert.Equal(t, []model.SampleHistogramPair{
+				{Timestamp: model.TimeFromUnix(t1.Unix()), Histogram: h1},
+				{Timestamp: model.TimeFromUnix(t2.Unix()), Histogram: h2},
+			}, matrix[1].Histograms)
+		})
+	}
+}
+
+func TestPrometheusBackendQuery_StringResultUnsupported(t *testing.T) {
+	fake := newFakeVMServer(t, backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{data.NewFrame("",
+			data.NewField("Time", nil, []time.Time{time.Unix(1700000000, 0)}),
+			data.NewField("Value", nil, []string{"hello"}),
+		)}},
+	}})
+	_, _, err := newTestPrometheusBackend(t, fake.server).Query(context.Background(), `"hello"`, "instant", time.Time{}, time.Unix(1700000000, 0), 0)
+	require.ErrorContains(t, err, "string results are not supported")
 }
 
 func TestNewPrometheusBackend_NoClientTimeout(t *testing.T) {
