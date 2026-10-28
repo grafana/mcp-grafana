@@ -467,7 +467,7 @@ func seriesFramesToResponse(frames data.Frames, start, end time.Time, step float
 
 // pyroscopeDSQuery runs one Pyroscope query of the given queryType
 // ("profile" or "metrics") through Grafana's /api/ds/query endpoint, so it
-// goes through the query service and shows up in its query log.
+// goes through the query service.
 func pyroscopeDSQuery(ctx context.Context, uid, queryType, profileType, matchers string, groupBy []string, start, end time.Time, step float64) (data.Frames, error) {
 	httpClient, baseURL, err := newDSQueryHTTPClient(ctx)
 	if err != nil {
