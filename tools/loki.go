@@ -49,6 +49,7 @@ type patternsAPIResponse struct {
 	Status string `json:"status"`
 	Data   []struct {
 		Pattern string     `json:"pattern"`
+		Level   string     `json:"level"`
 		Samples [][2]int64 `json:"samples"` // [[timestamp, value], ...]
 	} `json:"data"`
 }
@@ -57,6 +58,7 @@ type patternsAPIResponse struct {
 type Pattern struct {
 	Pattern    string `json:"pattern"`
 	TotalCount int64  `json:"totalCount"`
+	Level      string `json:"level,omitempty"`
 }
 
 // newLokiClient builds the HTTP client used by the native Loki backend.
@@ -767,6 +769,7 @@ func (c *Client) fetchPatterns(ctx context.Context, query, startRFC3339, endRFC3
 		patterns[i] = Pattern{
 			Pattern:    p.Pattern,
 			TotalCount: total,
+			Level:      p.Level,
 		}
 	}
 
@@ -861,7 +864,7 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pat
 // QueryLokiPatterns is a tool for querying detected log patterns from Loki
 var QueryLokiPatterns = mcpgrafana.MustTool(
 	"query_loki_patterns",
-	"Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string and a total count of occurrences. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job=\"nginx\"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted. **Not supported on VictoriaLogs** datasources - use a `| stats` pipeline instead.",
+	"Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string, a total count of occurrences, and a detected `level` when available. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job=\"nginx\"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted. **Not supported on VictoriaLogs** datasources - use a `| stats` pipeline instead.",
 	queryLokiPatterns,
 	mcpgrafana.WithTitleAnnotation("Query Loki patterns"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
