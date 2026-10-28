@@ -62,6 +62,8 @@ Read-only mode also removes `query_sql` and `query_influxdb`: they pass the quer
 
 In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through a `POST` request. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
 
+The alerting write tools can be opted back in individually the same way. For example, `--enable-write-tools=alerting_rules_write` allows alert rule changes while silences, contact points, and every other write tool stay disabled.
+
 ## Run without query execution
 
 Use `--disable-query` to remove every tool that executes a query against a datasource, such as `query_prometheus`, `query_loki_logs`, `query_sql`, and `run_panel_query`. The server can still list datasources and dashboards, explore metric names, labels, and table schemas, and generate deeplinks, but it can't run the queries themselves.
