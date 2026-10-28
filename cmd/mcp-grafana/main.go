@@ -396,7 +396,9 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddElasticsearchTools(s, enableQueryTools) }, dt.elasticsearch, "elasticsearch"},
 		{func(s *mcp.Server) { tools.AddQuickwitTools(s, enableQueryTools) }, dt.quickwit, "quickwit"},
 		{func(s *mcp.Server) { tools.AddInfluxDBTools(s, dt.queryToolsEnabled("influxdb")) }, dt.influxdb, "influxdb"},
-		{func(s *mcp.Server) { tools.AddAlertingTools(s, enableWriteTools) }, dt.alerting, "alerting"},
+		{func(s *mcp.Server) {
+			tools.AddAlertingTools(s, func(name string) bool { return dt.writeToolEnabled(name) })
+		}, dt.alerting, "alerting"},
 		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard"},
 		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
 		{func(s *mcp.Server) { tools.AddOnCallTools(s, enableWriteTools) }, dt.oncall, "oncall"},

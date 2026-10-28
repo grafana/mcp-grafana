@@ -1425,6 +1425,15 @@ func TestProcessTools_EnableWriteToolsRestoresWritableDeeplink(t *testing.T) {
 	assert.NotContains(t, listed, "update_dashboard", "the override must not re-enable other write tools")
 }
 
+func TestProcessTools_EnableWriteToolsRestoresSingleAlertingWriteTool(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "alerting_rules_write"})
+	require.Contains(t, listed, "alerting_rules_write")
+	assert.False(t, listed["alerting_rules_write"].Annotations.ReadOnlyHint)
+	for _, name := range []string{"alerting_routing_write", "alerting_silences_write", "update_dashboard"} {
+		assert.NotContains(t, listed, name, "the override must not re-enable other write tools")
+	}
+}
+
 func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 	listed := listAllCategoryTools(t, disabledTools{write: true})
 	require.Contains(t, listed, "generate_deeplink")
