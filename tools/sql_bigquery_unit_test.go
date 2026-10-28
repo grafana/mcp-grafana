@@ -122,3 +122,107 @@ func TestBigQueryHandlerDefaults(t *testing.T) {
 		assert.Equal(t, 1, result.RowCount)
 	}
 }
+
+func TestBigQueryMetadataProjectFallback(t *testing.T) {
+	for _, tool := range []struct{ name, path, response string }{
+		{"datasets", "/datasets", `["dataset"]`},
+		{"tables", "/tables", `["facts"]`},
+		{"columns", "/dataset/table/schema", `{"schema":[]}`},
+	} {
+		for _, tc := range []struct {
+			name, database, configuredProject, defaultResponse, wantProject, wantError string
+			defaultStatus, metadataStatus                                              int
+		}{
+			{name: "explicit overrides configured", database: "explicit-project", configuredProject: "configured-project", wantProject: "explicit-project"},
+			{name: "configured skips fallback", configuredProject: "configured-project", wantProject: "configured-project"},
+			{name: "explicit skips fallback", database: "explicit-project", wantProject: "explicit-project"},
+			{name: "plugin fallback", defaultResponse: `"inferred-project"`, wantProject: "inferred-project"},
+			{name: "empty project", defaultResponse: `""`, wantError: "database (BigQuery project) is required"},
+			{name: "null project", defaultResponse: `null`, wantError: "database (BigQuery project) is required"},
+			{name: "wrong response shape", defaultResponse: `["project"]`, wantError: "decoding BigQuery default project"},
+			{name: "malformed response", defaultResponse: `{`, wantError: "decoding BigQuery default project"},
+			{name: "invalid inferred project", defaultResponse: `"bad/project"`, wantError: "invalid database"},
+			{name: "forbidden fallback", defaultStatus: http.StatusForbidden, wantError: "resolving BigQuery default project: resource /defaultProjects returned status 403"},
+			{name: "missing endpoint", defaultStatus: http.StatusNotFound, wantError: "resolving BigQuery default project: resource /defaultProjects returned status 404"},
+			{name: "unavailable fallback", defaultStatus: http.StatusServiceUnavailable, wantError: "resolving BigQuery default project: resource /defaultProjects returned status 503"},
+			{name: "metadata error after fallback", defaultResponse: `"inferred-project"`, wantProject: "inferred-project", metadataStatus: http.StatusForbidden, wantError: "returned status 403"},
+		} {
+			t.Run(tool.name+"/"+tc.name, func(t *testing.T) {
+				var resourcePaths []string
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/api/datasources/uid/bq":
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{
+							"uid": "bq", "type": sql.BigQueryDatasourceType,
+							"jsonData": map[string]string{"authenticationType": "gce", "defaultProject": tc.configuredProject},
+						})
+					case "/api/datasources/uid/bq/resources/defaultProjects":
+						resourcePaths = append(resourcePaths, "/defaultProjects")
+						assert.Equal(t, http.MethodPost, r.Method)
+						var body map[string]string
+						require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+						assert.Empty(t, body)
+						if tc.defaultStatus != 0 {
+							w.WriteHeader(tc.defaultStatus)
+						}
+						_, _ = w.Write([]byte(tc.defaultResponse))
+					case "/api/datasources/uid/bq/resources" + tool.path:
+						resourcePaths = append(resourcePaths, tool.path)
+						var body map[string]string
+						require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+						wantBody := map[string]string{"project": tc.wantProject}
+						if tool.name != "datasets" {
+							wantBody["dataset"] = "dataset"
+						}
+						if tool.name == "columns" {
+							wantBody["table"] = "facts"
+						}
+						assert.Equal(t, wantBody, body)
+						if tc.metadataStatus != 0 {
+							w.WriteHeader(tc.metadataStatus)
+						}
+						_, _ = w.Write([]byte(tool.response))
+					default:
+						t.Errorf("unexpected request: %s; metadata discovery must not execute SQL", r.URL.Path)
+						http.NotFound(w, r)
+					}
+				}))
+				t.Cleanup(ts.Close)
+				ctx := enforceTestCtx(ts, false)
+				var err error
+				switch tool.name {
+				case "datasets":
+					var result *sql.ListSQLDatabasesResult
+					result, err = listSQLDatabasesHandler(ctx, sql.ListSQLDatabasesParams{DatasourceUID: "bq", Database: tc.database})
+					if err == nil {
+						require.Len(t, result.Databases, 1)
+						assert.Equal(t, tc.wantProject, result.Databases[0].Database)
+					}
+				case "tables":
+					var result *sql.ListSQLTablesResult
+					result, err = listSQLTablesHandler(ctx, sql.ListSQLTablesParams{DatasourceUID: "bq", Database: tc.database, Schema: "dataset"})
+					if err == nil {
+						require.Len(t, result.Tables, 1)
+						assert.Equal(t, tc.wantProject, result.Tables[0].Database)
+					}
+				case "columns":
+					_, err = describeSQLTableHandler(ctx, sql.DescribeSQLTableParams{DatasourceUID: "bq", Database: tc.database, Schema: "dataset", Table: "facts"})
+				}
+				if tc.wantError != "" {
+					require.ErrorContains(t, err, tc.wantError)
+				} else {
+					require.NoError(t, err)
+				}
+				var wantPaths []string
+				if tc.database == "" && tc.configuredProject == "" {
+					wantPaths = append(wantPaths, "/defaultProjects")
+				}
+				if tc.wantProject != "" {
+					wantPaths = append(wantPaths, tool.path)
+				}
+				assert.Equal(t, wantPaths, resourcePaths)
+			})
+		}
+	}
+}

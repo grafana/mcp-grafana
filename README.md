@@ -104,7 +104,7 @@ Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MS
 - **Describe table schema:** Get column names, types, nullability, defaults, and comments.
 - **Query SQL:** Execute SQL queries with datasource-specific macro substitution (`$__timeFilter(col)`, `$__from/$__to`, `$__interval`, `${varname}`), automatic limit enforcement, and template variable support.
 
-For **BigQuery**, configure the `grafana-bigquery-datasource` plugin in Grafana. Discovery uses `database` for the project (default: datasource `defaultProject`) and `schema` for the dataset. Metadata is fetched through APIs only, without query jobs or table scans. Column descriptions and nested types are included; the plugin omits table descriptions/types, column nullability, and defaults.
+For **BigQuery**, configure the `grafana-bigquery-datasource` plugin in Grafana. Discovery uses `database` for the project and `schema` for the dataset. If `database` is omitted, the project defaults to datasource `defaultProject`, then the plugin's `/defaultProjects` endpoint (including GCE project discovery). Metadata is fetched through APIs only, without query jobs or table scans. Column descriptions and nested types are included; the plugin omits table descriptions/types, column nullability, and defaults.
 
 BigQuery queries require qualified table references such as `` `my-project.my_dataset.fct_events` `` and use the datasource's billing project. Optional `location` defaults to datasource `processingLocation`. Use `${name:sqlstring}` for escaped string variables. Row limits do not limit bytes scanned or query costs.
 

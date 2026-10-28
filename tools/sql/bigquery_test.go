@@ -145,7 +145,9 @@ func TestBigQueryIdentifiers(t *testing.T) {
 		_, err := d.DescribeTable(ctx, r, "", DescribeSQLTableParams{Database: "project", Schema: "dataset", Table: table})
 		require.Error(t, err)
 	}
+	assert.Empty(t, r.path, "invalid identifiers must fail before resource requests")
+	r.response = []byte(`""`)
 	_, err := d.ListDatabases(ctx, r, "", ListSQLDatabasesParams{})
-	require.Error(t, err)
-	assert.Empty(t, r.path)
+	require.ErrorContains(t, err, "database (BigQuery project) is required")
+	assert.Equal(t, "/defaultProjects", r.path)
 }

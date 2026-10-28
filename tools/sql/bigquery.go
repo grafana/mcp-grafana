@@ -52,10 +52,29 @@ func (d *bigqueryDialect) EnforceLimit(query string, limit int) string {
 	return EnforceSQLLimit(query, limit, DefaultSQLLimit, MaxSQLLimit)
 }
 
-func (d *bigqueryDialect) validateMetadataScope(project, dataset string) error {
+// Handlers already apply explicit/configured projects. Let the plugin discover
+// the remaining default (e.g. GCE credentials), without accessing GCP from MCP.
+func (d *bigqueryDialect) resolveMetadataProject(ctx context.Context, qr QueryRunner, uid, project string) (string, error) {
 	if project == "" {
-		return fmt.Errorf("database (BigQuery project) is required; set it or configure defaultProject on the datasource")
+		body, err := qr.ResourceRequest(ctx, uid, "/defaultProjects", map[string]string{})
+		if err != nil {
+			return "", fmt.Errorf("resolving BigQuery default project: %w", err)
+		}
+		// Despite the endpoint's plural name, the response is one JSON string.
+		if err := json.Unmarshal(body, &project); err != nil {
+			return "", fmt.Errorf("decoding BigQuery default project: %w", err)
+		}
 	}
+	if project == "" {
+		return "", fmt.Errorf("database (BigQuery project) is required; set it or configure defaultProject on the datasource")
+	}
+	if err := d.ValidateIdentifier(project, "database"); err != nil {
+		return "", err
+	}
+	return project, nil
+}
+
+func (d *bigqueryDialect) validateMetadataScope(project, dataset string) error {
 	if dataset == "" {
 		return fmt.Errorf("schema (BigQuery dataset) is required")
 	}
@@ -68,13 +87,11 @@ func (d *bigqueryDialect) validateMetadataScope(project, dataset string) error {
 }
 
 func (d *bigqueryDialect) ListDatabases(ctx context.Context, qr QueryRunner, _ string, params ListSQLDatabasesParams) (*ListSQLDatabasesResult, error) {
-	if params.Database == "" {
-		return nil, fmt.Errorf("database (BigQuery project) is required; set it or configure defaultProject on the datasource")
-	}
-	if err := d.ValidateIdentifier(params.Database, "database"); err != nil {
+	project, err := d.resolveMetadataProject(ctx, qr, params.DatasourceUID, params.Database)
+	if err != nil {
 		return nil, err
 	}
-	body, err := qr.ResourceRequest(ctx, params.DatasourceUID, "/datasets", map[string]string{"project": params.Database})
+	body, err := qr.ResourceRequest(ctx, params.DatasourceUID, "/datasets", map[string]string{"project": project})
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +101,7 @@ func (d *bigqueryDialect) ListDatabases(ctx context.Context, qr QueryRunner, _ s
 	}
 	result := &ListSQLDatabasesResult{Databases: make([]SQLDatabaseInfo, 0, len(names))}
 	for _, name := range names {
-		result.Databases = append(result.Databases, SQLDatabaseInfo{Database: params.Database, Schema: name})
+		result.Databases = append(result.Databases, SQLDatabaseInfo{Database: project, Schema: name})
 	}
 	return result, nil
 }
@@ -93,10 +110,14 @@ func (d *bigqueryDialect) ListTables(ctx context.Context, qr QueryRunner, _ stri
 	if err := d.validateMetadataScope(params.Database, params.Schema); err != nil {
 		return nil, err
 	}
+	project, err := d.resolveMetadataProject(ctx, qr, params.DatasourceUID, params.Database)
+	if err != nil {
+		return nil, err
+	}
 	// The plugin's completion endpoint uses BigQuery tables.list. It returns
 	// names only, including views. Never enrich these with billable SQL jobs.
 	body, err := qr.ResourceRequest(ctx, params.DatasourceUID, "/tables", map[string]string{
-		"project": params.Database, "dataset": params.Schema,
+		"project": project, "dataset": params.Schema,
 	})
 	if err != nil {
 		return nil, err
@@ -107,7 +128,7 @@ func (d *bigqueryDialect) ListTables(ctx context.Context, qr QueryRunner, _ stri
 	}
 	result := &ListSQLTablesResult{Tables: make([]SQLTableInfo, 0, len(names))}
 	for _, name := range names {
-		result.Tables = append(result.Tables, SQLTableInfo{Database: params.Database, Schema: params.Schema, Name: name})
+		result.Tables = append(result.Tables, SQLTableInfo{Database: project, Schema: params.Schema, Name: name})
 	}
 	return result, nil
 }
@@ -164,10 +185,14 @@ func (d *bigqueryDialect) DescribeTable(ctx context.Context, qr QueryRunner, _ s
 	if err := d.ValidateIdentifier(params.Table, "table"); err != nil {
 		return nil, err
 	}
+	project, err := d.resolveMetadataProject(ctx, qr, params.DatasourceUID, params.Database)
+	if err != nil {
+		return nil, err
+	}
 	// This resource is backed by BigQuery tables.get, not a query job. Do not
 	// fall back to INFORMATION_SCHEMA, sampling, or any other SQL on failure.
 	body, err := qr.ResourceRequest(ctx, params.DatasourceUID, "/dataset/table/schema", map[string]string{
-		"project": params.Database, "dataset": params.Schema, "table": params.Table,
+		"project": project, "dataset": params.Schema, "table": params.Table,
 	})
 	if err != nil {
 		return nil, err
