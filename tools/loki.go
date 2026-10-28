@@ -126,10 +126,6 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	// Request categorized labels so Loki returns structured metadata and
-	// parsed labels separately from stream/index labels (Loki >= 3.0).
-	req.Header.Set("X-Loki-Response-Encoding-Flags", "categorize-labels")
-
 	// Tag the request so Loki's query logs and metrics can attribute load to
 	// this server (the tags surface as `source` in Loki's query_tags handling).
 	req.Header.Set("X-Query-Tags", lokiQueryTags)
@@ -405,7 +401,7 @@ type CompactLine struct {
 }
 
 // LogEntry represents a single log entry or metric sample with metadata.
-// When Loki returns categorized labels (via X-Loki-Response-Encoding-Flags),
+// When the datasource returns label types (the labelTypes frame field),
 // Labels contains only stream/index labels, while StructuredMetadata and
 // Parsed carry the remaining label categories per entry.
 type LogEntry struct {
