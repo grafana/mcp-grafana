@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -140,9 +141,11 @@ const (
 )
 
 // elasticsearchPluginVersion returns the major and minor version of the
-// installed Elasticsearch plugin, or zeros if it can't be read. Grafana up to
-// 12.4 bundles the plugin with the Grafana version, so those report versions
-// below 12.6 too.
+// installed Elasticsearch plugin. Grafana up to 12.4 bundles the plugin with
+// the Grafana version, so those report versions below 12.6 too. If the
+// version can't be read, the plugin is assumed to be new enough, so a token
+// without access to the settings gets Grafana's error from /api/ds/query
+// rather than a silent fallback to the proxy.
 func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafanaURL string) (major, minor int) {
 	key := fallbackProxyIDKey(ctx, "es-plugin-version", "")
 	if v, ok := esPluginVersions.Load(key); ok && time.Now().Before(v.(esPluginVersion).expires) {
@@ -151,6 +154,9 @@ func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafan
 	lookupCtx, cancel := context.WithTimeout(ctx, esPluginVersionTimeout)
 	defer cancel()
 	major, minor, ok := fetchElasticsearchPluginVersion(lookupCtx, client, grafanaURL)
+	if !ok {
+		major, minor = math.MaxInt, 0
+	}
 	if ctx.Err() != nil {
 		// The caller gave up, which says nothing about the lookup for others.
 		return major, minor

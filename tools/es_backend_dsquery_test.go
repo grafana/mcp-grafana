@@ -20,7 +20,8 @@ import (
 // esStub serves an Elasticsearch plugin of the given version. /api/ds/query
 // answers with a raw_document frame and the proxy with an _msearch response;
 // the last ds/query payload and the routes hit are recorded. extra is added
-// to the document's fields. A version of "fail" makes the lookup fail.
+// to the document's fields. A version of "fail" makes the lookup fail, which
+// assumes a new enough plugin.
 func esStub(t *testing.T, version, extra string) (*httptest.Server, *map[string]interface{}, *[]string) {
 	payload := &map[string]interface{}{}
 	routes := &[]string{}
@@ -64,7 +65,7 @@ func TestElasticsearchBackendRoutesByPluginVersion(t *testing.T) {
 		{"12.6.2", "ds/query", "proxy"},
 		{"12.4.0", "proxy", "proxy"},
 		{"", "proxy", "proxy"},
-		{"fail", "proxy", "proxy"},
+		{"fail", "ds/query", "ds/query"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			srv, _, routes := esStub(t, tc.version, "")
