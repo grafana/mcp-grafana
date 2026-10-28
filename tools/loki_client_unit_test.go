@@ -195,6 +195,32 @@ func TestQueryLokiLogsRefillsPageTrimmedAtBoundary(t *testing.T) {
 	assert.EqualValues(t, 6, (*payload)["queries"].([]interface{})[0].(map[string]interface{})["maxLines"])
 }
 
+// Each refill asks for the page size plus the lines trimmed at the leading
+// edge, rather than adding to the previous request, so repeated refills over a
+// dense boundary don't overshoot.
+func TestQueryLokiLogsRefillDoesNotCompound(t *testing.T) {
+	server, payload := lokiQueryStub(
+		[2]string{"1705312800000000009", "s5"},
+		[2]string{"1705312800000000008", "s4"},
+		[2]string{"1705312800000000007", "s3"},
+		[2]string{"1705312800000000006", "s2"},
+		[2]string{"1705312800000000005", "s1"},
+		[2]string{"1705312800000000003", "a-3"},
+		[2]string{"1705312800000000002", "a-2"},
+		[2]string{"1705312800000000001", "a-1"},
+	)
+	defer server.Close()
+
+	result, err := queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `{app="a"}`, Limit: 2, Direction: "backward",
+		StartRFC3339: "2024-01-15T10:00:00Z", EndRFC3339: "2024-01-15T10:00:00.000000004Z",
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Data, 2)
+	// Requests: 3, then 3+3, then 3+5 (not 6+5).
+	assert.EqualValues(t, 8, (*payload)["queries"].([]interface{})[0].(map[string]interface{})["maxLines"])
+}
+
 // Lines trimmed at the trailing edge mean Loki ran out of in-range lines, so
 // the query is not repeated.
 func TestQueryLokiLogsSkipsRefillForTrailingTrim(t *testing.T) {

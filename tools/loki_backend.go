@@ -275,7 +275,9 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 		if returned < maxLines || len(kept) >= p.Limit || leading == 0 || attempt == 3 {
 			return result, nil
 		}
-		maxLines += leading
+		// Loki returns the leading-edge lines first, so this many extra
+		// lines cover them; adding to the previous maxLines would overshoot.
+		maxLines = p.Limit + leading
 	}
 }
 
