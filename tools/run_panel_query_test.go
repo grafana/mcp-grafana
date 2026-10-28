@@ -833,6 +833,18 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			expected: "rate(requests[1m])",
 		},
 		{
+			name:     "rate_interval_ms_not_corrupted_by_rate_interval",
+			query:    "rate(x[$__rate_interval]) * $__rate_interval_ms",
+			duration: time.Hour,
+			expected: "rate(x[1m]) * 60000",
+		},
+		{
+			name:     "rate_interval_ms_braced",
+			query:    "timestamp(up) - ${__rate_interval_ms}",
+			duration: time.Hour,
+			expected: "timestamp(up) - 60000",
+		},
+		{
 			name:     "interval_1_hour",
 			query:    "rate(requests[$__interval])",
 			duration: time.Hour,
