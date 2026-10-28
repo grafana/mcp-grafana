@@ -316,6 +316,36 @@ func TestQueryLokiLogsCategorizesLabels(t *testing.T) {
 	}}, result.Entries)
 }
 
+// With Grafana's lokiLogsDataplane flag, log frames use body and timestamp
+// and have no tsNs. The nanosecond timestamp must survive the /api/ds/query
+// JSON round trip.
+func TestQueryLokiLogsReadsDataplaneFrames(t *testing.T) {
+	frame := data.NewFrame("",
+		data.NewField("labels", nil, []json.RawMessage{json.RawMessage(`{"app":"a","level":"error"}`)}),
+		data.NewField("timestamp", nil, []time.Time{time.Unix(0, 1705312800000000123)}),
+		data.NewField("body", nil, []string{"boom"}),
+		data.NewField("id", nil, []string{"1705312800000000123_abcd"}),
+		data.NewField("labelTypes", nil, []json.RawMessage{json.RawMessage(`{"app":"I","level":"P"}`)}),
+	)
+	frame.SetMeta(&data.FrameMeta{Type: data.FrameTypeLogLines})
+	raw, err := json.Marshal(backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{frame}},
+	}})
+	require.NoError(t, err)
+	var resp backend.QueryDataResponse
+	require.NoError(t, json.Unmarshal(raw, &resp))
+
+	result, err := lokiFramesToResult(&resp, "range")
+	require.NoError(t, err)
+	assert.Equal(t, "streams", result.ResultType)
+	assert.Equal(t, []LogEntry{{
+		Timestamp: "1705312800000000123",
+		Line:      "boom",
+		Labels:    map[string]string{"app": "a"},
+		Parsed:    map[string]string{"level": "error"},
+	}}, result.Entries)
+}
+
 func TestLokiFramesToResult_Metrics(t *testing.T) {
 	frame := data.NewFrame("",
 		data.NewField("Time", nil, []time.Time{time.UnixMilli(1000), time.UnixMilli(2500)}),

@@ -316,9 +316,8 @@ func lokiFramesToResult(resp *backend.QueryDataResponse, queryType string) (*lok
 			}
 		}
 
-		// With Grafana's experimental lokiLogsDataplane flag the line field
-		// is "body" and tsNs is gone; lokiLogFrameEntries then fails loudly
-		// rather than the frame being skipped as a metric series.
+		// Log frames have a Line field, or body when Grafana's
+		// lokiLogsDataplane flag is on; see lokiLogFrameEntries.
 		_, lineIdx := frame.FieldByName("Line")
 		_, bodyIdx := frame.FieldByName("body")
 		if lineIdx != -1 || bodyIdx != -1 {
@@ -364,14 +363,23 @@ func lokiFramesToResult(resp *backend.QueryDataResponse, queryType string) (*lok
 // lokiLogFrameEntries reads the rows of a Loki log frame. labelTypes marks
 // each label as indexed (I), structured metadata (S) or parsed (P); without
 // it (Loki before 3.0) every label is treated as a stream label.
+//
+// Grafana's lokiLogsDataplane feature flag (on in some Grafana Cloud waves)
+// renames Line to body and Time to timestamp and drops tsNs; the timestamp
+// field still carries nanosecond precision, so both shapes are read.
 func lokiLogFrameEntries(frame *data.Frame) ([]LogEntry, error) {
-	field := func(name string) *data.Field {
-		f, _ := frame.FieldByName(name)
-		return f
+	field := func(names ...string) *data.Field {
+		for _, name := range names {
+			if f, _ := frame.FieldByName(name); f != nil {
+				return f
+			}
+		}
+		return nil
 	}
-	lineField, tsField, labelsField, typesField := field("Line"), field("tsNs"), field("labels"), field("labelTypes")
-	if tsField == nil {
-		return nil, fmt.Errorf("loki log frame has no tsNs field")
+	lineField, labelsField, typesField := field("Line", "body"), field("labels"), field("labelTypes")
+	tsNsField, timeField := field("tsNs"), field("timestamp", "Time")
+	if tsNsField == nil && timeField == nil {
+		return nil, fmt.Errorf("loki log frame has no timestamp field")
 	}
 
 	entries := make([]LogEntry, 0, frame.Rows())
@@ -380,8 +388,14 @@ func lokiLogFrameEntries(frame *data.Frame) ([]LogEntry, error) {
 		if v, ok := lineField.ConcreteAt(i); ok {
 			entry.Line, _ = v.(string)
 		}
-		if v, ok := tsField.ConcreteAt(i); ok {
-			entry.Timestamp, _ = v.(string)
+		if tsNsField != nil {
+			if v, ok := tsNsField.ConcreteAt(i); ok {
+				entry.Timestamp, _ = v.(string)
+			}
+		} else if v, ok := timeField.ConcreteAt(i); ok {
+			if t, ok := v.(time.Time); ok {
+				entry.Timestamp = strconv.FormatInt(t.UnixNano(), 10)
+			}
 		}
 
 		var labels, types map[string]string
