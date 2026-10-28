@@ -5,7 +5,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,7 +19,6 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -249,36 +247,8 @@ func TestRenderTraceMissingFocusPreservesTrace(t *testing.T) {
 	assert.Len(t, structured.Spans, 2)
 }
 
-func TestDecodeTraceResponseRejectsPartialTrace(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
-	response, err := json.Marshal(map[string]any{"trace": json.RawMessage(traceJSON), "status": "PARTIAL", "message": "trace exceeded max bytes"})
-	require.NoError(t, err)
-	_, err = decodeTraceResponse(strings.NewReader(string(response)), defaultResponseLimitBytes)
-	require.ErrorContains(t, err, "partial")
-}
-
 func TestTraceStatusRespectsExplicitOKWithException(t *testing.T) {
 	assert.Equal(t, "ok", traceStatus(&tracepb.Status{Code: tracepb.Status_STATUS_CODE_OK}, []TraceEvent{{Name: "exception"}}))
-}
-
-func TestDecodeTraceResponseRejectsOversizeWithoutTruncating(t *testing.T) {
-	_, err := decodeTraceResponse(strings.NewReader(strings.Repeat("x", 33)), 32)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no span or exception data was truncated")
-
-	failing := &failingReader{}
-	_, err = decodeTraceResponse(failing, 32)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "read Tempo response")
-}
-
-func TestNormalizeTraceRejectsSpanLimit(t *testing.T) {
-	trace := &tracepb.TracesData{ResourceSpans: []*tracepb.ResourceSpans{{
-		ScopeSpans: []*tracepb.ScopeSpans{{Spans: make([]*tracepb.Span, maxTraceSpans+1)}},
-	}}}
-	_, err := normalizeTrace(trace)
-	require.EqualError(t, err, "trace contains more than the supported limit of 100000 spans")
 }
 
 func TestRenderTraceRejectsNonTempoDatasource(t *testing.T) {
@@ -347,7 +317,7 @@ func testTraceFrame(trace *tracepb.TracesData) *data.Frame {
 	keyValues := func(attrs []*commonpb.KeyValue) json.RawMessage {
 		kvs := []map[string]any{}
 		for _, a := range attrs {
-			kvs = append(kvs, map[string]any{"key": a.Key, "value": anyValue(a.Value)})
+			kvs = append(kvs, map[string]any{"key": a.Key, "value": a.Value.GetStringValue()})
 		}
 		b, _ := json.Marshal(kvs)
 		return b
@@ -374,7 +344,12 @@ func testTraceFrame(trace *tracepb.TracesData) *data.Frame {
 	frame.SetMeta(&data.FrameMeta{Custom: map[string]any{"partial": false, "message": ""}})
 	for _, rs := range trace.ResourceSpans {
 		resource := keyValues(rs.Resource.GetAttributes())
-		service := attributeString(attributesToMap(rs.Resource.GetAttributes()), "service.name")
+		service := ""
+		for _, a := range rs.Resource.GetAttributes() {
+			if a.Key == "service.name" {
+				service = a.Value.GetStringValue()
+			}
+		}
 		for _, ss := range rs.ScopeSpans {
 			for _, span := range ss.Spans {
 				logs := []map[string]any{}
@@ -441,14 +416,6 @@ func writeTempoDatasource(t *testing.T, w http.ResponseWriter) {
 		"uid": "tempo-main", "name": "Main Tempo", "type": "tempo", "id": 1,
 	}))
 }
-
-type failingReader struct{}
-
-func (failingReader) Read([]byte) (int, error) {
-	return 0, errors.New("read failed")
-}
-
-var _ io.Reader = failingReader{}
 
 func callInteractiveTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
 	values := map[string]any{"trace_id": args.TraceID, "datasourceUid": args.DatasourceUID}

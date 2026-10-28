@@ -13,13 +13,11 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
-// Grafana's Tempo datasource answers trace-by-ID queries through
-// /api/ds/query from 9.0 (the first release whose /api/ds/query accepts
-// datasource UIDs), TraceQL range metrics from 11.5, instant metrics from
-// 11.6 (11.5 runs every metrics query as a range query) and TraceQL search
-// from 12.3. Older releases keep using the proxy.
+// Grafana's Tempo datasource answers TraceQL range metrics through
+// /api/ds/query from 11.5, instant metrics from 11.6 (11.5 runs every metrics
+// query as a range query) and TraceQL search from 12.3. Older releases keep
+// using the proxy for these. Trace-by-ID queries always use /api/ds/query.
 var (
-	tempoDSQueryTraceSince   = [2]int{9, 0}
 	tempoDSQueryMetricsSince = [2]int{11, 5}
 	tempoDSQueryInstantSince = [2]int{11, 6}
 	tempoDSQuerySearchSince  = [2]int{12, 3}
@@ -28,10 +26,7 @@ var (
 // useDSQuery reports whether queries should go through /api/ds/query rather
 // than the datasource proxy. since is the first Grafana release whose Tempo
 // datasource supports the query type; an unknown version counts as new.
-func (b *tempoBackend) useDSQuery(ctx context.Context, since [2]int) bool {
-	if b.legacy {
-		return false
-	}
+func useDSQuery(ctx context.Context, since [2]int) bool {
 	major, minor, ok := parseMajorMinor(mcpgrafana.GrafanaVersion(ctx))
 	return !ok || major > since[0] || (major == since[0] && minor >= since[1])
 }
@@ -73,25 +68,106 @@ func (b *tempoBackend) dsQuery(ctx context.Context, from, to time.Time, query ma
 	return r.Frames, nil
 }
 
-// tempoRawSearchResponse returns the Tempo search response that Grafana's
-// "raw" table type wraps in a single string field.
-func tempoRawSearchResponse(frames data.Frames) (string, error) {
-	for _, frame := range frames {
-		if f, _ := frame.FieldByName("response"); f != nil && f.Len() > 0 {
-			if v, ok := f.ConcreteAt(0); ok {
-				if s, ok := v.(string); ok {
-					return s, nil
-				}
-			}
-		}
-	}
-	return "", fmt.Errorf("tempo datasource returned no raw search response")
+// tempoSearchTrace is one trace of a search_tempo_traces result.
+type tempoSearchTrace struct {
+	TraceID         string               `json:"traceID"`
+	RootServiceName string               `json:"rootServiceName,omitempty"`
+	RootTraceName   string               `json:"rootTraceName,omitempty"`
+	StartTimeMs     int64                `json:"startTimeMs"`
+	DurationMs      *float64             `json:"durationMs,omitempty"`
+	SpanSets        []tempoSearchSpanSet `json:"spanSets,omitempty"`
 }
 
-// flattenTempoAttributes rewrites every "attributes" list of {key, value}
-// pairs below v into a {key: value} object. Values arrive as OTLP JSON
-// ({"stringValue": "GET"}) from Tempo, or wrapped in a Go oneof
-// ({"Value": {"string_value": "GET"}}) from Grafana's raw search frame.
+type tempoSearchSpanSet struct {
+	Spans []tempoSearchSpan `json:"spans"`
+}
+
+type tempoSearchSpan struct {
+	SpanID      string         `json:"spanID"`
+	Name        string         `json:"name,omitempty"`
+	StartTimeMs int64          `json:"startTimeMs"`
+	DurationMs  float64        `json:"durationMs"`
+	Attributes  map[string]any `json:"attributes,omitempty"`
+}
+
+// tempoSearchFromFrames converts the frames of Grafana's "traces" table type:
+// a "Traces" frame with one row per trace, whose "nested" field holds a
+// "Spans" frame per matched span set. Each span set frame has a column per
+// returned attribute, so values keep their types. ok is false when there is
+// no "Traces" frame, which is what a metrics query returns.
+func tempoSearchFromFrames(frames data.Frames) (traces []tempoSearchTrace, ok bool, err error) {
+	var frame *data.Frame
+	for _, f := range frames {
+		if f.Name == "Traces" {
+			frame = f
+		}
+	}
+	if frame == nil {
+		return nil, false, nil
+	}
+	traces = make([]tempoSearchTrace, 0, frame.Rows())
+	for row := 0; row < frame.Rows(); row++ {
+		trace := tempoSearchTrace{
+			TraceID:         frameString(frame, "traceID", row),
+			RootServiceName: frameString(frame, "traceService", row),
+			RootTraceName:   frameString(frame, "traceName", row),
+		}
+		trace.StartTimeMs, _ = toMillis(frameValue(frame, "startTime", row))
+		if ms, ok := toFloat(frameValue(frame, "traceDuration", row)); ok {
+			trace.DurationMs = &ms
+		}
+		var spanSets []*data.Frame
+		if nested, ok := frameValue(frame, "nested", row).(json.RawMessage); ok && len(nested) > 0 {
+			if err := json.Unmarshal(nested, &spanSets); err != nil {
+				return nil, true, fmt.Errorf("parsing span sets: %w", err)
+			}
+		}
+		for _, set := range spanSets {
+			spans := make([]tempoSearchSpan, 0, set.Rows())
+			for i := 0; i < set.Rows(); i++ {
+				span := tempoSearchSpan{SpanID: frameString(set, "spanID", i), Name: frameString(set, "name", i)}
+				span.StartTimeMs, _ = toMillis(frameValue(set, "time", i))
+				if ns, ok := toFloat(frameValue(set, "duration", i)); ok {
+					span.DurationMs = ns / 1e6
+				}
+				for _, f := range set.Fields {
+					switch f.Name {
+					case "traceIdHidden", "spanID", "name", "time", "duration":
+						continue
+					}
+					if v, ok := f.ConcreteAt(i); ok {
+						if span.Attributes == nil {
+							span.Attributes = map[string]any{}
+						}
+						span.Attributes[f.Name] = v
+					}
+				}
+				spans = append(spans, span)
+			}
+			trace.SpanSets = append(trace.SpanSets, tempoSearchSpanSet{Spans: spans})
+		}
+		traces = append(traces, trace)
+	}
+	return traces, true, nil
+}
+
+// frameValue returns the concrete value of the named field at row, or nil.
+func frameValue(frame *data.Frame, name string, row int) any {
+	f, _ := frame.FieldByName(name)
+	if f == nil || row >= f.Len() {
+		return nil
+	}
+	v, _ := f.ConcreteAt(row)
+	return v
+}
+
+func frameString(frame *data.Frame, name string, row int) string {
+	s, _ := frameValue(frame, name, row).(string)
+	return s
+}
+
+// flattenTempoAttributes rewrites every "attributes" list of OTLP JSON
+// {key, value} pairs below v into a {key: value} object.
 func flattenTempoAttributes(v any) {
 	switch v := v.(type) {
 	case map[string]any:
@@ -120,17 +196,14 @@ func tempoAttributeValue(v any) any {
 	if !ok {
 		return v
 	}
-	if inner, ok := m["Value"].(map[string]any); ok {
-		m = inner
-	}
 	for k, value := range m {
 		switch k {
-		case "intValue", "int_value":
+		case "intValue":
 			// OTLP JSON encodes 64-bit integers as strings.
 			if s, ok := value.(string); ok {
 				return json.Number(s)
 			}
-		case "arrayValue", "array_value":
+		case "arrayValue":
 			wrapper, _ := value.(map[string]any)
 			list, _ := wrapper["values"].([]any)
 			values := make([]any, len(list))
@@ -138,7 +211,7 @@ func tempoAttributeValue(v any) any {
 				values[i] = tempoAttributeValue(item)
 			}
 			return values
-		case "kvlistValue", "kvlist_value":
+		case "kvlistValue":
 			wrapper, _ := value.(map[string]any)
 			list, _ := wrapper["values"].([]any)
 			values := make(map[string]any, len(list))
@@ -314,13 +387,8 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 			return nil
 		}
 		v, _ := f.ConcreteAt(row)
-		switch v := v.(type) {
-		case json.RawMessage:
-			return v
-		case string: // Grafana 9.0 sends these fields as JSON strings.
-			return json.RawMessage(v)
-		}
-		return nil
+		msg, _ := v.(json.RawMessage)
+		return msg
 	}
 
 	result := &tempoTrace{TraceID: traceID, Services: []tempoTraceService{}}
@@ -486,7 +554,7 @@ func tempoKeyValues(msg json.RawMessage) (map[string]any, error) {
 	}
 	result := make(map[string]any, len(kvs))
 	for _, kv := range kvs {
-		result[kv.Key] = llmValue(kv.Value)
+		result[kv.Key] = exactJSONValue(kv.Value)
 	}
 	return result, nil
 }
@@ -500,4 +568,38 @@ func unmarshalTempoJSON(msg json.RawMessage, v any) error {
 	dec := json.NewDecoder(strings.NewReader(string(msg)))
 	dec.UseNumber()
 	return dec.Decode(v)
+}
+
+// exactJSONValue keeps numbers decoded with UseNumber exact: integers beyond 2^53
+// and other non-float numbers become strings.
+func exactJSONValue(value any) any {
+	switch v := value.(type) {
+	case json.Number:
+		if integer, err := v.Int64(); err == nil {
+			if integer > 1<<53-1 || integer < -(1<<53-1) {
+				return string(v)
+			}
+			return integer
+		}
+		if !strings.ContainsAny(string(v), ".eE") {
+			return string(v)
+		}
+		number, err := v.Float64()
+		if err != nil {
+			return string(v)
+		}
+		return number
+	case []any:
+		for i, item := range v {
+			v[i] = exactJSONValue(item)
+		}
+		return v
+	case map[string]any:
+		for k, item := range v {
+			v[k] = exactJSONValue(item)
+		}
+		return v
+	default:
+		return value
+	}
 }

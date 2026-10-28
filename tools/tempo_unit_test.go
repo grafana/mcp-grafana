@@ -20,8 +20,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // tempoTestServer creates a mock server that handles both the Grafana datasource
@@ -65,21 +63,6 @@ func tempoTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 	return ts, ts.Close
 }
 
-// tempoLegacyTestServer is tempoTestServer for Grafana before 9.0, where the
-// datasource was resolved through the frontend-settings fallback and queries
-// stay on the proxy.
-func tempoLegacyTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, func()) {
-	t.Helper()
-	ts, cleanup := tempoTestServer(t, handler)
-	ctx := mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: ts.URL})
-	key := fallbackProxyIDKey(ctx, "uid", "test-tempo")
-	fallbackProxyIDs.Store(key, fallbackRoute{id: 1, uid: "test-tempo"})
-	return ts, func() {
-		fallbackProxyIDs.Delete(key)
-		cleanup()
-	}
-}
-
 // tempoDSQueryServer answers /api/ds/query with frames, recording the query
 // it received.
 func tempoDSQueryServer(t *testing.T, frames data.Frames) (*httptest.Server, func(), *map[string]any) {
@@ -108,10 +91,24 @@ func dsQueryOf(t *testing.T, payload map[string]any) map[string]any {
 	return queries[0].(map[string]any)
 }
 
-// tempoRawSearchFrame wraps a Tempo search response the way Grafana's "raw"
-// table type does.
-func tempoRawSearchFrame(body string) data.Frames {
-	return data.Frames{data.NewFrame("Raw response", data.NewField("response", nil, []string{body}))}
+// tempoTracesFrame builds the frames of Grafana's "traces" table type for
+// one trace whose only span set is spans. A nil spans frame gives no traces.
+func tempoTracesFrame(t *testing.T, spans *data.Frame) data.Frames {
+	t.Helper()
+	if spans == nil {
+		return data.Frames{data.NewFrame("Traces", data.NewField("traceID", nil, []string{}))}
+	}
+	nested, err := json.Marshal([]*data.Frame{spans})
+	require.NoError(t, err)
+	duration := 125.0
+	return data.Frames{data.NewFrame("Traces",
+		data.NewField("traceID", nil, []string{"abc123"}),
+		data.NewField("startTime", nil, []time.Time{time.UnixMilli(1735689600001)}),
+		data.NewField("traceService", nil, []string{"frontend"}),
+		data.NewField("traceName", nil, []string{"GET /"}),
+		data.NewField("traceDuration", nil, []*float64{&duration}),
+		data.NewField("nested", nil, []json.RawMessage{nested}),
+	)}
 }
 
 func tempoTestContext(t *testing.T, serverURL string) func(*mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -166,9 +163,17 @@ func makeTempoRequest(toolName string, args map[string]any) *mcp.CallToolRequest
 }
 
 func TestTempoSearch(t *testing.T) {
-	ts, cleanup, payload := tempoDSQueryServer(t, tempoRawSearchFrame(`{"traces":[{"traceID":"abc123","rootServiceName":"frontend",`+
-		`"spanSets":[{"spans":[{"spanID":"s1","startTimeUnixNano":1735689600000000001,"attributes":[`+
-		`{"key":"http.method","value":{"Value":{"string_value":"GET"}}},{"key":"http.status_code","value":{"Value":{"int_value":500}}}]}]}]}]}`))
+	spans := data.NewFrame("Spans",
+		data.NewField("traceIdHidden", nil, []string{"abc123"}),
+		data.NewField("spanID", nil, []string{"s1"}),
+		data.NewField("time", nil, []time.Time{time.UnixMilli(1735689600002)}),
+		data.NewField("name", nil, []string{""}),
+		data.NewField("cache.hit", nil, []bool{false}),
+		data.NewField("http.status_code", nil, []float64{500}),
+		data.NewField("note", nil, []string{""}),
+		data.NewField("duration", nil, []float64{2_500_000}),
+	)
+	ts, cleanup, payload := tempoDSQueryServer(t, tempoTracesFrame(t, spans))
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
@@ -183,16 +188,16 @@ func TestTempoSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.False(t, result.IsError, "%v", result.Content)
-	text := result.Content[0].(*mcp.TextContent).Text
-	assert.Contains(t, text, `"traceID":"abc123"`)
-	assert.Contains(t, text, `"attributes":{"http.method":"GET","http.status_code":500}`)
-	assert.Contains(t, text, `"startTimeUnixNano":1735689600000000001`, "nanosecond timestamps must stay exact")
+	assert.JSONEq(t, `{"traces":[{"traceID":"abc123","rootServiceName":"frontend","rootTraceName":"GET /","startTimeMs":1735689600001,"durationMs":125,`+
+		`"spanSets":[{"spans":[{"spanID":"s1","startTimeMs":1735689600002,"durationMs":2.5,`+
+		`"attributes":{"cache.hit":false,"http.status_code":500,"note":""}}]}]}]}`, result.Content[0].(*mcp.TextContent).Text,
+		"zero-valued attributes keep their types")
 
 	assert.Equal(t, "1735689600000", (*payload)["from"])
 	assert.Equal(t, "1735693200000", (*payload)["to"])
 	q := dsQueryOf(t, *payload)
 	assert.Equal(t, "traceql", q["queryType"])
-	assert.Equal(t, "raw", q["tableType"])
+	assert.Equal(t, "traces", q["tableType"])
 	assert.Equal(t, `{ span.http.status_code >= 500 }`, q["query"])
 	assert.Equal(t, float64(tempoDefaultSearchLimit), q["limit"])
 	assert.Equal(t, float64(2), q["spss"])
@@ -234,14 +239,20 @@ func TestTempoSearch_OldGrafanaUsesProxy(t *testing.T) {
 	assert.Equal(t, "application/vnd.grafana.llm", capturedAccept)
 }
 
+// On the proxy, Tempo's own response is tidied.
 func TestTempoSearch_LimitAndDedupe(t *testing.T) {
-	ts, cleanup, payload := tempoDSQueryServer(t, tempoRawSearchFrame(`{"traces":[{"traceID":"abc123",`+
-		`"spanSet":{"spans":[{"spanID":"s1"}],"matched":1},`+
-		`"spanSets":[{"spans":[{"spanID":"s1"}],"matched":1}]}],`+
-		`"metrics":{"inspectedBytes":100,"completedJobs":1,"totalJobs":1470}}`))
+	var capturedQuery url.Values
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"traces":[{"traceID":"abc123",` +
+			`"spanSet":{"spans":[{"spanID":"s1"}],"matched":1},` +
+			`"spanSets":[{"spans":[{"spanID":"s1"}],"matched":1}]}],` +
+			`"metrics":{"inspectedBytes":100,"completedJobs":1,"totalJobs":1470}}`))
+	})
 	defer cleanup()
 
-	call := tempoTestContext(t, ts.URL)
+	call := tempoTestContextWithVersion(t, ts.URL, "12.2.0")
 	result, err := call(makeTempoRequest("search_tempo_traces", map[string]any{
 		"datasourceUid": "test-tempo",
 		"query":         `{ }`,
@@ -250,9 +261,8 @@ func TestTempoSearch_LimitAndDedupe(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	q := dsQueryOf(t, *payload)
-	assert.Equal(t, float64(1), q["limit"])
-	assert.Equal(t, float64(5), q["spss"])
+	assert.Equal(t, "1", capturedQuery.Get("limit"))
+	assert.Equal(t, "5", capturedQuery.Get("spss"))
 
 	text := result.Content[0].(*mcp.TextContent).Text
 	assert.Equal(t, 1, strings.Count(text, `"spanID":"s1"`), "spans should not be duplicated: %s", text)
@@ -276,7 +286,7 @@ func TestTidyTempoSearchResults(t *testing.T) {
 }
 
 func TestTempoSearch_DefaultTimeBounds(t *testing.T) {
-	ts, cleanup, payload := tempoDSQueryServer(t, tempoRawSearchFrame(`{"traces":[]}`))
+	ts, cleanup, payload := tempoDSQueryServer(t, tempoTracesFrame(t, nil))
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
@@ -296,7 +306,7 @@ func TestTempoSearch_DefaultTimeBounds(t *testing.T) {
 }
 
 func TestTempoSearch_PartialTimeBounds(t *testing.T) {
-	ts, cleanup, payload := tempoDSQueryServer(t, tempoRawSearchFrame(`{"traces":[]}`))
+	ts, cleanup, payload := tempoDSQueryServer(t, tempoTracesFrame(t, nil))
 	defer cleanup()
 
 	call := tempoTestContext(t, ts.URL)
@@ -371,7 +381,7 @@ func TestTempoMetrics_InstantGate(t *testing.T) {
 // Grafana picks search or metrics from the query text, so each tool rejects
 // the other kind of result.
 func TestTempoWrongQueryKind(t *testing.T) {
-	ts, cleanup, _ := tempoDSQueryServer(t, tempoRawSearchFrame(`{"traces":[]}`))
+	ts, cleanup, _ := tempoDSQueryServer(t, tempoTracesFrame(t, nil))
 	defer cleanup()
 	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("query_tempo_metrics", map[string]any{
 		"datasourceUid": "test-tempo", "query": `{ status = error }`,
@@ -586,29 +596,19 @@ func TestTempoTraceFromFrames(t *testing.T) {
 		_, _, err := tempoTraceFromFrames(testTraceID, nil)
 		assert.ErrorContains(t, err, "not found")
 	})
-	t.Run("Grafana 9.x frames", func(t *testing.T) {
-		// 9.0 sends the JSON columns as strings, and nothing before 10.1 has a
-		// statusCode column: the status is in the otel.status_* tags.
+	t.Run("status before Grafana 10.1", func(t *testing.T) {
+		// Nothing before 10.1 has a statusCode column: the status is in the
+		// otel.status_* tags.
 		frame := data.NewFrame("Trace",
 			data.NewField("spanID", nil, []string{"0102030405060708"}),
-			data.NewField("operationName", nil, []string{"op"}),
 			data.NewField("serviceName", nil, []string{"checkout"}),
-			data.NewField("serviceTags", nil, []string{`[{"key":"service.name","value":"checkout"}]`}),
-			data.NewField("startTime", nil, []float64{1750000000000}),
-			data.NewField("duration", nil, []float64{5}),
-			data.NewField("logs", nil, []string{`[{"timestamp":1750000000001,"name":"exception","fields":[{"key":"exception.message","value":"boom"}]}]`}),
-			data.NewField("references", nil, []string{`[]`}),
-			data.NewField("tags", nil, []string{`[{"key":"otel.status_code","value":2},{"key":"otel.status_description","value":"boom"}]`}),
+			data.NewField("tags", nil, []json.RawMessage{json.RawMessage(`[{"key":"otel.status_code","value":2},{"key":"otel.status_description","value":"boom"}]`)}),
 		)
 		trace, spans, err := tempoTraceFromFrames(testTraceID, data.Frames{frame})
 		require.NoError(t, err)
-		svc := trace.Services[0]
-		assert.Equal(t, map[string]any{"service.name": "checkout"}, svc.Resource)
-		span := svc.Spans[0]
+		span := trace.Services[0].Spans[0]
 		assert.Equal(t, "error", span.Status)
 		assert.Equal(t, "boom", span.StatusMessage)
-		require.Len(t, span.Events, 1)
-		assert.Equal(t, "boom", span.Events[0].Attributes["exception.message"])
 		require.Len(t, spans, 1)
 		assert.Equal(t, "error", spans[0].Status)
 	})
@@ -617,9 +617,9 @@ func TestTempoTraceFromFrames(t *testing.T) {
 func TestFlattenTempoAttributes(t *testing.T) {
 	var v map[string]any
 	require.NoError(t, unmarshalTempoJSON(json.RawMessage(`{"attributes":[
-		{"key":"s","value":{"Value":{"string_value":"GET"}}},
+		{"key":"s","value":{"stringValue":"GET"}},
 		{"key":"i","value":{"intValue":"9007199254740993"}},
-		{"key":"a","value":{"Value":{"array_value":{"values":[{"Value":{"string_value":"x"}},{"Value":{"int_value":2}}]}}}},
+		{"key":"a","value":{"arrayValue":{"values":[{"stringValue":"x"},{"intValue":"2"}]}}},
 		{"key":"kv","value":{"kvlistValue":{"values":[{"key":"k","value":{"boolValue":true}}]}}}
 	]}`), &v))
 	flattenTempoAttributes(v)
@@ -646,104 +646,6 @@ func TestTempoGetTrace_NotFound(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "trace with id 0000000000000000000000000000dead not found")
-}
-
-func TestTempoGetTrace_TimeRange(t *testing.T) {
-	var capturedQuery url.Values
-
-	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		capturedQuery = r.URL.Query()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"batches":[{"resource":{"attributes":[]},"scopeSpans":[]}]}`))
-	})
-	defer cleanup()
-
-	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
-		"datasourceUid": "test-tempo",
-		"trace_id":      "abc123def456",
-		"start":         "2022-01-01T00:00:00Z",
-		"end":           "2022-01-02T00:00:00Z",
-	}))
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.IsError)
-	assert.Equal(t, "1640995200", capturedQuery.Get("start"))
-	assert.Equal(t, "1641081600", capturedQuery.Get("end"))
-}
-
-func TestTempoGetTrace_TimeRangeRequiresBoth(t *testing.T) {
-	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("request should not be sent")
-	})
-	defer cleanup()
-
-	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
-		"datasourceUid": "test-tempo",
-		"trace_id":      "abc123def456",
-		"start":         "2022-01-01T00:00:00Z",
-	}))
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsError)
-	assert.Equal(t, `arguments "start" and "end" must be provided together`, result.Content[0].(*mcp.TextContent).Text)
-}
-
-// Grafana before 9.0 fetches traces through the proxy even when the
-// datasource metadata API resolved it (for example, with an admin token).
-func TestTempoGetTrace_OldGrafanaUsesProxy(t *testing.T) {
-	var capturedPath string
-	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{}`))
-	})
-	defer cleanup()
-
-	call := tempoTestContextWithVersion(t, ts.URL, "8.5.27")
-	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
-		"datasourceUid": "test-tempo",
-		"trace_id":      "0000000000000000000000000000dead",
-	}))
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/v2/traces/0000000000000000000000000000dead", capturedPath)
-}
-
-// On Grafana before 9.0 traces are fetched through the proxy, whose v2
-// trace-by-ID endpoint returns 200 with an empty trace for unknown IDs.
-func TestTempoGetTrace_LegacyNotFound(t *testing.T) {
-	for name, body := range map[string]string{
-		"llm format":  `{}`,
-		"json format": `{"trace":{},"metrics":{"inspectedBytes":"0"}}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			var capturedPath, capturedAccept string
-			ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-				capturedPath = r.URL.Path
-				capturedAccept = r.Header.Get("Accept")
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(body))
-			})
-			defer cleanup()
-
-			call := tempoTestContext(t, ts.URL)
-			result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
-				"datasourceUid": "test-tempo",
-				"trace_id":      "0000000000000000000000000000dead",
-			}))
-
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			assert.True(t, result.IsError)
-			assert.Equal(t, "tempo API returned 404: trace not found", result.Content[0].(*mcp.TextContent).Text)
-			assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/v2/traces/0000000000000000000000000000dead", capturedPath)
-			assert.Equal(t, tempoAcceptLLM, capturedAccept)
-		})
-	}
 }
 
 func TestTempoTraceDiff(t *testing.T) {
@@ -1192,81 +1094,8 @@ func TestQueryTempoMetricsAnnotatesParseErrors(t *testing.T) {
 	assert.Contains(t, text, "quantile_over_time(span:duration, .99)")
 }
 
-func TestTempoGetTraceInteractiveOTLP(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
-	body := `{"trace":` + string(traceJSON) + `}`
-	requests := 0
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		assert.Equal(t, tempoAcceptLLM, r.Header.Get("Accept"))
-		_, _ = w.Write([]byte(body))
-	})
-	defer cleanup()
-	call := tempoTestContext(t, ts.URL)
-	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}))
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-	assert.Equal(t, "trace", result.Meta["type"])
-	assert.Equal(t, "json", result.Meta["encoding"])
-	assert.Equal(t, 1, requests)
-	require.NotNil(t, result.StructuredContent, "get_tempo_trace should enrich its existing fetched body")
-	structured := result.StructuredContent.(TraceViewResult)
-	assert.Len(t, structured.Spans, 2)
-	require.NotNil(t, GetTempoTraceTool.Tool.Meta)
-	ui := GetTempoTraceTool.Tool.Meta["ui"].(map[string]any)
-	assert.Equal(t, mcpgrafana.TraceViewerResourceURI, ui["resourceUri"])
-}
-
-func TestTempoGetTraceInteractiveLLM(t *testing.T) {
-	body := `{"trace":{"traceId":"abc123","services":[{"serviceName":"checkout","resource":{"deployment.environment.name":"production"},"scopes":[{"name":"sdk","version":"1","spans":[{"spanId":"1111111111111111","name":"checkout","startTimeUnixNano":"1750000000000000000","endTimeUnixNano":"1750000000125000000","durationMs":125,"attributes":{"count":9007199254740993},"status":{"code":"STATUS_CODE_OK"},"events":[{"name":"exception","timeUnixNano":"1750000000001000000","attributes":{"exception.stacktrace":"stack"}}]}]}]}]}}`
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
-	defer cleanup()
-	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc123", "focus_span_id": "AAAAAAAAAAAAAAAA"}))
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-	require.NotNil(t, result.StructuredContent)
-	structured := result.StructuredContent.(TraceViewResult)
-	assert.Equal(t, "abc123", structured.TraceID)
-	assert.Equal(t, "aaaaaaaaaaaaaaaa", *structured.FocusSpanID)
-	require.Len(t, structured.Spans, 1)
-	span := structured.Spans[0]
-	assert.Equal(t, "checkout", span.ServiceName)
-	assert.Equal(t, float64(1750000000000), span.StartTimeMS)
-	assert.Equal(t, float64(125), span.DurationMS)
-	assert.Equal(t, "ok", span.Status)
-	assert.Equal(t, "production", span.Attributes["resource.deployment.environment.name"])
-	assert.Equal(t, "sdk", span.Attributes["scope.name"])
-	assert.Equal(t, "9007199254740993", span.Attributes["count"])
-	require.Len(t, span.Events, 1)
-	assert.Equal(t, "stack", span.Events[0].Attributes["exception.stacktrace"])
-}
-
-func TestTempoGetTraceFallbackPreservesRawOutput(t *testing.T) {
-	malformedOTLP, err := protojson.Marshal(&tracepb.TracesData{ResourceSpans: []*tracepb.ResourceSpans{{ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{Name: "missing ID"}}}}}}})
-	require.NoError(t, err)
-	for _, body := range []string{
-		`not JSON`, `{"trace":{"unknown":true}}`, `{"trace":null}`, `{"trace":{"services":[]}}`,
-		`{"status":"PARTIAL","message":"too large","trace":{"services":[]}}`,
-		`{"trace":` + string(malformedOTLP) + `}`,
-	} {
-		t.Run(body, func(t *testing.T) {
-			ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
-			defer cleanup()
-			result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "existing-nonstandard-id"}))
-			require.NoError(t, err)
-			require.False(t, result.IsError)
-			assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-			assert.Nil(t, result.StructuredContent)
-			assert.Equal(t, "trace", result.Meta["type"])
-		})
-	}
-}
-
 func TestTempoGetTraceFocusValidation(t *testing.T) {
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("invalid focus should not fetch trace") })
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("invalid focus should not fetch trace") })
 	defer cleanup()
 	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc", "focus_span_id": "bad"}))
 	require.NoError(t, err)
@@ -1274,181 +1103,37 @@ func TestTempoGetTraceFocusValidation(t *testing.T) {
 	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "focus_span_id must be 16 hexadecimal characters")
 }
 
-func TestTempoGetTraceEnrichmentLimitsPreserveRawOutput(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		spans        int
-		resourceSize int
-	}{
-		{"span limit", maxTraceSpans + 1, 0},
-		{"structured limit", 1000, 40 << 10},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			span := `{"spanId":"AQIDBAUGBwg=","name":"operation"}`
-			body := `{"trace":{"resourceSpans":[{"resource":{"attributes":[{"key":"large","value":{"stringValue":"` + strings.Repeat("x", tc.resourceSize) + `"}}]},"scopeSpans":[{"spans":[` + strings.TrimSuffix(strings.Repeat(span+",", tc.spans), ",") + `]}]}]}}`
-			require.Less(t, int64(len(body)), defaultResponseLimitBytes)
-			requests := 0
-			ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { requests++; _, _ = w.Write([]byte(body)) })
-			defer cleanup()
-			result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "nonstandard"}))
-			require.NoError(t, err)
-			require.False(t, result.IsError)
-			assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-			assert.Nil(t, result.StructuredContent)
-			assert.Equal(t, 1, requests)
-		})
-	}
-}
-
-func TestTempoGetTraceRetainsResponseCap(t *testing.T) {
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("x", int(defaultResponseLimitBytes)+1)))
-	})
+func TestTempoGetTrace_TimeRange(t *testing.T) {
+	ts, cleanup, payload := tempoDSQueryServer(t, tempoTracesFrame(t, nil))
 	defer cleanup()
-	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"}))
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "exceeds")
-}
 
-func TestTempoGetTraceLLMUnsupportedFieldsPreserveRawOutput(t *testing.T) {
-	validSpan := `{"spanId":"1111111111111111","name":"operation","startTimeUnixNano":"1750000000000000000","endTimeUnixNano":"1750000000001000000","status":{"code":"STATUS_CODE_UNSET"}}`
-	for _, span := range []string{
-		strings.Replace(validSpan, `"1750000000000000000"`, `null`, 1),
-		strings.Replace(validSpan, `"1750000000000000000"`, `"not a timestamp"`, 1),
-		strings.Replace(validSpan, `"1750000000001000000"`, `"1749999999999999999"`, 1),
-		strings.Replace(validSpan, `STATUS_CODE_UNSET`, `UNKNOWN`, 1),
-		strings.Replace(validSpan, `"1111111111111111"`, `"bad"`, 1),
-	} {
-		body := `{"trace":{"services":[{"serviceName":"checkout","scopes":[{"spans":[` + span + `]}]}]}}`
-		ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
-		result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"}))
-		cleanup()
-		require.NoError(t, err)
-		require.False(t, result.IsError)
-		assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-		assert.Nil(t, result.StructuredContent)
-	}
-}
-
-func TestTempoGetTracePartialSupportedTracePreservesRawOutput(t *testing.T) {
-	otlp, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
-	llm := `{"services":[{"serviceName":"checkout","scopes":[{"spans":[{"spanId":"1111111111111111","name":"operation","startTimeUnixNano":"1750000000000000000","endTimeUnixNano":"1750000000001000000"}]}]}]}`
-	for _, trace := range []string{string(otlp), llm} {
-		body := `{"status":"PaRtIaL","message":"trace exceeded max bytes","trace":` + trace + `}`
-		ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
-		result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"}))
-		cleanup()
-		require.NoError(t, err)
-		require.False(t, result.IsError)
-		assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-		assert.Nil(t, result.StructuredContent)
-	}
-}
-
-func TestTempoGetTraceEnrichmentIsAdditiveWithoutApps(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
-	body := `{"trace":` + string(traceJSON) + `}`
-	requests := 0
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		assert.Equal(t, tempoAcceptLLM, r.Header.Get("Accept"))
-		_, _ = w.Write([]byte(body))
-	})
-	defer cleanup()
-	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"}))
-	require.NoError(t, err)
-	raw := tempoToolResult(body, "trace", "json")
-	assert.Equal(t, raw.Content, result.Content)
-	assert.Equal(t, raw.Meta, result.Meta)
-	require.NotNil(t, result.StructuredContent)
-	assert.Len(t, result.StructuredContent.(TraceViewResult).Spans, 2)
-	assert.Equal(t, 1, requests)
-}
-
-func TestTempoGetTraceStructuredContentWireBoundary(t *testing.T) {
-	template := `{"trace":{"services":[{"serviceName":"checkout","scopes":[{"spans":[{"spanId":"1111111111111111","name":"operation","startTimeUnixNano":"1750000000000000000","endTimeUnixNano":"1750000000001000000","attributes":{"padding":"%s"}}]}]}]}}`
-	body := fmt.Sprintf(template, "")
-	requests := 0
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { requests++; _, _ = w.Write([]byte(body)) })
-	defer cleanup()
 	call := tempoTestContext(t, ts.URL)
-	request := makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": "abc"})
-	baseline, err := call(request)
+	_, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
+		"datasourceUid": "test-tempo",
+		"trace_id":      "abc123def456",
+		"start":         "2022-01-01T00:00:00Z",
+		"end":           "2022-01-02T00:00:00Z",
+	}))
+
 	require.NoError(t, err)
-	require.NotNil(t, baseline.StructuredContent)
-	encoded, err := json.Marshal(baseline.StructuredContent)
-	require.NoError(t, err)
-	baseSize := len(encoded)
-	for _, tc := range []struct {
-		name      string
-		size      int
-		available bool
-	}{
-		{"at limit", 1 << 20, true}, {"above limit", (1 << 20) + 1, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body = fmt.Sprintf(template, strings.Repeat("x", tc.size-baseSize))
-			result, err := call(request)
-			require.NoError(t, err)
-			require.False(t, result.IsError)
-			assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-			assert.Equal(t, tempoToolResult(body, "trace", "json").Meta, result.Meta)
-			if tc.available {
-				require.NotNil(t, result.StructuredContent)
-				encoded, err := json.Marshal(result.StructuredContent)
-				require.NoError(t, err)
-				assert.Equal(t, tc.size, len(encoded))
-			} else {
-				assert.True(t, result.StructuredContent == nil, "the whole structured envelope must stay within 1 MiB")
-			}
-		})
-	}
-	assert.Equal(t, 3, requests)
+	assert.Equal(t, "1640995200000", (*payload)["from"])
+	assert.Equal(t, "1641081600000", (*payload)["to"])
 }
 
-func TestTempoGetTraceIgnoresAdditiveOTLPFields(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
-	require.NoError(t, err)
-	var trace map[string]any
-	require.NoError(t, json.Unmarshal(traceJSON, &trace))
-	trace["futureTraceField"] = map[string]any{"enabled": true}
-	resource := trace["resourceSpans"].([]any)[0].(map[string]any)
-	resource["futureResourceField"] = "new data"
-	scope := resource["scopeSpans"].([]any)[0].(map[string]any)
-	scope["futureScopeField"] = 1
-	span := scope["spans"].([]any)[0].(map[string]any)
-	span["futureSpanField"] = []any{true, "extra"}
-	traceJSON, err = json.Marshal(trace)
-	require.NoError(t, err)
-	body := `{"trace":` + string(traceJSON) + `}`
-	requests := 0
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { requests++; _, _ = w.Write([]byte(body)) })
+func TestTempoGetTrace_TimeRangeRequiresBoth(t *testing.T) {
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("request should not be sent")
+	})
 	defer cleanup()
-	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}))
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-	assert.Equal(t, tempoToolResult(body, "trace", "json").Meta, result.Meta)
-	assert.Equal(t, 1, requests)
-	require.NotNil(t, result.StructuredContent, "unknown additive fields must not hide the supported OTLP spans")
-	structured := result.StructuredContent.(TraceViewResult)
-	require.Len(t, structured.Spans, 2)
-	assert.Equal(t, "0102030405060708", structured.Spans[0].ID)
-	assert.Equal(t, "stack", structured.Spans[0].Events[0].Attributes["exception.stacktrace"])
-}
 
-func TestTempoGetTraceInvalidKnownOTLPFieldPreservesRawOutput(t *testing.T) {
-	traceJSON, err := protojson.Marshal(testTraceData("stack"))
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
+		"datasourceUid": "test-tempo",
+		"trace_id":      "abc123def456",
+		"start":         "2022-01-01T00:00:00Z",
+	}))
+
 	require.NoError(t, err)
-	body := `{"trace":` + strings.Replace(string(traceJSON), `"1750000000000000000"`, `"not a timestamp"`, 1) + `}`
-	ts, cleanup := tempoLegacyTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
-	defer cleanup()
-	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("get_tempo_trace", map[string]any{"datasourceUid": "test-tempo", "trace_id": testTraceID}))
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	assert.Equal(t, body, result.Content[0].(*mcp.TextContent).Text)
-	assert.Nil(t, result.StructuredContent)
+	assert.True(t, result.IsError)
+	assert.Equal(t, `arguments "start" and "end" must be provided together`, result.Content[0].(*mcp.TextContent).Text)
 }
