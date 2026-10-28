@@ -168,6 +168,8 @@ func supportedDialectTypes() string {
 
 var sqlIdentifierRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
+var trailingLineCommentRe = regexp.MustCompile(`(--|#|//)[^\n]*$`)
+
 // grafanaMacroRe matches a whole $__name token. replaceWholeMacros looks the name up, so a
 // macro that merely starts with a substituted name ($__toTime, $__interval_s, $__to_date) is
 // never touched.
@@ -220,6 +222,9 @@ func EnforceSQLLimit(query string, requestedLimit, defaultLimit, maxLimit int) s
 
 	query = strings.TrimSpace(query)
 	query = strings.TrimSuffix(query, ";")
+	if trailingLineCommentRe.MatchString(query) {
+		return fmt.Sprintf("%s\nLIMIT %d", query, limit)
+	}
 	return fmt.Sprintf("%s LIMIT %d", query, limit)
 }
 
