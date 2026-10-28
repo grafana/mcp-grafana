@@ -51,8 +51,6 @@ func newFakeVMServer(t *testing.T, response backend.QueryDataResponse) *fakeVMSe
 	return f
 }
 
-const victoriaMetricsDatasourceType = "victoriametrics-metrics-datasource"
-
 func newTestVMBackend(t *testing.T, server *httptest.Server) *prometheusBackend {
 	t.Helper()
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: server.URL})

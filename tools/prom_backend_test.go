@@ -17,6 +17,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -175,4 +176,44 @@ func TestPrometheusBackendQuery_IncludesErrorBody(t *testing.T) {
 			assert.True(t, errors.As(err, &apiErr), "original *promv1.Error should still be unwrappable")
 		})
 	}
+}
+
+func TestPrometheusBackendQuery_NativeHistogramUsesProxy(t *testing.T) {
+	heatmap := data.NewFrame("",
+		data.NewField("xMax", nil, []time.Time{time.Unix(1700000000, 0)}),
+		data.NewField("yMin", nil, []float64{0}),
+		data.NewField("yMax", nil, []float64{1}),
+		data.NewField("count", nil, []float64{5}),
+		data.NewField("yLayout", nil, []int8{0}),
+	)
+	dsResp, err := json.Marshal(backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{heatmap}},
+	}})
+	require.NoError(t, err)
+	var proxied bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/ds/query" {
+			_, _ = w.Write(dsResp)
+			return
+		}
+		proxied = true
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"h"},"histogram":[1700000000,{"count":"5","sum":"2","buckets":[[0,"0","1","5"]]}]}]}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	v, _, err := newTestPrometheusBackend(t, server).Query(context.Background(), "h", "instant", time.Time{}, time.Unix(1700000000, 0), 0)
+	require.NoError(t, err)
+	assert.True(t, proxied)
+	vec := v.(model.Vector)
+	require.Len(t, vec, 1)
+	require.NotNil(t, vec[0].Histogram)
+	assert.Equal(t, model.FloatString(5), vec[0].Histogram.Count)
+}
+
+func TestNewPrometheusBackend_NoClientTimeout(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://grafana.example"})
+	b, err := newPrometheusBackend(ctx, "uid", &models.DataSource{UID: "uid", Type: "prometheus"})
+	require.NoError(t, err)
+	assert.Zero(t, b.httpClient.Timeout)
 }

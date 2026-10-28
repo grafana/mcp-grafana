@@ -21,6 +21,8 @@ import (
 	"github.com/prometheus/common/model"
 )
 
+const victoriaMetricsDatasourceType = "victoriametrics-metrics-datasource"
+
 // promBackend abstracts the differences between datasource types that support
 // PromQL-compatible queries (native Prometheus, Cloud Monitoring, etc.).
 type promBackend interface {
@@ -79,8 +81,10 @@ type prometheusBackend struct {
 	baseURL    string
 	dsUID      string
 	dsType     string
-	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
-	// accept datasource UIDs; queries there stay on the proxy.
+	// legacy is set when the datasource was resolved through the
+	// frontend-settings fallback, in practice Grafana before 9.0, whose
+	// /api/ds/query does not accept datasource UIDs; queries there stay on
+	// the proxy.
 	legacy bool
 }
 
@@ -106,10 +110,11 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 
 	// A nil base selects cfg.HTTPTransport(), so an embedder's BaseTransport
 	// (tracing, connection pooling, limits) applies here as for other tools.
-	rt, err := mcpgrafana.BuildTransport(&cfg, nil)
+	baseRT, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
+	rt := baseRT
 
 	// Only convert POST→GET if the datasource is configured to use GET.
 	// The Prometheus client library sends POST first and only falls back to GET
@@ -140,22 +145,22 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("creating Prometheus client: %w", err)
 	}
 
-	httpClient, baseURL, err := newDSQueryHTTPClient(ctx)
-	if err != nil {
-		return nil, err
-	}
 	dsUID := ds.UID
 	if dsUID == "" {
 		dsUID = uid
 	}
 
 	return &prometheusBackend{
-		api:        promv1.NewAPI(c),
-		httpClient: httpClient,
-		baseURL:    baseURL,
+		api: promv1.NewAPI(c),
+		// No client timeout, as on the proxy client: queries are bounded by
+		// ctx and Grafana's own datasource timeout.
+		httpClient: &http.Client{Transport: baseRT, CheckRedirect: refuseRedirect},
+		baseURL:    grafanaURL,
 		dsUID:      dsUID,
 		dsType:     ds.Type,
-		legacy:     legacyMode,
+		// VictoriaMetrics' plugin proxy has no /api/v1/query, so its queries
+		// always go through /api/ds/query.
+		legacy: legacyMode && ds.Type != victoriaMetricsDatasourceType,
 	}, nil
 }
 
@@ -204,12 +209,33 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 	if err != nil {
 		return nil, nil, fmt.Errorf("querying Prometheus %s: %w", queryType, err)
 	}
+	if hasNonNumericFrames(resp) && b.dsType != victoriaMetricsDatasourceType {
+		// Grafana returns native histograms as heatmap cells without their
+		// count and sum, and string results as string fields; neither
+		// converts to samples, so ask the Prometheus API instead.
+		return b.queryViaProxy(ctx, expr, queryType, start, end, stepSeconds)
+	}
 
 	v, err := framesToPrometheusValue(resp, queryType)
 	if err != nil {
 		return nil, nil, err
 	}
 	return v, frameWarnings(resp), nil
+}
+
+// hasNonNumericFrames reports whether the response holds native-histogram or
+// string frames.
+func hasNonNumericFrames(resp *backend.QueryDataResponse) bool {
+	for _, r := range resp.Responses {
+		for _, frame := range r.Frames {
+			for _, f := range frame.Fields {
+				if f.Name == "yLayout" || f.Type() == data.FieldTypeString || f.Type() == data.FieldTypeNullableString {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // frameWarnings collects the warnings Grafana attaches to response frames as
