@@ -203,6 +203,9 @@ func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
 		case "/api/user":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"orgId":3}`)
+		case "/api/frontend/settings":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"buildInfo":{"version":"13.2.0"}}`)
 		case "/api/ds/query":
 			writeTraceFrameResponse(t, w, testTraceData("stack"))
 		default:

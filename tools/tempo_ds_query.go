@@ -14,9 +14,11 @@ import (
 )
 
 // Grafana's Tempo datasource answers trace-by-ID queries through
-// /api/ds/query in every release this server supports, TraceQL metrics from
-// 11.5 and TraceQL search from 12.3. Older releases keep using the proxy.
+// /api/ds/query from 9.0 (the first release whose /api/ds/query accepts
+// datasource UIDs), TraceQL metrics from 11.5 and TraceQL search from 12.3.
+// Older releases keep using the proxy.
 var (
+	tempoDSQueryTraceSince   = [2]int{9, 0}
 	tempoDSQueryMetricsSince = [2]int{11, 5}
 	tempoDSQuerySearchSince  = [2]int{12, 3}
 )

@@ -481,7 +481,7 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
-	if !backend.legacy {
+	if backend.useDSQuery(ctx, tempoDSQueryTraceSince) {
 		// Zero bounds make Tempo look the trace up across all time.
 		from, to := time.UnixMilli(0), time.UnixMilli(0)
 		if start != nil {

@@ -604,6 +604,27 @@ func TestTempoGetTrace_TimeRangeRequiresBoth(t *testing.T) {
 	assert.Equal(t, `arguments "start" and "end" must be provided together`, result.Content[0].(*mcp.TextContent).Text)
 }
 
+// Grafana before 9.0 fetches traces through the proxy even when the
+// datasource metadata API resolved it (for example, with an admin token).
+func TestTempoGetTrace_OldGrafanaUsesProxy(t *testing.T) {
+	var capturedPath string
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContextWithVersion(t, ts.URL, "8.5.27")
+	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
+		"datasourceUid": "test-tempo",
+		"trace_id":      "0000000000000000000000000000dead",
+	}))
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Equal(t, "/api/datasources/proxy/uid/test-tempo/api/v2/traces/0000000000000000000000000000dead", capturedPath)
+}
+
 // On Grafana before 9.0 traces are fetched through the proxy, whose v2
 // trace-by-ID endpoint returns 200 with an empty trace for unknown IDs.
 func TestTempoGetTrace_LegacyNotFound(t *testing.T) {
