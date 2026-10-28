@@ -49,8 +49,9 @@ func TestLokiClient_FetchData_OmitsQueryParamWhenMatcherEmpty(t *testing.T) {
 	assert.False(t, sawQuery, "query param should be omitted when matcher is empty")
 }
 
-// lokiQueryStub answers /api/ds/query with a Loki log frame holding the given
-// (tsNs, line) rows, and records the payload it received.
+// lokiQueryStub answers /api/ds/query with a Loki log frame holding the
+// first maxLines of the given (tsNs, line) rows, and records the last payload
+// it received.
 func lokiQueryStub(rows ...[2]string) (*httptest.Server, *map[string]interface{}) {
 	payload := &map[string]interface{}{}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,9 +60,16 @@ func lokiQueryStub(rows ...[2]string) (*httptest.Server, *map[string]interface{}
 		case "/api/datasources/uid/loki":
 			_, _ = io.WriteString(w, `{"uid":"loki","type":"loki"}`)
 		case "/api/ds/query":
+			*payload = map[string]interface{}{}
 			_ = json.NewDecoder(r.Body).Decode(payload)
+			page := rows
+			if q, ok := (*payload)["queries"].([]interface{}); ok && len(q) > 0 {
+				if n, ok := q[0].(map[string]interface{})["maxLines"].(float64); ok && int(n) < len(page) {
+					page = page[:int(n)]
+				}
+			}
 			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{
-				"A": backend.DataResponse{Frames: data.Frames{lokiLogFrame(rows...)}},
+				"A": backend.DataResponse{Frames: data.Frames{lokiLogFrame(page...)}},
 			}})
 		default:
 			http.NotFound(w, r)
@@ -157,6 +165,48 @@ func TestQueryLokiLogsPreservesNanosecondBounds(t *testing.T) {
 		lines = append(lines, e.Line)
 	}
 	assert.Equal(t, []string{"a-at-start", "a-inside"}, lines)
+}
+
+// Loki applies maxLines to the widened range, so lines in the extra
+// millisecond past end can fill the page. Paging backward from a boundary
+// timestamp must still return a full page and flag truncation.
+func TestQueryLokiLogsRefillsPageTrimmedAtBoundary(t *testing.T) {
+	server, payload := lokiQueryStub(
+		[2]string{"1705312800000000009", "a-past-end-2"},
+		[2]string{"1705312800000000005", "a-past-end-1"},
+		[2]string{"1705312800000000004", "a-at-end"},
+		[2]string{"1705312800000000003", "a-3"},
+		[2]string{"1705312800000000002", "a-2"},
+		[2]string{"1705312800000000001", "a-1"},
+	)
+	defer server.Close()
+
+	result, err := queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `{app="a"}`, Limit: 2, Direction: "backward",
+		StartRFC3339: "2024-01-15T10:00:00Z", EndRFC3339: "2024-01-15T10:00:00.000000004Z",
+	})
+	require.NoError(t, err)
+	var lines []string
+	for _, e := range result.Data {
+		lines = append(lines, e.Line)
+	}
+	assert.Equal(t, []string{"a-3", "a-2"}, lines)
+	assert.True(t, result.Metadata.ResultsTruncated)
+	assert.EqualValues(t, 6, (*payload)["queries"].([]interface{})[0].(map[string]interface{})["maxLines"])
+}
+
+// Instant queries evaluate at end, falling back to start, like the proxy path.
+func TestQueryLokiLogsInstantUsesStartWithoutEnd(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	_, err := queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `count_over_time({app="a"}[5m])`, QueryType: "instant",
+		StartRFC3339: "2024-01-15T10:00:00Z",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "1705312800000", (*payload)["from"])
+	assert.Equal(t, "1705312800000", (*payload)["to"])
 }
 
 func TestQueryLokiLogsCategorizesLabels(t *testing.T) {

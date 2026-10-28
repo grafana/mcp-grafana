@@ -190,11 +190,22 @@ func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*
 // queryLogsViaDSQuery runs the query through Grafana's /api/ds/query endpoint.
 func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQueryParams) (*lokiQueryResult, error) {
 	start, end := p.Start, p.End
-	if end.IsZero() {
-		end = time.Now()
-	}
-	if start.IsZero() {
+	if p.QueryType == "instant" {
+		// Like the proxy path, evaluate at end if given, else start, else now.
+		if end.IsZero() {
+			end = start
+		}
+		if end.IsZero() {
+			end = time.Now()
+		}
 		start = end
+	} else {
+		if end.IsZero() {
+			end = time.Now()
+		}
+		if start.IsZero() {
+			start = end
+		}
 	}
 
 	datasource := map[string]string{"uid": b.dsUID}
@@ -210,40 +221,66 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 		"datasource": datasource,
 		"expr":       p.Query,
 		"queryType":  queryType,
-		"maxLines":   p.Limit,
 		"direction":  p.Direction,
 	}
 	if p.StepSeconds > 0 {
 		query["step"] = fmt.Sprintf("%ds", p.StepSeconds)
 	}
 
+	if queryType == "instant" {
+		resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, ceilMillis(end), query))
+		if err != nil {
+			return nil, fmt.Errorf("querying Loki: %w", err)
+		}
+		return lokiFramesToResult(resp, queryType)
+	}
+
 	// /api/ds/query only takes millisecond bounds, but callers page through
 	// logs with exact nanosecond timestamps. Widen the range to whole
 	// milliseconds (Loki ranges are [start, end)) and trim the extra lines.
-	to := end.Truncate(time.Millisecond)
-	if to.Before(end) {
-		to = to.Add(time.Millisecond)
-	}
-	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, to, query))
-	if err != nil {
-		return nil, fmt.Errorf("querying Loki: %w", err)
-	}
-	result, err := lokiFramesToResult(resp, queryType)
-	if err != nil || result.ResultType != "streams" {
-		return result, err
-	}
-	kept := result.Entries[:0]
-	for _, e := range result.Entries {
-		ts, err := strconv.ParseInt(e.Timestamp, 10, 64)
+	// Loki applies maxLines to the widened range, so lines in the extra
+	// millisecond at the leading edge can use up the page; when that happens,
+	// ask for more lines until the page is full or Loki runs out.
+	to := ceilMillis(end)
+	maxLines := p.Limit
+	for attempt := 0; ; attempt++ {
+		query["maxLines"] = maxLines
+		resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, to, query))
 		if err != nil {
-			return nil, fmt.Errorf("invalid Loki stream timestamp %q: %w", e.Timestamp, err)
+			return nil, fmt.Errorf("querying Loki: %w", err)
 		}
-		if ts >= start.UnixNano() && ts < end.UnixNano() {
-			kept = append(kept, e)
+		result, err := lokiFramesToResult(resp, queryType)
+		if err != nil || result.ResultType != "streams" {
+			return result, err
 		}
+		returned := len(result.Entries)
+		kept := result.Entries[:0]
+		for _, e := range result.Entries {
+			ts, err := strconv.ParseInt(e.Timestamp, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid Loki stream timestamp %q: %w", e.Timestamp, err)
+			}
+			if ts >= start.UnixNano() && ts < end.UnixNano() {
+				kept = append(kept, e)
+			}
+		}
+		result.Entries = kept
+		// ponytail: capped retries; a sub-millisecond burst larger than
+		// a few pages can still end the page early.
+		if returned < maxLines || len(kept) >= p.Limit || attempt == 3 {
+			return result, nil
+		}
+		maxLines += returned - len(kept)
 	}
-	result.Entries = kept
-	return result, nil
+}
+
+// ceilMillis rounds t up to the next whole millisecond.
+func ceilMillis(t time.Time) time.Time {
+	ms := t.Truncate(time.Millisecond)
+	if ms.Before(t) {
+		ms = ms.Add(time.Millisecond)
+	}
+	return ms
 }
 
 // lokiFramesToResult converts the frames Grafana's Loki datasource returns
