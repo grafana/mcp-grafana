@@ -197,11 +197,7 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 	for name, value := range args.Variables {
 		variables[name] = []string{value}
 	}
-	if ds.Type == sql.BigQueryDatasourceType {
-		processedQuery = substituteTemplateVariableValuesWithFormatter(processedQuery, variables, formatBigQueryTemplateVariable)
-	} else {
-		processedQuery = substituteTemplateVariableValues(processedQuery, variables)
-	}
+	processedQuery = substituteQueryTemplateVariableValues(processedQuery, variables, ds.Type)
 	processedQuery = dialect.EnforceLimit(processedQuery, args.Limit)
 
 	qr, err := newQueryRunner(ctx)
