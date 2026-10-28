@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
@@ -250,29 +249,6 @@ func TestLokiFramesToResult_StatusError(t *testing.T) {
 	}}, "range")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "502")
-}
-
-// Legacy (frontend-settings fallback) backends stay on the proxy, which takes
-// nanosecond bounds and the instant evaluation time unchanged.
-func TestLokiLegacyProxyPreservesNanosecondBounds(t *testing.T) {
-	var query url.Values
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query = r.URL.Query()
-		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"streams","result":[]}}`)
-	}))
-	defer server.Close()
-	b := &lokiNativeBackend{client: &Client{httpClient: server.Client(), baseURL: server.URL}, legacy: true}
-	start := time.Date(2024, 1, 15, 10, 0, 0, 1, time.UTC)
-	end := time.Date(2024, 1, 15, 10, 0, 0, 4, time.UTC)
-
-	_, err := b.QueryLogs(context.Background(), lokiQueryParams{Query: `{app="a"}`, Start: start, End: end, Limit: 10})
-	require.NoError(t, err)
-	assert.Equal(t, "1705312800000000001", query.Get("start"))
-	assert.Equal(t, "1705312800000000004", query.Get("end"))
-
-	_, err = b.QueryLogs(context.Background(), lokiQueryParams{Query: `count_over_time({app="a"}[5m])`, QueryType: "instant", End: end})
-	require.NoError(t, err)
-	assert.Equal(t, "1705312800000000004", query.Get("time"))
 }
 
 func TestQueryLokiLogsCategorizesLabels(t *testing.T) {

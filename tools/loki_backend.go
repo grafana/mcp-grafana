@@ -107,11 +107,6 @@ type lokiNativeBackend struct {
 	baseURL    string
 	dsUID      string
 	dsType     string
-	// legacy is set when the datasource was resolved through the
-	// frontend-settings fallback: Grafana before 9.0, whose /api/ds/query
-	// does not accept datasource UIDs, or a token without datasources:read.
-	// Queries there stay on the proxy.
-	legacy bool
 }
 
 func newLokiNativeBackend(ctx context.Context, uid string, ds *models.DataSource) (*lokiNativeBackend, error) {
@@ -127,14 +122,12 @@ func newLokiNativeBackend(ctx context.Context, uid string, ds *models.DataSource
 	if dsUID == "" {
 		dsUID = uid
 	}
-	_, _, legacy := fallbackProxyBases(ctx, uid)
 	return &lokiNativeBackend{
 		client:     c,
 		httpClient: httpClient,
 		baseURL:    baseURL,
 		dsUID:      dsUID,
 		dsType:     ds.Type,
-		legacy:     legacy,
 	}, nil
 }
 
@@ -169,12 +162,7 @@ func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*
 	}
 	p.Query = enforcedQuery
 
-	var result *lokiQueryResult
-	if b.legacy {
-		result, err = b.queryLogsViaProxy(ctx, p)
-	} else {
-		result, err = b.queryLogsViaDSQuery(ctx, p)
-	}
+	result, err := b.queryLogsViaDSQuery(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -463,39 +451,6 @@ func sortLogEntries(entries []LogEntry, direction string) error {
 		entries[i] = entry.log
 	}
 	return nil
-}
-
-// queryLogsViaProxy queries the Loki HTTP API through the datasource proxy.
-func (b *lokiNativeBackend) queryLogsViaProxy(ctx context.Context, p lokiQueryParams) (*lokiQueryResult, error) {
-	response, err := b.client.fetchQuery(ctx, fetchQueryParams{
-		Query:       p.Query,
-		QueryType:   p.QueryType,
-		Start:       formatRFC3339OrEmpty(p.Start),
-		End:         formatRFC3339OrEmpty(p.End),
-		Limit:       p.Limit,
-		Direction:   p.Direction,
-		StepSeconds: p.StepSeconds,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	entries, err := parseLokiQueryResponse(response)
-	if err != nil {
-		return nil, err
-	}
-
-	var linesScanned *int
-	if response.Data.Stats != nil {
-		val := response.Data.Stats.Summary.TotalLinesProcessed
-		linesScanned = &val
-	}
-
-	return &lokiQueryResult{
-		Entries:           entries,
-		ResultType:        response.Data.ResultType,
-		TotalLinesScanned: linesScanned,
-	}, nil
 }
 
 func (b *lokiNativeBackend) QueryStats(ctx context.Context, query string, start, end time.Time) (*Stats, error) {
