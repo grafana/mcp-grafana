@@ -284,6 +284,9 @@ func (b *victoriaLogsBackend) queryLogsViaDSQuery(ctx context.Context, query str
 	// widened range and keeps the newest lines, so lines in the extra
 	// millisecond past end can use up the page; when that happens, ask for
 	// more lines until the page is full or VictoriaLogs runs out.
+	// The plugin sends maxLines as limit, and VictoriaLogs turns that into
+	// `| sort by (_time) desc | limit N` (app/vlselect/logsql/logsql.go; see
+	// "Querying logs" in https://docs.victoriametrics.com/victorialogs/querying/).
 	to := end.Truncate(time.Millisecond)
 	if to.Before(end) {
 		to = to.Add(time.Millisecond)
