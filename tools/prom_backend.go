@@ -69,7 +69,7 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 }
 
 // prometheusBackend runs queries through Grafana's /api/ds/query endpoint, so
-// they go through the query service and show up in its query log. Discovery
+// they go through the query service like dashboard and Explore queries. Discovery
 // calls (labels, metric names, metadata) use the Prometheus client library via
 // the datasource resources/proxy routes.
 type prometheusBackend struct {
