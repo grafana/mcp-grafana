@@ -236,6 +236,8 @@ When enabled, the following writes are disabled:
 - `alerting_silences_write` (create, update, delete)
 - `alerting_routing_write` (create_contact_point)
 
+Each alerting write tool can be kept individually with `--enable-write-tools=<name>`.
+
 **OnCall tools**
 
 - `update_alert_group`

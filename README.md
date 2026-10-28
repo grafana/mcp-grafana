@@ -575,6 +575,8 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `alerting_silences_write` (create, update, delete operations)
 - `alerting_routing_write` (create_contact_point operation)
 
+Each alerting write tool can be kept individually with `--enable-write-tools=<name>`.
+
 **OnCall Tools:**
 - `update_alert_group`
 
