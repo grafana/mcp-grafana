@@ -97,8 +97,8 @@ func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, err
 }
 
 // lokiNativeBackend runs log and metric queries through Grafana's
-// /api/ds/query endpoint, so they go through the query service and show up
-// in its query log. Label, stats and patterns calls use the Loki HTTP client
+// /api/ds/query endpoint, so they go through the query service like dashboard
+// and Explore queries. Label, stats and patterns calls use the Loki HTTP client
 // via the datasource proxy/resources routes.
 type lokiNativeBackend struct {
 	client *Client
