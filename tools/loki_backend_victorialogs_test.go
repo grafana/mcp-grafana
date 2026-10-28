@@ -341,14 +341,17 @@ func TestVictoriaLogsBackend_QueryLogs_DSQueryError(t *testing.T) {
 func TestVictoriaLogsBackend_QueryLogs_RefillsTrimmedLeadingEdge(t *testing.T) {
 	// end is mid-millisecond, so the widened range admits lines past end.
 	// VictoriaLogs keeps the newest maxLines lines, so those lines use up
-	// the first page and the backend asks again with a larger maxLines.
+	// the first page and the backend asks again with limit plus the number
+	// of trimmed lines, until the page is full.
 	start := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 5, 10, 12, 0, 1, 500, time.UTC)
 	rows := []vlRow{
-		{time: end.Add(200), msg: "past end 1", fields: `{}`},
-		{time: end, msg: "past end 2", fields: `{}`},
+		{time: end.Add(300), msg: "past end 1", fields: `{}`},
+		{time: end.Add(200), msg: "past end 2", fields: `{}`},
+		{time: end, msg: "past end 3", fields: `{}`},
 		{time: end.Add(-time.Second / 2), msg: "in range 1", fields: `{}`},
 		{time: end.Add(-time.Second), msg: "in range 2", fields: `{}`},
+		{time: end.Add(-2 * time.Second), msg: "in range 3", fields: `{}`},
 		{time: start.Add(-time.Nanosecond), msg: "never sent", fields: `{}`},
 	}
 	var maxLines []float64
@@ -366,7 +369,7 @@ func TestVictoriaLogsBackend_QueryLogs_RefillsTrimmedLeadingEdge(t *testing.T) {
 
 	res, err := newTestVLBackend(t, server).QueryLogs(context.Background(), lokiQueryParams{Query: "*", Start: start, End: end, Limit: 2})
 	require.NoError(t, err)
-	assert.Equal(t, []float64{2, 4}, maxLines)
+	assert.Equal(t, []float64{2, 4, 5}, maxLines)
 	require.Len(t, res.Entries, 2)
 	assert.Equal(t, "in range 1", res.Entries[0].Line)
 	assert.Equal(t, "in range 2", res.Entries[1].Line)

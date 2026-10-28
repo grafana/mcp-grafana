@@ -317,9 +317,15 @@ func (b *victoriaLogsBackend) queryLogsViaDSQuery(ctx context.Context, query str
 		// ponytail: capped retries; a sub-millisecond burst larger than a
 		// few pages can still end the page early.
 		if limit <= 0 || returned < maxLines || len(entries) >= limit || leading == 0 || attempt == 3 {
+			if limit > 0 && len(entries) > limit {
+				// Entries are newest first; keep the newest limit.
+				entries = entries[:limit]
+			}
 			return entries, nil
 		}
-		maxLines += leading
+		// The trimmed lines past end are the newest ones VictoriaLogs kept,
+		// so asking for limit plus that many fills the page exactly.
+		maxLines = limit + leading
 	}
 }
 
