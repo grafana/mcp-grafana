@@ -136,6 +136,7 @@ type esPluginVersion struct {
 const (
 	esPluginVersionTTL       = time.Hour
 	esPluginVersionFailedTTL = time.Minute
+	esPluginVersionTimeout   = 10 * time.Second
 )
 
 // elasticsearchPluginVersion returns the major and minor version of the
@@ -147,7 +148,13 @@ func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafan
 	if v, ok := esPluginVersions.Load(key); ok && time.Now().Before(v.(esPluginVersion).expires) {
 		return v.(esPluginVersion).major, v.(esPluginVersion).minor
 	}
-	major, minor, ok := fetchElasticsearchPluginVersion(ctx, client, grafanaURL)
+	lookupCtx, cancel := context.WithTimeout(ctx, esPluginVersionTimeout)
+	defer cancel()
+	major, minor, ok := fetchElasticsearchPluginVersion(lookupCtx, client, grafanaURL)
+	if ctx.Err() != nil {
+		// The caller gave up, which says nothing about the lookup for others.
+		return major, minor
+	}
 	ttl := esPluginVersionTTL
 	if !ok {
 		ttl = esPluginVersionFailedTTL
@@ -255,18 +262,18 @@ func (b *elasticsearchBackend) searchViaDSQuery(ctx context.Context, index strin
 		q["query"] = string(body)
 	}
 
-	resp, err := doDSQuery(ctx, b.httpClient, b.grafanaURL, dsQueryPayload(from, to, q))
+	resp, err := doDSQueryWithLimit(ctx, b.httpClient, b.grafanaURL, dsQueryPayload(from, to, q), rawDocumentResponseLimit)
 	if err != nil {
 		return nil, fmt.Errorf("querying Elasticsearch: %w", err)
 	}
 	r, ok := resp.Responses["A"]
 	if !ok {
-		return []ElasticsearchDocument{}, nil
+		return nil, fmt.Errorf("no result found for refId A")
 	}
 	if r.Error != nil {
 		return nil, fmt.Errorf("elasticsearch query error: %s", r.Error.Error())
 	}
-	docs, err := framesToDocuments(r.Frames, b.timeField)
+	docs, err := framesToDocuments(r.Frames, b.timeField, true)
 	if err != nil {
 		return nil, err
 	}

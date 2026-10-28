@@ -20,11 +20,11 @@ import (
 // esStub serves an Elasticsearch plugin of the given version. /api/ds/query
 // answers with a raw_document frame and the proxy with an _msearch response;
 // the last ds/query payload and the routes hit are recorded. extra is added
-// to the document's fields.
+// to the document's fields. A version of "fail" makes the lookup fail.
 func esStub(t *testing.T, version, extra string) (*httptest.Server, *map[string]interface{}, *[]string) {
 	payload := &map[string]interface{}{}
 	routes := &[]string{}
-	doc := json.RawMessage(`{"_id":"1","_index":"logs-1","_type":null,"sort":[1718452800000,1],"highlight":null,"@timestamp":1718452800000,"message":"hello"` + extra + `}`)
+	doc := json.RawMessage(`{"_id":"1","_index":"logs-1","_type":null,"sort":[1718452800000,1],"highlight":null,"@timestamp":[1718452800000],"message":"hello"` + extra + `}`)
 	frames, err := json.Marshal(&backend.QueryDataResponse{Responses: backend.Responses{
 		"A": {Frames: data.Frames{data.NewFrame("A", data.NewField("A", nil, []*json.RawMessage{&doc}))}},
 	}})
@@ -35,7 +35,7 @@ func esStub(t *testing.T, version, extra string) (*httptest.Server, *map[string]
 		switch r.URL.Path {
 		case "/api/plugins/elasticsearch/settings":
 			*routes = append(*routes, "settings")
-			if version == "" {
+			if version == "fail" {
 				http.NotFound(w, r)
 				return
 			}
@@ -64,6 +64,7 @@ func TestElasticsearchBackendRoutesByPluginVersion(t *testing.T) {
 		{"12.6.2", "ds/query", "proxy"},
 		{"12.4.0", "proxy", "proxy"},
 		{"", "proxy", "proxy"},
+		{"fail", "proxy", "proxy"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			srv, _, routes := esStub(t, tc.version, "")
@@ -81,7 +82,17 @@ func TestElasticsearchBackendRoutesByPluginVersion(t *testing.T) {
 			}
 			assert.Equal(t, []string{"settings", tc.lucene, tc.dsl}, *routes)
 
-			// The version is cached per Grafana instance, including failed lookups.
+			// The version is cached per Grafana instance, including failed
+			// lookups, which expire sooner. An empty version (Grafana 8) is a
+			// successful lookup.
+			v, ok := esPluginVersions.Load(fallbackProxyIDKey(ctx, "es-plugin-version", ""))
+			require.True(t, ok)
+			ttl := time.Until(v.(esPluginVersion).expires)
+			if tc.version == "fail" {
+				assert.LessOrEqual(t, ttl, esPluginVersionFailedTTL)
+			} else {
+				assert.Greater(t, ttl, esPluginVersionFailedTTL)
+			}
 			_, err = newElasticsearchBackend(ctx, &models.DataSource{UID: "es", Type: elasticsearchDatasourceType})
 			require.NoError(t, err)
 			assert.Equal(t, []string{"settings", tc.lucene, tc.dsl}, *routes)
@@ -124,10 +135,11 @@ func TestElasticsearchBackendDSQueryPayload(t *testing.T) {
 	assert.Contains(t, q["query"], `{"term":{"level":"error"}}`)
 }
 
-func TestElasticsearchBackendKeepsSourceSortAndHighlight(t *testing.T) {
+func TestElasticsearchBackendKeepsSourceFields(t *testing.T) {
 	// Source fields overwrite the plugin's sort and highlight keys, so values
-	// of another shape are real source fields.
-	srv, _, _ := esStub(t, "12.9.3", `,"sort":"asc","highlight":"yes"`)
+	// of another shape are real source fields. The plugin adds no other `_`
+	// keys, so those are source fields too.
+	srv, _, _ := esStub(t, "12.9.3", `,"sort":"asc","highlight":"yes","_app":"web"`)
 	defer srv.Close()
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL})
 	b, err := newElasticsearchBackend(ctx, &models.DataSource{UID: "es", Type: elasticsearchDatasourceType})
@@ -138,4 +150,22 @@ func TestElasticsearchBackendKeepsSourceSortAndHighlight(t *testing.T) {
 	require.Len(t, docs, 1)
 	assert.Equal(t, "asc", docs[0].Source["sort"])
 	assert.Equal(t, "yes", docs[0].Source["highlight"])
+	assert.Equal(t, "web", docs[0].Source["_app"])
+}
+
+func TestElasticsearchBackendMissingRefIDIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/plugins/elasticsearch/settings" {
+			_, _ = io.WriteString(w, `{"info":{"version":"12.9.3"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":{}}`)
+	}))
+	defer srv.Close()
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: srv.URL})
+	b, err := newElasticsearchBackend(ctx, &models.DataSource{UID: "es", Type: elasticsearchDatasourceType})
+	require.NoError(t, err)
+
+	_, err = b.Search(ctx, "logs-*", "*", time.Time{}, time.Time{}, 5)
+	assert.ErrorContains(t, err, "no result found for refId A")
 }
