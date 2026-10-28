@@ -221,7 +221,14 @@ func executeMSearch(ctx context.Context, client *http.Client, url string, index 
 		}
 		if source, ok := hit["_source"].(map[string]interface{}); ok {
 			doc.Source = source
-			doc.Timestamp = esDocumentTimestamp(source[timeField])
+			switch ts := source[timeField].(type) {
+			case string:
+				doc.Timestamp = ts
+			case float64:
+				sec := int64(ts) / 1000
+				nsec := (int64(ts) % 1000) * int64(time.Millisecond)
+				doc.Timestamp = time.Unix(sec, nsec).UTC().Format(time.RFC3339Nano)
+			}
 		}
 		if fields, ok := hit["fields"].(map[string]interface{}); ok {
 			doc.Fields = fields
@@ -324,16 +331,4 @@ func (q esSearchQuery) buildRangeClause() map[string]interface{} {
 			q.timeField: rangeQuery,
 		},
 	}
-}
-
-// esDocumentTimestamp formats a document's timestamp field: strings as-is,
-// numbers as epoch milliseconds.
-func esDocumentTimestamp(v interface{}) string {
-	switch ts := v.(type) {
-	case string:
-		return ts
-	case float64:
-		return time.UnixMilli(int64(ts)).UTC().Format(time.RFC3339Nano)
-	}
-	return ""
 }
