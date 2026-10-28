@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -385,4 +386,69 @@ func TestLokiClient_MakeRequest_SetsQueryTags(t *testing.T) {
 	_, err := c.fetchData(context.Background(), "/loki/api/v1/labels", "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "Source=mcp-grafana", gotTags)
+}
+
+// grafanaLokiStub mimics how Grafana routes a Loki datasource: the proxy
+// path forwards the request path to Loki unchanged, while the /resources
+// handler prepends /loki/api/v1/ itself (pkg/tsdb/loki callResource). Loki
+// answers a path it does not serve with its UI's index.html, which Grafana's
+// resource handler relays as Content-Type: application/json.
+func grafanaLokiStub(proxyStatus int, body string) (*httptest.Server, *[]string) {
+	var paths []string
+	const proxyBase = "/api/datasources/proxy/uid/loki"
+	const resourcesBase = "/api/datasources/uid/loki/resources/"
+	serveLoki := func(w http.ResponseWriter, lokiPath string) {
+		w.Header().Set("Content-Type", "application/json")
+		switch lokiPath {
+		case "/loki/api/v1/query_range", "/loki/api/v1/query", "/loki/api/v1/index/stats":
+			_, _ = io.WriteString(w, body)
+		default:
+			_, _ = io.WriteString(w, "<!DOCTYPE html>\n<html lang=\"en\"><head><title>Loki UI</title></head></html>")
+		}
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch {
+		case r.URL.Path == "/api/datasources/uid/loki":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"uid":"loki","type":"loki"}`)
+		case strings.HasPrefix(r.URL.Path, proxyBase+"/"):
+			if proxyStatus != http.StatusOK {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(proxyStatus)
+				_, _ = io.WriteString(w, `{"message":"query timed out"}`)
+				return
+			}
+			serveLoki(w, strings.TrimPrefix(r.URL.Path, proxyBase))
+		case strings.HasPrefix(r.URL.Path, resourcesBase):
+			if r.URL.Query().Get("query") == "" {
+				http.Error(w, "query parameter not forwarded", http.StatusBadRequest)
+				return
+			}
+			serveLoki(w, "/loki/api/v1/"+strings.TrimPrefix(r.URL.Path, resourcesBase))
+		default:
+			http.NotFound(w, r)
+		}
+	})), &paths
+}
+
+// A 500 on the proxy path falls back to /resources. For Loki that route must
+// drop the /loki/api/v1 prefix, which Grafana adds back; otherwise Loki gets
+// /loki/api/v1/loki/api/v1/index/stats and answers with its UI page. Stats
+// (like labels and patterns) still go through the proxy client; log queries
+// use /api/ds/query and never reach this path.
+func TestQueryLokiStatsFallsBackToLokiResourcesRoute(t *testing.T) {
+	resetFallbackCache()
+	t.Cleanup(resetFallbackCache)
+
+	server, paths := grafanaLokiStub(http.StatusInternalServerError, `{"streams":2,"chunks":3,"bytes":4096,"entries":5}`)
+	defer server.Close()
+
+	stats, err := queryLokiStats(enforceTestCtx(server, false), QueryLokiStatsParams{
+		DatasourceUID: "loki", LogQL: `{app="a"}`,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &Stats{Streams: 2, Chunks: 3, Bytes: 4096, Entries: 5}, stats)
+	assert.Contains(t, *paths, "/api/datasources/uid/loki/resources/index/stats")
+	assert.NotContains(t, *paths, "/api/datasources/uid/loki/resources/loki/api/v1/index/stats")
 }
