@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.grafana/grafana-cloud-mcp",
+  "title": "Grafana Cloud",
+  "description": "Hosted MCP server for Grafana Cloud: query metrics, logs and traces, manage dashboards and alerts.",
+  "websiteUrl": "https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/",
+  "version": "$VERSION",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/grafana/mcp-grafana/main/assets/icon.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "180x180"
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.grafana.com/mcp"
+    }
+  ]
+}
