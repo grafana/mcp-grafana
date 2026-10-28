@@ -15,11 +15,13 @@ import (
 
 // Grafana's Tempo datasource answers trace-by-ID queries through
 // /api/ds/query from 9.0 (the first release whose /api/ds/query accepts
-// datasource UIDs), TraceQL metrics from 11.5 and TraceQL search from 12.3.
-// Older releases keep using the proxy.
+// datasource UIDs), TraceQL range metrics from 11.5, instant metrics from
+// 11.6 (11.5 runs every metrics query as a range query) and TraceQL search
+// from 12.3. Older releases keep using the proxy.
 var (
 	tempoDSQueryTraceSince   = [2]int{9, 0}
 	tempoDSQueryMetricsSince = [2]int{11, 5}
+	tempoDSQueryInstantSince = [2]int{11, 6}
 	tempoDSQuerySearchSince  = [2]int{12, 3}
 )
 
@@ -35,7 +37,7 @@ func (b *tempoBackend) useDSQuery(ctx context.Context, since [2]int) bool {
 }
 
 // tempoTimeRange resolves optional start and end times, defaulting to the
-// past hour like the proxy path does.
+// past hour.
 func tempoTimeRange(start, end string) (time.Time, time.Time, error) {
 	to := time.Now()
 	from := to.Add(-time.Hour)
@@ -122,9 +124,30 @@ func tempoAttributeValue(v any) any {
 		m = inner
 	}
 	for k, value := range m {
-		// OTLP JSON encodes 64-bit integers as strings.
-		if s, ok := value.(string); ok && (k == "intValue" || k == "int_value") {
-			return json.Number(s)
+		switch k {
+		case "intValue", "int_value":
+			// OTLP JSON encodes 64-bit integers as strings.
+			if s, ok := value.(string); ok {
+				return json.Number(s)
+			}
+		case "arrayValue", "array_value":
+			wrapper, _ := value.(map[string]any)
+			list, _ := wrapper["values"].([]any)
+			values := make([]any, len(list))
+			for i, item := range list {
+				values[i] = tempoAttributeValue(item)
+			}
+			return values
+		case "kvlistValue", "kvlist_value":
+			wrapper, _ := value.(map[string]any)
+			list, _ := wrapper["values"].([]any)
+			values := make(map[string]any, len(list))
+			for _, item := range list {
+				kv, _ := item.(map[string]any)
+				key, _ := kv["key"].(string)
+				values[key] = tempoAttributeValue(kv["value"])
+			}
+			return values
 		}
 		return value
 	}
@@ -264,8 +287,12 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 		return nil, nil, fmt.Errorf("trace %s not found", traceID)
 	}
 	frame := frames[0]
+	fields := make(map[string]*data.Field, len(frame.Fields))
+	for _, f := range frame.Fields {
+		fields[f.Name] = f
+	}
 	str := func(name string, row int) string {
-		f, _ := frame.FieldByName(name)
+		f := fields[name]
 		if f == nil {
 			return ""
 		}
@@ -274,7 +301,7 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 		return s
 	}
 	num := func(name string, row int) float64 {
-		f, _ := frame.FieldByName(name)
+		f := fields[name]
 		if f == nil {
 			return 0
 		}
@@ -282,13 +309,18 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 		return v
 	}
 	raw := func(name string, row int) json.RawMessage {
-		f, _ := frame.FieldByName(name)
+		f := fields[name]
 		if f == nil {
 			return nil
 		}
 		v, _ := f.ConcreteAt(row)
-		msg, _ := v.(json.RawMessage)
-		return msg
+		switch v := v.(type) {
+		case json.RawMessage:
+			return v
+		case string: // Grafana 9.0 sends these fields as JSON strings.
+			return json.RawMessage(v)
+		}
+		return nil
 	}
 
 	result := &tempoTrace{TraceID: traceID, Services: []tempoTraceService{}}
@@ -303,11 +335,16 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 	displayOK := !result.Partial && frame.Rows() <= maxTraceSpans
 	displaySize := 0
 	services := map[string]int{}
+	resources := map[string]map[string]any{}
 	for row := 0; row < frame.Rows(); row++ {
-		resourceJSON := string(raw("serviceTags", row))
-		resource, err := tempoKeyValues(raw("serviceTags", row))
-		if err != nil {
-			return nil, nil, fmt.Errorf("parsing resource attributes: %w", err)
+		resourceJSON := raw("serviceTags", row)
+		resource, ok := resources[string(resourceJSON)]
+		if !ok {
+			var err error
+			if resource, err = tempoKeyValues(resourceJSON); err != nil {
+				return nil, nil, fmt.Errorf("parsing resource attributes: %w", err)
+			}
+			resources[string(resourceJSON)] = resource
 		}
 		attributes, err := tempoKeyValues(raw("tags", row))
 		if err != nil {
@@ -346,6 +383,12 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 			span.Attributes = attributes
 		}
 		code := tracepb.Status_StatusCode(num("statusCode", row))
+		if fields["statusCode"] == nil {
+			// Before Grafana 10.1 the status was only carried in the span tags.
+			c, _ := toFloat(attributes["otel.status_code"])
+			code = tracepb.Status_StatusCode(c)
+			span.StatusMessage, _ = attributes["otel.status_description"].(string)
+		}
 		switch code {
 		case tracepb.Status_STATUS_CODE_OK:
 			span.Status = "ok"
@@ -372,7 +415,7 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 		}
 
 		serviceName := str("serviceName", row)
-		key := serviceName + "\x00" + resourceJSON
+		key := serviceName + "\x00" + string(resourceJSON)
 		i, ok := services[key]
 		if !ok {
 			i = len(result.Services)

@@ -140,38 +140,6 @@ func tempoAPIError(statusCode int, body []byte) error {
 	return fmt.Errorf("tempo API returned %d: %s", statusCode, msg)
 }
 
-func tempoParseStartToEpochSeconds(value string) (string, error) {
-	t, err := parseStartTime(value)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%d", t.Unix()), nil
-}
-
-func tempoParseEndToEpochSeconds(value string) (string, error) {
-	t, err := parseEndTime(value)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%d", t.Unix()), nil
-}
-
-func tempoParseStartToEpochNanos(value string) (string, error) {
-	t, err := parseStartTime(value)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%d", t.UnixNano()), nil
-}
-
-func tempoParseEndToEpochNanos(value string) (string, error) {
-	t, err := parseEndTime(value)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%d", t.UnixNano()), nil
-}
-
 // tempoFilterHasOR checks whether a TraceQL filter query contains an OR (||)
 // operator outside of quoted strings. Tempo 2.10 silently reduces unsupported
 // OR filters to empty via ExtractMatchers.
@@ -190,56 +158,28 @@ func tempoFilterHasOR(q string) bool {
 	return false
 }
 
-// tempoDefaultTimeBoundsSeconds fills in default start (now-1h) and end (now)
-// for any omitted time bound. Tempo 2.10 interprets omitted bounds as an
-// ingester-only search, silently missing traces already flushed to backend
-// storage.
+// tempoDefaultTimeBoundsSeconds sets start and end, defaulting to the past
+// hour. Tempo 2.10 interprets omitted bounds as an ingester-only search,
+// silently missing traces already flushed to backend storage.
 func tempoDefaultTimeBoundsSeconds(params url.Values, start, end string) (url.Values, error) {
-	now := time.Now()
-	if start == "" {
-		start = fmt.Sprintf("%d", now.Add(-time.Hour).Unix())
-		params.Set("start", start)
-	} else {
-		epoch, err := tempoParseStartToEpochSeconds(start)
-		if err != nil {
-			return nil, fmt.Errorf("invalid start time: %v", err)
-		}
-		params.Set("start", epoch)
+	from, to, err := tempoTimeRange(start, end)
+	if err != nil {
+		return nil, err
 	}
-	if end == "" {
-		params.Set("end", fmt.Sprintf("%d", now.Unix()))
-	} else {
-		epoch, err := tempoParseEndToEpochSeconds(end)
-		if err != nil {
-			return nil, fmt.Errorf("invalid end time: %v", err)
-		}
-		params.Set("end", epoch)
-	}
+	params.Set("start", strconv.FormatInt(from.Unix(), 10))
+	params.Set("end", strconv.FormatInt(to.Unix(), 10))
 	return params, nil
 }
 
 // tempoDefaultTimeBoundsNanos is like tempoDefaultTimeBoundsSeconds but emits
 // nanosecond-precision epoch values, as required by the metrics endpoints.
 func tempoDefaultTimeBoundsNanos(params url.Values, start, end string) (url.Values, error) {
-	now := time.Now()
-	if start == "" {
-		params.Set("start", fmt.Sprintf("%d", now.Add(-time.Hour).UnixNano()))
-	} else {
-		epoch, err := tempoParseStartToEpochNanos(start)
-		if err != nil {
-			return nil, fmt.Errorf("invalid start time: %v", err)
-		}
-		params.Set("start", epoch)
+	from, to, err := tempoTimeRange(start, end)
+	if err != nil {
+		return nil, err
 	}
-	if end == "" {
-		params.Set("end", fmt.Sprintf("%d", now.UnixNano()))
-	} else {
-		epoch, err := tempoParseEndToEpochNanos(end)
-		if err != nil {
-			return nil, fmt.Errorf("invalid end time: %v", err)
-		}
-		params.Set("end", epoch)
-	}
+	params.Set("start", strconv.FormatInt(from.UnixNano(), 10))
+	params.Set("end", strconv.FormatInt(to.UnixNano(), 10))
 	return params, nil
 }
 
@@ -324,7 +264,9 @@ func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.
 		}
 		body, err := tempoRawSearchResponse(frames)
 		if err != nil {
-			return mcpgrafana.NewToolResultError(err.Error()), nil
+			// Grafana runs queries with a metrics function as metrics queries,
+			// which return time series (or nothing) instead of a search response.
+			return mcpgrafana.NewToolResultError("no trace search results: TraceQL metrics queries such as '{ } | rate()' return time series, not traces; run them as metrics queries instead"), nil
 		}
 		return tempoToolResult(tidyTempoSearchResults(body, limit), "search-results", "json"), nil
 	}
@@ -398,7 +340,11 @@ func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.
 		queryType = "range"
 	}
 
-	if backend.useDSQuery(ctx, tempoDSQueryMetricsSince) {
+	since := tempoDSQueryMetricsSince
+	if queryType == "instant" {
+		since = tempoDSQueryInstantSince
+	}
+	if backend.useDSQuery(ctx, since) {
 		if queryType != "instant" && queryType != "range" {
 			return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid type %q: must be 'instant' or 'range'", queryType)), nil
 		}
@@ -406,9 +352,14 @@ func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.
 		if err != nil {
 			return mcpgrafana.NewToolResultError(err.Error()), nil
 		}
-		frames, err := backend.dsQuery(ctx, from, to, map[string]any{"queryType": "traceql", "query": args.Query, "metricsQueryType": queryType})
+		// Grafana runs the query as a search unless it recognises a metrics
+		// function; tableType keeps that search from failing on a nil table type.
+		frames, err := backend.dsQuery(ctx, from, to, map[string]any{"queryType": "traceql", "query": args.Query, "metricsQueryType": queryType, "tableType": "raw"})
 		if err != nil {
 			return mcpgrafana.NewToolResultError(annotateTraceQLParseError(err.Error())), nil
+		}
+		if _, err := tempoRawSearchResponse(frames); err == nil {
+			return mcpgrafana.NewToolResultError("not a TraceQL metrics query: Grafana ran it as a trace search. Metrics queries pipe a spanset into a function such as rate(), count_over_time() or quantile_over_time()."), nil
 		}
 		out, err := json.Marshal(map[string]any{"series": tempoMetricsFromFrames(frames, queryType == "instant")})
 		if err != nil {

@@ -343,6 +343,54 @@ func TestTempoMetricsInstant(t *testing.T) {
 	assert.Equal(t, "instant", q["metricsQueryType"])
 }
 
+// Grafana 11.5 runs every metrics query through /api/ds/query as a range
+// query, so instant queries stay on the proxy until 11.6.
+func TestTempoMetrics_InstantGate(t *testing.T) {
+	for version, wantPath := range map[string]string{
+		"11.5.3": "/api/datasources/proxy/uid/test-tempo/api/metrics/query",
+		"11.6.0": "/api/ds/query",
+	} {
+		t.Run(version, func(t *testing.T) {
+			var capturedPath string
+			ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				capturedPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			})
+			defer cleanup()
+			call := tempoTestContextWithVersion(t, ts.URL, version)
+			_, err := call(makeTempoRequest("query_tempo_metrics", map[string]any{
+				"datasourceUid": "test-tempo", "query": `{ } | rate()`, "type": "instant",
+			}))
+			require.NoError(t, err)
+			assert.Equal(t, wantPath, capturedPath)
+		})
+	}
+}
+
+// Grafana picks search or metrics from the query text, so each tool rejects
+// the other kind of result.
+func TestTempoWrongQueryKind(t *testing.T) {
+	ts, cleanup, _ := tempoDSQueryServer(t, tempoRawSearchFrame(`{"traces":[]}`))
+	defer cleanup()
+	result, err := tempoTestContext(t, ts.URL)(makeTempoRequest("query_tempo_metrics", map[string]any{
+		"datasourceUid": "test-tempo", "query": `{ status = error }`,
+	}))
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "not a TraceQL metrics query")
+
+	series := data.NewFrame("", data.NewField("time", nil, []time.Time{time.UnixMilli(1)}), data.NewField("value", nil, []float64{1}))
+	ts2, cleanup2, _ := tempoDSQueryServer(t, data.Frames{series})
+	defer cleanup2()
+	result, err = tempoTestContext(t, ts2.URL)(makeTempoRequest("search_tempo_traces", map[string]any{
+		"datasourceUid": "test-tempo", "query": `{ } | rate()`,
+	}))
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "metrics queries")
+}
+
 // Grafana before 11.5 cannot run TraceQL metrics through /api/ds/query.
 func TestTempoMetrics_OldGrafanaUsesProxy(t *testing.T) {
 	var capturedPath string
@@ -538,6 +586,46 @@ func TestTempoTraceFromFrames(t *testing.T) {
 		_, _, err := tempoTraceFromFrames(testTraceID, nil)
 		assert.ErrorContains(t, err, "not found")
 	})
+	t.Run("Grafana 9.x frames", func(t *testing.T) {
+		// 9.0 sends the JSON columns as strings, and nothing before 10.1 has a
+		// statusCode column: the status is in the otel.status_* tags.
+		frame := data.NewFrame("Trace",
+			data.NewField("spanID", nil, []string{"0102030405060708"}),
+			data.NewField("operationName", nil, []string{"op"}),
+			data.NewField("serviceName", nil, []string{"checkout"}),
+			data.NewField("serviceTags", nil, []string{`[{"key":"service.name","value":"checkout"}]`}),
+			data.NewField("startTime", nil, []float64{1750000000000}),
+			data.NewField("duration", nil, []float64{5}),
+			data.NewField("logs", nil, []string{`[{"timestamp":1750000000001,"name":"exception","fields":[{"key":"exception.message","value":"boom"}]}]`}),
+			data.NewField("references", nil, []string{`[]`}),
+			data.NewField("tags", nil, []string{`[{"key":"otel.status_code","value":2},{"key":"otel.status_description","value":"boom"}]`}),
+		)
+		trace, spans, err := tempoTraceFromFrames(testTraceID, data.Frames{frame})
+		require.NoError(t, err)
+		svc := trace.Services[0]
+		assert.Equal(t, map[string]any{"service.name": "checkout"}, svc.Resource)
+		span := svc.Spans[0]
+		assert.Equal(t, "error", span.Status)
+		assert.Equal(t, "boom", span.StatusMessage)
+		require.Len(t, span.Events, 1)
+		assert.Equal(t, "boom", span.Events[0].Attributes["exception.message"])
+		require.Len(t, spans, 1)
+		assert.Equal(t, "error", spans[0].Status)
+	})
+}
+
+func TestFlattenTempoAttributes(t *testing.T) {
+	var v map[string]any
+	require.NoError(t, unmarshalTempoJSON(json.RawMessage(`{"attributes":[
+		{"key":"s","value":{"Value":{"string_value":"GET"}}},
+		{"key":"i","value":{"intValue":"9007199254740993"}},
+		{"key":"a","value":{"Value":{"array_value":{"values":[{"Value":{"string_value":"x"}},{"Value":{"int_value":2}}]}}}},
+		{"key":"kv","value":{"kvlistValue":{"values":[{"key":"k","value":{"boolValue":true}}]}}}
+	]}`), &v))
+	flattenTempoAttributes(v)
+	out, err := json.Marshal(v)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"attributes":{"s":"GET","i":9007199254740993,"a":["x",2],"kv":{"k":true}}}`, string(out))
 }
 
 func TestTempoGetTrace_NotFound(t *testing.T) {
@@ -999,35 +1087,6 @@ func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
 			strings.HasPrefix(name, "list_tempo"),
 			"no tempo tools should be registered when query disabled, found %q", name)
 	}
-}
-
-func TestTempoParseStartToEpochSeconds(t *testing.T) {
-	epoch, err := tempoParseStartToEpochSeconds("2025-01-01T00:00:00Z")
-	require.NoError(t, err)
-	assert.Equal(t, "1735689600", epoch)
-}
-
-func TestTempoParseEndToEpochSeconds(t *testing.T) {
-	epoch, err := tempoParseEndToEpochSeconds("2025-01-01T00:00:00Z")
-	require.NoError(t, err)
-	assert.Equal(t, "1735689600", epoch)
-}
-
-func TestTempoParseStartToEpochNanos(t *testing.T) {
-	epoch, err := tempoParseStartToEpochNanos("2025-01-01T00:00:00Z")
-	require.NoError(t, err)
-	assert.Equal(t, "1735689600000000000", epoch)
-}
-
-func TestTempoParseEndToEpochNanos(t *testing.T) {
-	epoch, err := tempoParseEndToEpochNanos("2025-01-01T00:00:00Z")
-	require.NoError(t, err)
-	assert.Equal(t, "1735689600000000000", epoch)
-}
-
-func TestTempoParseStartToEpochSeconds_InvalidInput(t *testing.T) {
-	_, err := tempoParseStartToEpochSeconds("not-a-date")
-	require.Error(t, err)
 }
 
 func TestTempoAPIError_499EmptyBody(t *testing.T) {
