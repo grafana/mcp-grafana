@@ -20,8 +20,8 @@ import (
 const quickwitDatasourceType = "quickwit-quickwit-datasource"
 
 // quickwitBackend searches a Quickwit datasource. Lucene searches on the
-// configured index run through Grafana's /api/ds/query endpoint so they show
-// up in Grafana's query log. Query DSL JSON and an index narrower than the
+// configured index run through Grafana's /api/ds/query endpoint so they go
+// through Grafana's query service. Query DSL JSON and an index narrower than the
 // configured one stay on the datasource proxy's _msearch, because the
 // plugin's query model can't express them. Index metadata lookups always use
 // the proxy.
