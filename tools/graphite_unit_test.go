@@ -37,6 +37,8 @@ func TestParseGraphiteTime(t *testing.T) {
 		{name: "grafana relative", input: "now-30m", want: now.Add(-30 * time.Minute), delta: time.Minute},
 		{name: "RFC3339", input: "2024-01-01T00:00:00Z", want: time.Unix(1704067200, 0)},
 		{name: "unix seconds", input: "1704067200", want: time.Unix(1704067200, 0)},
+		{name: "YYYYMMDD", input: "20240101", want: time.Unix(1704067200, 0)},
+		{name: "8-digit non-date is unix seconds", input: "12345678", want: time.Unix(12345678, 0)},
 	}
 
 	for _, tc := range tests {

@@ -168,6 +168,11 @@ func parseGraphiteTime(s, def string, parse func(string) (time.Time, error)) (ti
 	if s == "" {
 		s = def
 	}
+	// Like Graphite, an 8-digit value that is a valid date is YYYYMMDD, not
+	// Unix seconds.
+	if t, err := time.Parse("20060102", s); err == nil && t.Year() > 1900 {
+		return t, nil
+	}
 	if secs, err := strconv.ParseUint(s, 10, 63); err == nil {
 		return time.Unix(int64(secs), 0), nil
 	}
