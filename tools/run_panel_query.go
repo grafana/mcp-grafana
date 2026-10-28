@@ -1010,6 +1010,10 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	query = strings.ReplaceAll(query, "${__range}", rangeStr)
 	query = strings.ReplaceAll(query, "$__range", rangeStr)
 
+	// Substitute $__rate_interval_ms BEFORE $__rate_interval to avoid partial replacement
+	query = strings.ReplaceAll(query, "${__rate_interval_ms}", "60000")
+	query = strings.ReplaceAll(query, "$__rate_interval_ms", "60000")
+
 	// $__rate_interval - default to "1m"
 	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
 	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
