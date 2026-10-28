@@ -168,16 +168,21 @@ func parseGraphiteTime(s, def string, parse func(string) (time.Time, error)) (ti
 	if s == "" {
 		s = def
 	}
-	if secs, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return time.Unix(secs, 0), nil
+	if secs, err := strconv.ParseUint(s, 10, 63); err == nil {
+		return time.Unix(int64(secs), 0), nil
 	}
-	if m := graphiteRelativeTime.FindStringSubmatch(s); m != nil {
-		for _, u := range graphiteUnits {
-			if strings.HasPrefix(m[2], u[0]) {
-				s = "now-" + m[1] + u[1]
-				break
+	if strings.HasPrefix(s, "-") {
+		// Anything else starting with "-" would reach gtime as a negative Go
+		// duration ("-30m", "-1h30m") and resolve to the future, so reject it.
+		// Graphite lowercases its input, so units are case-insensitive.
+		if m := graphiteRelativeTime.FindStringSubmatch(strings.ToLower(s)); m != nil {
+			for _, u := range graphiteUnits {
+				if strings.HasPrefix(m[2], u[0]) {
+					return parse("now-" + m[1] + u[1])
+				}
 			}
 		}
+		return time.Time{}, fmt.Errorf("invalid relative time %q: use -<number><unit> with unit s, min, h, d, w, mon or y (e.g. '-30min'), or 'now-30m'", s)
 	}
 	return parse(s)
 }
@@ -197,6 +202,9 @@ func graphiteRender(ctx context.Context, uid, target, fromStr, untilStr string, 
 	until, err := parseGraphiteTime(untilStr, "now", parseEndTime)
 	if err != nil {
 		return nil, from, until, fmt.Errorf("parsing until: %w", err)
+	}
+	if !until.After(from) {
+		return nil, from, until, fmt.Errorf("from (%s) must be before until (%s)", from.Format(time.RFC3339), until.Format(time.RFC3339))
 	}
 	if maxDataPoints <= 0 {
 		maxDataPoints = max(int(until.Sub(from)/time.Second), 1)

@@ -33,6 +33,7 @@ func TestParseGraphiteTime(t *testing.T) {
 		{name: "graphite hours", input: "-24h", want: now.Add(-24 * time.Hour), delta: time.Minute},
 		{name: "graphite minutes", input: "-5min", want: now.Add(-5 * time.Minute), delta: time.Minute},
 		{name: "graphite long unit", input: "-2weeks", want: now.Add(-14 * 24 * time.Hour), delta: time.Minute},
+		{name: "graphite uppercase unit", input: "-1H", want: now.Add(-time.Hour), delta: time.Minute},
 		{name: "grafana relative", input: "now-30m", want: now.Add(-30 * time.Minute), delta: time.Minute},
 		{name: "RFC3339", input: "2024-01-01T00:00:00Z", want: time.Unix(1704067200, 0)},
 		{name: "unix seconds", input: "1704067200", want: time.Unix(1704067200, 0)},
@@ -46,8 +47,12 @@ func TestParseGraphiteTime(t *testing.T) {
 		})
 	}
 
-	_, err := parseGraphiteTime("noon+yesterday", "-1h", parseStartTime)
-	assert.Error(t, err)
+	// "-30m" and "-1h30m" would otherwise parse as negative Go durations,
+	// i.e. times in the future.
+	for _, input := range []string{"noon+yesterday", "-30m", "-1h30m", "-3600"} {
+		_, err := parseGraphiteTime(input, "-1h", parseStartTime)
+		assert.Error(t, err, input)
+	}
 }
 
 // --- parseGraphiteDatapoints ---
@@ -190,6 +195,14 @@ func TestQueryGraphite_PassesMaxDataPoints(t *testing.T) {
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, float64(50), q["maxDataPoints"])
+}
+
+func TestQueryGraphite_RejectsInvertedRange(t *testing.T) {
+	_, err := queryGraphite(context.Background(), QueryGraphiteParams{
+		DatasourceUID: "graphite", Target: "a.b", From: "now", Until: "-1h",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be before")
 }
 
 func TestGraphiteFramesToSeries_Error(t *testing.T) {
