@@ -364,8 +364,8 @@ func lokiFramesToResult(resp *backend.QueryDataResponse, queryType string) (*lok
 // each label as indexed (I), structured metadata (S) or parsed (P); without
 // it (Loki before 3.0) every label is treated as a stream label.
 //
-// Grafana's lokiLogsDataplane feature flag (on in some Grafana Cloud waves)
-// renames Line to body and Time to timestamp and drops tsNs; the timestamp
+// Grafana's lokiLogsDataplane feature flag renames Line to body and Time to
+// timestamp and drops tsNs; the timestamp
 // field still carries nanosecond precision, so both shapes are read.
 func lokiLogFrameEntries(frame *data.Frame) ([]LogEntry, error) {
 	field := func(names ...string) *data.Field {
