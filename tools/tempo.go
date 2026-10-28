@@ -19,8 +19,8 @@ const (
 )
 
 // tempoBackend runs search, metrics and trace-by-ID queries through Grafana's
-// /api/ds/query endpoint, so they go through the query service and show up in
-// its query log. Trace diffs and attribute discovery call Tempo's HTTP API
+// /api/ds/query endpoint, so they go through the query service like dashboard
+// and Explore queries. Trace diffs and attribute discovery call Tempo's HTTP API
 // through the datasource proxy, as do queries on Grafana releases whose Tempo
 // datasource cannot run them (see useDSQuery).
 type tempoBackend struct {
