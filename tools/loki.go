@@ -107,8 +107,14 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	}, nil
 }
 
-// lokiQueryTags is sent as the X-Query-Tags header on every Loki request.
-const lokiQueryTags = "Source=mcp-grafana"
+// lokiQuerySource attributes this server's load in Loki's query logs and
+// metrics. Proxy requests send it as an X-Query-Tags header; /api/ds/query
+// requests send it as the query's supportingQueryType, which Grafana's Loki
+// datasource turns into the same header.
+const lokiQuerySource = "mcp-grafana"
+
+// lokiQueryTags is sent as the X-Query-Tags header on every Loki proxy request.
+const lokiQueryTags = "Source=" + lokiQuerySource
 
 // makeRequest makes an HTTP request to the Loki API and returns the response body
 func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params url.Values) ([]byte, error) {

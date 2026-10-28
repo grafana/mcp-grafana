@@ -243,6 +243,19 @@ func TestQueryLokiLogsSendsLokiDefaultStep(t *testing.T) {
 	assert.Equal(t, "14s", (*payload)["queries"].([]interface{})[0].(map[string]interface{})["step"])
 }
 
+// Grafana's Loki datasource sends supportingQueryType to Loki as
+// X-Query-Tags: Source=<value>, keeping the attribution the proxy path had.
+func TestQueryLokiLogsTagsQuerySource(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	_, err := queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `{app="a"}`,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "mcp-grafana", (*payload)["queries"].([]interface{})[0].(map[string]interface{})["supportingQueryType"])
+}
+
 func TestLokiFramesToResult_StatusError(t *testing.T) {
 	_, err := lokiFramesToResult(&backend.QueryDataResponse{Responses: backend.Responses{
 		"A": backend.DataResponse{Status: backend.StatusBadGateway},

@@ -212,6 +212,8 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 		"expr":       p.Query,
 		"queryType":  queryType,
 		"direction":  p.Direction,
+		// Becomes X-Query-Tags: Source=mcp-grafana on the request to Loki.
+		"supportingQueryType": lokiQuerySource,
 	}
 	if p.StepSeconds > 0 {
 		query["step"] = fmt.Sprintf("%ds", p.StepSeconds)
