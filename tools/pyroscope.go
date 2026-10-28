@@ -414,8 +414,17 @@ type seriesResponse struct {
 // seriesFramesToResponse converts the "series" frames Grafana's Pyroscope
 // datasource returns (one per series, with a time and a value field) into a
 // seriesResponse. Exemplar and annotation frames are skipped.
+//
+// The datasource raises the step to its minStep, so the reported step is the
+// smallest gap between points, falling back to the requested step when no
+// series has two points.
 func seriesFramesToResponse(frames data.Frames, start, end time.Time, step float64) *seriesResponse {
-	res := buildSeriesResponse(nil, start, end, step)
+	res := &seriesResponse{
+		Series:    []rawSeries{},
+		TimeRange: map[string]string{"from": start.Format(time.RFC3339), "to": end.Format(time.RFC3339)},
+		StepSecs:  step,
+	}
+	var minGapMs float64
 	for _, frame := range frames {
 		if frame.Name != "series" {
 			continue
@@ -429,6 +438,11 @@ func seriesFramesToResponse(frames data.Frames, start, end time.Time, step float
 			ts, tsOk := toMillis(frame.At(timeIdx, i))
 			val, valOk := toFloat(frame.At(valueIdx, i))
 			if tsOk && valOk {
+				if n := len(points); n > 0 {
+					if gap := float64(ts) - points[n-1][0]; gap > 0 && (minGapMs == 0 || gap < minGapMs) {
+						minGapMs = gap
+					}
+				}
 				points = append(points, [2]float64{float64(ts), val})
 			}
 		}
@@ -444,6 +458,9 @@ func seriesFramesToResponse(frames data.Frames, start, end time.Time, step float
 			res.Unit = valueField.Config.Unit
 		}
 		res.Series = append(res.Series, rawSeries{Labels: labels, Points: points})
+	}
+	if minGapMs > 0 {
+		res.StepSecs = minGapMs / 1000
 	}
 	return res
 }
@@ -466,8 +483,9 @@ func pyroscopeDSQuery(ctx context.Context, uid, queryType, profileType, matchers
 	}
 	if step > 0 {
 		// The datasource uses max(intervalMs, the datasource's minStep) as
-		// the series step.
-		query["intervalMs"] = step * 1000
+		// the series step. Grafana reads intervalMs as an integer and
+		// ignores a fractional value.
+		query["intervalMs"] = int64(math.Round(step * 1000))
 		query["maxDataPoints"] = int64(math.Ceil(end.Sub(start).Seconds()/step)) + 1
 	}
 	resp, err := doDSQuery(ctx, httpClient, baseURL, dsQueryPayload(start, end, query))
@@ -476,7 +494,7 @@ func pyroscopeDSQuery(ctx context.Context, uid, queryType, profileType, matchers
 	}
 	r, ok := resp.Responses["A"]
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("pyroscope query returned no result")
 	}
 	if r.Error != nil {
 		return nil, r.Error
@@ -501,37 +519,7 @@ func pyroscopeDSProfileTable(ctx context.Context, uid, profileType, matchers str
 		}
 		return buildProfileTable(nodes, sampleUnitFromProfileType(profileType), maxRows)
 	}
-	return buildProfileTable(nil, "", maxRows)
-}
-
-func buildSeriesResponse(series []*typesv1.Series, start, end time.Time, step float64) *seriesResponse {
-	raw := make([]rawSeries, 0, len(series))
-	for _, s := range series {
-		labels := make(map[string]string, len(s.Labels))
-		for _, lp := range s.Labels {
-			labels[lp.Name] = lp.Value
-		}
-
-		points := make([][2]float64, 0, len(s.Points))
-		for _, p := range s.Points {
-			points = append(points, [2]float64{float64(p.Timestamp), p.Value})
-		}
-
-		if len(points) == 0 {
-			continue
-		}
-
-		raw = append(raw, rawSeries{
-			Labels: labels,
-			Points: points,
-		})
-	}
-
-	return &seriesResponse{
-		Series:    raw,
-		TimeRange: map[string]string{"from": start.Format(time.RFC3339), "to": end.Format(time.RFC3339)},
-		StepSecs:  step,
-	}
+	return "", fmt.Errorf("pyroscope query returned no flame graph frame")
 }
 
 // ---------------------------------------------------------------------------
@@ -549,19 +537,6 @@ type functionStat struct {
 	cum  int64
 }
 
-func (c *pyroscopeClient) ProfileTable(ctx context.Context, profileType, matchers string, start, end time.Time, maxRows int) (string, error) {
-	res, err := c.SelectMergeStacktraces(ctx, connect.NewRequest(&querierv1.SelectMergeStacktracesRequest{
-		ProfileTypeID: profileType,
-		LabelSelector: matchers,
-		Start:         start.UnixMilli(),
-		End:           end.UnixMilli(),
-	}))
-	if err != nil {
-		return "", err
-	}
-	return buildProfileTable(flameGraphNodes(res.Msg.Flamegraph), sampleUnitFromProfileType(profileType), maxRows)
-}
-
 // flameNode is one node of a merged flame graph. Parents precede their
 // children, and the root (the synthetic "total" node) has parent -1.
 type flameNode struct {
@@ -569,46 +544,6 @@ type flameNode struct {
 	total  int64
 	self   int64
 	parent int
-}
-
-// flameGraphNodes flattens a Pyroscope flame graph. Its levels encode nodes as
-// [xOffset, total, self, nameIndex] quads with delta-encoded offsets (see
-// NewFlameGraph in pyroscope's pkg/model); a node's parent is the node on the
-// level above whose span covers its offset.
-func flameGraphNodes(fg *querierv1.FlameGraph) []flameNode {
-	if fg == nil {
-		return nil
-	}
-	type span struct {
-		x, total int64
-		idx      int
-	}
-	var nodes []flameNode
-	var parents []span
-	for _, level := range fg.Levels {
-		vals := level.Values
-		spans := make([]span, 0, len(vals)/4)
-		var offset int64
-		p := 0
-		for i := 0; i+3 < len(vals); i += 4 {
-			x := vals[i] + offset
-			offset = x + vals[i+1]
-			n := flameNode{total: vals[i+1], self: vals[i+2], parent: -1}
-			if name := vals[i+3]; name >= 0 && int(name) < len(fg.Names) {
-				n.name = fg.Names[name]
-			}
-			if len(parents) > 0 {
-				for p < len(parents)-1 && parents[p].x+parents[p].total <= x {
-					p++
-				}
-				n.parent = parents[p].idx
-			}
-			spans = append(spans, span{x: x, total: n.total, idx: len(nodes)})
-			nodes = append(nodes, n)
-		}
-		parents = spans
-	}
-	return nodes
 }
 
 // flameFrameNodes reads the flame graph frame Grafana's Pyroscope datasource
@@ -639,7 +574,17 @@ func flameFrameNodes(frame *data.Frame) ([]flameNode, error) {
 			return nil, fmt.Errorf("invalid Pyroscope flame graph frame: row %d is at level %d after level %d", i, lvl, len(stack)-1)
 		}
 		n := flameNode{total: int64At(value, i), self: int64At(self, i), parent: -1}
-		if idx, ok := label.At(i).(data.EnumItemIndex); ok && int(idx) < len(names) {
+		var idx int
+		switch v := label.At(i).(type) {
+		case data.EnumItemIndex:
+			idx = int(v)
+		case int64:
+			// Older datasource versions send enum indexes as int64.
+			idx = int(v)
+		default:
+			return nil, fmt.Errorf("invalid Pyroscope flame graph frame: label field has type %T", v)
+		}
+		if idx >= 0 && idx < len(names) {
 			n.name = names[idx]
 		}
 		if lvl > 0 {
@@ -869,9 +814,6 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 
 	wantProfile := queryType == "profile" || queryType == "both"
 	wantMetrics := queryType == "metrics" || queryType == "both"
-	// Grafana before 9.0 has no uid-based /api/ds/query, so queries there
-	// stay on the datasource proxy.
-	_, _, legacy := fallbackProxyBases(ctx, args.DataSourceUID)
 
 	result := make(map[string]any)
 	result["query_type"] = queryType
@@ -895,8 +837,6 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 			if profileErr == nil {
 				profile = cleanupDotProfile(res)
 			}
-		} else if legacy {
-			profile, profileErr = client.ProfileTable(ctx, args.ProfileType, matchers, start, end, maxNodes)
 		} else {
 			profile, profileErr = pyroscopeDSProfileTable(ctx, args.DataSourceUID, args.ProfileType, matchers, start, end, maxNodes)
 		}
@@ -918,33 +858,14 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 			step = math.Max(end.Sub(start).Seconds()/50.0, 15.0)
 		}
 
-		var metrics *seriesResponse
-		var metricsErr error
-		if legacy {
-			var seriesRes *connect.Response[querierv1.SelectSeriesResponse]
-			seriesRes, metricsErr = client.SelectSeries(ctx, connect.NewRequest(&querierv1.SelectSeriesRequest{
-				ProfileTypeID: args.ProfileType,
-				LabelSelector: matchers,
-				Start:         start.UnixMilli(),
-				End:           end.UnixMilli(),
-				GroupBy:       args.GroupBy,
-				Step:          step,
-			}))
-			if metricsErr == nil {
-				metrics = buildSeriesResponse(seriesRes.Msg.Series, start, end, step)
-			}
-		} else {
-			var frames data.Frames
-			frames, metricsErr = pyroscopeDSQuery(ctx, args.DataSourceUID, "metrics", args.ProfileType, matchers, args.GroupBy, start, end, step)
-			metrics = seriesFramesToResponse(frames, start, end, step)
-		}
+		frames, metricsErr := pyroscopeDSQuery(ctx, args.DataSourceUID, "metrics", args.ProfileType, matchers, args.GroupBy, start, end, step)
 		if metricsErr != nil {
 			if queryType == "metrics" {
 				return "", fmt.Errorf("failed to fetch metrics: %w", metricsErr)
 			}
 			result["metrics"] = map[string]string{"error": metricsErr.Error()}
 		} else {
-			result["metrics"] = metrics
+			result["metrics"] = seriesFramesToResponse(frames, start, end, step)
 		}
 	}
 
