@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -339,42 +338,38 @@ func TestVictoriaLogsBackend_QueryLogs_DSQueryError(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot parse query")
 }
 
-func TestVictoriaLogsBackend_QueryLogs_LegacyGrafanaUsesProxy(t *testing.T) {
-	body := strings.Join([]string{
-		`{"_time":"2026-05-10T12:00:00Z","_stream":"{app=\"acme-app\",pod=\"p1\"}","_msg":"hello","level":"info"}`,
-		`{"_time":"2026-05-10T12:00:01Z","_stream":"{app=\"acme-app\",pod=\"p1\"}","_msg":"world","level":"warn"}`,
-	}, "\n")
-	fake := newFakeVLServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, body)
-	})
-	b := newTestVLBackend(t, fake.server)
-	b.legacy = true
+func TestVictoriaLogsBackend_QueryLogs_RefillsTrimmedLeadingEdge(t *testing.T) {
+	// end is mid-millisecond, so the widened range admits lines past end.
+	// VictoriaLogs keeps the newest maxLines lines, so those lines use up
+	// the first page and the backend asks again with a larger maxLines.
+	start := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 10, 12, 0, 1, 500, time.UTC)
+	rows := []vlRow{
+		{time: end.Add(200), msg: "past end 1", fields: `{}`},
+		{time: end, msg: "past end 2", fields: `{}`},
+		{time: end.Add(-time.Second / 2), msg: "in range 1", fields: `{}`},
+		{time: end.Add(-time.Second), msg: "in range 2", fields: `{}`},
+		{time: start.Add(-time.Nanosecond), msg: "never sent", fields: `{}`},
+	}
+	var maxLines []float64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Queries []map[string]interface{} `json:"queries"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		n := payload.Queries[0]["maxLines"].(float64)
+		maxLines = append(maxLines, n)
+		frame := vlLogFrame(rows[:min(int(n), len(rows)-1)]...)
+		_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: data.Frames{frame}}}})
+	}))
+	t.Cleanup(server.Close)
 
-	start := time.Date(2026, 5, 10, 12, 0, 0, 1, time.UTC)
-	end := time.Date(2026, 5, 10, 12, 0, 1, 999999999, time.UTC)
-	res, err := b.QueryLogs(context.Background(), lokiQueryParams{
-		Query:     `{app="acme-app"}`,
-		QueryType: "range",
-		Start:     start,
-		End:       end,
-		Limit:     50,
-		Direction: "backward",
-	})
+	res, err := newTestVLBackend(t, server).QueryLogs(context.Background(), lokiQueryParams{Query: "*", Start: start, End: end, Limit: 2})
 	require.NoError(t, err)
-	assert.Equal(t, "/select/logsql/query", fake.lastPath)
-	assert.Equal(t, http.MethodPost, fake.lastMethod)
-	assert.Equal(t, `{app="acme-app"}`, fake.lastForm.Get("query"))
-	assert.Equal(t, "50", fake.lastForm.Get("limit"))
-	assert.Equal(t, "2026-05-10T12:00:00.000000001Z", fake.lastForm.Get("start"))
-	assert.Equal(t, "2026-05-10T12:00:01.999999999Z", fake.lastForm.Get("end"))
-
-	require.Equal(t, "streams", res.ResultType)
+	assert.Equal(t, []float64{2, 4}, maxLines)
 	require.Len(t, res.Entries, 2)
-	first := res.Entries[0]
-	assert.Equal(t, "hello", first.Line)
-	assert.Equal(t, map[string]string{"app": "acme-app", "pod": "p1"}, first.Labels)
-	assert.Equal(t, "info", first.Parsed["level"])
-	assert.Equal(t, "1778414400000000000", first.Timestamp)
+	assert.Equal(t, "in range 1", res.Entries[0].Line)
+	assert.Equal(t, "in range 2", res.Entries[1].Line)
 }
 
 func TestVictoriaLogsBackend_QueryStats_AppendsCountPipe(t *testing.T) {

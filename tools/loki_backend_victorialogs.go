@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -37,9 +36,6 @@ type victoriaLogsBackend struct {
 	dsQueryClient *http.Client
 	dsQueryURL    string
 	dsUID         string
-	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
-	// accept datasource UIDs; queries there stay on the proxy.
-	legacy bool
 }
 
 func newVictoriaLogsBackend(ctx context.Context, uid string, ds *models.DataSource) (*victoriaLogsBackend, error) {
@@ -86,7 +82,6 @@ func newVictoriaLogsBackend(ctx context.Context, uid string, ds *models.DataSour
 		dsQueryClient: dsQueryClient,
 		dsQueryURL:    dsQueryURL,
 		dsUID:         dsUID,
-		legacy:        legacyMode,
 	}, nil
 }
 
@@ -242,15 +237,7 @@ func (b *victoriaLogsBackend) QueryLogs(ctx context.Context, p lokiQueryParams) 
 		start, end = anchor, anchor
 	}
 
-	var (
-		entries []LogEntry
-		err     error
-	)
-	if b.legacy {
-		entries, err = b.queryLogsViaProxy(ctx, p.Query, start, end, p.Limit)
-	} else {
-		entries, err = b.queryLogsViaDSQuery(ctx, p.Query, start, end, p.Limit)
-	}
+	entries, err := b.queryLogsViaDSQuery(ctx, p.Query, start, end, p.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -293,32 +280,47 @@ func (b *victoriaLogsBackend) queryLogsViaDSQuery(ctx context.Context, query str
 	// /api/ds/query only takes millisecond bounds, but callers page through
 	// logs with exact nanosecond timestamps. Widen the range to whole
 	// milliseconds (VictoriaLogs ranges are [start, end)) and trim the extra
-	// lines while reading the frame.
+	// lines while reading the frame. VictoriaLogs applies the limit to the
+	// widened range and keeps the newest lines, so lines in the extra
+	// millisecond past end can use up the page; when that happens, ask for
+	// more lines until the page is full or VictoriaLogs runs out.
 	to := end.Truncate(time.Millisecond)
 	if to.Before(end) {
 		to = to.Add(time.Millisecond)
 	}
-	resp, err := doDSQuery(ctx, b.dsQueryClient, b.dsQueryURL, dsQueryPayload(start, to, q))
-	if err != nil {
-		return nil, fmt.Errorf("querying VictoriaLogs: %w", err)
-	}
-
-	entries := []LogEntry{}
-	r, ok := resp.Responses["A"]
-	if !ok {
-		return entries, nil
-	}
-	if r.Error != nil {
-		return nil, fmt.Errorf("querying VictoriaLogs: %s", r.Error.Error())
-	}
-	for _, frame := range r.Frames {
-		frameEntries, err := vlLogFrameEntries(frame, start, end)
+	maxLines := limit
+	for attempt := 0; ; attempt++ {
+		q["maxLines"] = maxLines
+		resp, err := doDSQuery(ctx, b.dsQueryClient, b.dsQueryURL, dsQueryPayload(start, to, q))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("querying VictoriaLogs: %w", err)
 		}
-		entries = append(entries, frameEntries...)
+
+		entries := []LogEntry{}
+		r, ok := resp.Responses["A"]
+		if !ok {
+			return entries, nil
+		}
+		if r.Error != nil {
+			return nil, fmt.Errorf("querying VictoriaLogs: %s", r.Error.Error())
+		}
+		returned, leading := 0, 0
+		for _, frame := range r.Frames {
+			frameEntries, frameLeading, err := vlLogFrameEntries(frame, start, end)
+			if err != nil {
+				return nil, err
+			}
+			returned += frame.Rows()
+			leading += frameLeading
+			entries = append(entries, frameEntries...)
+		}
+		// ponytail: capped retries; a sub-millisecond burst larger than a
+		// few pages can still end the page early.
+		if limit <= 0 || returned < maxLines || len(entries) >= limit || leading == 0 || attempt == 3 {
+			return entries, nil
+		}
+		maxLines += leading
 	}
-	return entries, nil
 }
 
 // vlLogFrameEntries reads the rows of a VictoriaLogs log frame (Time, Line
@@ -326,39 +328,42 @@ func (b *victoriaLogsBackend) queryLogsViaDSQuery(ctx context.Context, query str
 // remaining fields. Plugin v0.30.0 and later keep the raw _stream there;
 // v0.29.0 drops it and adds a hidden streams field instead; earlier releases
 // flatten stream labels and other fields together, so all of them are
-// treated as labels.
-func vlLogFrameEntries(frame *data.Frame, start, end time.Time) ([]LogEntry, error) {
+// treated as labels. It also returns how many rows were trimmed for falling
+// at or after end.
+func vlLogFrameEntries(frame *data.Frame, start, end time.Time) ([]LogEntry, int, error) {
 	timeField, _ := frame.FieldByName("Time")
 	lineField, _ := frame.FieldByName("Line")
 	labelsField, _ := frame.FieldByName("labels")
 	streamsField, _ := frame.FieldByName("streams")
 	if timeField == nil || lineField == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	entries := make([]LogEntry, 0, frame.Rows())
+	leading := 0
 	for i := 0; i < frame.Rows(); i++ {
-		v, _ := timeField.ConcreteAt(i)
-		ts, _ := v.(time.Time)
-		if ts.Before(start) || !ts.Before(end) {
+		ts := fieldTime(timeField, i)
+		if !ts.Before(end) {
+			leading++
+			continue
+		}
+		if ts.Before(start) {
 			continue
 		}
 
 		var record map[string]json.RawMessage
 		if err := unmarshalVLJSONField(labelsField, i, &record); err != nil {
-			return nil, fmt.Errorf("parsing VictoriaLogs labels: %w", err)
+			return nil, 0, fmt.Errorf("parsing VictoriaLogs labels: %w", err)
 		}
 		entry := vlRecordToEntry(record)
 		entry.Timestamp = strconv.FormatInt(ts.UnixNano(), 10)
-		if v, ok := lineField.ConcreteAt(i); ok {
-			entry.Line, _ = v.(string)
-		}
+		entry.Line = fieldString(lineField, i)
 
 		if _, hasStream := record["_stream"]; !hasStream {
 			if streamsField != nil {
 				var stream map[string]string
 				if err := unmarshalVLJSONField(streamsField, i, &stream); err != nil {
-					return nil, fmt.Errorf("parsing VictoriaLogs streams: %w", err)
+					return nil, 0, fmt.Errorf("parsing VictoriaLogs streams: %w", err)
 				}
 				if len(stream) > 0 {
 					entry.Labels = stream
@@ -369,7 +374,7 @@ func vlLogFrameEntries(frame *data.Frame, start, end time.Time) ([]LogEntry, err
 		}
 		entries = append(entries, entry)
 	}
-	return entries, nil
+	return entries, leading, nil
 }
 
 // unmarshalVLJSONField decodes row i of a JSON frame field into v. A missing
@@ -388,22 +393,6 @@ func unmarshalVLJSONField(f *data.Field, i int, v interface{}) error {
 		return nil
 	}
 	return json.Unmarshal(msg, v)
-}
-
-// queryLogsViaProxy queries /select/logsql/query through the datasource proxy.
-func (b *victoriaLogsBackend) queryLogsViaProxy(ctx context.Context, query string, start, end time.Time, limit int) ([]LogEntry, error) {
-	params := url.Values{}
-	params.Set("query", query)
-	addVLTimeRange(params, start, end)
-	if limit > 0 {
-		params.Set("limit", strconv.Itoa(limit))
-	}
-
-	body, err := b.doRequest(ctx, http.MethodPost, "/select/logsql/query", params)
-	if err != nil {
-		return nil, err
-	}
-	return parseVictoriaLogsNDJSON(body)
 }
 
 // QueryStats approximates Loki's /index/stats by running the selector
@@ -462,39 +451,6 @@ func (b *victoriaLogsBackend) QueryStats(ctx context.Context, query string, star
 // exploration or a LogsQL `| stats` pipeline instead.
 func (b *victoriaLogsBackend) QueryPatterns(ctx context.Context, query, step string, start, end time.Time) ([]Pattern, error) {
 	return nil, fmt.Errorf("query_loki_patterns is not supported on VictoriaLogs datasources (no equivalent endpoint); use list_loki_label_values or a LogsQL '| stats' query for similar exploration")
-}
-
-// parseVictoriaLogsNDJSON converts the newline-delimited JSON returned by
-// /select/logsql/query into a slice of LogEntry. Each line is one record.
-func parseVictoriaLogsNDJSON(body []byte) ([]LogEntry, error) {
-	entries := []LogEntry{}
-	if len(body) == 0 {
-		return entries, nil
-	}
-
-	scanner := bufio.NewScanner(bytes.NewReader(body))
-	// Allow long log lines; the default 64 KiB buffer is too small.
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-
-		var record map[string]json.RawMessage
-		if err := json.Unmarshal(line, &record); err != nil {
-			// Skip malformed lines — VL occasionally emits trailing
-			// metadata that isn't a log record.
-			continue
-		}
-		entries = append(entries, vlRecordToEntry(record))
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading VictoriaLogs response: %w", err)
-	}
-	return entries, nil
 }
 
 // vlRecordToEntry maps one VictoriaLogs record onto a LogEntry: the special
