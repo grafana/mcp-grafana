@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -195,6 +196,26 @@ func TestQueryLokiLogsRefillsPageTrimmedAtBoundary(t *testing.T) {
 	assert.EqualValues(t, 6, (*payload)["queries"].([]interface{})[0].(map[string]interface{})["maxLines"])
 }
 
+// Lines trimmed at the trailing edge mean Loki ran out of in-range lines, so
+// the query is not repeated.
+func TestQueryLokiLogsSkipsRefillForTrailingTrim(t *testing.T) {
+	server, payload := lokiQueryStub(
+		[2]string{"1705312800000000003", "a-3"},
+		[2]string{"1705312800000000002", "a-2"},
+		[2]string{"1705312800000000000", "a-before-start"},
+	)
+	defer server.Close()
+
+	result, err := queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `{app="a"}`, Limit: 2, Direction: "backward",
+		StartRFC3339: "2024-01-15T10:00:00.000000001Z", EndRFC3339: "2024-01-15T10:00:01Z",
+	})
+	require.NoError(t, err)
+	assert.Len(t, result.Data, 2)
+	assert.False(t, result.Metadata.ResultsTruncated)
+	assert.EqualValues(t, 3, (*payload)["queries"].([]interface{})[0].(map[string]interface{})["maxLines"])
+}
+
 // Instant queries evaluate at end, falling back to start, like the proxy path.
 func TestQueryLokiLogsInstantUsesStartWithoutEnd(t *testing.T) {
 	server, payload := lokiQueryStub()
@@ -207,6 +228,51 @@ func TestQueryLokiLogsInstantUsesStartWithoutEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1705312800000", (*payload)["from"])
 	assert.Equal(t, "1705312800000", (*payload)["to"])
+}
+
+// Without stepSeconds, range queries send Loki's default step of range/250
+// rather than letting Grafana derive one from its 1s default interval.
+func TestQueryLokiLogsSendsLokiDefaultStep(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	_, err := queryLokiLogs(enforceTestCtx(server, false), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `rate({app="a"}[5m])`,
+		StartRFC3339: "2024-01-15T10:00:00Z", EndRFC3339: "2024-01-15T11:00:00Z",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "14s", (*payload)["queries"].([]interface{})[0].(map[string]interface{})["step"])
+}
+
+func TestLokiFramesToResult_StatusError(t *testing.T) {
+	_, err := lokiFramesToResult(&backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Status: backend.StatusBadGateway},
+	}}, "range")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "502")
+}
+
+// Legacy (frontend-settings fallback) backends stay on the proxy, which takes
+// nanosecond bounds and the instant evaluation time unchanged.
+func TestLokiLegacyProxyPreservesNanosecondBounds(t *testing.T) {
+	var query url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query()
+		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"streams","result":[]}}`)
+	}))
+	defer server.Close()
+	b := &lokiNativeBackend{client: &Client{httpClient: server.Client(), baseURL: server.URL}, legacy: true}
+	start := time.Date(2024, 1, 15, 10, 0, 0, 1, time.UTC)
+	end := time.Date(2024, 1, 15, 10, 0, 0, 4, time.UTC)
+
+	_, err := b.QueryLogs(context.Background(), lokiQueryParams{Query: `{app="a"}`, Start: start, End: end, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, "1705312800000000001", query.Get("start"))
+	assert.Equal(t, "1705312800000000004", query.Get("end"))
+
+	_, err = b.QueryLogs(context.Background(), lokiQueryParams{Query: `count_over_time({app="a"}[5m])`, QueryType: "instant", End: end})
+	require.NoError(t, err)
+	assert.Equal(t, "1705312800000000004", query.Get("time"))
 }
 
 func TestQueryLokiLogsCategorizesLabels(t *testing.T) {

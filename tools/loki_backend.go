@@ -107,8 +107,10 @@ type lokiNativeBackend struct {
 	baseURL    string
 	dsUID      string
 	dsType     string
-	// legacy is set on Grafana before 9.0, whose /api/ds/query does not
-	// accept datasource UIDs; queries there stay on the proxy.
+	// legacy is set when the datasource was resolved through the
+	// frontend-settings fallback: Grafana before 9.0, whose /api/ds/query
+	// does not accept datasource UIDs, or a token without datasources:read.
+	// Queries there stay on the proxy.
 	legacy bool
 }
 
@@ -225,6 +227,10 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 	}
 	if p.StepSeconds > 0 {
 		query["step"] = fmt.Sprintf("%ds", p.StepSeconds)
+	} else if queryType == "range" {
+		// Without a step Grafana picks one from its default 1s interval, far
+		// finer than Loki's own default of range/250, so send Loki's default.
+		query["step"] = fmt.Sprintf("%ds", max(int(end.Sub(start).Seconds()/250), 1))
 	}
 
 	if queryType == "instant" {
@@ -242,6 +248,7 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 	// millisecond at the leading edge can use up the page; when that happens,
 	// ask for more lines until the page is full or Loki runs out.
 	to := ceilMillis(end)
+	forward := strings.EqualFold(p.Direction, "forward")
 	maxLines := p.Limit
 	for attempt := 0; ; attempt++ {
 		query["maxLines"] = maxLines
@@ -254,23 +261,31 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 			return result, err
 		}
 		returned := len(result.Entries)
+		// leading counts trimmed lines that Loki returns before in-range
+		// ones: past end when paging backward, before start when forward.
+		// Lines trimmed at the trailing edge mean Loki ran out of in-range
+		// lines, so they are no reason to ask again.
+		leading := 0
 		kept := result.Entries[:0]
 		for _, e := range result.Entries {
 			ts, err := strconv.ParseInt(e.Timestamp, 10, 64)
 			if err != nil {
 				return nil, fmt.Errorf("invalid Loki stream timestamp %q: %w", e.Timestamp, err)
 			}
-			if ts >= start.UnixNano() && ts < end.UnixNano() {
+			switch {
+			case ts >= start.UnixNano() && ts < end.UnixNano():
 				kept = append(kept, e)
+			case (ts >= end.UnixNano()) != forward:
+				leading++
 			}
 		}
 		result.Entries = kept
 		// ponytail: capped retries; a sub-millisecond burst larger than
 		// a few pages can still end the page early.
-		if returned < maxLines || len(kept) >= p.Limit || attempt == 3 {
+		if returned < maxLines || len(kept) >= p.Limit || leading == 0 || attempt == 3 {
 			return result, nil
 		}
-		maxLines += returned - len(kept)
+		maxLines += leading
 	}
 }
 
@@ -295,8 +310,8 @@ func lokiFramesToResult(resp *backend.QueryDataResponse, queryType string) (*lok
 	if !ok {
 		return result, nil
 	}
-	if r.Error != nil {
-		return nil, fmt.Errorf("querying Loki: %s", r.Error.Error())
+	if err := dsQueryResponsesError(resp.Responses); err != nil {
+		return nil, fmt.Errorf("querying Loki: %w", err)
 	}
 
 	for _, frame := range r.Frames {
@@ -309,7 +324,12 @@ func lokiFramesToResult(resp *backend.QueryDataResponse, queryType string) (*lok
 			}
 		}
 
-		if _, idx := frame.FieldByName("Line"); idx != -1 {
+		// With Grafana's experimental lokiLogsDataplane flag the line field
+		// is "body" and tsNs is gone; lokiLogFrameEntries then fails loudly
+		// rather than the frame being skipped as a metric series.
+		_, lineIdx := frame.FieldByName("Line")
+		_, bodyIdx := frame.FieldByName("body")
+		if lineIdx != -1 || bodyIdx != -1 {
 			result.ResultType = "streams"
 			entries, err := lokiLogFrameEntries(frame)
 			if err != nil {
