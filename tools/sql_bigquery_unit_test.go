@@ -137,6 +137,9 @@ func TestBigQueryMetadataProjectFallback(t *testing.T) {
 			{name: "configured skips fallback", configuredProject: "configured-project", wantProject: "configured-project"},
 			{name: "explicit skips fallback", database: "explicit-project", wantProject: "explicit-project"},
 			{name: "plugin fallback", defaultResponse: `"inferred-project"`, wantProject: "inferred-project"},
+			{name: "explicit domain-scoped project", database: "example.com:my-project", wantProject: "example.com:my-project"},
+			{name: "configured domain-scoped project", configuredProject: "example.com:my-project", wantProject: "example.com:my-project"},
+			{name: "inferred domain-scoped project", defaultResponse: `"example.com:my-project"`, wantProject: "example.com:my-project"},
 			{name: "empty project", defaultResponse: `""`, wantError: "database (BigQuery project) is required"},
 			{name: "null project", defaultResponse: `null`, wantError: "database (BigQuery project) is required"},
 			{name: "wrong response shape", defaultResponse: `["project"]`, wantError: "decoding BigQuery default project"},
@@ -225,4 +228,53 @@ func TestBigQueryMetadataProjectFallback(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestBigQueryMetadataIdentifierRoundTrip(t *testing.T) {
+	const project = "example.com:my-project"
+	// Include Unicode, decomposed marks, and punctuation to catch normalization
+	// or SQL escaping of identifiers that must remain plain JSON values.
+	names := []string{"table 01", "ग्राहक", "00_お客様", "étudiant-01", "e\u0301", "x%2Fy", "x'\"`;--\\y"}
+	var describedNames []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/datasources/uid/bq":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"uid": "bq", "type": sql.BigQueryDatasourceType,
+				"jsonData": map[string]string{"defaultProject": project},
+			})
+		case "/api/datasources/uid/bq/resources/tables":
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, map[string]string{"project": project, "dataset": "dataset"}, body)
+			_ = json.NewEncoder(w).Encode(names)
+		case "/api/datasources/uid/bq/resources/dataset/table/schema":
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, project, body["project"])
+			assert.Equal(t, "dataset", body["dataset"])
+			describedNames = append(describedNames, body["table"])
+			_, _ = w.Write([]byte(`{"schema":[{"name":"id","type":"STRING"}]}`))
+		default:
+			t.Errorf("unexpected request: %s; metadata discovery must not execute SQL", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	ctx := enforceTestCtx(ts, false)
+	tables, err := listSQLTablesHandler(ctx, sql.ListSQLTablesParams{DatasourceUID: "bq", Schema: "dataset"})
+	require.NoError(t, err)
+	require.Len(t, tables.Tables, len(names))
+	for i, table := range tables.Tables {
+		assert.Equal(t, names[i], table.Name)
+		assert.Equal(t, project, table.Database)
+		assert.Equal(t, "dataset", table.Schema)
+		columns, err := describeSQLTableHandler(ctx, sql.DescribeSQLTableParams{
+			DatasourceUID: "bq", Database: table.Database, Schema: table.Schema, Table: table.Name,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []sql.SQLColumnInfo{{Name: "id", Type: "STRING"}}, columns.Columns)
+	}
+	assert.Equal(t, names, describedNames, "discovered names must reach the schema API unchanged")
 }

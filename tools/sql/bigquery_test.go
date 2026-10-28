@@ -130,24 +130,27 @@ func TestBigQueryMetadata(t *testing.T) {
 
 func TestBigQueryIdentifiers(t *testing.T) {
 	d := &bigqueryDialect{}
-	for _, name := range []string{"project-id", "dataset_name", "table_01"} {
-		require.NoError(t, d.ValidateIdentifier(name, "identifier"))
+	// Naming validity belongs to BigQuery; these are transport-safe JSON values.
+	for _, name := range []string{"", "project-id", "dataset_name", "table_01", "table 01", "ग्राहक", "00_お客様", "étudiant-01", "e\u0301", "example.com:my-project", "project.dataset", "bad`name", "x'; drop table t;--", "x\\y", "x%2Fy", "x%00y"} {
+		require.NoError(t, d.ValidateIdentifier(name, "identifier"), "%q", name)
 	}
-	for _, name := range []string{"project.dataset", "bad`name", "x'; drop table t;--", "x\\y", "x\ny"} {
-		require.Error(t, d.ValidateIdentifier(name, "identifier"))
+	for _, name := range []string{"/", "x/y", "../table", "x\x00y", "x\ty", "x\ny", "x\ry", "x\x7fy", "x\u0085y", "x\u009fy"} {
+		require.ErrorContains(t, d.ValidateIdentifier(name, "identifier"), "invalid identifier", "%q", name)
 	}
 	ctx, r := context.Background(), &bigqueryTestRunner{}
-	for _, params := range []ListSQLTablesParams{{}, {Database: "project"}, {Database: "project`", Schema: "dataset"}, {Database: "project", Schema: "bad'name"}} {
+	for _, params := range []ListSQLTablesParams{{}, {Database: "project"}, {Database: "bad/project", Schema: "dataset"}, {Database: "project", Schema: "bad/dataset"}, {Schema: "bad\ndataset"}} {
 		_, err := d.ListTables(ctx, r, "", params)
 		require.Error(t, err)
 	}
-	for _, table := range []string{"", "bad'name"} {
+	for _, table := range []string{"", "bad/table", "bad\ntable"} {
 		_, err := d.DescribeTable(ctx, r, "", DescribeSQLTableParams{Database: "project", Schema: "dataset", Table: table})
 		require.Error(t, err)
 	}
+	_, err := d.ListDatabases(ctx, r, "", ListSQLDatabasesParams{Database: "bad/project"})
+	require.ErrorContains(t, err, "invalid database")
 	assert.Empty(t, r.path, "invalid identifiers must fail before resource requests")
 	r.response = []byte(`""`)
-	_, err := d.ListDatabases(ctx, r, "", ListSQLDatabasesParams{})
+	_, err = d.ListDatabases(ctx, r, "", ListSQLDatabasesParams{})
 	require.ErrorContains(t, err, "database (BigQuery project) is required")
 	assert.Equal(t, "/defaultProjects", r.path)
 }

@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type bigqueryDialect struct{}
@@ -17,11 +17,11 @@ func init() { RegisterDialect(&bigqueryDialect{}) }
 func (d *bigqueryDialect) DatasourceTypes() []string  { return []string{BigQueryDatasourceType} }
 func (d *bigqueryDialect) DefaultFormat() interface{} { return 1 }
 
-var bigqueryIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_-]*$`)
-
+// Metadata names are JSON values, not SQL. Leave naming rules to BigQuery,
+// but reject path separators and controls before the SDK's URL expansion.
 func (d *bigqueryDialect) ValidateIdentifier(name, field string) error {
-	if name != "" && !bigqueryIdentifier.MatchString(name) {
-		return fmt.Errorf("invalid %s: use letters, numbers, underscores, or hyphens", field)
+	if strings.ContainsRune(name, '/') || strings.ContainsFunc(name, unicode.IsControl) {
+		return fmt.Errorf("invalid %s: slashes and control characters are not allowed", field)
 	}
 	return nil
 }
