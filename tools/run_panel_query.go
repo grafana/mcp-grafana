@@ -264,7 +264,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}
 
 	// Substitute variables in the query
-	query := substituteTemplateVariableValues(panelData.Query, templateVariables)
+	query := substituteQueryTemplateVariableValues(panelData.Query, templateVariables, datasourceType)
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -333,11 +333,24 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 type templateVariableValues map[string][]string
 
+// Select SQL literal quoting using the known datasource type, without lookups.
+// Keep non-SQL fields (datasource UIDs, locations, etc.) on generic interpolation.
+func substituteQueryTemplateVariableValues(query string, variables templateVariableValues, datasourceType string) string {
+	if normalizeDatasourceType(datasourceType) == "bigquery" {
+		return substituteTemplateVariableValuesWithFormatter(query, variables, formatBigQueryTemplateVariable)
+	}
+	return substituteTemplateVariableValues(query, variables)
+}
+
 // substituteTemplateVariableValues interpolates variables while retaining
 // multi-select values for formatters such as sqlstring. Explicitly supported
 // formatters follow Grafana's formatting syntax; unknown formatters fall back
 // to Grafana's glob representation.
 func substituteTemplateVariableValues(query string, variables templateVariableValues) string {
+	return substituteTemplateVariableValuesWithFormatter(query, variables, formatTemplateVariable)
+}
+
+func substituteTemplateVariableValuesWithFormatter(query string, variables templateVariableValues, formatter func([]string, string) string) string {
 	for name, values := range variables {
 		variableRe := regexp.MustCompile(fmt.Sprintf(
 			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
@@ -348,7 +361,7 @@ func substituteTemplateVariableValues(query string, variables templateVariableVa
 			if !hasFormat {
 				return firstTemplateVariableValue(values)
 			}
-			return formatTemplateVariable(values, format)
+			return formatter(values, format)
 		})
 	}
 	return query
