@@ -21,17 +21,16 @@ const quickwitDatasourceType = "quickwit-quickwit-datasource"
 
 // quickwitBackend searches a Quickwit datasource. Lucene searches on the
 // configured index run through Grafana's /api/ds/query endpoint so they show
-// up in Grafana's query log. Query DSL JSON, a narrower index than the
-// configured one, and Grafana before 9.0 stay on the datasource proxy's
-// _msearch, because the plugin's query model can't express them. Index
-// metadata lookups always use the proxy.
+// up in Grafana's query log. Query DSL JSON and an index narrower than the
+// configured one stay on the datasource proxy's _msearch, because the
+// plugin's query model can't express them. Index metadata lookups always use
+// the proxy.
 type quickwitBackend struct {
 	httpClient            *http.Client
 	baseURL               string
 	dsQueryClient         *http.Client
 	grafanaURL            string
 	dsUID                 string
-	legacy                bool
 	configuredIndex       string
 	timeField             string
 	timestampOutputFormat string
@@ -77,7 +76,6 @@ func newQuickwitBackend(ctx context.Context, ds *models.DataSource) (*quickwitBa
 	if err != nil {
 		return nil, err
 	}
-	_, _, legacy := fallbackProxyBases(ctx, ds.UID)
 
 	return &quickwitBackend{
 		httpClient:      &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
@@ -85,7 +83,6 @@ func newQuickwitBackend(ctx context.Context, ds *models.DataSource) (*quickwitBa
 		baseURL:         fmt.Sprintf("%s/api/datasources/proxy/uid/%s", grafanaURL, ds.UID),
 		grafanaURL:      grafanaURL,
 		dsUID:           ds.UID,
-		legacy:          legacy,
 		configuredIndex: indexFromQuickwitDataSource(ds),
 	}, nil
 }
@@ -125,7 +122,7 @@ func (b *quickwitBackend) Search(ctx context.Context, index, query string, start
 		return nil, err
 	}
 
-	if !b.legacy && resolvedIndex == b.configuredIndex && !isQueryDSL(query) {
+	if resolvedIndex == b.configuredIndex && !isQueryDSL(query) {
 		return b.searchViaDSQuery(ctx, query, startTime, endTime, limit)
 	}
 
@@ -220,23 +217,11 @@ func quickwitFramesToDocuments(frames data.Frames, index, timeField string) ([]E
 			documents = append(documents, ElasticsearchDocument{
 				Index:     index,
 				Source:    source,
-				Timestamp: quickwitTimestamp(source[timeField]),
+				Timestamp: esDocumentTimestamp(source[timeField]),
 			})
 		}
 	}
 	return documents, nil
-}
-
-// quickwitTimestamp formats a document's timestamp the same way executeMSearch
-// does: strings as-is, numbers as epoch milliseconds.
-func quickwitTimestamp(v interface{}) string {
-	switch ts := v.(type) {
-	case string:
-		return ts
-	case float64:
-		return time.UnixMilli(int64(ts)).UTC().Format(time.RFC3339Nano)
-	}
-	return ""
 }
 
 func (b *quickwitBackend) ensureTimestampInfo(ctx context.Context, index string) error {

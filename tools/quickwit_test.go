@@ -219,13 +219,6 @@ func TestQuickwitBackendSearchProxy(t *testing.T) {
 		check(t, docs, err)
 	})
 
-	t.Run("legacy Grafana", func(t *testing.T) {
-		backend := newQuickwitTestServer(t, nil, msearch)
-		backend.legacy = true
-		docs, err := backend.Search(context.Background(), "", "service_name:api", time.Time{}, time.Time{}, 10)
-		check(t, docs, err)
-	})
-
 	t.Run("narrower index than configured pattern", func(t *testing.T) {
 		backend := newQuickwitTestServer(t, nil, msearch)
 		backend.configuredIndex = "test-*"
