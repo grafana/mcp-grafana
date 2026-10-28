@@ -217,11 +217,23 @@ func quickwitFramesToDocuments(frames data.Frames, index, timeField string) ([]E
 			documents = append(documents, ElasticsearchDocument{
 				Index:     index,
 				Source:    source,
-				Timestamp: esDocumentTimestamp(source[timeField]),
+				Timestamp: quickwitTimestamp(source[timeField]),
 			})
 		}
 	}
 	return documents, nil
+}
+
+// quickwitTimestamp formats a document's timestamp the same way executeMSearch
+// does: strings as-is, numbers as epoch milliseconds.
+func quickwitTimestamp(v interface{}) string {
+	switch ts := v.(type) {
+	case string:
+		return ts
+	case float64:
+		return time.UnixMilli(int64(ts)).UTC().Format(time.RFC3339Nano)
+	}
+	return ""
 }
 
 func (b *quickwitBackend) ensureTimestampInfo(ctx context.Context, index string) error {
