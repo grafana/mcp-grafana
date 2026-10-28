@@ -77,6 +77,11 @@ func TestAllToolsDeclareAnnotationHints(t *testing.T) {
 				if ann.ReadOnlyHint && *ann.DestructiveHint {
 					violations = append(violations, fmt.Sprintf("%s: readOnlyHint=true conflicts with destructiveHint=true", tool.Name))
 				}
+				// Per the MCP spec, destructiveHint=false means "only additive
+				// updates"; overwriting or deleting existing state is not.
+				if (strings.HasPrefix(tool.Name, "update_") || strings.HasPrefix(tool.Name, "delete_")) && !*ann.DestructiveHint {
+					violations = append(violations, fmt.Sprintf("%s: update/delete tools must set destructiveHint=true", tool.Name))
+				}
 			}
 			if len(violations) > 0 {
 				t.Errorf("tools with missing or inconsistent annotations (%d):\n%s", len(violations), strings.Join(violations, "\n"))
