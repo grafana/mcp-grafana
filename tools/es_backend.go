@@ -80,9 +80,9 @@ func timeFieldFromDataSource(ds *models.DataSource) string {
 }
 
 // elasticsearchBackend handles queries to an Elasticsearch datasource. Queries
-// go through Grafana's /api/ds/query endpoint, so they show up in the query
-// service's query log, when the installed plugin supports them there;
-// otherwise they go through the datasource proxy.
+// go through Grafana's /api/ds/query endpoint, and so through its query
+// service, when the installed plugin supports them there; otherwise they go
+// through the datasource proxy.
 type elasticsearchBackend struct {
 	httpClient *http.Client
 	baseURL    string
