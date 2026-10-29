@@ -97,7 +97,7 @@ var categoryDescription = map[string]string{
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
 	"cloudlogging":  "Google Cloud Logging: Query logs with the Cloud Logging query language and list projects, log buckets, and views.",
 	"examples":      "Examples: Query example tools.",
-	"sql":           "SQL: Query supported SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL) via Grafana with macro substitution, schema discovery, and variable support.",
+	"sql":           "SQL: Query supported SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery) via Grafana with macro substitution, schema discovery, and variable support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
 	"graphite":      "Graphite: Query Graphite datasources for metrics.",
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
@@ -115,7 +115,7 @@ var categoryDescriptionNoQuery = map[string]string{
 	"pyroscope":    "Pyroscope: Explore profile types and label names/values. Query execution is disabled.",
 	"cloudwatch":   "CloudWatch: List AWS CloudWatch namespaces, metrics, dimensions, and log groups. Query execution is disabled.",
 	"cloudlogging": "Google Cloud Logging: List GCP projects, log buckets, and views. Query execution is disabled.",
-	"sql":          "SQL: List tables and describe table schemas in SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Query execution is disabled.",
+	"sql":          "SQL: List tables and describe table schemas in SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Query execution is disabled.",
 	"graphite":     "Graphite: List Graphite metrics and tags. Query execution is disabled.",
 }
 
@@ -243,7 +243,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.cloudlogging, "disable-cloudlogging", false, "Disable Google Cloud Logging tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
-	flag.BoolVar(&dt.sql, "disable-sql", false, "Disable SQL tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL)")
+	flag.BoolVar(&dt.sql, "disable-sql", false, "Disable SQL tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery)")
 	flag.BoolVar(&dt.sql, "disable-clickhouse", false, "Deprecated: use --disable-sql instead")
 	flag.BoolVar(&dt.sql, "disable-snowflake", false, "Deprecated: use --disable-sql instead")
 	flag.BoolVar(&dt.sql, "disable-athena", false, "Deprecated: use --disable-sql instead")
@@ -396,7 +396,9 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddElasticsearchTools(s, enableQueryTools) }, dt.elasticsearch, "elasticsearch"},
 		{func(s *mcp.Server) { tools.AddQuickwitTools(s, enableQueryTools) }, dt.quickwit, "quickwit"},
 		{func(s *mcp.Server) { tools.AddInfluxDBTools(s, dt.queryToolsEnabled("influxdb")) }, dt.influxdb, "influxdb"},
-		{func(s *mcp.Server) { tools.AddAlertingTools(s, enableWriteTools) }, dt.alerting, "alerting"},
+		{func(s *mcp.Server) {
+			tools.AddAlertingTools(s, func(name string) bool { return dt.writeToolEnabled(name) })
+		}, dt.alerting, "alerting"},
 		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard"},
 		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
 		{func(s *mcp.Server) { tools.AddOnCallTools(s, enableWriteTools) }, dt.oncall, "oncall"},

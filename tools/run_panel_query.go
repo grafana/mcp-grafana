@@ -264,7 +264,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}
 
 	// Substitute variables in the query
-	query := substituteTemplateVariableValues(panelData.Query, templateVariables)
+	query := substituteQueryTemplateVariableValues(panelData.Query, templateVariables, datasourceType)
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -333,11 +333,24 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 type templateVariableValues map[string][]string
 
+// Select SQL literal quoting using the known datasource type, without lookups.
+// Keep non-SQL fields (datasource UIDs, locations, etc.) on generic interpolation.
+func substituteQueryTemplateVariableValues(query string, variables templateVariableValues, datasourceType string) string {
+	if normalizeDatasourceType(datasourceType) == "bigquery" {
+		return substituteTemplateVariableValuesWithFormatter(query, variables, formatBigQueryTemplateVariable)
+	}
+	return substituteTemplateVariableValues(query, variables)
+}
+
 // substituteTemplateVariableValues interpolates variables while retaining
 // multi-select values for formatters such as sqlstring. Explicitly supported
 // formatters follow Grafana's formatting syntax; unknown formatters fall back
 // to Grafana's glob representation.
 func substituteTemplateVariableValues(query string, variables templateVariableValues) string {
+	return substituteTemplateVariableValuesWithFormatter(query, variables, formatTemplateVariable)
+}
+
+func substituteTemplateVariableValuesWithFormatter(query string, variables templateVariableValues, formatter func([]string, string) string) string {
 	for name, values := range variables {
 		variableRe := regexp.MustCompile(fmt.Sprintf(
 			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
@@ -348,7 +361,7 @@ func substituteTemplateVariableValues(query string, variables templateVariableVa
 			if !hasFormat {
 				return firstTemplateVariableValue(values)
 			}
-			return formatTemplateVariable(values, format)
+			return formatter(values, format)
 		})
 	}
 	return query
@@ -645,6 +658,8 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Limit:         100,
 		Direction:     "backward",
 		QueryType:     "range",
+		// $__auto is substituted with this interval, and Grafana defines it as the step.
+		StepSeconds: int(autoInterval(startTime, endTime) / time.Second),
 	})
 	if err != nil {
 		return nil, err
@@ -992,6 +1007,22 @@ func dsQueryResponsesError(responses backend.Responses) error {
 	return errors.New(strings.Join(failures, "; "))
 }
 
+// macroInterval is the value of $__interval and $__auto: the time range over ~100 data points,
+// at least one second.
+func macroInterval(start, end time.Time) time.Duration {
+	return max(end.Sub(start)/100, time.Second)
+}
+
+// autoInterval is the duration $__auto is written as in the query. It parses the formatted string
+// back, so a step derived from it always matches the substituted window.
+func autoInterval(start, end time.Time) time.Duration {
+	d := macroInterval(start, end)
+	if parsed, err := time.ParseDuration(formatPrometheusDuration(d)); err == nil {
+		return parsed
+	}
+	return d
+}
+
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
 // used across datasource types (Prometheus, Loki, etc.)
 func substituteGrafanaMacros(query string, start, end time.Time) string {
@@ -1010,15 +1041,15 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	query = strings.ReplaceAll(query, "${__range}", rangeStr)
 	query = strings.ReplaceAll(query, "$__range", rangeStr)
 
+	// Substitute $__rate_interval_ms BEFORE $__rate_interval to avoid partial replacement
+	query = strings.ReplaceAll(query, "${__rate_interval_ms}", "60000")
+	query = strings.ReplaceAll(query, "$__rate_interval_ms", "60000")
+
 	// $__rate_interval - default to "1m"
 	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
 	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
 
-	// Calculate interval based on time range / max data points (~100 points)
-	interval := duration / 100
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := macroInterval(start, end)
 
 	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
 	intervalMs := int64(interval / time.Millisecond)
@@ -1038,20 +1069,23 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	return query
 }
 
-// formatPrometheusDuration formats a duration for Prometheus (e.g., "14m", "1h30m", "36s")
+// formatPrometheusDuration formats a duration for Prometheus and Loki (e.g. "14m", "1h30m",
+// "36s", "1m30s"). Every unit is kept, so the result matches the _s and _ms macros; only
+// sub-second precision is dropped.
 func formatPrometheusDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
+	secs := int64(d / time.Second)
+	hours, mins, rem := secs/3600, secs/60%60, secs%60
+	var b strings.Builder
+	if hours > 0 {
+		fmt.Fprintf(&b, "%dh", hours)
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
+	if mins > 0 {
+		fmt.Fprintf(&b, "%dm", mins)
 	}
-	hours := int(d.Hours())
-	mins := int(d.Minutes()) % 60
-	if mins == 0 {
-		return fmt.Sprintf("%dh", hours)
+	if rem > 0 || b.Len() == 0 {
+		fmt.Fprintf(&b, "%ds", rem)
 	}
-	return fmt.Sprintf("%dh%dm", hours, mins)
+	return b.String()
 }
 
 // isVariableReference checks if a string is a Grafana variable reference
