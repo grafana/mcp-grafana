@@ -81,12 +81,13 @@ func (d *clickHouseDialect) EnforceLimit(query string, limit int) string {
 
 var clickHouseHeredoc = regexp.MustCompile(`^\$[a-zA-Z0-9_]*\$`)
 
-// clickHouseSettingsStart finds the end of the expression before a top-level
-// SETTINGS clause. Keep intervening comments in the suffix, so an inserted LIMIT
-// cannot become part of a trailing line comment. This only locates SETTINGS; the
-// shared limit helper retains its existing handling of LIMIT expressions.
+// clickHouseSettingsStart finds the end of the expression before a SETTINGS clause
+// belonging to a top-level SELECT. Keep intervening comments in the suffix, so an
+// inserted LIMIT cannot become part of a trailing line comment. This only locates
+// SETTINGS; the shared limit helper retains its existing handling of LIMIT expressions.
 func clickHouseSettingsStart(query string) (int, bool) {
 	depth, lastCode := 0, 0
+	selectSeen := false
 	for i := 0; i < len(query); {
 		if next := skipClickHouseTrivia(query, i); next > i {
 			i = next
@@ -118,7 +119,11 @@ func clickHouseSettingsStart(query string) (int, bool) {
 			for i < len(query) && isClickHouseWordByte(query[i]) {
 				i++
 			}
-			if depth == 0 && strings.EqualFold(query[start:i], "SETTINGS") &&
+			if depth == 0 && strings.EqualFold(query[start:i], "SELECT") {
+				selectSeen = true
+			}
+			// INSERT and CREATE TABLE can have their own SETTINGS before SELECT.
+			if depth == 0 && selectSeen && strings.EqualFold(query[start:i], "SETTINGS") &&
 				hasClickHouseSettingAssignment(query, i) {
 				return lastCode, true
 			}
@@ -173,7 +178,7 @@ func skipClickHouseTrivia(query string, i int) int {
 		switch {
 		case strings.ContainsRune(" \t\r\n", rune(query[i])):
 			i++
-		case strings.HasPrefix(query[i:], "--") || query[i] == '#':
+		case strings.HasPrefix(query[i:], "--") || strings.HasPrefix(query[i:], "//") || query[i] == '#':
 			for i < len(query) && query[i] != '\n' {
 				i++
 			}
