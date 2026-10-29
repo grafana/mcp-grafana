@@ -245,6 +245,8 @@ type GetTempoTraceParams struct {
 	FocusSpanID   *string `json:"focus_span_id,omitempty" jsonschema:"description=Optional 16-character hexadecimal span ID to select initially. The full trace remains available."`
 	DatasourceUID string  `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	TraceID       string  `json:"trace_id" jsonschema:"required,description=Trace ID to retrieve"`
+	Start         string  `json:"start,omitempty" jsonschema:"description=Optional start of the trace search range in RFC3339 format. Must be provided with end. Narrowing the range makes the lookup much cheaper."`
+	End           string  `json:"end,omitempty" jsonschema:"description=Optional end of the trace search range in RFC3339 format. Must be provided with start."`
 }
 
 type DiffTempoTracesParams struct {
@@ -415,7 +417,21 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
-	body, err := backend.doGet(ctx, "/api/v2/traces/"+url.PathEscape(args.TraceID), nil)
+	start, end, err := parseOptionalTimeRange(args.Start, args.End, "start", "end")
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+	var query url.Values
+	if start != nil {
+		// Tempo's trace-by-ID endpoint takes unix seconds; round end up so the range stays inclusive.
+		sec := int64(time.Second)
+		query = url.Values{
+			"start": {strconv.FormatInt(*start/sec, 10)},
+			"end":   {strconv.FormatInt((*end+sec-1)/sec, 10)},
+		}
+	}
+
+	body, err := backend.doGet(ctx, "/api/v2/traces/"+url.PathEscape(args.TraceID), query)
 	if err != nil {
 		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}

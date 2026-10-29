@@ -371,6 +371,50 @@ func TestTempoGetTrace(t *testing.T) {
 	assert.Equal(t, "application/vnd.grafana.llm", capturedAccept, "should request LLM format without JSON fallback")
 }
 
+func TestTempoGetTrace_TimeRange(t *testing.T) {
+	var capturedQuery url.Values
+
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"batches":[{"resource":{"attributes":[]},"scopeSpans":[]}]}`))
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
+		"datasourceUid": "test-tempo",
+		"trace_id":      "abc123def456",
+		"start":         "2022-01-01T00:00:00Z",
+		"end":           "2022-01-02T00:00:00Z",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+	assert.Equal(t, "1640995200", capturedQuery.Get("start"))
+	assert.Equal(t, "1641081600", capturedQuery.Get("end"))
+}
+
+func TestTempoGetTrace_TimeRangeRequiresBoth(t *testing.T) {
+	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("request should not be sent")
+	})
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	result, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
+		"datasourceUid": "test-tempo",
+		"trace_id":      "abc123def456",
+		"start":         "2022-01-01T00:00:00Z",
+	}))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	assert.Equal(t, `arguments "start" and "end" must be provided together`, result.Content[0].(*mcp.TextContent).Text)
+}
+
 func TestTempoGetTrace_NotFound(t *testing.T) {
 	// Tempo's v2 trace-by-ID endpoint returns 200 with an empty trace for unknown IDs.
 	for name, body := range map[string]string{
