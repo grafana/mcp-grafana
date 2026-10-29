@@ -22,7 +22,7 @@ func TestCreateContactPointIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(baseCtx, time.Minute)
 	defer cancel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	AddAlertingTools(srv, true)
+	AddAlertingTools(srv, func(string) bool { return true })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := srv.Connect(ctx, serverTransport, nil)
 	require.NoError(t, err)

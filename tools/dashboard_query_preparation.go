@@ -51,7 +51,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery, err = substituteInspectionMacros(substituteTemplateVariableValues(query.Query, values), query.Datasource.Type, from, to)
+		query.ProcessedQuery, err = substituteInspectionMacros(substituteQueryTemplateVariableValues(query.Query, values, query.Datasource.Type), query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
