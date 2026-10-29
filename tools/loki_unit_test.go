@@ -3,12 +3,48 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLokiClientFetchPatternsLevels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/loki/api/v1/patterns", r.URL.Path)
+		assert.Equal(t, `{job="app"}`, r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":[
+			{"pattern":"request completed <_>","level":"info","samples":[[1700000000,3],[1700000060,4]]},
+			{"pattern":"request failed <_>","level":"error","samples":[[1700000000,2],[1700000060,5]]},
+			{"pattern":"request received <_>","samples":[[1700000000,6]]},
+			{"pattern":"request pending <_>","level":"","samples":[]}
+		]}`))
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: server.Client(), baseURL: server.URL}
+	patterns, err := client.fetchPatterns(context.Background(), `{job="app"}`, "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, []Pattern{
+		{Pattern: "request completed <_>", TotalCount: 7, Level: "info"},
+		{Pattern: "request failed <_>", TotalCount: 7, Level: "error"},
+		{Pattern: "request received <_>", TotalCount: 6},
+		{Pattern: "request pending <_>", TotalCount: 0},
+	}, patterns)
+
+	encoded, err := json.Marshal(patterns)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"pattern":"request completed <_>","totalCount":7,"level":"info"},
+		{"pattern":"request failed <_>","totalCount":7,"level":"error"},
+		{"pattern":"request received <_>","totalCount":6},
+		{"pattern":"request pending <_>","totalCount":0}
+	]`, string(encoded))
+}
 
 func TestEnforceLogLimit(t *testing.T) {
 	tests := []struct {

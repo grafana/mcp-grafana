@@ -337,9 +337,10 @@ func TestPrometheusQueries(t *testing.T) {
 		oneHour := time.Hour
 
 		firstSampleTime := matrix[0].Values[0].Timestamp
-		// Check that the start timestamp is within the expected range
-		assert.True(t, firstSampleTime >= beforeQuery.Add(-oneHour),
-			"First timestamp should be after or equal to the time before the query minus one hour")
+		// Grafana aligns the range start down to a multiple of the step, so the
+		// first sample can precede the requested start by up to one step.
+		assert.True(t, firstSampleTime >= beforeQuery.Add(-oneHour).Add(-time.Minute),
+			"First timestamp should be no more than one query step before the time before the query minus one hour")
 		assert.True(t, firstSampleTime <= afterQuery.Add(buffer).Add(-oneHour),
 			"First timestamp should be before or equal to the time after the query minus one hour (with 5s buffer)")
 
