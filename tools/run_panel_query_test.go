@@ -827,6 +827,24 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			expected: "increase(requests[1h30m])",
 		},
 		{
+			name:     "range_keeps_seconds",
+			query:    "increase(requests[$__range])",
+			duration: 90 * time.Second,
+			expected: "increase(requests[1m30s])",
+		},
+		{
+			name:     "range_keeps_minutes_and_seconds",
+			query:    "increase(requests[$__range])",
+			duration: 2*time.Hour + 30*time.Minute + 45*time.Second,
+			expected: "increase(requests[2h30m45s])",
+		},
+		{
+			name:     "interval_matches_interval_ms",
+			query:    "rate(requests[$__interval]) * $__interval_ms",
+			duration: 3 * time.Hour,
+			expected: "rate(requests[1m48s]) * 108000", // 10800/100 = 108s
+		},
+		{
 			name:     "rate_interval",
 			query:    "rate(requests[$__rate_interval])",
 			duration: time.Hour,
@@ -959,6 +977,10 @@ func TestFormatPrometheusDuration(t *testing.T) {
 		{"hours_only", 3 * time.Hour, "3h"},
 		{"hours_and_minutes", 90 * time.Minute, "1h30m"},
 		{"complex", 2*time.Hour + 15*time.Minute, "2h15m"},
+		{"minutes_and_seconds", 90 * time.Second, "1m30s"},
+		{"hours_minutes_and_seconds", time.Hour + 30*time.Second, "1h30s"},
+		{"over_a_day", 25*time.Hour + 36*time.Second, "25h36s"},
+		{"zero", 0, "0s"},
 	}
 
 	for _, tt := range tests {
