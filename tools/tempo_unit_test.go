@@ -1120,6 +1120,26 @@ func TestTempoGetTrace_TimeRange(t *testing.T) {
 	assert.Equal(t, "1641081600000", (*payload)["to"])
 }
 
+// Tempo looks traces up by unix second and the datasource floors both bounds,
+// so a sub-second end (e.g. startTimeMs + durationMs from search) is rounded
+// up to keep the trace inside the window.
+func TestTempoGetTrace_TimeRangeRoundsEndUp(t *testing.T) {
+	ts, cleanup, payload := tempoDSQueryServer(t, tempoTracesFrame(t, nil))
+	defer cleanup()
+
+	call := tempoTestContext(t, ts.URL)
+	_, err := call(makeTempoRequest("get_tempo_trace", map[string]any{
+		"datasourceUid": "test-tempo",
+		"trace_id":      "abc123def456",
+		"start":         "2022-01-01T00:00:00.400Z",
+		"end":           "2022-01-01T00:00:00.900Z",
+	}))
+
+	require.NoError(t, err)
+	assert.Equal(t, "1640995200000", (*payload)["from"])
+	assert.Equal(t, "1640995201000", (*payload)["to"])
+}
+
 func TestTempoGetTrace_TimeRangeRequiresBoth(t *testing.T) {
 	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("request should not be sent")

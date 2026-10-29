@@ -438,7 +438,11 @@ func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallTool
 	// Zero bounds make Tempo look the trace up across all time.
 	from, to := time.UnixMilli(0), time.UnixMilli(0)
 	if start != nil {
-		from, to = time.Unix(0, *start), time.Unix(0, *end)
+		// Tempo's trace-by-ID lookup takes unix seconds and the datasource
+		// floors both bounds; round end up so the range stays inclusive.
+		sec := int64(time.Second)
+		from = time.Unix(*start/sec, 0)
+		to = time.Unix((*end+sec-1)/sec, 0)
 	}
 	frames, err := backend.dsQuery(ctx, from, to, map[string]any{"queryType": "traceId", "query": args.TraceID})
 	if err != nil {
