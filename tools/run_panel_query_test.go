@@ -1606,3 +1606,14 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
 	assert.Equal(t, `sum(count_over_time({app="a"}[1m]))`, query.Get("query"))
 	assert.Equal(t, "60", query.Get("step"), "step must equal $__auto")
 }
+
+// Over 24h the interval is 864s, which $__auto renders as "14m"; the step must be 840.
+func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
+	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, `sum(count_over_time({app="a"}[14m]))`, query.Get("query"))
+	assert.Equal(t, "840", query.Get("step"), "step must equal $__auto")
+}

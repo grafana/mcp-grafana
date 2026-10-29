@@ -1013,14 +1013,14 @@ func macroInterval(start, end time.Time) time.Duration {
 	return max(end.Sub(start)/100, time.Second)
 }
 
-// autoInterval is macroInterval rounded the way it is written into the query for $__auto, so a
-// step derived from it matches the substituted window.
+// autoInterval is the duration $__auto is written as in the query. It parses the formatted string
+// back, so a step derived from it always matches the substituted window.
 func autoInterval(start, end time.Time) time.Duration {
 	d := macroInterval(start, end)
-	if d < time.Minute {
-		return d.Truncate(time.Second)
+	if parsed, err := time.ParseDuration(formatPrometheusDuration(d)); err == nil {
+		return parsed
 	}
-	return d.Truncate(time.Minute)
+	return d
 }
 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
