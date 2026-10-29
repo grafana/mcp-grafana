@@ -37,7 +37,7 @@ func quoteUnquotedLabelValues(s string) string {
 }
 
 type alertRuleSummary struct {
-	UID            string            `json:"uid"`
+	UID            string            `json:"uid,omitempty"`
 	Title          string            `json:"title"`
 	Type           string            `json:"type,omitempty"`
 	State          string            `json:"state,omitempty"`
@@ -46,6 +46,7 @@ type alertRuleSummary struct {
 	RuleGroup      string            `json:"rule_group,omitempty"`
 	For            string            `json:"for,omitempty"`
 	LastEvaluation string            `json:"last_evaluation,omitempty"`
+	LastError      string            `json:"last_error,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 	Annotations    map[string]string `json:"annotations,omitempty"`
 	// Query is the rule expression. Populated for datasource-managed rules
@@ -53,6 +54,10 @@ type alertRuleSummary struct {
 	// rules where the expression is split across multiple AlertQuery nodes
 	// and exposed via the 'get' operation instead.
 	Query string `json:"query,omitempty"`
+	// Namespace is the ruler namespace of a datasource-managed rule (the
+	// rules API "file" field). Mimir and Loki identify a rule group by
+	// namespace + group name, so group names alone can collide.
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // alertRuleDetail is the enriched response for a single rule, combining
