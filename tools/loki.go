@@ -93,9 +93,15 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	// fallback_transport.go for the per-mode retry rules).
 	var rt http.RoundTripper
 	if legacyMode {
+		// Both legacy routes are proxy routes, which expect the full Loki path.
 		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
 	} else {
-		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+		// Grafana's Loki /resources handler prepends /loki/api/v1/ to the path
+		// it receives, so the API prefix belongs to the rewritten part:
+		// /proxy/uid/{uid}/loki/api/v1/query_range falls back to
+		// /resources/query_range, not /resources/loki/api/v1/query_range
+		// (which reaches Loki doubled and gets its UI page back).
+		rt = newDatasourceFallbackTransport(transport, primaryBase+lokiAPIPathPrefix, fallbackBase)
 	}
 
 	client := &http.Client{
@@ -107,6 +113,9 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 		baseURL:    url,
 	}, nil
 }
+
+// lokiAPIPathPrefix is the path prefix of every native Loki API route.
+const lokiAPIPathPrefix = "/loki/api/v1"
 
 // lokiQueryTags is sent as the X-Query-Tags header on every Loki request.
 const lokiQueryTags = "Source=mcp-grafana"
