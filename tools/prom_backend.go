@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -57,21 +59,26 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 	switch ds.Type {
 	case "stackdriver":
 		return newCloudMonitoringBackend(ctx, ds, proj)
-	case victoriaMetricsDatasourceType:
-		return newVictoriaMetricsBackend(ctx, uid, ds)
 	case "tempo":
 		return nil, fmt.Errorf("datasource %s is of type %q, which is not a supported Prometheus-compatible datasource", uid, ds.Type)
 	default:
-		// For prometheus, thanos, cortex, mimir, and any other Prometheus-compatible datasource,
-		// use the native Prometheus client via the datasource proxy.
+		// For prometheus, thanos, cortex, mimir, VictoriaMetrics and any other
+		// Prometheus-compatible datasource.
 		return newPrometheusBackend(ctx, uid, ds)
 	}
 }
 
-// prometheusBackend wraps the Prometheus client library, talking to the
-// datasource via Grafana's datasource proxy (/api/datasources/uid/{uid}/resources).
+// prometheusBackend runs queries through Grafana's /api/ds/query endpoint, so
+// they go through the query service like dashboard and Explore queries. Discovery
+// calls (labels, metric names, metadata) use the Prometheus client library via
+// the datasource resources/proxy routes.
 type prometheusBackend struct {
 	api promv1.API
+
+	httpClient *http.Client
+	baseURL    string
+	dsUID      string
+	dsType     string
 }
 
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
@@ -84,11 +91,12 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		// The datasource was resolved through the frontend-settings fallback,
 		// meaning this deployment's metadata API is inaccessible — in practice
 		// Grafana before 9.0, which has no uid-based routes at all (8.x answers
-		// them with a 400 "id is invalid", 7.x with a 500). Route through the
-		// numeric-id proxy path directly, keeping the uid-based proxy route
-		// only as the transport-level fallback for the opposite case: a newer
-		// Grafana with an RBAC-restricted token, where the numeric routes may
-		// be disabled (404, off by default since Grafana 13).
+		// them with a 400 "id is invalid", 7.x with a 500). Route discovery
+		// calls through the numeric-id proxy path directly, keeping the
+		// uid-based proxy route only as the transport-level fallback for the
+		// opposite case: a newer Grafana with an RBAC-restricted token, where
+		// the numeric routes may be disabled (404, off by default since
+		// Grafana 13). Queries always use /api/ds/query.
 		primaryBase, fallbackBase = numericBase, uidBase
 		legacyMode = true
 	}
@@ -96,10 +104,11 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 
 	// A nil base selects cfg.HTTPTransport(), so an embedder's BaseTransport
 	// (tracing, connection pooling, limits) applies here as for other tools.
-	rt, err := mcpgrafana.BuildTransport(&cfg, nil)
+	baseRT, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
+	rt := baseRT
 
 	// Only convert POST→GET if the datasource is configured to use GET.
 	// The Prometheus client library sends POST first and only falls back to GET
@@ -130,31 +139,205 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("creating Prometheus client: %w", err)
 	}
 
-	return &prometheusBackend{api: promv1.NewAPI(c)}, nil
+	dsUID := ds.UID
+	if dsUID == "" {
+		dsUID = uid
+	}
+
+	return &prometheusBackend{
+		api: promv1.NewAPI(c),
+		// No client timeout, as on the proxy client: queries are bounded by
+		// ctx and Grafana's own datasource timeout.
+		httpClient: &http.Client{Transport: baseRT, CheckRedirect: refuseRedirect},
+		baseURL:    grafanaURL,
+		dsUID:      dsUID,
+		dsType:     ds.Type,
+	}, nil
 }
 
+// Query executes a PromQL query via Grafana's /api/ds/query endpoint.
 func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
-	switch queryType {
-	case "range":
-		step := time.Duration(stepSeconds) * time.Second
-		result, warnings, _, err := b.api.QueryRange(ctx, expr, promv1.Range{
-			Start: start,
-			End:   end,
-			Step:  step,
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("querying Prometheus range: %w", promErrorWithDetail(err))
-		}
-		return result, warnings, nil
-	case "instant":
-		result, warnings, _, err := b.api.Query(ctx, expr, end)
-		if err != nil {
-			return nil, nil, fmt.Errorf("querying Prometheus instant: %w", promErrorWithDetail(err))
-		}
-		return result, warnings, nil
-	default:
+	if queryType != "instant" && queryType != "range" {
 		return nil, nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
+
+	if start.IsZero() && end.IsZero() {
+		end = time.Now()
+	}
+	if start.IsZero() {
+		start = end
+	}
+	if end.Before(start) {
+		end = start
+	}
+
+	step := stepSeconds
+	if step == 0 {
+		step = 60
+	}
+
+	datasource := map[string]string{"uid": b.dsUID}
+	if b.dsType != "" {
+		datasource["type"] = b.dsType
+	}
+	query := map[string]interface{}{
+		"refId":      "A",
+		"datasource": datasource,
+		"expr":       expr,
+		"instant":    queryType == "instant",
+		"range":      queryType == "range",
+		"interval":   fmt.Sprintf("%ds", step),
+		"intervalMs": int64(step) * 1000,
+		// Without this Grafana assumes 100 points and widens the step to
+		// fit; 11000 is Prometheus' own per-series limit.
+		"maxDataPoints": 11000,
+	}
+
+	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, end, query))
+	if err != nil {
+		return nil, nil, fmt.Errorf("querying Prometheus %s: %w", queryType, err)
+	}
+	if hasStringFrames(resp) {
+		return nil, nil, fmt.Errorf("querying Prometheus %s: string results are not supported through Grafana's query service", queryType)
+	}
+
+	warnings := frameWarnings(resp)
+	histograms := takeHistogramFrames(resp)
+	v, err := framesToPrometheusValue(resp, queryType)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(histograms) > 0 {
+		v, err = appendNativeHistograms(v, histograms)
+		if err != nil {
+			return nil, nil, err
+		}
+		warnings = append(warnings, nativeHistogramSumWarning)
+	}
+	return v, warnings, nil
+}
+
+// hasStringFrames reports whether the response holds a string result.
+func hasStringFrames(resp *backend.QueryDataResponse) bool {
+	for _, r := range resp.Responses {
+		for _, frame := range r.Frames {
+			for _, f := range frame.Fields {
+				if f.Type() == data.FieldTypeString || f.Type() == data.FieldTypeNullableString {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// nativeHistogramSumWarning is returned with native histograms, whose sum
+// Grafana drops when it converts them to frames.
+const nativeHistogramSumWarning = "native histogram sums are not available through Grafana's query service: each histogram's sum is reported as 0, and its count is the sum of its bucket counts"
+
+// takeHistogramFrames removes the native-histogram frames from the response
+// and returns them. Grafana returns each native-histogram series as a
+// "heatmap-cells" frame with one row per bucket: xMax (time), yMin and yMax
+// (bucket bounds), count, and yLayout (the bucket boundary rule).
+func takeHistogramFrames(resp *backend.QueryDataResponse) data.Frames {
+	r, ok := resp.Responses["A"]
+	if !ok {
+		return nil
+	}
+	var histograms, rest data.Frames
+	for _, frame := range r.Frames {
+		if frame.Meta != nil && frame.Meta.Type == "heatmap-cells" {
+			histograms = append(histograms, frame)
+		} else {
+			rest = append(rest, frame)
+		}
+	}
+	r.Frames = rest
+	resp.Responses["A"] = r
+	return histograms
+}
+
+// appendNativeHistograms converts native-histogram frames to histogram
+// samples and adds them to v, a model.Vector or model.Matrix.
+func appendNativeHistograms(v model.Value, frames data.Frames) (model.Value, error) {
+	for _, frame := range frames {
+		metric, pairs, err := histogramFrameToPairs(frame)
+		if err != nil {
+			return nil, err
+		}
+		switch val := v.(type) {
+		case model.Vector:
+			if len(pairs) > 0 {
+				last := pairs[len(pairs)-1]
+				v = append(val, &model.Sample{Metric: metric, Timestamp: last.Timestamp, Histogram: last.Histogram})
+			}
+		case model.Matrix:
+			v = append(val, &model.SampleStream{Metric: metric, Histograms: pairs})
+		}
+	}
+	return v, nil
+}
+
+// histogramFrameToPairs groups a native-histogram frame's bucket rows by
+// timestamp.
+func histogramFrameToPairs(frame *data.Frame) (model.Metric, []model.SampleHistogramPair, error) {
+	fields := map[string]*data.Field{}
+	for _, f := range frame.Fields {
+		fields[f.Name] = f
+	}
+	ts, lower, upper, count, layout := fields["xMax"], fields["yMin"], fields["yMax"], fields["count"], fields["yLayout"]
+	if ts == nil || lower == nil || upper == nil || count == nil || layout == nil {
+		return nil, nil, fmt.Errorf("unexpected native histogram frame: want fields xMax, yMin, yMax, count and yLayout")
+	}
+
+	var pairs []model.SampleHistogramPair
+	for i := 0; i < frame.Rows(); i++ {
+		t, ok := toMillis(ts.At(i))
+		if !ok {
+			continue
+		}
+		lo, err1 := lower.FloatAt(i)
+		hi, err2 := upper.FloatAt(i)
+		c, err3 := count.FloatAt(i)
+		boundaries, err4 := layout.FloatAt(i)
+		if err := errors.Join(err1, err2, err3, err4); err != nil {
+			return nil, nil, fmt.Errorf("reading native histogram bucket: %w", err)
+		}
+		if len(pairs) == 0 || pairs[len(pairs)-1].Timestamp != model.Time(t) {
+			pairs = append(pairs, model.SampleHistogramPair{Timestamp: model.Time(t), Histogram: &model.SampleHistogram{}})
+		}
+		h := pairs[len(pairs)-1].Histogram
+		h.Count += model.FloatString(c)
+		h.Buckets = append(h.Buckets, &model.HistogramBucket{
+			Boundaries: int32(boundaries),
+			Lower:      model.FloatString(lo),
+			Upper:      model.FloatString(hi),
+			Count:      model.FloatString(c),
+		})
+	}
+	return buildMetricFromLabels(count.Labels, frame.Name), pairs, nil
+}
+
+// frameWarnings collects the warnings Grafana attaches to response frames as
+// notices (e.g. partial responses from a Thanos store), deduplicated because
+// Grafana copies each warning onto every frame.
+func frameWarnings(resp *backend.QueryDataResponse) promv1.Warnings {
+	var warnings promv1.Warnings
+	seen := map[string]bool{}
+	for _, r := range resp.Responses {
+		for _, frame := range r.Frames {
+			if frame.Meta == nil {
+				continue
+			}
+			for _, n := range frame.Meta.Notices {
+				if n.Severity == data.NoticeSeverityWarning && !seen[n.Text] {
+					seen[n.Text] = true
+					warnings = append(warnings, n.Text)
+				}
+			}
+		}
+	}
+	return warnings
 }
 
 func (b *prometheusBackend) LabelNames(ctx context.Context, matchers []string, start, end time.Time) ([]string, error) {

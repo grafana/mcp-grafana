@@ -20,7 +20,7 @@ import (
 func routingTestSession(t *testing.T, ctx context.Context, enableWriteTools bool) *mcp.ClientSession {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	AddAlertingTools(srv, enableWriteTools)
+	AddAlertingTools(srv, func(string) bool { return enableWriteTools })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := srv.Connect(ctx, serverTransport, nil)
 	require.NoError(t, err)

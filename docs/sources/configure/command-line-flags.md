@@ -119,7 +119,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
 - `--enable-query`: Keep the raw-SQL query tools registered under `--disable-write` (refer to the following section).
-- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, or `generate_deeplink`. Has no effect on a tool whose whole category is disabled.
+- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, `generate_deeplink`, or the alerting write tools `alerting_rules_write`, `alerting_routing_write`, and `alerting_silences_write`. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
 - `--disable-quickwit`: Disable Quickwit tools.
@@ -137,7 +137,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-cloudwatch`: Disable CloudWatch tools.
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools.
 - `--disable-examples`: Disable query examples tools.
-- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
+- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-tempo`: Disable Tempo tracing tools.
@@ -235,6 +235,8 @@ When enabled, the following writes are disabled:
 - `alerting_rules_write` (create, update, delete)
 - `alerting_silences_write` (create, update, delete)
 - `alerting_routing_write` (create_contact_point)
+
+Each alerting write tool can be kept individually with `--enable-write-tools=<name>`.
 
 **OnCall tools**
 

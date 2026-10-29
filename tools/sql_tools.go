@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -123,6 +125,34 @@ func fillDatasourceDefaults(ds *models.DataSource, catalog, database, region *st
 	}
 }
 
+// BigQuery uses different datasource settings from the other SQL plugins. Do not
+// let its defaults change the behavior of existing dialects.
+func fillBigQueryDefaults(ds *models.DataSource, database, location *string) {
+	if ds.Type != sql.BigQueryDatasourceType {
+		return
+	}
+	if database != nil && *database == "" {
+		*database = jsonDataString(ds, "defaultProject")
+	}
+	if location != nil && *location == "" {
+		*location = jsonDataString(ds, "processingLocation")
+	}
+}
+
+func formatBigQueryTemplateVariable(values []string, format string) string {
+	name, _, _ := strings.Cut(format, ":")
+	if name != "sqlstring" {
+		return formatTemplateVariable(values, format)
+	}
+	// GoogleSQL supports double-quoted strings with backslash escapes, not
+	// the doubled-apostrophe SQL literals used by the shared formatter.
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = strconv.Quote(value)
+	}
+	return strings.Join(quoted, ",")
+}
+
 func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQueryResult, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
 	if err != nil {
@@ -135,6 +165,7 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 	}
 
 	fillDatasourceDefaults(ds, &args.Catalog, &args.Database, &args.Region)
+	fillBigQueryDefaults(ds, nil, &args.Location)
 
 	now := time.Now()
 	fromTime := now.Add(-1 * time.Hour)
@@ -166,7 +197,7 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 	for name, value := range args.Variables {
 		variables[name] = []string{value}
 	}
-	processedQuery = substituteTemplateVariableValues(processedQuery, variables)
+	processedQuery = substituteQueryTemplateVariableValues(processedQuery, variables, ds.Type)
 	processedQuery = dialect.EnforceLimit(processedQuery, args.Limit)
 
 	qr, err := newQueryRunner(ctx)
@@ -217,6 +248,7 @@ func listSQLDatabasesHandler(ctx context.Context, args sql.ListSQLDatabasesParam
 		return nil, err
 	}
 
+	fillBigQueryDefaults(ds, &args.Database, nil)
 	return dialect.ListDatabases(ctx, qr, ds.Type, args)
 }
 
@@ -237,7 +269,7 @@ func listSQLTablesHandler(ctx context.Context, args sql.ListSQLTablesParams) (*s
 	}
 
 	fillDatasourceDefaults(ds, &args.Catalog, &args.Database, &args.Region)
-
+	fillBigQueryDefaults(ds, &args.Database, nil)
 	return dialect.ListTables(ctx, qr, ds.Type, args)
 }
 
@@ -258,19 +290,13 @@ func describeSQLTableHandler(ctx context.Context, args sql.DescribeSQLTableParam
 	}
 
 	fillDatasourceDefaults(ds, &args.Catalog, &args.Database, &args.Region)
-
+	fillBigQueryDefaults(ds, &args.Database, nil)
 	return dialect.DescribeTable(ctx, qr, ds.Type, args)
 }
 
 var QuerySQL = mcpgrafana.MustTool(
 	"query_sql",
-	`Query a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL) via Grafana.
-
-Supports datasource-specific macros: $__timeFilter(column), $__from/$__to, $__interval, ${varname}
-
-Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
-
-Example: SELECT timestamp, message FROM logs WHERE $__timeFilter(timestamp) LIMIT 100`,
+	"Query ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, or BigQuery via Grafana. Supports datasource-specific time macros and template variables. BigQuery requires qualified project.dataset.table references; billing uses the datasource project.",
 	querySQLHandler,
 	mcpgrafana.WithTitleAnnotation("Query SQL"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
@@ -282,7 +308,7 @@ Example: SELECT timestamp, message FROM logs WHERE $__timeFilter(timestamp) LIMI
 
 var ListSQLDatabases = mcpgrafana.MustTool(
 	"list_sql_databases",
-	"List databases, schemas, or catalogs from a supported SQL datasource. Returns the organizational units (databases, schemas, or catalogs) that contain tables. For Athena: omit catalog to list catalogs, or pass catalog to list databases in it.",
+	"List databases, schemas, or catalogs. Athena: omit catalog to list catalogs; set it to list databases. BigQuery: list datasets in database (project), defaulting to datasource config.",
 	listSQLDatabasesHandler,
 	mcpgrafana.WithTitleAnnotation("List SQL databases"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -294,7 +320,7 @@ var ListSQLDatabases = mcpgrafana.MustTool(
 
 var ListSQLTables = mcpgrafana.MustTool(
 	"list_sql_tables",
-	"List tables from a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Returns table names, schemas, and metadata.",
+	"List SQL tables and available metadata. BigQuery returns table/view names only; schema is the required dataset and database is the project.",
 	listSQLTablesHandler,
 	mcpgrafana.WithTitleAnnotation("List SQL tables"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
@@ -306,7 +332,7 @@ var ListSQLTables = mcpgrafana.MustTool(
 
 var DescribeSQLTable = mcpgrafana.MustTool(
 	"describe_sql_table",
-	"Get column schema for a table in a supported SQL datasource (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Returns column names and types.",
+	"Describe SQL columns: names, types, and available metadata. BigQuery includes nested field paths and descriptions; schema is the required dataset and database is the project.",
 	describeSQLTableHandler,
 	mcpgrafana.WithTitleAnnotation("Describe SQL table"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
