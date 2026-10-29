@@ -50,12 +50,34 @@ func TestClickHouseLimitBeforeSettings(t *testing.T) {
 		{"clause comments", "SELECT 1 SETTINGS /* spacing */ max_threads /* name */ = 1", 1, "SELECT 1 LIMIT 1 SETTINGS /* spacing */ max_threads /* name */ = 1"},
 		{"quoted setting", "SELECT 1 SETTINGS `max_threads` = 1", 1, "SELECT 1 LIMIT 1 SETTINGS `max_threads` = 1"},
 		{"plain", "SELECT 1", 1, "SELECT 1 LIMIT 1"},
+		{"from first", "FROM numbers(10) SETTINGS max_threads=1", 1, "FROM numbers(10) LIMIT 1 SETTINGS max_threads=1"},
+		{"from first with comment", "/* SELECT */ from numbers(10) // comment\nsettings max_threads=1", 1, "/* SELECT */ from numbers(10) LIMIT 1 // comment\nsettings max_threads=1"},
+		{"from first existing maximum", "FROM numbers(10) LIMIT 5000 SETTINGS max_threads=1", 1, "FROM numbers(10) LIMIT 1000 SETTINGS max_threads=1"},
+		{"from first explicit select", "FROM numbers(10) SELECT number SETTINGS max_threads=1", 1, "FROM numbers(10) SELECT number LIMIT 1 SETTINGS max_threads=1"},
+		{"from first cte", "WITH t AS (SELECT 1) FROM t SETTINGS max_threads=1", 1, "WITH t AS (SELECT 1) FROM t LIMIT 1 SETTINGS max_threads=1"},
+		{"from table named infile", "FROM infile SETTINGS max_threads=1", 1, "FROM infile LIMIT 1 SETTINGS max_threads=1"},
+		{"explain from first", "EXPLAIN SYNTAX FROM numbers(10) SETTINGS max_threads=1", 1, "EXPLAIN SYNTAX FROM numbers(10) LIMIT 1 SETTINGS max_threads=1"},
+		{"insert from first", "INSERT INTO t SETTINGS max_threads=2 FROM numbers(10) SETTINGS max_threads=1", 1, "INSERT INTO t SETTINGS max_threads=2 FROM numbers(10) LIMIT 1 SETTINGS max_threads=1"},
+		{"create from first", "CREATE TABLE t ENGINE=MergeTree ORDER BY tuple() SETTINGS index_granularity=8192 AS FROM numbers(10) SETTINGS max_threads=1", 1, "CREATE TABLE t ENGINE=MergeTree ORDER BY tuple() SETTINGS index_granularity=8192 AS FROM numbers(10) LIMIT 1 SETTINGS max_threads=1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := d.EnforceLimit(tt.query, tt.limit)
 			assert.Equal(t, tt.want, got)
 			assert.Equal(t, got, d.EnforceLimit(got, tt.limit), "projection must be idempotent")
+		})
+	}
+}
+
+func TestClickHouseSettingsStartNonQueryFrom(t *testing.T) {
+	for _, query := range []string{
+		"INSERT INTO t FROM INFILE 'data.csv' SETTINGS max_threads=1 FORMAT CSV",
+		"INSERT INTO t FROM /* comment */ INFILE 'data.csv' SETTINGS max_threads=1 FORMAT CSV",
+		"DELETE FROM t WHERE x=1 SETTINGS max_threads=1",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, found := clickHouseSettingsStart(query)
+			assert.False(t, found, "non-query SETTINGS must not be relocated")
 		})
 	}
 }

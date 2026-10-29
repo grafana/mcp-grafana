@@ -82,12 +82,12 @@ func (d *clickHouseDialect) EnforceLimit(query string, limit int) string {
 var clickHouseHeredoc = regexp.MustCompile(`^\$[a-zA-Z0-9_]*\$`)
 
 // clickHouseSettingsStart finds the end of the expression before a SETTINGS clause
-// belonging to a top-level SELECT. Keep intervening comments in the suffix, so an
-// inserted LIMIT cannot become part of a trailing line comment. This only locates
-// SETTINGS; the shared limit helper retains its existing handling of LIMIT expressions.
+// belonging to a top-level SELECT or FROM-first query. Keep intervening comments
+// in the suffix, so an inserted LIMIT cannot become part of a trailing line comment.
+// This only locates SETTINGS; the shared helper retains its handling of LIMIT expressions.
 func clickHouseSettingsStart(query string) (int, bool) {
 	depth, lastCode := 0, 0
-	selectSeen := false
+	querySeen, fromFirstAllowed := false, false
 	for i := 0; i < len(query); {
 		if next := skipClickHouseTrivia(query, i); next > i {
 			i = next
@@ -119,11 +119,29 @@ func clickHouseSettingsStart(query string) (int, bool) {
 			for i < len(query) && isClickHouseWordByte(query[i]) {
 				i++
 			}
-			if depth == 0 && strings.EqualFold(query[start:i], "SELECT") {
-				selectSeen = true
+			if lastCode == 0 {
+				switch strings.ToUpper(query[start:i]) {
+				case "FROM", "WITH", "INSERT", "CREATE", "EXPLAIN":
+					fromFirstAllowed = true
+				}
 			}
-			// INSERT and CREATE TABLE can have their own SETTINGS before SELECT.
-			if depth == 0 && selectSeen && strings.EqualFold(query[start:i], "SETTINGS") &&
+			if depth == 0 && strings.EqualFold(query[start:i], "SELECT") {
+				querySeen = true
+			}
+			if depth == 0 && fromFirstAllowed && strings.EqualFold(query[start:i], "FROM") {
+				next := skipClickHouseTrivia(query, i)
+				end := next
+				for end < len(query) && isClickHouseWordByte(query[end]) {
+					end++
+				}
+				filename := skipClickHouseTrivia(query, end)
+				// FROM INFILE belongs to INSERT, not its source query.
+				if !strings.EqualFold(query[next:end], "INFILE") || filename == len(query) || query[filename] != '\'' {
+					querySeen = true
+				}
+			}
+			// INSERT and CREATE TABLE can have settings before their source query.
+			if depth == 0 && querySeen && strings.EqualFold(query[start:i], "SETTINGS") &&
 				hasClickHouseSettingAssignment(query, i) {
 				return lastCode, true
 			}
