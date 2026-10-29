@@ -10,7 +10,7 @@ Add other categories to the comma-separated list as needed. `--disable-query` or
 
 ## Tools
 
-- `get_tempo_trace(trace_id, datasourceUid, focus_span_id?)` retrieves a Tempo trace and displays a virtualized waterfall, span filtering, attributes and exception details. The optional focus span selects an initial span without filtering the trace. The datasource must be Tempo.
+- `get_tempo_trace(trace_id, datasourceUid, focus_span_id?, start?, end?)` retrieves a Tempo trace and displays a virtualized waterfall, span filtering, attributes and exception details. The optional focus span selects an initial span without filtering the trace. The datasource must be Tempo.
 - `query_prometheus(expr, datasourceUid, …)` displays the query result as a chart. The visualization is derived from the shape of the response and the metric's unit, never from a model-supplied argument:
 
   | Response | View |
