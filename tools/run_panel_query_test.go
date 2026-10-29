@@ -1582,3 +1582,16 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 	assert.Equal(t, "my-cluster", result[0])
 	assert.Equal(t, "static-value", result[1])
 }
+
+// Grafana replaces $__auto with the step of a Loki range query, so the step sent to Loki must
+// match the value substituted for $__auto. Otherwise Loki falls back to range/250 and
+// count_over_time windows overlap, counting each line more than once.
+func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
+	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, query.Get("query"))
+	assert.Equal(t, "36", query.Get("step"), "step must equal $__auto")
+}
