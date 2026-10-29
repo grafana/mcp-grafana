@@ -1055,20 +1055,23 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	return query
 }
 
-// formatPrometheusDuration formats a duration for Prometheus (e.g., "14m", "1h30m", "36s")
+// formatPrometheusDuration formats a duration for Prometheus and Loki (e.g. "14m", "1h30m",
+// "36s", "1m30s"). Every unit is kept, so the result matches the _s and _ms macros; only
+// sub-second precision is dropped.
 func formatPrometheusDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
+	secs := int64(d / time.Second)
+	hours, mins, rem := secs/3600, secs/60%60, secs%60
+	var b strings.Builder
+	if hours > 0 {
+		fmt.Fprintf(&b, "%dh", hours)
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
+	if mins > 0 {
+		fmt.Fprintf(&b, "%dm", mins)
 	}
-	hours := int(d.Hours())
-	mins := int(d.Minutes()) % 60
-	if mins == 0 {
-		return fmt.Sprintf("%dh", hours)
+	if rem > 0 || b.Len() == 0 {
+		fmt.Fprintf(&b, "%ds", rem)
 	}
-	return fmt.Sprintf("%dh%dm", hours, mins)
+	return b.String()
 }
 
 // isVariableReference checks if a string is a Grafana variable reference
