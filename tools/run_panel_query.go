@@ -658,6 +658,8 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Limit:         100,
 		Direction:     "backward",
 		QueryType:     "range",
+		// $__auto is substituted with this interval, and Grafana defines it as the step.
+		StepSeconds: int(autoInterval(startTime, endTime) / time.Second),
 	})
 	if err != nil {
 		return nil, err
@@ -1005,6 +1007,22 @@ func dsQueryResponsesError(responses backend.Responses) error {
 	return errors.New(strings.Join(failures, "; "))
 }
 
+// macroInterval is the value of $__interval and $__auto: the time range over ~100 data points,
+// at least one second.
+func macroInterval(start, end time.Time) time.Duration {
+	return max(end.Sub(start)/100, time.Second)
+}
+
+// autoInterval is the duration $__auto is written as in the query. It parses the formatted string
+// back, so a step derived from it always matches the substituted window.
+func autoInterval(start, end time.Time) time.Duration {
+	d := macroInterval(start, end)
+	if parsed, err := time.ParseDuration(formatPrometheusDuration(d)); err == nil {
+		return parsed
+	}
+	return d
+}
+
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
 // used across datasource types (Prometheus, Loki, etc.)
 func substituteGrafanaMacros(query string, start, end time.Time) string {
@@ -1031,11 +1049,7 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
 	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
 
-	// Calculate interval based on time range / max data points (~100 points)
-	interval := duration / 100
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := macroInterval(start, end)
 
 	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
 	intervalMs := int64(interval / time.Millisecond)

@@ -1604,3 +1604,38 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 	assert.Equal(t, "my-cluster", result[0])
 	assert.Equal(t, "static-value", result[1])
 }
+
+// Grafana replaces $__auto with the step of a Loki range query, so the step sent to Loki must
+// match the value substituted for $__auto. Otherwise Loki falls back to range/250 and
+// count_over_time windows overlap, counting each line more than once.
+func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
+	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, query.Get("query"))
+	assert.Equal(t, "36", query.Get("step"), "step must equal $__auto")
+}
+
+// Over 3h the interval is 108s, which $__auto renders as "1m"; the step must match that, not 108.
+func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
+	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, `sum(count_over_time({app="a"}[1m]))`, query.Get("query"))
+	assert.Equal(t, "60", query.Get("step"), "step must equal $__auto")
+}
+
+// Over 24h the interval is 864s, which $__auto renders as "14m"; the step must be 840.
+func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
+	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, `sum(count_over_time({app="a"}[14m]))`, query.Get("query"))
+	assert.Equal(t, "840", query.Get("step"), "step must equal $__auto")
+}
