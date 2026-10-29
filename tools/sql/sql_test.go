@@ -51,6 +51,7 @@ func TestEnforceSQLLimit(t *testing.T) {
 		{"negative uses default", "SELECT * FROM t", -1, "SELECT * FROM t LIMIT 100"},
 		{"trailing line comment", "SELECT * FROM t -- c", 100, "SELECT * FROM t -- c\nLIMIT 100"},
 		{"trailing hash comment", "SELECT * FROM t # c", 100, "SELECT * FROM t # c\nLIMIT 100"},
+		{"trailing slash comment", "SELECT * FROM t // c", 100, "SELECT * FROM t // c\nLIMIT 100"},
 		{"comment on earlier line", "SELECT * -- c\nFROM t", 100, "SELECT * -- c\nFROM t LIMIT 100"},
 	}
 
