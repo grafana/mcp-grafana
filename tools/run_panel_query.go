@@ -659,7 +659,7 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Direction:     "backward",
 		QueryType:     "range",
 		// $__auto is substituted with this interval, and Grafana defines it as the step.
-		StepSeconds: int(macroInterval(startTime, endTime) / time.Second),
+		StepSeconds: int(autoInterval(startTime, endTime) / time.Second),
 	})
 	if err != nil {
 		return nil, err
@@ -1011,6 +1011,16 @@ func dsQueryResponsesError(responses backend.Responses) error {
 // at least one second.
 func macroInterval(start, end time.Time) time.Duration {
 	return max(end.Sub(start)/100, time.Second)
+}
+
+// autoInterval is macroInterval rounded the way it is written into the query for $__auto, so a
+// step derived from it matches the substituted window.
+func autoInterval(start, end time.Time) time.Duration {
+	d := macroInterval(start, end)
+	if d < time.Minute {
+		return d.Truncate(time.Second)
+	}
+	return d.Truncate(time.Minute)
 }
 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
