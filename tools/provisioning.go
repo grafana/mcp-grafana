@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -279,61 +280,17 @@ type fileValidationResponse struct {
 }
 
 func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFileParams) (*ProvisioningFileValidation, error) {
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	if cfg.URL == "" {
-		return nil, fmt.Errorf("grafana URL is not configured")
-	}
-	if err := validateRepoSlug("repo", args.Repo); err != nil {
-		return nil, err
-	}
-	if err := validateRepoPath("path", args.Path); err != nil {
-		return nil, err
-	}
-
-	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build transport: %w", err)
-	}
-
-	// The namespace is derived from the request's org (default / org-N /
-	// stacks-{id}); an orgId override selects a different org. The resolved
-	// value is trusted and url.PathEscape'd into the URL below, so this slug
-	// check is just a sanity guard that surfaces a malformed namespace as a
-	// clear error instead of an opaque API failure.
-	ns, err := mcpgrafana.GrafanaNamespace(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateRepoSlug("namespace", ns); err != nil {
-		return nil, err
-	}
-	escapedPath := (&url.URL{Path: strings.TrimLeft(args.Path, "/")}).EscapedPath()
-	endpoint := strings.TrimRight(cfg.URL, "/") + fmt.Sprintf(
-		"/apis/provisioning.grafana.app/v0alpha1/namespaces/%s/repositories/%s/files/%s",
-		url.PathEscape(ns), url.PathEscape(args.Repo), escapedPath,
-	)
+	query := url.Values{}
 	if args.Ref != "" {
-		endpoint += "?" + url.Values{"ref": []string{args.Ref}}.Encode()
+		query.Set("ref", args.Ref)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	statusCode, body, err := provisioningFileRequest(ctx, http.MethodGet, args.Repo, args.Path, query, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, err
 	}
-	resp, err := (&http.Client{Transport: transport}).Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
 	// Success / partial-content path: file parses and dry-run apply succeeded
 	// (the latter is implied by a 2xx response from this endpoint).
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
+	if statusCode == http.StatusOK || statusCode == http.StatusPartialContent {
 		var raw fileValidationResponse
 		if err := json.Unmarshal(body, &raw); err != nil {
 			return nil, fmt.Errorf("decode response: %w", err)
@@ -358,7 +315,7 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 	// verdict on the file, so they bubble up as a tool error even when the
 	// body happens to be a Status object.
 	var status k8sStatus
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+	if statusCode >= 400 && statusCode < 500 &&
 		json.Unmarshal(body, &status) == nil && status.Kind == "Status" {
 		out := &ProvisioningFileValidation{Valid: false}
 		if len(status.Details.Causes) > 0 {
@@ -378,7 +335,82 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 		return out, nil
 	}
 
-	return nil, fmt.Errorf("validate file: HTTP %d - %s", resp.StatusCode, string(body))
+	return nil, fmt.Errorf("validate file: HTTP %d - %s", statusCode, string(body))
+}
+
+// provisioningFileRequest calls the files endpoint of a provisioning
+// repository and returns the status code and body. GET reads (and dry-runs) a
+// file; POST, PUT and DELETE commit to the repository.
+func provisioningFileRequest(ctx context.Context, method, repo, filePath string, query url.Values, reqBody []byte) (int, []byte, error) {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	if cfg.URL == "" {
+		return 0, nil, fmt.Errorf("grafana URL is not configured")
+	}
+	if err := validateRepoSlug("repo", repo); err != nil {
+		return 0, nil, err
+	}
+	if err := validateRepoPath("path", filePath); err != nil {
+		return 0, nil, err
+	}
+
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return 0, nil, fmt.Errorf("build transport: %w", err)
+	}
+
+	// The namespace is derived from the request's org (default / org-N /
+	// stacks-{id}); an orgId override selects a different org. The resolved
+	// value is trusted and url.PathEscape'd into the URL below, so this slug
+	// check is just a sanity guard that surfaces a malformed namespace as a
+	// clear error instead of an opaque API failure.
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := validateRepoSlug("namespace", ns); err != nil {
+		return 0, nil, err
+	}
+	escapedPath := (&url.URL{Path: strings.TrimLeft(filePath, "/")}).EscapedPath()
+	endpoint := strings.TrimRight(cfg.URL, "/") + fmt.Sprintf(
+		"/apis/provisioning.grafana.app/v0alpha1/namespaces/%s/repositories/%s/files/%s",
+		url.PathEscape(ns), url.PathEscape(repo), escapedPath,
+	)
+	if len(query) > 0 {
+		endpoint += "?" + query.Encode()
+	}
+
+	var bodyReader io.Reader
+	if reqBody != nil {
+		bodyReader = bytes.NewReader(reqBody)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bodyReader)
+	if err != nil {
+		return 0, nil, fmt.Errorf("create request: %w", err)
+	}
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("do request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return 0, nil, fmt.Errorf("read response: %w", err)
+	}
+	return resp.StatusCode, body, nil
+}
+
+// provisioningErrorMessage turns a failed files API response into a readable
+// message, preferring the k8s Status message when the body is one.
+func provisioningErrorMessage(statusCode int, body []byte) string {
+	var status k8sStatus
+	if json.Unmarshal(body, &status) == nil && status.Kind == "Status" && status.Message != "" {
+		return fmt.Sprintf("HTTP %d - %s", statusCode, status.Message)
+	}
+	return fmt.Sprintf("HTTP %d - %s", statusCode, string(body))
 }
 
 var ValidateProvisioningFile = mcpgrafana.MustTool(

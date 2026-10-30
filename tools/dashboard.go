@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"regexp"
 	"slices"
 	"sort"
@@ -376,6 +377,7 @@ type UpdateDashboardParams struct {
 	Message   string `json:"message,omitempty" jsonschema:"description=Set a commit message for the version history"`
 	Overwrite bool   `json:"overwrite,omitempty" jsonschema:"description=Overwrite the dashboard if it exists. Otherwise create one"`
 	UserID    int64  `json:"userId,omitempty" jsonschema:"description=ID of the user making the change"`
+	Ref       string `json:"ref,omitempty" jsonschema:"description=Git Sync only: branch to commit a repository-managed dashboard to. Omit to commit to the repository's configured branch\\, which Grafana applies at once. A new branch name opens a branch to review and merge."`
 }
 
 // updateDashboard intelligently handles dashboard updates using either full JSON or patch operations.
@@ -411,6 +413,9 @@ func updateDashboardContent(ctx context.Context, args UpdateDashboardParams) (*m
 		return updateDashboardWithPatches(ctx, args)
 	} else if args.Dashboard != nil {
 		// Full dashboard update: use the provided JSON
+		if res, handled, err := saveFullJSONToRepoIfManaged(ctx, args); handled || err != nil {
+			return res, err
+		}
 		if err := rejectV1BodyOverV2Stored(ctx, args.Dashboard); err != nil {
 			return nil, err
 		}
@@ -464,6 +469,15 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		default:
 			return nil, fmt.Errorf("operation %d: unsupported operation '%s'", i, op.Op)
 		}
+	}
+
+	// Grafana rejects direct writes to Git Sync managed dashboards; commit the
+	// change to the repository file instead.
+	if src := repoSourceOf(res.Object); src != nil {
+		if args.FolderUID != "" && res.Meta != nil && args.FolderUID != res.Meta.FolderUID {
+			return nil, fmt.Errorf("dashboard %q is managed by repository %q; moving it to another folder means moving its file, which update_dashboard does not do", args.UID, src.Repo)
+		}
+		return saveDashboardToRepo(ctx, http.MethodPut, *src, res.APIVersion, args.UID, dashboardMap, args)
 	}
 
 	// v2 dashboards are written back through the Kubernetes API to preserve the
@@ -920,7 +934,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Minimal v2 body: {\"title\":\"T\",\"timeSettings\":{\"from\":\"now-6h\",\"to\":\"now\"},\"variables\":[],\"elements\":{\"p1\":{\"kind\":\"Panel\",\"spec\":{\"id\":1,\"title\":\"Up\",\"vizConfig\":{\"kind\":\"VizConfig\",\"group\":\"timeseries\",\"spec\":{}},\"data\":{\"kind\":\"QueryGroup\",\"spec\":{\"queries\":[{\"kind\":\"PanelQuery\",\"spec\":{\"refId\":\"A\",\"query\":{\"kind\":\"DataQuery\",\"group\":\"prometheus\",\"datasource\":{\"name\":\"<ds uid>\"},\"spec\":{\"expr\":\"up\"}}}}]}}}}},\"layout\":{\"kind\":\"GridLayout\",\"spec\":{\"items\":[{\"kind\":\"GridLayoutItem\",\"spec\":{\"x\":0,\"y\":0,\"width\":24,\"height\":8,\"element\":{\"kind\":\"ElementReference\",\"name\":\"p1\"}}}]}}}. For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
+	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Git Sync: a dashboard in a repository-managed folder is saved by committing its file to the repository (pass 'ref' to commit to a review branch instead of the configured branch). A dashboard that already exists outside the repository cannot be saved into such a folder until it is deleted. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Minimal v2 body: {\"title\":\"T\",\"timeSettings\":{\"from\":\"now-6h\",\"to\":\"now\"},\"variables\":[],\"elements\":{\"p1\":{\"kind\":\"Panel\",\"spec\":{\"id\":1,\"title\":\"Up\",\"vizConfig\":{\"kind\":\"VizConfig\",\"group\":\"timeseries\",\"spec\":{}},\"data\":{\"kind\":\"QueryGroup\",\"spec\":{\"queries\":[{\"kind\":\"PanelQuery\",\"spec\":{\"refId\":\"A\",\"query\":{\"kind\":\"DataQuery\",\"group\":\"prometheus\",\"datasource\":{\"name\":\"<ds uid>\"},\"spec\":{\"expr\":\"up\"}}}}]}}}}},\"layout\":{\"kind\":\"GridLayout\",\"spec\":{\"items\":[{\"kind\":\"GridLayoutItem\",\"spec\":{\"x\":0,\"y\":0,\"width\":24,\"height\":8,\"element\":{\"kind\":\"ElementReference\",\"name\":\"p1\"}}}]}}}. For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
 	updateDashboard,
 	mcpgrafana.WithTitleAnnotation("Create or update dashboard"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
