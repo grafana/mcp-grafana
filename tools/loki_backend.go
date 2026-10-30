@@ -2,13 +2,17 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
 
 // lokiBackend abstracts the differences between datasource types that serve
@@ -92,9 +96,17 @@ func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, err
 	}
 }
 
-// lokiNativeBackend wraps the existing Loki HTTP client to satisfy lokiBackend.
+// lokiNativeBackend runs log and metric queries through Grafana's
+// /api/ds/query endpoint, so they go through the query service like dashboard
+// and Explore queries. Label, stats and patterns calls use the Loki HTTP client
+// via the datasource proxy/resources routes.
 type lokiNativeBackend struct {
 	client *Client
+
+	httpClient *http.Client
+	baseURL    string
+	dsUID      string
+	dsType     string
 }
 
 func newLokiNativeBackend(ctx context.Context, uid string, ds *models.DataSource) (*lokiNativeBackend, error) {
@@ -102,7 +114,21 @@ func newLokiNativeBackend(ctx context.Context, uid string, ds *models.DataSource
 	if err != nil {
 		return nil, err
 	}
-	return &lokiNativeBackend{client: c}, nil
+	httpClient, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dsUID := ds.UID
+	if dsUID == "" {
+		dsUID = uid
+	}
+	return &lokiNativeBackend{
+		client:     c,
+		httpClient: httpClient,
+		baseURL:    baseURL,
+		dsUID:      dsUID,
+		dsType:     ds.Type,
+	}, nil
 }
 
 func formatRFC3339OrEmpty(t time.Time) string {
@@ -134,61 +160,315 @@ func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*
 	if err != nil {
 		return nil, err
 	}
-	response, err := b.client.fetchQuery(ctx, fetchQueryParams{
-		Query:       enforcedQuery,
-		QueryType:   p.QueryType,
-		Start:       formatRFC3339OrEmpty(p.Start),
-		End:         formatRFC3339OrEmpty(p.End),
-		Limit:       p.Limit,
-		Direction:   p.Direction,
-		StepSeconds: p.StepSeconds,
-	})
+	p.Query = enforcedQuery
+
+	result, err := b.queryLogsViaDSQuery(ctx, p)
 	if err != nil {
 		return nil, err
 	}
 
-	entries, err := parseLokiQueryResponse(response)
-	if err != nil {
-		return nil, err
-	}
 	// Loki groups results by stream, so flattening does not preserve global time order.
 	// Sort before queryLokiLogs trims the page to the requested limit.
-	if response.Data.ResultType == "streams" {
-		type timedEntry struct {
-			log       LogEntry
-			timestamp int64
+	if result.ResultType == "streams" {
+		if err := sortLogEntries(result.Entries, p.Direction); err != nil {
+			return nil, err
 		}
-		ordered := make([]timedEntry, len(entries))
-		for i, entry := range entries {
-			timestamp, err := strconv.ParseInt(entry.Timestamp, 10, 64)
+	}
+	return result, nil
+}
+
+// queryLogsViaDSQuery runs the query through Grafana's /api/ds/query endpoint.
+func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQueryParams) (*lokiQueryResult, error) {
+	start, end := p.Start, p.End
+	if p.QueryType == "instant" {
+		// Like the proxy path, evaluate at end if given, else start, else now.
+		if end.IsZero() {
+			end = start
+		}
+		if end.IsZero() {
+			end = time.Now()
+		}
+		start = end
+	} else {
+		if end.IsZero() {
+			end = time.Now()
+		}
+		if start.IsZero() {
+			start = end
+		}
+	}
+
+	datasource := map[string]string{"uid": b.dsUID}
+	if b.dsType != "" {
+		datasource["type"] = b.dsType
+	}
+	queryType := p.QueryType
+	if queryType != "instant" {
+		queryType = "range"
+	}
+	query := map[string]interface{}{
+		"refId":      "A",
+		"datasource": datasource,
+		"expr":       p.Query,
+		"queryType":  queryType,
+		"direction":  p.Direction,
+		// Becomes X-Query-Tags: Source=mcp-grafana on the request to Loki.
+		"supportingQueryType": lokiQuerySource,
+	}
+	if p.StepSeconds > 0 {
+		query["step"] = fmt.Sprintf("%ds", p.StepSeconds)
+	} else if queryType == "range" {
+		// Without a step Grafana picks one from its default 1s interval, far
+		// finer than Loki's own default of range/250, so send Loki's default.
+		query["step"] = fmt.Sprintf("%ds", max(int(end.Sub(start).Seconds()/250), 1))
+	}
+
+	if queryType == "instant" {
+		resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, ceilMillis(end), query))
+		if err != nil {
+			return nil, fmt.Errorf("querying Loki: %w", err)
+		}
+		return lokiFramesToResult(resp, queryType)
+	}
+
+	// /api/ds/query only takes millisecond bounds, but callers page through
+	// logs with exact nanosecond timestamps. Widen the range to whole
+	// milliseconds (Loki ranges are [start, end)) and trim the extra lines.
+	// Loki applies maxLines to the widened range, so lines in the extra
+	// millisecond at the leading edge can use up the page; when that happens,
+	// ask for more lines until the page is full or Loki runs out.
+	to := ceilMillis(end)
+	forward := strings.EqualFold(p.Direction, "forward")
+	maxLines := p.Limit
+	for attempt := 0; ; attempt++ {
+		query["maxLines"] = maxLines
+		resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, to, query))
+		if err != nil {
+			return nil, fmt.Errorf("querying Loki: %w", err)
+		}
+		result, err := lokiFramesToResult(resp, queryType)
+		if err != nil || result.ResultType != "streams" {
+			return result, err
+		}
+		returned := len(result.Entries)
+		// leading counts trimmed lines that Loki returns before in-range
+		// ones: past end when paging backward, before start when forward.
+		// Lines trimmed at the trailing edge mean Loki ran out of in-range
+		// lines, so they are no reason to ask again.
+		leading := 0
+		kept := result.Entries[:0]
+		for _, e := range result.Entries {
+			ts, err := strconv.ParseInt(e.Timestamp, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("invalid Loki stream timestamp %q: %w", entry.Timestamp, err)
+				return nil, fmt.Errorf("invalid Loki stream timestamp %q: %w", e.Timestamp, err)
 			}
-			ordered[i] = timedEntry{log: entry, timestamp: timestamp}
-		}
-		forward := strings.EqualFold(p.Direction, "forward")
-		sort.SliceStable(ordered, func(i, j int) bool {
-			if forward {
-				return ordered[i].timestamp < ordered[j].timestamp
+			switch {
+			case ts >= start.UnixNano() && ts < end.UnixNano():
+				kept = append(kept, e)
+			case (ts >= end.UnixNano()) != forward:
+				leading++
 			}
-			return ordered[i].timestamp > ordered[j].timestamp
-		})
-		for i, entry := range ordered {
-			entries[i] = entry.log
 		}
+		result.Entries = kept
+		// ponytail: capped retries; a sub-millisecond burst larger than
+		// a few pages can still end the page early.
+		if returned < maxLines || len(kept) >= p.Limit || leading == 0 || attempt == 3 {
+			return result, nil
+		}
+		// Loki returns the leading-edge lines first, so this many extra
+		// lines cover them; adding to the previous maxLines would overshoot.
+		maxLines = p.Limit + leading
+	}
+}
+
+// ceilMillis rounds t up to the next whole millisecond.
+func ceilMillis(t time.Time) time.Time {
+	ms := t.Truncate(time.Millisecond)
+	if ms.Before(t) {
+		ms = ms.Add(time.Millisecond)
+	}
+	return ms
+}
+
+// lokiFramesToResult converts the frames Grafana's Loki datasource returns
+// into LogEntry values. Log queries return one frame with labels, Time, Line,
+// tsNs and labelTypes fields; metric queries return one frame per series.
+func lokiFramesToResult(resp *backend.QueryDataResponse, queryType string) (*lokiQueryResult, error) {
+	result := &lokiQueryResult{Entries: []LogEntry{}, ResultType: "matrix"}
+	if queryType == "instant" {
+		result.ResultType = "vector"
+	}
+	r, ok := resp.Responses["A"]
+	if !ok {
+		return result, nil
+	}
+	if err := dsQueryResponsesError(resp.Responses); err != nil {
+		return nil, fmt.Errorf("querying Loki: %w", err)
 	}
 
-	var linesScanned *int
-	if response.Data.Stats != nil {
-		val := response.Data.Stats.Summary.TotalLinesProcessed
-		linesScanned = &val
+	for _, frame := range r.Frames {
+		if result.TotalLinesScanned == nil && frame.Meta != nil {
+			for _, s := range frame.Meta.Stats {
+				if s.DisplayName == "Summary: total lines processed" {
+					v := int(s.Value)
+					result.TotalLinesScanned = &v
+				}
+			}
+		}
+
+		// Log frames have a Line field, or body when Grafana's
+		// lokiLogsDataplane flag is on; see lokiLogFrameEntries.
+		_, lineIdx := frame.FieldByName("Line")
+		_, bodyIdx := frame.FieldByName("body")
+		if lineIdx != -1 || bodyIdx != -1 {
+			result.ResultType = "streams"
+			entries, err := lokiLogFrameEntries(frame)
+			if err != nil {
+				return nil, err
+			}
+			result.Entries = append(result.Entries, entries...)
+			continue
+		}
+
+		timeIdx, valueIdx := findTimeAndValueFields(frame.Fields)
+		if timeIdx == -1 || valueIdx == -1 {
+			continue
+		}
+		labels := map[string]string(frame.Fields[valueIdx].Labels)
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		var values []MetricValue
+		for i := 0; i < frame.Rows(); i++ {
+			ts, tsOk := toMillis(frame.At(timeIdx, i))
+			val, valOk := toFloat(frame.At(valueIdx, i))
+			if !tsOk || !valOk {
+				continue
+			}
+			values = append(values, MetricValue{Timestamp: fmt.Sprintf("%.3f", float64(ts)/1000), Value: val})
+		}
+		if len(values) == 0 {
+			continue
+		}
+		if queryType == "instant" {
+			last := values[len(values)-1]
+			result.Entries = append(result.Entries, LogEntry{Timestamp: last.Timestamp, Value: &last.Value, Labels: labels})
+		} else {
+			result.Entries = append(result.Entries, LogEntry{Values: values, Labels: labels})
+		}
+	}
+	return result, nil
+}
+
+// lokiLogFrameEntries reads the rows of a Loki log frame. labelTypes marks
+// each label as indexed (I), structured metadata (S) or parsed (P); without
+// it (Loki before 3.0) every label is treated as a stream label.
+//
+// Grafana's lokiLogsDataplane feature flag renames Line to body and Time to
+// timestamp and drops tsNs; the timestamp
+// field still carries nanosecond precision, so both shapes are read.
+func lokiLogFrameEntries(frame *data.Frame) ([]LogEntry, error) {
+	field := func(names ...string) *data.Field {
+		for _, name := range names {
+			if f, _ := frame.FieldByName(name); f != nil {
+				return f
+			}
+		}
+		return nil
+	}
+	lineField, labelsField, typesField := field("Line", "body"), field("labels"), field("labelTypes")
+	tsNsField, timeField := field("tsNs"), field("timestamp", "Time")
+	if tsNsField == nil && timeField == nil {
+		return nil, fmt.Errorf("loki log frame has no timestamp field")
 	}
 
-	return &lokiQueryResult{
-		Entries:           entries,
-		ResultType:        response.Data.ResultType,
-		TotalLinesScanned: linesScanned,
-	}, nil
+	entries := make([]LogEntry, 0, frame.Rows())
+	for i := 0; i < frame.Rows(); i++ {
+		entry := LogEntry{Labels: map[string]string{}}
+		if v, ok := lineField.ConcreteAt(i); ok {
+			entry.Line, _ = v.(string)
+		}
+		if tsNsField != nil {
+			if v, ok := tsNsField.ConcreteAt(i); ok {
+				entry.Timestamp, _ = v.(string)
+			}
+		} else if v, ok := timeField.ConcreteAt(i); ok {
+			if t, ok := v.(time.Time); ok {
+				entry.Timestamp = strconv.FormatInt(t.UnixNano(), 10)
+			}
+		}
+
+		var labels, types map[string]string
+		if err := unmarshalJSONField(labelsField, i, &labels); err != nil {
+			return nil, fmt.Errorf("parsing Loki labels: %w", err)
+		}
+		if err := unmarshalJSONField(typesField, i, &types); err != nil {
+			return nil, fmt.Errorf("parsing Loki label types: %w", err)
+		}
+		for k, v := range labels {
+			switch types[k] {
+			case "S":
+				if entry.StructuredMetadata == nil {
+					entry.StructuredMetadata = map[string]string{}
+				}
+				entry.StructuredMetadata[k] = v
+			case "P":
+				if entry.Parsed == nil {
+					entry.Parsed = map[string]string{}
+				}
+				entry.Parsed[k] = v
+			default:
+				entry.Labels[k] = v
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// unmarshalJSONField decodes row i of a json.RawMessage frame field into v.
+// A missing field or null value leaves v untouched.
+func unmarshalJSONField(f *data.Field, i int, v interface{}) error {
+	if f == nil {
+		return nil
+	}
+	raw, ok := f.ConcreteAt(i)
+	if !ok {
+		return nil
+	}
+	msg, ok := raw.(json.RawMessage)
+	if !ok || len(msg) == 0 {
+		return nil
+	}
+	return json.Unmarshal(msg, v)
+}
+
+// sortLogEntries orders log entries by their nanosecond timestamps in the
+// requested direction.
+func sortLogEntries(entries []LogEntry, direction string) error {
+	type timedEntry struct {
+		log       LogEntry
+		timestamp int64
+	}
+	ordered := make([]timedEntry, len(entries))
+	for i, entry := range entries {
+		timestamp, err := strconv.ParseInt(entry.Timestamp, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid Loki stream timestamp %q: %w", entry.Timestamp, err)
+		}
+		ordered[i] = timedEntry{log: entry, timestamp: timestamp}
+	}
+	forward := strings.EqualFold(direction, "forward")
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if forward {
+			return ordered[i].timestamp < ordered[j].timestamp
+		}
+		return ordered[i].timestamp > ordered[j].timestamp
+	})
+	for i, entry := range ordered {
+		entries[i] = entry.log
+	}
+	return nil
 }
 
 func (b *lokiNativeBackend) QueryStats(ctx context.Context, query string, start, end time.Time) (*Stats, error) {

@@ -1609,33 +1609,36 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 // match the value substituted for $__auto. Otherwise Loki falls back to range/250 and
 // count_over_time windows overlap, counting each line more than once.
 func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
-	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	server, payload := lokiQueryStub()
 	defer server.Close()
 
 	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
 	require.NoError(t, err)
-	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, query.Get("query"))
-	assert.Equal(t, "36", query.Get("step"), "step must equal $__auto")
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, q["expr"])
+	assert.Equal(t, "36s", q["step"], "step must equal $__auto")
 }
 
 // Over 3h the interval is 108s, which $__auto renders as "1m48s"; the step must match it.
 func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
-	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	server, payload := lokiQueryStub()
 	defer server.Close()
 
 	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
 	require.NoError(t, err)
-	assert.Equal(t, `sum(count_over_time({app="a"}[1m48s]))`, query.Get("query"))
-	assert.Equal(t, "108", query.Get("step"), "step must equal $__auto")
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[1m48s]))`, q["expr"])
+	assert.Equal(t, "108s", q["step"], "step must equal $__auto")
 }
 
 // Over 24h the interval is 864s, which $__auto renders as "14m24s"; the step must match it.
 func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
-	server, query := lokiQueryStub(`{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	server, payload := lokiQueryStub()
 	defer server.Close()
 
 	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
 	require.NoError(t, err)
-	assert.Equal(t, `sum(count_over_time({app="a"}[14m24s]))`, query.Get("query"))
-	assert.Equal(t, "864", query.Get("step"), "step must equal $__auto")
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[14m24s]))`, q["expr"])
+	assert.Equal(t, "864s", q["step"], "step must equal $__auto")
 }
