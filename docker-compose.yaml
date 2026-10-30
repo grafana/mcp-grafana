@@ -43,13 +43,10 @@ services:
       timeout: 3s
       retries: 20
 
-  # grafana-legacy-8 runs Grafana 8.5, which predates the uid-based datasource
-  # routes (added in 9.0) and whose datasource metadata API is Org-Admin-only.
-  # Integration tests create a basic-auth editor user against it to exercise
-  # the frontend-settings datasource fallback and the numeric-id proxy routing
-  # (tools/legacy_grafana_integration_test.go).
-  grafana-legacy-8:
-    image: grafana/grafana:8.5.27@sha256:b43abed8a2b8c5a4055c3729d77ae11c9646c4b9feefb5c136b7c67dcdad21c0
+  # grafana-9 runs the oldest supported Grafana release. It shares the normal
+  # provisioning stack and is exposed on port 3003 for compatibility tests.
+  grafana-9:
+    image: grafana/grafana:9.0.9@sha256:65dbf52a84017d0c3c33feed4a1e9753c958c82d8d22ad183044844bbb5624cd
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_LEVEL: debug

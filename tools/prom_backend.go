@@ -84,22 +84,12 @@ type prometheusBackend struct {
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := trimTrailingSlash(cfg.URL)
-	resourcesBase, proxyBase := datasourceProxyPaths(uid)
-	primaryBase, fallbackBase := resourcesBase, proxyBase
-	legacyMode := false
-	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
-		// The datasource was resolved through the frontend-settings fallback,
-		// meaning this deployment's metadata API is inaccessible — in practice
-		// Grafana before 9.0, which has no uid-based routes at all (8.x answers
-		// them with a 400 "id is invalid", 7.x with a 500). Route discovery
-		// calls through the numeric-id proxy path directly, keeping the
-		// uid-based proxy route only as the transport-level fallback for the
-		// opposite case: a newer Grafana with an RBAC-restricted token, where
-		// the numeric routes may be disabled (404, off by default since
-		// Grafana 13). Queries always use /api/ds/query.
-		primaryBase, fallbackBase = numericBase, uidBase
-		legacyMode = true
+	dsUID := ds.UID
+	if dsUID == "" {
+		dsUID = uid
 	}
+	resourcesBase, proxyBase := datasourceProxyPaths(dsUID)
+	primaryBase, fallbackBase := resourcesBase, proxyBase
 	url := grafanaURL + primaryBase
 
 	// A nil base selects cfg.HTTPTransport(), so an embedder's BaseTransport
@@ -122,13 +112,8 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	}
 
 	// Wrap with fallback transport: try the primary base first, fall back to
-	// the alternate for compatibility with different Grafana deployments (see
-	// fallback_transport.go for the per-mode retry rules).
-	if legacyMode {
-		rt = newLegacyDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
-	} else {
-		rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
-	}
+	// the alternate for compatibility with different Grafana deployments.
+	rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
 
 	rt = &prometheusResponseLimitTransport{underlying: rt}
 	c, err := api.NewClient(api.Config{
@@ -137,11 +122,6 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating Prometheus client: %w", err)
-	}
-
-	dsUID := ds.UID
-	if dsUID == "" {
-		dsUID = uid
 	}
 
 	return &prometheusBackend{
