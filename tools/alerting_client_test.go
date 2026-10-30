@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 
 	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
@@ -455,4 +456,48 @@ func TestNewAlertingClientFromContext(t *testing.T) {
 	require.Equal(t, "http://localhost:3000", client.baseURL.String())
 	require.NotNil(t, client.httpClient)
 	require.NotNil(t, client.httpClient.Transport)
+}
+
+func TestAlertingClient_DatasourceRulesAuthenticationError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		wantTip bool
+	}{
+		{"datasource authentication", 400, `{"message":"Authentication to data source failed"}`, true},
+		{"ordinary bad request", 400, `{"message":"invalid query"}`, false},
+		{"unrelated message", 400, `{"message":"Authentication to data source failed during a previous request"}`, false},
+		{"caller authentication", 401, `{"message":"Unauthorized"}`, false},
+		{"server failure", 500, `{"message":"Authentication to data source failed"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/api/prometheus/prom-ds/api/v1/rules", r.URL.Path)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			defer server.Close()
+			_, err := client.GetDatasourceRules(t.Context(), "prom-ds", nil, "")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.body)
+			require.Contains(t, err.Error(), "status code "+strconv.Itoa(tc.status))
+			if tc.wantTip {
+				require.Contains(t, err.Error(), "datasource's credentials and ruler configuration")
+			} else {
+				require.NotContains(t, err.Error(), "datasource's credentials and ruler configuration")
+			}
+		})
+	}
+}
+
+func TestAlertingClient_GrafanaRulesDoesNotSuggestDatasourceCredentials(t *testing.T) {
+	server, client := setupMockServer(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"Authentication to data source failed"}`))
+	})
+	defer server.Close()
+	_, err := client.GetRules(t.Context(), nil)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "datasource's credentials and ruler configuration")
 }
