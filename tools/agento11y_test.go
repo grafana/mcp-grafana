@@ -477,3 +477,37 @@ func TestAgento11yManageGenerations(t *testing.T) {
 		})
 	}
 }
+
+func TestAgento11yMissingPlugin(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"plugin absent JSON", http.StatusNotFound, `{"message":"Plugin not found"}`, "plugin grafana-agento11y-app (Agent Observability) is not available"},
+		{"plugin absent text", http.StatusNotFound, "Plugin not found, no installed plugin with id grafana-agento11y-app", "plugin grafana-agento11y-app (Agent Observability) is not available"},
+		{"resource absent", http.StatusNotFound, `{"message":"experiment not found"}`, `request failed with status 404: {"message":"experiment not found"}`},
+		{"unknown route", http.StatusNotFound, "404 page not found", "request failed with status 404: 404 page not found"},
+		{"unrelated status", http.StatusForbidden, `{"message":"Plugin not found"}`, `request failed with status 403: {"message":"Plugin not found"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, ctx := setupMockAgento11yServer(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/experiments", r.URL.Path)
+				w.WriteHeader(tc.status)
+				_, err := w.Write([]byte(tc.body))
+				require.NoError(t, err)
+			})
+			defer server.Close()
+			client, err := newAgento11yClient(ctx)
+			require.NoError(t, err)
+			_, status, err := client.fetchAgento11yWithStatus(ctx, http.MethodGet, "/eval/experiments", nil, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.Equal(t, tc.status, status)
+			if tc.name == "plugin absent JSON" || tc.name == "plugin absent text" {
+				assert.Contains(t, err.Error(), "installed and enabled")
+			}
+		})
+	}
+}

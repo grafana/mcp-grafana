@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -85,6 +87,18 @@ func (c *Client) fetchAgento11yWithStatus(ctx context.Context, method, urlPath s
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusNotFound {
+			message := strings.TrimSpace(string(body))
+			var errorResponse struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(body, &errorResponse) == nil && errorResponse.Message != "" {
+				message = errorResponse.Message
+			}
+			if message == "Plugin not found" || message == "Plugin not found, no installed plugin with id grafana-agento11y-app" {
+				return nil, resp.StatusCode, errors.New("plugin grafana-agento11y-app (Agent Observability) is not available on this Grafana instance (HTTP 404); check that Agent Observability is installed and enabled")
+			}
+		}
 		return nil, resp.StatusCode, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
