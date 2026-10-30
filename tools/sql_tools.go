@@ -197,7 +197,7 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 	for name, value := range args.Variables {
 		variables[name] = []string{value}
 	}
-	processedQuery = substituteQueryTemplateVariableValues(processedQuery, variables, ds.Type)
+	processedQuery = substituteQueryTemplateVariableValues(processedQuery, variables, ds.Type, nil)
 	processedQuery = dialect.EnforceLimit(processedQuery, args.Limit)
 
 	qr, err := newQueryRunner(ctx)

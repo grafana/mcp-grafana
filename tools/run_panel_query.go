@@ -264,7 +264,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}
 
 	// Substitute variables in the query
-	query := substituteQueryTemplateVariableValues(panelData.Query, templateVariables, datasourceType)
+	query := substituteQueryTemplateVariableValues(panelData.Query, templateVariables, datasourceType, multiValueTemplateVariables(db))
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -335,11 +335,83 @@ type templateVariableValues map[string][]string
 
 // Select SQL literal quoting using the known datasource type, without lookups.
 // Keep non-SQL fields (datasource UIDs, locations, etc.) on generic interpolation.
-func substituteQueryTemplateVariableValues(query string, variables templateVariableValues, datasourceType string) string {
+// multi names the multi-value and include-All variables, which Grafana formats
+// as a list in unformatted references; nil keeps the first value.
+func substituteQueryTemplateVariableValues(query string, variables templateVariableValues, datasourceType string, multi map[string]bool) string {
+	formatter := formatTemplateVariable
 	if normalizeDatasourceType(datasourceType) == "bigquery" {
-		return substituteTemplateVariableValuesWithFormatter(query, variables, formatBigQueryTemplateVariable)
+		formatter = formatBigQueryTemplateVariable
 	}
-	return substituteTemplateVariableValues(query, variables)
+	return substituteFormattedTemplateVariables(query, variables, formatter, multiValueFormatter(datasourceType, multi))
+}
+
+// multiValueFormatter returns the datasource's default interpolation for an
+// unformatted reference to a multi-value or include-All variable, matching
+// Grafana's interpolateQueryExpr (Prometheus, Loki) and interpolateVariable
+// (PostgreSQL, MySQL, MSSQL). It returns nil for other datasources.
+func multiValueFormatter(datasourceType string, multi map[string]bool) func(string, []string) (string, bool) {
+	var format func([]string) string
+	switch normalizeDatasourceType(datasourceType) {
+	case "prometheus":
+		format = func(values []string) string { return regexAlternation(values, true) }
+	case "loki":
+		format = func(values []string) string { return regexAlternation(values, false) }
+	case "postgres", "mysql", "mssql":
+		format = formatSQLLiteralList
+	default:
+		return nil
+	}
+	return func(name string, values []string) (string, bool) {
+		if !multi[name] || len(values) == 0 {
+			return "", false
+		}
+		return format(values), true
+	}
+}
+
+var regexMetacharacters = regexp.MustCompile(`[$^*{}\[\]+?.()|]`)
+
+// regexAlternation escapes each value as Grafana's prometheusSpecialRegexEscape
+// and lokiSpecialRegexEscape do, doubling every escape because the result sits
+// inside a double-quoted string. Prometheus groups several values; Loki doesn't.
+func regexAlternation(values []string, group bool) string {
+	escaped := make([]string, len(values))
+	for i, value := range values {
+		value = strings.ReplaceAll(value, `\`, `\\\\`)
+		escaped[i] = regexMetacharacters.ReplaceAllString(value, `\\${0}`)
+	}
+	joined := strings.Join(escaped, "|")
+	if group && len(escaped) > 1 {
+		return "(" + joined + ")"
+	}
+	return joined
+}
+
+// formatSQLLiteralList quotes each value as Grafana's SQL quoteLiteral does.
+func formatSQLLiteralList(values []string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
+	return strings.Join(quoted, ",")
+}
+
+// multiValueTemplateVariables names the dashboard variables with multi-value or
+// include-All enabled.
+func multiValueTemplateVariables(db map[string]interface{}) map[string]bool {
+	multi := make(map[string]bool)
+	for _, item := range safeArray(safeObject(db, "templating"), "list") {
+		variable, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		isMulti, _ := variable["multi"].(bool)
+		includeAll, _ := variable["includeAll"].(bool)
+		if name := safeString(variable, "name"); name != "" && (isMulti || includeAll) {
+			multi[name] = true
+		}
+	}
+	return multi
 }
 
 // substituteTemplateVariableValues interpolates variables while retaining
@@ -351,6 +423,13 @@ func substituteTemplateVariableValues(query string, variables templateVariableVa
 }
 
 func substituteTemplateVariableValuesWithFormatter(query string, variables templateVariableValues, formatter func([]string, string) string) string {
+	return substituteFormattedTemplateVariables(query, variables, formatter, nil)
+}
+
+// substituteFormattedTemplateVariables formats explicitly formatted references with
+// formatter, and unformatted ones with unformatted when it applies, otherwise
+// as the first value.
+func substituteFormattedTemplateVariables(query string, variables templateVariableValues, formatter func([]string, string) string, unformatted func(string, []string) (string, bool)) string {
 	for name, values := range variables {
 		variableRe := regexp.MustCompile(fmt.Sprintf(
 			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
@@ -359,6 +438,11 @@ func substituteTemplateVariableValuesWithFormatter(query string, variables templ
 		query = variableRe.ReplaceAllStringFunc(query, func(match string) string {
 			format, hasFormat := templateVariableFormat(match)
 			if !hasFormat {
+				if unformatted != nil {
+					if formatted, ok := unformatted(name, values); ok {
+						return formatted
+					}
+				}
 				return firstTemplateVariableValue(values)
 			}
 			return formatter(values, format)
