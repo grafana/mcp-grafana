@@ -5,6 +5,8 @@ package tools
 import (
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,6 +67,19 @@ func TestTempoIntegration_MetricsRange(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError, "metrics range should not return error: %v", result)
+}
+
+func TestTempoIntegration_GetTrace_NotFound(t *testing.T) {
+	ctx := newTestContext()
+
+	result, err := getTempoTrace(ctx, GetTempoTraceParams{
+		DatasourceUID: tempoTestDatasourceUID,
+		TraceID:       "0000000000000000000000000000dead",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.IsError, "unknown trace should return tool error")
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "not found")
 }
 
 func TestTempoIntegration_GetAttributeNames(t *testing.T) {
