@@ -213,8 +213,8 @@ func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 		// Get datasource from target or fall back to panel level
 		dsInfo := panelDs
 		if targetDs := safeObject(target, "datasource"); targetDs != nil {
-			if uid := safeString(targetDs, "uid"); uid != "" {
-				dsInfo.UID = uid
+			if uid := safeString(targetDs, "uid"); uid != "" && uid != panelDs.UID {
+				dsInfo = datasourceInfo{UID: uid}
 			}
 			if dsType := safeString(targetDs, "type"); dsType != "" {
 				dsInfo.Type = dsType
