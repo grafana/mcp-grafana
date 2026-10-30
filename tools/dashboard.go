@@ -387,7 +387,8 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.P
 	if err != nil {
 		return nil, err
 	}
-	if dashboard != nil && dashboard.UID != nil && *dashboard.UID != "" {
+	// A commit to a review branch is not live until merged, so a link would 404.
+	if dashboard != nil && dashboard.UID != nil && *dashboard.UID != "" && args.Ref == "" {
 		// Return a user-facing link, including when Grafana is accessed internally.
 		// Keep the API's URL if no instance URL is available: the save succeeded.
 		if deeplink, err := generateDeeplink(ctx, GenerateDeeplinkParams{

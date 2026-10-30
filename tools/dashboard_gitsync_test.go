@@ -97,7 +97,7 @@ func TestUpdateDashboard_PatchOnRepoManagedDashboardCommitsFile(t *testing.T) {
 				"d1": k8sObject("Dashboard", "d1", repoManaged("team/d1.json"), map[string]interface{}{"title": "Old", "id": 7, "version": 3, "panels": []interface{}{}}),
 			}, nil)
 
-			res, err := updateDashboardContent(ctx, UpdateDashboardParams{
+			res, err := updateDashboard(ctx, UpdateDashboardParams{
 				UID:        "d1",
 				Operations: []PatchOperation{{Op: "replace", Path: "$.title", Value: "New"}},
 				Message:    "rename",
@@ -120,6 +120,7 @@ func TestUpdateDashboard_PatchOnRepoManagedDashboardCommitsFile(t *testing.T) {
 			assert.Equal(t, "d1", *res.UID)
 			if ref != "" {
 				assert.Contains(t, *res.Status, "merged")
+				assert.Nil(t, res.URL, "a review-branch commit has no live dashboard to link to")
 			}
 		})
 	}
