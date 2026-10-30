@@ -3,14 +3,30 @@
 package datasource
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/client"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func mockDatasourcesCtx(server *httptest.Server) context.Context {
+	u, _ := url.Parse(server.URL)
+	cfg := client.DefaultTransportConfig()
+	cfg.Host = u.Host
+	cfg.Schemes = []string{"http"}
+	cfg.APIKey = "test"
+
+	c := client.NewHTTPClientWithConfig(nil, cfg)
+	ctx := mcpgrafana.WithGrafanaClient(context.Background(), &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: c})
+	return mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfig{URL: server.URL})
+}
 
 func TestByUID_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,8 +41,8 @@ func TestByUID_NotFound(t *testing.T) {
 	assert.Equal(t, "datasource with UID 'missing' not found. Please check if the datasource exists and is accessible", err.Error())
 }
 
-// Only a 404 status means not found: other failures, even ones whose text
-// mentions 404, go through the frontend-settings fallback.
+// Only a 404 status means not found. Other failures remain server errors even
+// when their text mentions 404.
 func TestByUID_ServerErrorMentioning404IsNotNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -38,17 +54,4 @@ func TestByUID_ServerErrorMentioning404IsNotNotFound(t *testing.T) {
 	_, err := ByUID(mockDatasourcesCtx(server), "prom")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrNotFound), "got %v", err)
-}
-
-// When the metadata API is inaccessible, the fallback's not-found also
-// matches ErrNotFound.
-func TestFallbackNotFoundMatchesErrNotFound(t *testing.T) {
-	server := newFallbackTestServer()
-	defer server.Close()
-	ctx := mockDatasourcesCtx(server)
-
-	_, err := ByUID(ctx, "nope")
-	assert.ErrorIs(t, err, ErrNotFound)
-	_, err = ByName(ctx, "nope")
-	assert.ErrorIs(t, err, ErrNotFound)
 }

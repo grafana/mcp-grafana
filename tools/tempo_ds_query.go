@@ -387,8 +387,14 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 			return nil
 		}
 		v, _ := f.ConcreteAt(row)
-		msg, _ := v.(json.RawMessage)
-		return msg
+		switch v := v.(type) {
+		case json.RawMessage:
+			return v
+		case string:
+			return json.RawMessage(v)
+		default:
+			return nil
+		}
 	}
 
 	result := &tempoTrace{TraceID: traceID, Services: []tempoTraceService{}}
@@ -468,7 +474,16 @@ func tempoTraceFromFrames(traceID string, frames data.Frames) (*tempoTrace, []Tr
 			if err != nil {
 				return nil, nil, fmt.Errorf("parsing span event attributes: %w", err)
 			}
-			span.Events = append(span.Events, TraceEvent{Name: l.Name, TimeMS: l.Timestamp, Attributes: fields})
+			name := l.Name
+			if name == "" {
+				// Grafana 9 stores an event's name as the synthetic message
+				// field. Later releases provide the dedicated name property.
+				if message, ok := fields["message"].(string); ok {
+					name = message
+					delete(fields, "message")
+				}
+			}
+			span.Events = append(span.Events, TraceEvent{Name: name, TimeMS: l.Timestamp, Attributes: fields})
 		}
 		for _, r := range references {
 			tags, err := tempoKeyValues(r.Tags)

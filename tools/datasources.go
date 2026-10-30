@@ -716,14 +716,6 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	)
 	if err != nil {
-		// Health checks require the datasource metadata API and the
-		// per-datasource health endpoint (a uid-based route that only exists
-		// from Grafana 9.0). On deployments where the metadata API is
-		// inaccessible to this token (see internal/datasource), say so
-		// explicitly instead of surfacing a confusing permission error.
-		if datasource.FallbackAvailable(ctx) {
-			return nil, fmt.Errorf("checking datasource health is not supported on this Grafana deployment: the datasource metadata API is not accessible to this token, and health checks require it. Datasource discovery still works via the list_datasources tool")
-		}
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
