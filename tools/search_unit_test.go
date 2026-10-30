@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -230,5 +231,177 @@ func TestSearchDashboards_Filters(t *testing.T) {
 		ctx := mockSearchCtx(server)
 		_, err := searchDashboards(ctx, SearchDashboardsParams{})
 		require.NoError(t, err)
+	})
+}
+
+// testFolderTree is Ops/Production/Services plus look-alikes: "Opsx" checks
+// whole-segment matching, the second "Production" under Staging checks that
+// equal titles are told apart, and "orphan" sits under a parent the caller
+// cannot see.
+func testFolderTree() folderTree {
+	return folderTree{
+		"ops":          {title: "Ops"},
+		"ops-prod":     {title: "Production", parentUID: "ops"},
+		"ops-prod-svc": {title: "Services", parentUID: "ops-prod"},
+		"opsx":         {title: "Opsx"},
+		"staging":      {title: "Staging"},
+		"staging-prod": {title: "Production", parentUID: "staging"},
+		"orphan":       {title: "Orphan", parentUID: "hidden"},
+	}
+}
+
+func TestFolderTree_Path(t *testing.T) {
+	tree := testFolderTree()
+
+	assert.Equal(t, "Ops", tree.path("ops"))
+	assert.Equal(t, "Ops/Production/Services", tree.path("ops-prod-svc"))
+	assert.Equal(t, "Staging/Production", tree.path("staging-prod"))
+	assert.Empty(t, tree.path(""), "dashboards in the General folder have no path")
+	assert.Empty(t, tree.path("unknown"))
+	assert.Empty(t, tree.path("orphan"), "an incomplete chain must not look like a root path")
+
+	cyclic := folderTree{
+		"a": {title: "A", parentUID: "b"},
+		"b": {title: "B", parentUID: "a"},
+	}
+	assert.Empty(t, cyclic.path("a"))
+}
+
+func TestFolderTree_Subtree(t *testing.T) {
+	tree := testFolderTree()
+
+	assert.Equal(t, []string{"ops", "ops-prod", "ops-prod-svc"}, tree.subtree("Ops"))
+	assert.Equal(t, []string{"ops-prod", "ops-prod-svc"}, tree.subtree("ops/PRODUCTION"))
+	assert.Equal(t, []string{"ops-prod-svc"}, tree.subtree("Ops/Production/Services"))
+	assert.Empty(t, tree.subtree("Op"), "partial segments must not match")
+	assert.Empty(t, tree.subtree("Production"), "paths start at the root")
+	assert.Empty(t, tree.subtree("Orphan"))
+
+	dup := folderTree{
+		"a": {title: "Ops"},
+		"b": {title: "Ops"},
+	}
+	assert.Equal(t, []string{"a", "b"}, dup.subtree("Ops"), "folders sharing a path all match")
+}
+
+// folderSearchServer serves folders for type=dash-folder and dashboards for
+// type=dash-db, and records the dashboard search query.
+func folderSearchServer(t *testing.T, folders, dashboards models.HitList, dashQuery *url.Values) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		switch q.Get("type") {
+		case "dash-folder":
+			if q.Get("page") != "1" {
+				_ = json.NewEncoder(w).Encode(models.HitList{})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(folders)
+		case "dash-db":
+			if dashQuery != nil {
+				*dashQuery = q
+			}
+			_ = json.NewEncoder(w).Encode(dashboards)
+		default:
+			t.Errorf("unexpected search type %q", q.Get("type"))
+		}
+	}))
+}
+
+var testFolderHits = models.HitList{
+	{UID: "ops", Title: "Ops", Type: "dash-folder"},
+	{UID: "ops-prod", Title: "Production", FolderUID: "ops", Type: "dash-folder"},
+	{UID: "ops-prod-svc", Title: "Services", FolderUID: "ops-prod", Type: "dash-folder"},
+	{UID: "opsx", Title: "Opsx", Type: "dash-folder"},
+}
+
+func TestSearchDashboards_FolderPath(t *testing.T) {
+	t.Run("folderPath expands to the folder and its subfolders", func(t *testing.T) {
+		var dashQuery url.Values
+		server := folderSearchServer(t, testFolderHits, models.HitList{}, &dashQuery)
+		defer server.Close()
+
+		_, err := searchDashboards(mockSearchCtx(server), SearchDashboardsParams{FolderPath: "/ops/production/"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"ops-prod", "ops-prod-svc"}, dashQuery["folderUIDs"])
+	})
+
+	t.Run("unknown folderPath returns no dashboards without searching", func(t *testing.T) {
+		var dashQuery url.Values
+		server := folderSearchServer(t, testFolderHits, models.HitList{{UID: "d1"}}, &dashQuery)
+		defer server.Close()
+
+		result, err := searchDashboards(mockSearchCtx(server), SearchDashboardsParams{FolderPath: "Op"})
+		require.NoError(t, err)
+		assert.NotNil(t, result.Dashboards)
+		assert.Empty(t, result.Dashboards)
+		assert.Nil(t, dashQuery, "dashboard search must not run unfiltered")
+	})
+
+	t.Run("folderUid and folderPath together are rejected", func(t *testing.T) {
+		_, err := searchDashboards(context.Background(), SearchDashboardsParams{FolderUID: "ops", FolderPath: "Ops"})
+		require.Error(t, err)
+	})
+
+	t.Run("hits carry their folder path", func(t *testing.T) {
+		dashboards := models.HitList{
+			{UID: "d1", Title: "Keycloak", FolderUID: "ops-prod-svc", FolderTitle: "Services", Type: "dash-db"},
+			{UID: "d2", Title: "Home", Type: "dash-db"},
+		}
+		server := folderSearchServer(t, testFolderHits, dashboards, nil)
+		defer server.Close()
+
+		result, err := searchDashboards(mockSearchCtx(server), SearchDashboardsParams{Query: "k"})
+		require.NoError(t, err)
+		require.Len(t, result.Dashboards, 2)
+		assert.Equal(t, "Ops/Production/Services", result.Dashboards[0].FolderPath)
+		assert.Empty(t, result.Dashboards[1].FolderPath)
+	})
+
+	t.Run("folder listing failure leaves folder paths empty", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("type") == "dash-folder" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(models.HitList{{UID: "d1", FolderUID: "ops", Type: "dash-db"}})
+		}))
+		defer server.Close()
+
+		result, err := searchDashboards(mockSearchCtx(server), SearchDashboardsParams{Query: "d"})
+		require.NoError(t, err)
+		require.Len(t, result.Dashboards, 1)
+		assert.Empty(t, result.Dashboards[0].FolderPath)
+	})
+
+	t.Run("folder listing pages until a short page", func(t *testing.T) {
+		var pages []string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			w.Header().Set("Content-Type", "application/json")
+			if q.Get("type") == "dash-db" {
+				_ = json.NewEncoder(w).Encode(models.HitList{})
+				return
+			}
+			pages = append(pages, q.Get("page"))
+			assert.Equal(t, "1000", q.Get("limit"))
+			if q.Get("page") == "1" {
+				full := make(models.HitList, folderListPageSize)
+				for i := range full {
+					full[i] = &models.Hit{UID: fmt.Sprintf("f%d", i), Title: fmt.Sprintf("F%d", i)}
+				}
+				_ = json.NewEncoder(w).Encode(full)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(models.HitList{{UID: "last", Title: "Last"}})
+		}))
+		defer server.Close()
+
+		tree, err := listFolderTree(mockSearchCtx(server))
+		require.NoError(t, err)
+		assert.Equal(t, []string{"1", "2"}, pages)
+		assert.Len(t, tree, folderListPageSize+1)
 	})
 }
