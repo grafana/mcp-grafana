@@ -241,6 +241,14 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// trusted as-is: it comes from the dashboard, not the caller.
 	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
 		ds, lookupErr := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
+		if lookupErr != nil && params.DsUID == "" {
+			// Dashboards saved before schema version 33 reference a
+			// datasource, or a datasource variable's value, by name.
+			if byName, err := getDatasourceByName(ctx, GetDatasourceByNameParams{Name: datasourceUID}); err == nil {
+				ds, lookupErr = byName, nil
+				datasourceUID = byName.UID
+			}
+		}
 		switch {
 		case lookupErr == nil:
 			// The datasource's real type wins over any caller-supplied type.
@@ -459,6 +467,21 @@ func substituteTemplateVariablesInSliceWithValues(slice []interface{}, variables
 	return result
 }
 
+// panelDatasourceRef reads a panel or target datasource reference. Dashboards
+// saved before schema version 33 store it as a plain string: a datasource name
+// or a variable. runSinglePanelQuery resolves a name to its UID.
+func panelDatasourceRef(ref interface{}) (uid, dsType string) {
+	switch ref := ref.(type) {
+	case map[string]interface{}:
+		return safeString(ref, "uid"), safeString(ref, "type")
+	case string:
+		if ref != "-- Mixed --" {
+			return ref, ""
+		}
+	}
+	return "", ""
+}
+
 // extractPanelInfo extracts query and datasource information from a panel
 func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
 	info := &panelInfo{
@@ -488,17 +511,16 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 
 	// Extract datasource - prefer target-level (more specific) over panel-level.
 	// This handles "Mixed" datasource panels where each target specifies its own datasource.
-	if targetDS := safeObject(target, "datasource"); targetDS != nil {
-		info.DatasourceUID = safeString(targetDS, "uid")
-		info.DatasourceType = safeString(targetDS, "type")
-	}
+	info.DatasourceUID, info.DatasourceType = panelDatasourceRef(target["datasource"])
 
 	// Fall back to panel-level datasource
 	if info.DatasourceUID == "" {
-		if dsField := safeObject(panel, "datasource"); dsField != nil {
-			info.DatasourceUID = safeString(dsField, "uid")
-			info.DatasourceType = safeString(dsField, "type")
-		}
+		info.DatasourceUID, info.DatasourceType = panelDatasourceRef(panel["datasource"])
+	}
+
+	// Grafana runs a panel without any datasource reference on the default one.
+	if info.DatasourceUID == "" && target["datasource"] == nil && panel["datasource"] == nil {
+		info.DatasourceUID = "default"
 	}
 
 	if info.DatasourceUID == "" {

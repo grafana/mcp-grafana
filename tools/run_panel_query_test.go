@@ -297,7 +297,9 @@ func TestExtractPanelInfo(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name: "panel with no datasource",
+			// Grafana runs such a panel on the default datasource (schema 36
+			// migrates a null reference to the default datasource's ref).
+			name: "panel with no datasource uses the default",
 			panel: map[string]interface{}{
 				"id":    7,
 				"title": "No Datasource",
@@ -306,6 +308,47 @@ func TestExtractPanelInfo(t *testing.T) {
 						"expr": "up",
 					},
 				},
+			},
+			wantQuery: "up",
+			wantDSUID: "default",
+		},
+		{
+			name: "null panel datasource uses the default",
+			panel: map[string]interface{}{
+				"id":         7,
+				"datasource": nil,
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "default",
+		},
+		{
+			// Dashboards saved before schema 33 reference datasources by name.
+			name: "legacy datasource name",
+			panel: map[string]interface{}{
+				"id":         8,
+				"datasource": "Prometheus",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "Prometheus",
+		},
+		{
+			name: "legacy target datasource name wins over the panel's",
+			panel: map[string]interface{}{
+				"id":         9,
+				"datasource": "-- Mixed --",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up", "datasource": "$ds"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "$ds",
+		},
+		{
+			name: "mixed panel with an unreferenced target",
+			panel: map[string]interface{}{
+				"id":         10,
+				"datasource": "-- Mixed --",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
 			},
 			wantErr:     true,
 			errContains: "could not determine datasource",
