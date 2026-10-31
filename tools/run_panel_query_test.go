@@ -1612,7 +1612,7 @@ func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z", nil)
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, q["expr"])
@@ -1624,7 +1624,7 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z", nil)
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[1m48s]))`, q["expr"])
@@ -1636,9 +1636,25 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z", nil)
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[14m24s]))`, q["expr"])
 	assert.Equal(t, "864s", q["step"], "step must equal $__auto")
+}
+
+func TestSubstituteGrafanaMacrosPreservesLongerNames(t *testing.T) {
+	start := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	for _, name := range []string{"__interval_env", "__range_bucket", "__auto_mode", "__rate_interval_custom", "__interval_ms2", "__interval_ENV"} {
+		query := "$" + name + " ${" + name + "} $__interval"
+		assert.Equal(t, "$"+name+" ${"+name+"} 36s", substituteGrafanaMacros(query, start, end))
+	}
+}
+
+func TestTemplateValuesAreNotInterpolatedAgain(t *testing.T) {
+	variables := templateVariableValues{"choice": {"$__interval"}, "__interval": {"other"}}
+	for range 100 {
+		require.Equal(t, "SELECT '$__interval'", substituteTemplateVariableValues("SELECT '${choice}'", variables))
+	}
 }

@@ -154,6 +154,14 @@ func formatBigQueryTemplateVariable(values []string, format string) string {
 }
 
 func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQueryResult, error) {
+	variables := make(templateVariableValues, len(args.Variables))
+	for name, value := range args.Variables {
+		variables[name] = []string{value}
+	}
+	return querySQLWithTemplateVariables(ctx, args, variables)
+}
+
+func querySQLWithTemplateVariables(ctx context.Context, args sql.QuerySQLParams, variables templateVariableValues) (*sql.SQLQueryResult, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
 	if err != nil {
 		return nil, fmt.Errorf("looking up datasource: %w", err)
@@ -193,10 +201,6 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 
 	processedQuery := args.Query
 	processedQuery = dialect.SubstituteMacros(processedQuery, fromTime, toTime)
-	variables := make(templateVariableValues, len(args.Variables))
-	for name, value := range args.Variables {
-		variables[name] = []string{value}
-	}
 	processedQuery = substituteQueryTemplateVariableValues(processedQuery, variables, ds.Type)
 	processedQuery = dialect.EnforceLimit(processedQuery, args.Limit)
 

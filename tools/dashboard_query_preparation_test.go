@@ -51,6 +51,16 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			targetFields      map[string]interface{}
 			requiredNames     []string
 		}{
+			{name: "literal macro-prefixed variable", query: "SELECT '$__interval_env', $__interval", overrides: map[string]string{"__interval_env": "$__range"}, want: "SELECT '$__range', 36s"},
+			{name: "literal macro matching another variable", query: "SELECT '${choice}', $__interval", current: "$__interval", overrides: map[string]string{"__interval": "other"}, want: "SELECT '$__interval', 36s"},
+			{name: "literal saved macro", query: "SELECT '${choice}', $__interval", current: "$__interval", want: "SELECT '$__interval', 36s"},
+			{name: "literal override macro", query: "SELECT '${choice}', ${__range_s}", current: "saved", overrides: map[string]string{"choice": "${__interval_ms}"}, want: "SELECT '${__interval_ms}', 3600"},
+			{name: "literal formatted macro", query: "SELECT ${choice:sqlstring}, $__range_s", current: []interface{}{"$__interval", "${__range}"}, want: "SELECT '$__interval','${__range}', 3600"},
+			{name: "literal MySQL macro", query: "SELECT '${choice}', $__interval", current: "$__interval", datasourceType: "mysql", want: "SELECT '$__interval', 36s"},
+			{name: "literal MSSQL macro", query: "SELECT '${choice}', $__interval", current: "$__interval", datasourceType: "mssql", want: "SELECT '$__interval', 36s"},
+			{name: "literal BigQuery macro", query: "SELECT '${choice}', $__interval", current: "$__interval", datasourceType: "grafana-bigquery-datasource", want: "SELECT '$__interval', 36s"},
+			{name: "literal ClickHouse macro", query: "SELECT '${choice}', $__interval LIMIT 100", current: "$__interval", datasourceType: "grafana-clickhouse-datasource", want: "SELECT '$__interval', 3s LIMIT 100"},
+			{name: "literal CloudWatch macro", query: "SELECT '${choice}', $__interval", current: "$__interval", datasourceType: "cloudwatch", targetFields: map[string]interface{}{"dimensions": map[string]interface{}{"instance": []interface{}{"${choice}", "$__interval"}}}, want: "SELECT '$__interval', 36s"},
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "multi-value glob", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, want: "SELECT '{east,west}'"},
 			{name: "bracketed sqlstring", query: "SELECT [[choice:sqlstring]]", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
@@ -200,6 +210,9 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 						require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 						submittedTarget := safeArray(payload, "queries")[0].(map[string]interface{})
 						submitted = safeString(submittedTarget, expressionField)
+						if tc.name == "literal CloudWatch macro" {
+							assert.Equal(t, []interface{}{"$__interval", "36s"}, safeObject(submittedTarget, "dimensions")["instance"])
+						}
 						if tc.name == "SQL location override" {
 							assert.Equal(t, "us-east1", submittedTarget["location"])
 						}
@@ -345,5 +358,51 @@ func TestRunPanelQueryAllDatasourceOverride(t *testing.T) {
 			require.EqualError(t, err, `Variable "source" is set to All. Supply an explicit value in variables.`)
 			assert.Equal(t, 1, queryCalls, "datasource overrides must not skip All checks in other target fields")
 		})
+	}
+}
+
+func TestRunPanelQueryPreservesLiteralMacrosInRangeRequests(t *testing.T) {
+	for _, datasource := range []string{"prometheus", "loki"} {
+		for _, override := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/override=%t", datasource, override), func(t *testing.T) {
+				var submitted string
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/api/datasources/uid/test":
+						_ = json.NewEncoder(w).Encode(map[string]string{"uid": "test", "type": datasource})
+					case "/api/ds/query":
+						var payload map[string]interface{}
+						require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+						submitted = safeString(safeArray(payload, "queries")[0].(map[string]interface{}), "expr")
+						_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {}}})
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				defer server.Close()
+				value := "$__interval"
+				var overrides map[string]string
+				if override {
+					value = "saved"
+					overrides = map[string]string{"choice": "$__interval"}
+				}
+				db := map[string]interface{}{
+					"templating": map[string]interface{}{"list": []interface{}{
+						map[string]interface{}{"name": "choice", "current": map[string]interface{}{"value": value}},
+					}},
+					"panels": []interface{}{map[string]interface{}{
+						"id": float64(1), "datasource": map[string]interface{}{"uid": "test", "type": datasource},
+						"targets": []interface{}{map[string]interface{}{"expr": `sum(count_over_time({job="${choice}"}[$__auto]))`}},
+					}},
+				}
+				_, err := runSinglePanelQuery(enforceTestCtx(server, false), singlePanelQueryParams{
+					DB: db, PanelID: 1, Variables: overrides,
+					Start: "2026-10-30T00:00:00Z", End: "2026-10-30T01:00:00Z",
+				})
+				require.NoError(t, err)
+				assert.Equal(t, `sum(count_over_time({job="$__interval"}[36s]))`, submitted)
+			})
+		}
 	}
 }
