@@ -84,6 +84,7 @@ var categoryDescription = map[string]string{
 	"alerting":      "Alerting: List and fetch alert rules and notification contact points.",
 	"dashboard":     "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.",
 	"folder":        "Folders: Manage dashboard folders.",
+	"notebooks":     "Notebooks: List, search, read, create, update, and delete notebooks.",
 	"oncall":        "OnCall: View and manage on-call schedules, shifts, teams, and users.",
 	"asserts":       "Asserts: Query and analyze assertion data.",
 	"admin":         "Admin: List teams and perform administrative tasks.",
@@ -175,7 +176,7 @@ type disabledTools struct {
 
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
-	dashboard, folder, oncall, asserts, admin,
+	dashboard, folder, notebooks, oncall, asserts, admin,
 	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
@@ -226,6 +227,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
+	flag.BoolVar(&dt.notebooks, "disable-notebooks", false, "Disable notebook tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
 	flag.BoolVar(&dt.asserts, "disable-asserts", false, "Disable asserts tools")
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
@@ -401,6 +403,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		}, dt.alerting, "alerting"},
 		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard"},
 		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
+		{func(s *mcp.Server) { tools.AddNotebookTools(s, enableWriteTools) }, dt.notebooks, "notebooks"},
 		{func(s *mcp.Server) { tools.AddOnCallTools(s, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
 		{tools.AddAdminTools, dt.admin, "admin"},

@@ -140,3 +140,38 @@ async def test_without_disable_write_flag_enables_write_tools(grafana_env):
 
             for tool in read_tools:
                 assert tool in tool_names, f"Read tool '{tool}' should be available without --disable-write flag"
+
+
+async def test_notebook_tools_are_opt_in_and_respect_disable_write(grafana_env):
+    """Notebook tools are an opt-in category, so they are absent under the
+    default flags and appear only when the category is enabled; once enabled,
+    --disable-write still closes the writes."""
+
+    async def tool_names(args):
+        params = StdioServerParameters(
+            command=os.environ.get("MCP_GRAFANA_PATH", "../dist/mcp-grafana"),
+            args=args,
+            env=grafana_env,
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                return [tool.name for tool in (await session.list_tools()).tools]
+
+    read_tools = ["list_notebooks", "search_notebooks", "get_notebook_by_uid"]
+    write_tools = ["create_notebook", "update_notebook", "delete_notebook"]
+
+    default_names = await tool_names([])
+    for tool in read_tools + write_tools:
+        assert tool not in default_names, f"Notebook tool '{tool}' should be opt-in"
+
+    enabled = ["--enabled-tools", "search,notebooks"]
+    enabled_names = await tool_names(enabled)
+    for tool in read_tools + write_tools:
+        assert tool in enabled_names, f"Notebook tool '{tool}' should be available when the category is enabled"
+
+    read_only_names = await tool_names([*enabled, "--disable-write"])
+    for tool in read_tools:
+        assert tool in read_only_names, f"Read tool '{tool}' should be available with --disable-write"
+    for tool in write_tools:
+        assert tool not in read_only_names, f"Write tool '{tool}' should not be available with --disable-write"
