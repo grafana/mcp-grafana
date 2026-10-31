@@ -54,6 +54,7 @@ const (
 	skipNoCloudWatch   = "mcptests has no CloudWatch datasource"
 	skipNoCloudLogging = "mcptests has no Google Cloud Logging datasource"
 	skipIncident       = "needs a live incident; list_incidents covers the same declared permissions"
+	skipNotebooks      = "notebooks are behind the dashboard.notebooks toggle, which mcptests does not have on"
 )
 
 var rbacSeq atomic.Int64
@@ -126,6 +127,15 @@ var rbacFixtures = map[string]rbacFixture{
 	"agento11y_manage_experiments":      {args: map[string]any{"operation": "list"}},
 	"agento11y_manage_generations":      {skip: "needs a live generation ID"},
 	"agento11y_manage_test_suites":      {args: map[string]any{"operation": "list_suites"}},
+
+	// Notebooks are behind the dashboard.notebooks toggle, which mcptests does
+	// not have on, so there is nothing for these calls to succeed against.
+	"create_notebook":     {skip: skipNotebooks},
+	"delete_notebook":     {skip: skipNotebooks},
+	"get_notebook_by_uid": {skip: skipNotebooks},
+	"list_notebooks":      {skip: skipNotebooks},
+	"search_notebooks":    {skip: skipNotebooks},
+	"update_notebook":     {skip: skipNotebooks},
 
 	"alerting_manage_routing": {args: map[string]any{"operation": "get_notification_policies"}},
 	"alerting_routing_write": {
