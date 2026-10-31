@@ -155,6 +155,12 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 
 The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
+
+- `--prometheus-guardrail-mode`: Prometheus query guardrail for `query_prometheus`, `query_prometheus_histogram`, and the Prometheus queries of `run_panel_query`: `off` (default), `shadow` (log queries that would be blocked, but let them run), or `enforce` (reject them with rewrite guidance). Falls back to the `GRAFANA_PROMETHEUS_GUARDRAIL_MODE` environment variable.
+- `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query: its own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, with nested subquery ranges added up. Defaults to `192h`. Takes a Go duration, so write `192h`, not `8d`. `0` disables the range check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
+- `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1`. Defaults to `11000`; `0` disables the points check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
+
+The points check budgets the requested resolution, not the number of series, samples, or subquery evaluations. The range check ignores `offset` and `@`. An expression the guardrail cannot parse, such as one with Grafana macros like `$__rate_interval`, is checked against its time range and step only. Decisions are exported as `mcp_prometheus_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, and `_fail_open_total`. See [Observability](../../developer/observability-metrics-and-tracing/#prometheus-guardrail-metrics).
 - `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 ## Run without query execution

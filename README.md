@@ -518,6 +518,11 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations - default: `24h`. Accepts Go duration strings. `0` disables the range check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+- `--prometheus-guardrail-mode`: Prometheus query guardrail for `query_prometheus`, `query_prometheus_histogram`, and the Prometheus queries of `run_panel_query` - default: `off`. The guardrail caps the effective time range of a query and the number of points per series it requests, before the query reaches the datasource. `shadow` logs queries that would be blocked but lets them run; `enforce` rejects them with rewrite guidance the LLM can act on (`run_panel_query` reports it in the result's `errors` entry for that panel). Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MODE`.
+- `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query - default: `192h`. The effective range is the query's own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, where nested subquery ranges add up, so `max_over_time(rate(x[5m])[30d:1m])` reads 30d5m. Accepts Go duration strings, so write `192h`, not `8d`. `0` disables the range check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
+- `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1` - default: `11000`, Prometheus' own per-series limit. The guidance names the smallest `stepSeconds` that fits. `0` disables the points check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
+
+  Limits of the Prometheus guardrail: the points check budgets the requested resolution, not the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step. `offset` and `@` modifiers are ignored. Expressions the guardrail cannot parse (for example ones with Grafana macros such as `$__rate_interval`, or syntax only another dialect accepts) are checked against the query's own time range and step only, and run otherwise.
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
 - `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
 - `--disable-search`: Disable search tools
@@ -1323,6 +1328,17 @@ When the [Loki cost guardrail](#cli-flags-reference) (`--loki-guardrail-mode`) i
 | `mcp_loki_guardrail_fail_open_total` | Counter | Queries the guardrail could not evaluate and admitted (labels: `backend`, `cause`) |
 
 `reason` is one of `selector`, `range`, `bytes`; `cause` is one of `unparseable`, `estimate_failed`; `backend` is one of `loki`, `victorialogs`, `unknown`. A query that trips several checks is counted once, labelled with the check that ran first (`selector`, then `range`, then `bytes`), so the four counters partition the guarded population. See [Observability](docs/sources/developer/observability-metrics-and-tracing.md#loki-cost-guardrail-metrics) for how to read them during a `shadow` → `enforce` rollout.
+
+When the Prometheus guardrail (`--prometheus-guardrail-mode`) is enabled, four counters record its decisions in the same way:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_prometheus_guardrail_admitted_total` | Counter | Queries that passed every enabled check |
+| `mcp_prometheus_guardrail_would_block_total` | Counter | Queries that failed a check in `shadow` mode and ran anyway (labels: `reason`) |
+| `mcp_prometheus_guardrail_blocked_total` | Counter | Queries rejected in `enforce` mode (labels: `reason`) |
+| `mcp_prometheus_guardrail_fail_open_total` | Counter | Queries whose expression the guardrail could not parse and admitted (labels: `reason`) |
+
+`reason` is `range` or `points` on `would_block` and `blocked`, counted once under the first check that failed (`range`, then `points`), and `unparseable` on `fail_open`. There is no `backend` label: every Prometheus-compatible backend gets the same checks.
 
 Library embedders should set `GrafanaConfig.MeterProvider` (the metrics counterpart of `GrafanaConfig.Logger`): the guardrail runs inside a tool handler, so it has no constructor option, and a process that installs a noop global `MeterProvider` would otherwise drop every recording.
 
