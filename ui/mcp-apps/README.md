@@ -63,7 +63,7 @@ ECharts features are registered once, in `src/viz/echartsSetup.ts`.
 
 ## Metrics app
 
-`query_prometheus` renders its own result. The visualization is derived from the
+`render_prometheus_chart` renders its own result. `query_prometheus` returns data without opening a view and handles refresh requests from an existing App. The visualization is derived from the
 response shape and the inferred unit rather than chosen by the model: a range
 query is a time series, an instant query over several series is ranked bars, and
 a single value is a stat — or a bullet when the unit bounds it. Alternatives that

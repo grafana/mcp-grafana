@@ -2,7 +2,7 @@
  * Visualization selection for the metrics app.
  *
  * The viz type is derived from the *shape of the datasource response* — never
- * from a model-supplied argument. `query_prometheus` declares the app, the host
+ * from a model-supplied argument. `render_prometheus_chart` declares the app, the host
  * renders that tool's own result, and nothing the model writes decides what is
  * drawn. A user-facing toggle inside the app is fine; a `panel:` tool argument
  * would not be.

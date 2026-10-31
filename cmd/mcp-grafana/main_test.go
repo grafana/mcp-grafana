@@ -1229,6 +1229,7 @@ func TestSOCKS5ProxyFromEnv(t *testing.T) {
 // data. --disable-query removes them; --disable-write must not.
 var safeQueryToolNames = []string{
 	"query_prometheus",
+	"render_prometheus_chart",
 	"query_prometheus_histogram",
 	"query_loki_logs",
 	"query_loki_patterns",

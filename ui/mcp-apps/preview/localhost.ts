@@ -177,7 +177,7 @@ async function main() {
     buckets: 'rate(http_request_duration_seconds_bucket[5m])',
   };
   await bridge.sendToolInput({
-    toolName: 'query_prometheus',
+    toolName: 'render_prometheus_chart',
     arguments: {
       expr: fixtureName ? (fixtureExpr[fixtureName] ?? fixtureName) : 'node_load1',
       datasourceUid: 'grafanacloud-prom',

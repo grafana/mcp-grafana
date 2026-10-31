@@ -278,6 +278,7 @@ var rbacFixtures = map[string]rbacFixture{
 	},
 
 	"query_prometheus":                {args: map[string]any{"datasourceUid": rbacPrometheusUID, "expr": "vector(1)", "endTime": "now", "queryType": "instant"}},
+	"render_prometheus_chart":         {args: map[string]any{"datasourceUid": rbacPrometheusUID, "expr": "vector(1)", "endTime": "now", "queryType": "instant"}},
 	"query_prometheus_histogram":      {args: map[string]any{"datasourceUid": rbacPrometheusUID, "metric": "mcp_rbac_test", "percentile": 95, "endTime": "now"}},
 	"list_prometheus_label_names":     {args: map[string]any{"datasourceUid": rbacPrometheusUID, "limit": 1}},
 	"list_prometheus_label_values":    {args: map[string]any{"datasourceUid": rbacPrometheusUID, "labelName": "__name__", "limit": 1}},

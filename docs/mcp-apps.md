@@ -6,12 +6,13 @@ MCP Apps render interactive views inside compatible MCP hosts. Each app is attac
 mcp-grafana --enabled-tools=tempo,prometheus
 ```
 
-Add other categories to the comma-separated list as needed. `--disable-query` or `--disable-tempo` removes the trace tool; `--disable-prometheus` removes the metrics view; `--disable-write` keeps both because they only read data.
+Add other categories to the comma-separated list as needed. `--disable-query` removes trace retrieval and metrics query/chart tools; `--disable-tempo` removes the trace tool; `--disable-prometheus` removes the metrics tools. `--disable-write` keeps these read-only tools.
 
 ## Tools
 
 - `get_tempo_trace(trace_id, datasourceUid, focus_span_id?, start?, end?)` retrieves a Tempo trace and displays a virtualized waterfall, span filtering, attributes and exception details. The optional focus span selects an initial span without filtering the trace. The datasource must be Tempo.
-- `query_prometheus(expr, datasourceUid, …)` displays the query result as a chart. The visualization is derived from the shape of the response and the metric's unit, never from a model-supplied argument:
+- `query_prometheus(expr, datasourceUid, …)` returns data for analysis without opening a view.
+- `render_prometheus_chart(expr, datasourceUid, …)` runs the same read-only query and displays its result using the existing metrics App. Call it for an explicit chart request. The visualization is derived from the shape of the response and the metric's unit, never from a model-supplied argument:
 
   | Response | View |
   | --- | --- |
@@ -25,7 +26,7 @@ Add other categories to the comma-separated list as needed. `--disable-query` or
 
   A bounded unit is one that carries its own range, such as `percent` or `percentunit`. Nothing is scaled against an invented maximum, because Prometheus supplies no bounds. A table is always available, since it can represent any response shape. The viewer offers the alternatives that suit the same data in a picker, re-runs the query through the host on request, and can hand a selected time window back to the agent as a follow-up question. Units are inferred from the metric name (`_seconds`, `_bytes`, `_ratio`), since a PromQL response carries no field configuration. Functions such as `rate()` and `sum()` drop the name, so their results show plain numbers rather than a guessed unit, and `_count` and `_bucket` values show as counts. Views that cannot fit every series, such as the bar chart and heatmap, say how many they leave out.
 
-Both tools preserve their existing text output and add viewer data when the response can be converted. The trace viewer is built from the trace frame Grafana’s Tempo datasource returns. Unsupported or partial responses retain their text output without an interactive view. Existing response-size limits still apply. Normalized viewer data is limited to 1 MiB; larger traces and wider query results retain their text output without an interactive view, rather than truncating data. Viewer data is optional structured content alongside the existing text output. Hosts without MCP Apps support can use the text output.
+The trace and chart tools preserve their text output and add viewer data when the response can be converted. The trace viewer is built from the trace frame Grafana’s Tempo datasource returns. Unsupported or partial responses retain their text output without an interactive view. Existing response-size limits still apply. Normalized viewer data is limited to 1 MiB; larger traces and wider query results retain their text output without an interactive view, rather than truncating data. Viewer data is optional structured content alongside the existing text output. Hosts without MCP Apps support can use the text output.
 
 Tools use the configured Grafana connection and caller identity. Credentials
 stay on the server. Apps are self-contained HTML with no external connection or
@@ -47,7 +48,7 @@ mcpgrafana.RegisterAppResources(s)
 tools.AddTempoTools(s, enableQueryTools)
 ```
 
-For selective UI resource registration, use `RegisterTraceAppResource` or `RegisterMetricsAppResource`. `GetTempoTraceTool` links to the exported `TraceViewerResourceURI`, and `QueryPrometheus` to `MetricsViewerResourceURI`.
+For selective UI resource registration, use `RegisterTraceAppResource` or `RegisterMetricsAppResource`. `GetTempoTraceTool` links to the exported `TraceViewerResourceURI`, and `RenderPrometheusChart` to `MetricsViewerResourceURI`. `QueryPrometheus` exposes the same data without a UI annotation; the metrics App uses it to refresh its current view.
 
 The module embeds the built HTML, so Go consumers need no Node toolchain to serve
 these apps. Do not copy the bundles into the embedding server: update the Go

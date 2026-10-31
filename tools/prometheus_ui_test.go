@@ -14,16 +14,6 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
-// query_prometheus declares the metrics app so the host renders that tool's own
-// result. Nothing the model writes chooses the visualization: the app derives it
-// from the response shape.
-func TestQueryPrometheusDeclaresMetricsApp(t *testing.T) {
-	require.NotNil(t, QueryPrometheus.Tool.Meta)
-	ui, ok := QueryPrometheus.Tool.Meta["ui"].(map[string]any)
-	require.True(t, ok, "query_prometheus should carry _meta.ui")
-	assert.Equal(t, mcpgrafana.MetricsViewerResourceURI, ui["resourceUri"])
-}
-
 // The host must be able to find the payload whichever channel it reads.
 func TestMetricsAppResultCarriesEveryHostSignal(t *testing.T) {
 	result := &QueryPrometheusResult{

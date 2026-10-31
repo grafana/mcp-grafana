@@ -24,6 +24,27 @@ const ok = (payload: unknown) => ({ structuredContent: payload, content: [] });
 const args = { expr: 'up', datasourceUid: 'prom', queryType: 'instant', endTime: 'now' };
 
 describe('createMetricsHostState', () => {
+  it('refreshes only the current App through the data-only query tool', async () => {
+    const current = fakeHost();
+    const other = fakeHost();
+    const currentView = createMetricsHostState(current.app);
+    const otherView = createMetricsHostState(other.app);
+    for (const { app } of [current, other]) {
+      app.ontoolinput?.({ arguments: args });
+      app.ontoolresult?.(ok(vectorSingleUnbounded));
+    }
+    const previousOther = otherView.getSnapshot();
+
+    const refreshing = currentView.refresh();
+    expect(current.app.callServerTool).toHaveBeenCalledWith({ name: 'query_prometheus', arguments: args });
+    current.resolveCall(ok(matrixSingleSeries));
+    await refreshing;
+
+    expect(currentView.getSnapshot().result?.resultType).toBe('matrix');
+    expect(otherView.getSnapshot()).toBe(previousOther);
+    expect(other.app.callServerTool).not.toHaveBeenCalled();
+  });
+
   it('drops a refresh that returns after the host delivered a newer result', async () => {
     const { app, resolveCall } = fakeHost();
     const host = createMetricsHostState(app);
