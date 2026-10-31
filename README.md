@@ -50,6 +50,19 @@ _The following features are currently available in MCP server. This list is for 
 - **Patch dashboard:** Apply specific changes to a dashboard without requiring the full JSON, significantly reducing context window usage for targeted modifications
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
 
+### Notebooks
+
+Grafana notebooks combine notes, queries, and visualizations in one investigation document. The notebook tools call the notebooks API in the dashboard API group, so they need the `notebooks:*` scope and the `dashboard.notebooks` feature toggle to be enabled in Grafana. Notebooks are a public preview in Grafana 13.3 and later.
+
+> **Note:** Notebook tools are **disabled by default** because they need a feature toggle most instances don't have on. To enable them, add `notebooks` to your `--enabled-tools` flag.
+
+- **List notebooks:** List notebooks with their UID, title, tags, cell count, and URL
+- **Search notebooks:** Find notebooks by title text
+- **Get notebook by UID:** Retrieve a full notebook resource, including its spec
+- **Create notebook:** Create a notebook with a title, optional tags, and optional Markdown and code cells in document order
+- **Update notebook:** Replace a notebook's spec, keeping its labels and annotations, and optionally fail instead of overwriting a notebook that changed since it was read
+- **Delete notebook:** Delete a notebook by its UID
+
 ### Run Panel Query
 
 > **Note:** Run panel query tools are **disabled by default**. To enable them, add `runpanelquery` to your `--enabled-tools` flag.
@@ -329,6 +342,12 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_property`            | Dashboard                 | Extract specific parts of a dashboard using JSONPath expressions                                                                                              | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
 | `get_dashboard_summary`             | Dashboard                 | Get a compact summary of a dashboard without full JSON                                                                                                        | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
 | `create_folder`                     | Dashboard                 | Create a folder                                                                                                                                               | `folders:create`, `folders:read`, `folders:write`                                                                                                                                                                                                                                   | `folders:*`                                                   |
+| `list_notebooks`                    | Notebook*                 | List notebooks with title, tags, cell count and URL                                                                                                           | `dashboard.grafana.app/notebooks:list`, `notebooks:read`                                                                                                                                                                                                                            | `notebooks:*`                                                 |
+| `search_notebooks`                  | Notebook*                 | Search notebooks by title text                                                                                                                                | `dashboard.grafana.app/notebooks:list`, `notebooks:read`                                                                                                                                                                                                                            | `notebooks:*`                                                 |
+| `get_notebook_by_uid`               | Notebook*                 | Get a notebook resource including its spec                                                                                                                    | `dashboard.grafana.app/notebooks:get`, `notebooks:read`                                                                                                                                                                                                                             | `notebooks:*`                                                 |
+| `create_notebook`                   | Notebook*                 | Create a notebook with Markdown and code cells                                                                                                                | `dashboard.grafana.app/notebooks:create`, `notebooks:create`                                                                                                                                                                                                                        | `notebooks:*`                                                 |
+| `update_notebook`                   | Notebook*                 | Replace a notebook's spec, preserving labels and annotations, with optional conflict detection                                                                | `dashboard.grafana.app/notebooks:update`, `notebooks:write`                                                                                                                                                                                                                         | `notebooks:*`                                                 |
+| `delete_notebook`                   | Notebook*                 | Delete a notebook by UID                                                                                                                                      | `dashboard.grafana.app/notebooks:delete`, `notebooks:delete`                                                                                                                                                                                                                        | `notebooks:*`                                                 |
 | `list_datasources`                  | Datasources               | List datasources                                                                                                                                              | `datasources:read`                                                                                                                                                                                                                                                                  | `datasources:*`                                               |
 | `get_datasource`                    | Datasources               | Get a datasource by UID or name                                                                                                                               | `datasources:read`                                                                                                                                                                                                                                                                  | `datasources:uid:prometheus-uid`                              |
 | `check_datasources_health`          | Datasources               | Check the health of one or more datasources                                                                                                                   | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
@@ -534,6 +553,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-influxdb`: Disable InfluxDB tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
+- `--disable-notebooks`: Disable notebook tools
 - `--disable-oncall`: Disable oncall tools
 - `--disable-asserts`: Disable asserts tools
 - `--disable-admin`: Disable admin tools
@@ -592,6 +612,11 @@ Each alerting write tool can be kept individually with `--enable-write-tools=<na
 **Snapshot Tools:**
 - `create_snapshot`
 - `delete_snapshot`
+
+**Notebook Tools:**
+- `create_notebook`
+- `update_notebook`
+- `delete_notebook`
 
 **Navigation Tools:**
 - `generate_deeplink` (`shorten=true` is ignored and the full URL is returned; pass `--enable-write-tools=generate_deeplink` to keep URL shortening)
