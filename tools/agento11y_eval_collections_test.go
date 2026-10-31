@@ -142,7 +142,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 				_, err := w.Write([]byte(`Plugin not found, no installed plugin with id grafana-agento11y-app`))
 				require.NoError(t, err)
 			},
-			wantErr:         "request failed with status 404: Plugin not found",
+			wantErr:         "plugin grafana-agento11y-app (Agent Observability) is not available",
 			wantErrExcludes: "saved conversation",
 		},
 		{
