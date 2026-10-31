@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -174,8 +175,8 @@ func TestAssessPromQueryUnparseable(t *testing.T) {
 	policy := promGuardPolicy{MaxRange: 192 * time.Hour, MaxPoints: 11000}
 	hour := promGuardEnd.Add(-time.Hour)
 
-	t.Run("macro expression fails open", func(t *testing.T) {
-		d := assessPromQuery(`rate(x[$__rate_interval])`, "range", hour, promGuardEnd, 60, policy)
+	t.Run("dashboard variable fails open", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$window])`, "range", hour, promGuardEnd, 60, policy)
 		assert.Equal(t, promGuardUnknown, d.Verdict)
 		assert.Error(t, d.ParseErr)
 		assert.Empty(t, d.Violations)
@@ -187,14 +188,14 @@ func TestAssessPromQueryUnparseable(t *testing.T) {
 	})
 
 	t.Run("outer window over the range cap still blocks", func(t *testing.T) {
-		d := assessPromQuery(`rate(x[$__rate_interval])`, "range", promGuardEnd.Add(-9*24*time.Hour), promGuardEnd, 3600, policy)
+		d := assessPromQuery(`rate(x[$window])`, "range", promGuardEnd.Add(-9*24*time.Hour), promGuardEnd, 3600, policy)
 		assert.Equal(t, promGuardBlock, d.Verdict)
 		assert.Equal(t, []promGuardReason{promGuardReasonRange}, promGuardReasons(d))
 		assert.NoError(t, d.ParseErr)
 	})
 
 	t.Run("points violation still blocks", func(t *testing.T) {
-		d := assessPromQuery(`rate(x[$__rate_interval])`, "range", promGuardEnd.Add(-4*time.Hour), promGuardEnd, 1, policy)
+		d := assessPromQuery(`rate(x[$window])`, "range", promGuardEnd.Add(-4*time.Hour), promGuardEnd, 1, policy)
 		assert.Equal(t, promGuardBlock, d.Verdict)
 		assert.Equal(t, []promGuardReason{promGuardReasonPoints}, promGuardReasons(d))
 	})
@@ -202,8 +203,53 @@ func TestAssessPromQueryUnparseable(t *testing.T) {
 	// With the range check off the expression's windows are never used, so
 	// failing to parse it is not worth a fail_open.
 	t.Run("not parsed when the range check is off", func(t *testing.T) {
-		d := assessPromQuery(`rate(x[$__rate_interval])`, "range", hour, promGuardEnd, 60, promGuardPolicy{MaxPoints: 11000})
+		d := assessPromQuery(`rate(x[$window])`, "range", hour, promGuardEnd, 60, promGuardPolicy{MaxPoints: 11000})
 		assert.Equal(t, promGuardAllow, d.Verdict)
+	})
+}
+
+func TestAssessPromQueryGrafanaMacros(t *testing.T) {
+	policy := promGuardPolicy{MaxRange: 192 * time.Hour, MaxPoints: 11000}
+	hour := promGuardEnd.Add(-time.Hour)
+
+	t.Run("a macro does not hide the other windows", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$__rate_interval]) + avg_over_time(y[90d])`, "range", hour, promGuardEnd, 60, policy)
+		assert.Equal(t, promGuardBlock, d.Verdict)
+		assert.Equal(t, []promGuardReason{promGuardReasonRange}, promGuardReasons(d))
+	})
+
+	t.Run("a macro expression within budget is admitted", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[${__rate_interval}]) / rate(y[$__interval])`, "range", hour, promGuardEnd, 60, policy)
+		assert.Equal(t, promGuardAllow, d.Verdict)
+	})
+
+	t.Run("$__range counts as the query's own range", func(t *testing.T) {
+		start := promGuardEnd.Add(-100 * time.Hour)
+		d := assessPromQuery(`max_over_time(up[$__range])`, "range", start, promGuardEnd, 60, policy)
+		assert.Equal(t, promGuardBlock, d.Verdict)
+		assert.Contains(t, d.Violations[0].Message, "including 100h0m0s of range vectors")
+	})
+
+	t.Run("$__interval is the step, not a fraction of the range", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$__interval])`, "range", promGuardEnd.Add(-191*time.Hour), promGuardEnd, 63, policy)
+		assert.Equal(t, promGuardAllow, d.Verdict)
+	})
+
+	t.Run("$__rate_interval is four steps", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$__rate_interval])`, "range", hour, promGuardEnd, 259200, policy)
+		require.Equal(t, promGuardBlock, d.Verdict)
+		assert.Contains(t, d.Violations[0].Message, "including 288h0m0s of range vectors")
+	})
+
+	t.Run("an instant $__rate_interval uses the default step", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$__rate_interval])`, "instant", time.Time{}, promGuardEnd, 0, promGuardPolicy{MaxRange: 239 * time.Second})
+		require.Equal(t, promGuardBlock, d.Verdict)
+		assert.Contains(t, d.Violations[0].Message, "including 4m0s of range vectors")
+	})
+
+	t.Run("a sub-second $__range rounds up like Grafana's", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$__range]) + avg_over_time(y[90d])`, "range", promGuardEnd.Add(-750*time.Millisecond), promGuardEnd, 1, policy)
+		assert.Equal(t, promGuardBlock, d.Verdict)
 	})
 }
 
@@ -268,7 +314,7 @@ func TestGuardPrometheusQueryModes(t *testing.T) {
 	t.Run("enforce fails open on an unparseable expression", func(t *testing.T) {
 		config, _ := promGuardConfig(mcpgrafana.PrometheusGuardrailEnforce, 192*time.Hour, 11000)
 		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
-		assert.NoError(t, guardPrometheusQuery(ctx, `rate(x[$__rate_interval])`, "range", start, promGuardEnd, 10))
+		assert.NoError(t, guardPrometheusQuery(ctx, `rate(x[$window])`, "range", start, promGuardEnd, 10))
 	})
 }
 
@@ -338,4 +384,26 @@ func TestQueryPrometheusGuardrailBlocksBeforeHTTP(t *testing.T) {
 		_, _ = queryPrometheusWithHints(ctx, args)
 		assert.NotZero(t, *hits)
 	})
+}
+
+// run_panel_query has no step parameter, so a long Prometheus panel must not
+// trip the points check with a hint the caller cannot act on.
+func TestRunPanelPrometheusQueryFitsPointsCheck(t *testing.T) {
+	for _, maxPoints := range []int64{11000, 1000} {
+		t.Run(fmt.Sprintf("max points %d", maxPoints), func(t *testing.T) {
+			config, _ := promGuardConfig(mcpgrafana.PrometheusGuardrailEnforce, 192*time.Hour, maxPoints)
+			ctx, hits := promGuardGrafana(t, config)
+			_, err := executePrometheusQuery(ctx, "prometheus", "up", "now-190h", "now")
+			if err != nil {
+				assert.NotContains(t, err.Error(), "Prometheus query guardrail")
+			}
+			assert.NotZero(t, *hits, "a 190h panel query must reach Grafana")
+		})
+	}
+}
+
+func TestRunPanelPrometheusQueryShadowKeepsStep(t *testing.T) {
+	config, _ := promGuardConfig(mcpgrafana.PrometheusGuardrailShadow, 192*time.Hour, 10)
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+	assert.Equal(t, 60, panelPrometheusStep(ctx, time.Hour))
 }

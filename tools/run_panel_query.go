@@ -652,9 +652,23 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 		Expr:          query,
 		StartTime:     start,
 		EndTime:       end,
-		StepSeconds:   60, // Default 1-minute resolution
+		StepSeconds:   panelPrometheusStep(ctx, endTime.Sub(startTime)),
 		QueryType:     "range",
 	})
+}
+
+// panelPrometheusStep is a 1-minute step, widened for long ranges to stay
+// within Prometheus' per-series limit, as Grafana would, or within a lower
+// enforced guardrail points cap. The tool has no step parameter, so a points
+// block would leave the caller nothing to change. Shadow mode only observes,
+// so it keeps the step and records the would-be block.
+func panelPrometheusStep(ctx context.Context, window time.Duration) int {
+	limit := int64(prometheusMaxPointsPerSeries)
+	config := mcpgrafana.GrafanaConfigFromContext(ctx)
+	if mode := config.PrometheusGuardrailMode; mode != "" && mode != mcpgrafana.PrometheusGuardrailOff && mode != mcpgrafana.PrometheusGuardrailShadow && config.PrometheusGuardrailMaxPoints > 0 {
+		limit = min(limit, config.PrometheusGuardrailMaxPoints)
+	}
+	return int(max(60, promMinStepSeconds(max(window, 0), limit)))
 }
 
 // executeLokiQuery runs a Loki query using the existing queryLokiLogs function

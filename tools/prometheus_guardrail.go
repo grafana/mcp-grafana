@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,7 +78,7 @@ func assessPromQuery(expr, queryType string, start, end time.Time, stepSeconds i
 	var parseErr error
 	if p.MaxRange > 0 {
 		var extension time.Duration
-		extension, parseErr = promExprWindow(expr)
+		extension, parseErr = promExprWindow(promGuardSubstituteMacros(expr, window, stepSeconds))
 		if v, ok := checkPromRange(window, extension, p.MaxRange); ok {
 			d.Violations = append(d.Violations, v)
 		}
@@ -96,6 +97,34 @@ func assessPromQuery(expr, queryType string, start, end time.Time, stepSeconds i
 		d.ParseErr = parseErr
 	}
 	return d
+}
+
+// promGuardSubstituteMacros fills in Grafana's built-in macros with the values
+// its Prometheus datasource uses server-side, so that one $__rate_interval
+// does not leave every other window in the expression unchecked. $__interval
+// skips Grafana's rounding to a whole unit, which moves it by a few seconds.
+func promGuardSubstituteMacros(expr string, window time.Duration, stepSeconds int) string {
+	step := int64(stepSeconds)
+	if step <= 0 {
+		step = 60 // the backend's default
+	}
+	// Grafana widens the step so no series exceeds maxDataPoints.
+	interval := strconv.FormatInt(max(step, int64(window/time.Second)/prometheusMaxPointsPerSeries), 10)
+	// The backend sends the step as the query's min interval, which Grafana
+	// takes as the scrape interval: $__rate_interval is four of them.
+	rateInterval := strconv.FormatInt(4*step, 10)
+	rangeMs := window.Milliseconds()
+	rangeS := strconv.FormatInt((rangeMs+500)/1000, 10)
+	// Longer names come first: the replacer tries them in argument order.
+	return strings.NewReplacer(
+		"${__range_ms}", strconv.FormatInt(rangeMs, 10), "$__range_ms", strconv.FormatInt(rangeMs, 10),
+		"${__range_s}", rangeS, "$__range_s", rangeS,
+		"${__range}", rangeS+"s", "$__range", rangeS+"s",
+		"${__rate_interval_ms}", rateInterval+"000", "$__rate_interval_ms", rateInterval+"000",
+		"${__rate_interval}", rateInterval+"s", "$__rate_interval", rateInterval+"s",
+		"${__interval_ms}", interval+"000", "$__interval_ms", interval+"000",
+		"${__interval}", interval+"s", "$__interval", interval+"s",
+	).Replace(expr)
 }
 
 // promExprWindow returns how far back the expression reads beyond each
@@ -153,15 +182,19 @@ func checkPromPoints(window time.Duration, step, maxPoints int64) (promGuardViol
 	if points <= maxPoints {
 		return promGuardViolation{}, false
 	}
-	// The smallest integer step s with floor(windowMs/(s*1000)) + 1 <= maxPoints.
-	// maxPoints*1000 cannot overflow here: points > maxPoints bounds maxPoints
-	// by windowMs/1000.
-	minStep := windowMs/(maxPoints*1000) + 1
+	minStep := promMinStepSeconds(window, maxPoints)
 	return promGuardViolation{
 		Reason:  promGuardReasonPoints,
 		Message: fmt.Sprintf("the query requests %d points per series (%s at a %ds step), more than the maximum allowed (%d)", points, window, step, maxPoints),
 		Hint:    fmt.Sprintf("raise stepSeconds to at least %ds (query_prometheus), or shorten the time range", minStep),
 	}, true
+}
+
+// promMinStepSeconds returns the smallest integer step s with
+// floor(window/s) + 1 <= maxPoints. maxPoints*1000 overflows only for limits
+// far beyond any window that time.Duration can hold.
+func promMinStepSeconds(window time.Duration, maxPoints int64) int64 {
+	return window.Milliseconds()/(maxPoints*1000) + 1
 }
 
 // saturatingAdd adds two non-negative durations, capping at the maximum
@@ -225,9 +258,9 @@ func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, en
 		return nil
 
 	case promGuardUnknown:
-		// Grafana macros such as $__rate_interval are the usual cause, and a
-		// real syntax error comes back from the datasource anyway, so this is
-		// not worth a warning per query; the fail_open counter tracks the rate.
+		// Dashboard variables such as $window are the usual cause, and a real
+		// syntax error comes back from the datasource anyway, so this is not
+		// worth a warning per query; the fail_open counter tracks the rate.
 		logger.DebugContext(ctx, "prometheus guardrail could not parse the expression; checked the query's own time range only (fail-open)", "error", d.ParseErr, "expr", expr)
 		metrics.recordFailOpen(ctx, promGuardReasonUnparseable)
 		return nil

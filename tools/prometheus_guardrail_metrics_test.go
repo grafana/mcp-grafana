@@ -83,7 +83,7 @@ func TestPrometheusGuardrailMetricsVerdicts(t *testing.T) {
 		{"unknown mode records blocked", "enfore", `up`, monthAgo, 3600, "mcp.prometheus_guardrail.blocked", "reason=range"},
 		{"points reason", mcpgrafana.PrometheusGuardrailShadow, `up`, promGuardEnd.Add(-4 * time.Hour), 1, "mcp.prometheus_guardrail.would_block", "reason=points"},
 		{"range wins over points", mcpgrafana.PrometheusGuardrailShadow, `up`, monthAgo, 1, "mcp.prometheus_guardrail.would_block", "reason=range"},
-		{"unparseable fails open", mcpgrafana.PrometheusGuardrailEnforce, `rate(x[$__rate_interval])`, start, 60, "mcp.prometheus_guardrail.fail_open", "reason=unparseable"},
+		{"unparseable fails open", mcpgrafana.PrometheusGuardrailEnforce, `rate(x[$window])`, start, 60, "mcp.prometheus_guardrail.fail_open", "reason=unparseable"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -107,7 +107,7 @@ func TestPrometheusGuardrailMetricsRecordNothingWhenNotGuarded(t *testing.T) {
 		reader := sdkmetric.NewManualReader()
 		ctx := newPromGuardMetricsContext(t, reader, mcpgrafana.PrometheusGuardrailOff, 192*time.Hour, 11000)
 		require.NoError(t, guardPrometheusQuery(ctx, `up`, "range", start, promGuardEnd, 1))
-		require.NoError(t, guardPrometheusQuery(ctx, `rate(x[$__rate_interval])`, "range", start, promGuardEnd, 1))
+		require.NoError(t, guardPrometheusQuery(ctx, `rate(x[$window])`, "range", start, promGuardEnd, 1))
 		assert.Empty(t, promGuardCounts(t, reader))
 	})
 

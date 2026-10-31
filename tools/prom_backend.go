@@ -155,6 +155,10 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	}, nil
 }
 
+// prometheusMaxPointsPerSeries is Prometheus' own per-series limit, which
+// Grafana also widens the step to respect.
+const prometheusMaxPointsPerSeries = 11000
+
 // Query executes a PromQL query via Grafana's /api/ds/query endpoint.
 func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
 	if queryType != "instant" && queryType != "range" {
@@ -189,8 +193,8 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 		"interval":   fmt.Sprintf("%ds", step),
 		"intervalMs": int64(step) * 1000,
 		// Without this Grafana assumes 100 points and widens the step to
-		// fit; 11000 is Prometheus' own per-series limit.
-		"maxDataPoints": 11000,
+		// fit.
+		"maxDataPoints": prometheusMaxPointsPerSeries,
 	}
 
 	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, end, query))
