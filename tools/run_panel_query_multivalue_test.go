@@ -28,12 +28,14 @@ func TestSubstituteQueryTemplateVariableValuesMultiValue(t *testing.T) {
 		{name: "Prometheus single selection is escaped, not grouped", datasourceType: "prometheus", query: `up{job=~"${job}"}`, values: []string{"api.v1"}, multi: multi, want: `up{job=~"api\\.v1"}`},
 		{name: "Prometheus regex metacharacters", datasourceType: "prometheus", query: `up{job=~"[[job]]"}`, values: []string{"a+b", "c(d)|e", "$^*{}[]?"}, multi: multi, want: `up{job=~"(a\\+b|c\\(d\\)\\|e|\\$\\^\\*\\{\\}\\[\\]\\?)"}`},
 		{name: "Prometheus backslash", datasourceType: "prometheus", query: `up{path=~"$job"}`, values: []string{`C:\tmp`, "x"}, multi: multi, want: `up{path=~"(C:\\\\tmp|x)"}`},
+		{name: "Prometheus leaves single quotes unescaped", datasourceType: "prometheus", query: `up{name=~"$job"}`, values: []string{"O'Brien", "b"}, multi: multi, want: `up{name=~"(O'Brien|b)"}`},
 		{name: "Loki joins without a group", datasourceType: "loki", query: `{job=~"$job"}`, values: []string{"api", "web.1"}, multi: multi, want: `{job=~"api|web\\.1"}`},
 		{name: "PostgreSQL quotes each value", datasourceType: "grafana-postgresql-datasource", query: "WHERE job IN ($job)", values: []string{"api", "O'Reilly"}, multi: multi, want: "WHERE job IN ('api','O''Reilly')"},
 		{name: "legacy postgres type", datasourceType: "postgres", query: "WHERE job IN ($job)", values: []string{"api"}, multi: multi, want: "WHERE job IN ('api')"},
 		{name: "single-value variable keeps the raw value", datasourceType: "prometheus", query: `up{job=~"$job"}`, values: []string{"api.v1"}, want: `up{job=~"api.v1"}`},
 		{name: "explicit format wins", datasourceType: "prometheus", query: `up{job=~"${job:pipe}"}`, values: []string{"api", "web"}, multi: multi, want: `up{job=~"{api,web}"}`},
 		{name: "other datasources keep the first value", datasourceType: "influxdb", query: `WHERE job = '$job'`, values: []string{"api", "web"}, multi: multi, want: `WHERE job = 'api'`},
+		{name: "other datasources keep the first value: stackdriver", datasourceType: "stackdriver", query: `x{a=~"$job"}`, values: []string{"a", "b"}, multi: multi, want: `x{a=~"a"}`},
 		{name: "empty selection keeps the empty value", datasourceType: "prometheus", query: `up{job=~"$job"}`, values: []string{}, multi: multi, want: `up{job=~""}`},
 	}
 	for _, tt := range tests {

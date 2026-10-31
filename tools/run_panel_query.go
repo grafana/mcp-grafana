@@ -348,15 +348,16 @@ func substituteQueryTemplateVariableValues(query string, variables templateVaria
 // multiValueFormatter returns the datasource's default interpolation for an
 // unformatted reference to a multi-value or include-All variable, matching
 // Grafana's interpolateQueryExpr (Prometheus, Loki) and interpolateVariable
-// (PostgreSQL, MySQL, MSSQL). It returns nil for other datasources.
+// (PostgreSQL, MySQL, MSSQL). It returns nil for other datasources. It keys on
+// the raw type because normalizeDatasourceType maps stackdriver to prometheus.
 func multiValueFormatter(datasourceType string, multi map[string]bool) func(string, []string) (string, bool) {
 	var format func([]string) string
-	switch normalizeDatasourceType(datasourceType) {
+	switch strings.ToLower(datasourceType) {
 	case "prometheus":
 		format = func(values []string) string { return regexAlternation(values, true) }
 	case "loki":
 		format = func(values []string) string { return regexAlternation(values, false) }
-	case "postgres", "mysql", "mssql":
+	case "postgres", "grafana-postgresql-datasource", "mysql", "mssql":
 		format = formatSQLLiteralList
 	default:
 		return nil
@@ -374,6 +375,8 @@ var regexMetacharacters = regexp.MustCompile(`[$^*{}\[\]+?.()|]`)
 // regexAlternation escapes each value as Grafana's prometheusSpecialRegexEscape
 // and lokiSpecialRegexEscape do, doubling every escape because the result sits
 // inside a double-quoted string. Prometheus groups several values; Loki doesn't.
+// Quotes are left alone, as in Prometheus's default (classic) escaping; only the
+// experimental prometheusSpecialCharsInLabelValues toggle escapes them.
 func regexAlternation(values []string, group bool) string {
 	escaped := make([]string, len(values))
 	for i, value := range values {
