@@ -3,11 +3,14 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,8 +128,8 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 }
 
 // esPluginVersions caches elasticsearchPluginVersion results per Grafana
-// instance and credential (see fallbackProxyIDKey). Lookups that fail are
-// cached briefly so they don't add a round trip to every call.
+// instance and credential. Lookups that fail are cached briefly so they don't
+// add a round trip to every call.
 var esPluginVersions sync.Map
 
 type esPluginVersion struct {
@@ -147,7 +150,7 @@ const (
 // without access to the settings gets Grafana's error from /api/ds/query
 // rather than a silent fallback to the proxy.
 func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafanaURL string) (major, minor int) {
-	key := fallbackProxyIDKey(ctx, "es-plugin-version", "")
+	key := elasticsearchPluginVersionCacheKey(ctx)
 	if v, ok := esPluginVersions.Load(key); ok && time.Now().Before(v.(esPluginVersion).expires) {
 		return v.(esPluginVersion).major, v.(esPluginVersion).minor
 	}
@@ -169,9 +172,37 @@ func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafan
 	return major, minor
 }
 
+func elasticsearchPluginVersionCacheKey(ctx context.Context) string {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	h := sha256.New()
+	for _, part := range []string{cfg.APIKey, cfg.AccessToken, cfg.IDToken} {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	if cfg.BasicAuth != nil {
+		password, _ := cfg.BasicAuth.Password()
+		h.Write([]byte(cfg.BasicAuth.Username() + ":" + password))
+	}
+	h.Write([]byte{0})
+	headers := make([]string, 0, len(cfg.ExtraHeaders))
+	for key := range cfg.ExtraHeaders {
+		headers = append(headers, key)
+	}
+	sort.Strings(headers)
+	for _, key := range headers {
+		h.Write([]byte(key))
+		h.Write([]byte{0})
+		h.Write([]byte(cfg.ExtraHeaders[key]))
+		h.Write([]byte{0})
+	}
+	credentialHash := h.Sum(nil)
+	return strings.TrimRight(cfg.URL, "/") + "\x00" + strconv.FormatInt(cfg.OrgID, 10) + "\x00" +
+		hex.EncodeToString(credentialHash[:8])
+}
+
 // fetchElasticsearchPluginVersion reads the plugin version from Grafana.
-// ok is false when the settings can't be read; a version that doesn't parse,
-// such as the empty one Grafana 8 reports, is a successful zero result.
+// ok is false when the settings can't be read; an empty or unparseable version
+// is a successful zero result that selects proxy mode.
 func fetchElasticsearchPluginVersion(ctx context.Context, client *http.Client, grafanaURL string) (major, minor int, ok bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaURL+"/api/plugins/"+elasticsearchDatasourceType+"/settings", nil)
 	if err != nil {

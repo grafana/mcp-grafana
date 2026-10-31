@@ -16,15 +16,6 @@ import (
 //   - Azure Managed Grafana requires /api/datasources/uid/{uid}/resources
 //   - AWS Managed Grafana requires /api/datasources/proxy/uid/{uid}
 //
-// In legacy mode (datasource resolved through the frontend-settings fallback,
-// see datasources_fallback.go) the retry rules differ: the primary is the
-// numeric-id proxy path, and the only reason its uid-based fallback exists is
-// deployments that disable the deprecated numeric routes (404, default since
-// Grafana 13). Legacy mode therefore retries on 404 only — on pre-9.0 the
-// uid routes answer garbage (400 "id is invalid" on 8.x, 500 on 7.x), so
-// retrying a genuine 401/403/500 from the working numeric primary would mask
-// the real error with a routing error.
-//
 // The 401 fallback also covers datasources with basic auth: the /resources
 // proxy does not always forward the datasource's configured basic auth to the
 // upstream (which then answers 401), whereas the legacy /proxy path does.
@@ -34,26 +25,11 @@ type datasourceFallbackTransport struct {
 	wrapped      http.RoundTripper
 	primaryBase  string // e.g., "/api/datasources/uid/{uid}/resources"
 	fallbackBase string // e.g., "/api/datasources/proxy/uid/{uid}"
-	// legacy marks transports whose datasource was resolved through the
-	// frontend-settings fallback. It changes two behaviors:
-	//   - retries happen on 404 only (see the type comment), and
-	//   - the process-wide fallbackEndpoints cache is skipped: its key is a
-	//     path string with no notion of the Grafana instance, org or
-	//     credentials, which is fine for uid-based paths (uids rarely collide
-	//     across tenants) but not for numeric-id paths —
-	//     /api/datasources/proxy/1/... is the same string on every tenant, so
-	//     a Grafana 13+ tenant recording a fallback hit would pin the
-	//     uid-based path for a Grafana 8.x tenant, whose uid routes answer
-	//     400.
-	legacy bool
 }
 
 // shouldRetry reports whether the primary response status warrants trying
 // the fallback base.
 func (t *datasourceFallbackTransport) shouldRetry(status int) bool {
-	if t.legacy {
-		return status == http.StatusNotFound
-	}
 	return status == http.StatusUnauthorized ||
 		status == http.StatusForbidden ||
 		status == http.StatusInternalServerError
@@ -72,31 +48,12 @@ func newDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fall
 	}
 }
 
-// newLegacyDatasourceFallbackTransport is the variant used when the
-// datasource was resolved through the frontend-settings fallback (see
-// datasources_fallback.go): primary is the numeric-id proxy path, retries
-// happen on 404 only, and the shared endpoint cache is skipped (see the
-// legacy field). The numeric primary is expected to succeed on the
-// deployments that use this mode; the retry only fires in the rare
-// newer-Grafana-with-restricted-token case where the numeric routes are
-// disabled.
-func newLegacyDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fallbackBase string) http.RoundTripper {
-	return &datasourceFallbackTransport{
-		wrapped:      wrapped,
-		primaryBase:  primaryBase,
-		fallbackBase: fallbackBase,
-		legacy:       true,
-	}
-}
-
 func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	cacheKey := t.fallbackCacheKey(req)
 
 	// Check cache: if we already know the fallback works, use it directly.
-	if !t.legacy {
-		if useFallback, ok := fallbackEndpoints.Load(cacheKey); ok && useFallback.(bool) {
-			return t.wrapped.RoundTrip(t.rewriteRequest(req, t.primaryBase, t.fallbackBase))
-		}
+	if useFallback, ok := fallbackEndpoints.Load(cacheKey); ok && useFallback.(bool) {
+		return t.wrapped.RoundTrip(t.rewriteRequest(req, t.primaryBase, t.fallbackBase))
 	}
 
 	// Buffer the request body so we can replay it on retry.
@@ -121,10 +78,9 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return resp, nil
 	}
 
-	// A retryable status — try the fallback endpoint (see the type comment
-	// for which statuses are retryable in which mode, and why). Keep the
-	// primary's error body: it is returned if the fallback turns out to be
-	// an HTML page rather than an API answer. A read error is not fatal —
+	// A retryable status tries the fallback endpoint. Keep the primary's error
+	// body: it is returned if the fallback turns out to be an HTML page rather
+	// than an API answer. A read error is not fatal —
 	// keep whatever was read (possibly nothing) and still try the fallback,
 	// since that body only matters if the fallback is HTML.
 	primaryBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxPrimaryErrorBodyBytes))
@@ -157,7 +113,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	// successful (2xx) response.  A 4xx from the fallback means neither path
 	// is working for this particular request; caching it would silently break
 	// all subsequent calls that would otherwise succeed via the primary path.
-	if !t.legacy && retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
+	if retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
 		fallbackEndpoints.Store(cacheKey, true)
 	}
 

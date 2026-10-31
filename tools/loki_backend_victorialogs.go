@@ -40,16 +40,12 @@ type victoriaLogsBackend struct {
 
 func newVictoriaLogsBackend(ctx context.Context, uid string, ds *models.DataSource) (*victoriaLogsBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	resourcesBase, proxyBase := datasourceProxyPaths(uid)
-	primaryBase, fallbackBase := proxyBase, resourcesBase
-	legacyMode := false
-	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
-		// Legacy-compatible routing — see newPrometheusBackend for the full
-		// rationale: route through the numeric-id proxy path directly, keeping
-		// the uid-based proxy route as the transport-level fallback.
-		primaryBase, fallbackBase = numericBase, uidBase
-		legacyMode = true
+	dsUID := uid
+	if ds != nil && ds.UID != "" {
+		dsUID = ds.UID
 	}
+	resourcesBase, proxyBase := datasourceProxyPaths(dsUID)
+	primaryBase, fallbackBase := proxyBase, resourcesBase
 	baseURL := trimTrailingSlash(cfg.URL) + primaryBase
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
@@ -57,25 +53,14 @@ func newVictoriaLogsBackend(ctx context.Context, uid string, ds *models.DataSour
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	// Mirror the native Loki client: try the primary base first and fall back
-	// to the alternate for compatibility with different Grafana deployments.
-	// See fallback_transport.go for the per-mode retry rules.
-	var rt http.RoundTripper
-	if legacyMode {
-		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
-	} else {
-		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
-	}
+	// Mirror the native Loki client: try the proxy route first and fall back to
+	// the resources route for compatibility with different deployments.
+	rt := newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
 
 	dsQueryClient, dsQueryURL, err := newDSQueryHTTPClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	dsUID := uid
-	if ds != nil && ds.UID != "" {
-		dsUID = ds.UID
-	}
-
 	return &victoriaLogsBackend{
 		httpClient:    &http.Client{Transport: rt, Timeout: 30 * time.Second},
 		baseURL:       baseURL,
