@@ -364,7 +364,7 @@ func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
 		}
 
 		variable := map[string]interface{}{}
-		for _, key := range []string{"name", "current", "query"} {
+		for _, key := range []string{"name", "current", "query", "multi", "includeAll"} {
 			if val, ok := vspec[key]; ok {
 				variable[key] = val
 			}

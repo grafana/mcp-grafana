@@ -32,11 +32,11 @@ func TestBigQueryVariableFormatting(t *testing.T) {
 		})
 	}
 	for _, reference := range []string{"${x:sqlstring}", "[[x:sqlstring]]"} {
-		got := substituteQueryTemplateVariableValues("select "+reference, templateVariableValues{"x": {"O'Reilly"}}, sql.BigQueryDatasourceType)
+		got := substituteQueryTemplateVariableValues("select "+reference, templateVariableValues{"x": {"O'Reilly"}}, sql.BigQueryDatasourceType, nil)
 		assert.Equal(t, `select "O'Reilly"`, got)
 	}
 	for _, datasourceType := range []string{"", "postgres", "mssql"} {
-		got := substituteQueryTemplateVariableValues("select ${x:sqlstring}", templateVariableValues{"x": {"O'Reilly"}}, datasourceType)
+		got := substituteQueryTemplateVariableValues("select ${x:sqlstring}", templateVariableValues{"x": {"O'Reilly"}}, datasourceType, nil)
 		assert.Equal(t, "select 'O''Reilly'", got, "unknown and non-BigQuery types keep the existing formatter")
 	}
 }

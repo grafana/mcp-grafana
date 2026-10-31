@@ -33,6 +33,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		values[name] = []string{value}
 	}
 	allWarnings := allTemplateSelectionWarnings(db, args.Variables, values)
+	multi := multiValueTemplateVariables(db)
 	for i := range queries {
 		query := &queries[i]
 		// Frontend macros are not dashboard variables, even when the executor
@@ -51,7 +52,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery, err = substituteInspectionMacros(substituteQueryTemplateVariableValues(query.Query, values, query.Datasource.Type), query.Datasource.Type, from, to)
+		query.ProcessedQuery, err = substituteInspectionMacros(substituteQueryTemplateVariableValues(query.Query, values, query.Datasource.Type, multi), query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
