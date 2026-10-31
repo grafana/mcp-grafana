@@ -336,7 +336,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `update_datasource`                 | Datasources               | Update a datasource                                                                                                                                           | `datasources:read`, `datasources:write`                                                                                                                                                                                                                                             | `datasources:*` or `datasources:uid:abc123`                   |
 | `get_query_examples`                | Examples*                 | Get example queries for a datasource type                                                                                                                     | None                                                                                                                                                                                                                                                                                | `datasources:*`                                               |
 | `query_prometheus`                  | Prometheus                | Query metrics using PromQL without opening a chart                                                                                                            | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
-| `render_prometheus_chart`           | Prometheus                | Query metrics using PromQL and display the interactive metrics App                                                                                            | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
+| `render_grafana_app`                | Rendering                 | Run an enabled query tool and display its result in the interactive Grafana App                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:*` or `datasources:uid:<uid>`                    |
 | `list_prometheus_metric_metadata`   | Prometheus                | List metric metadata                                                                                                                                          | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
 | `list_prometheus_metric_names`      | Prometheus                | List available metric names                                                                                                                                   | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
 | `list_prometheus_label_names`       | Prometheus                | List label names matching a selector                                                                                                                          | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
@@ -435,7 +435,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
-The `get_tempo_trace` tool displays an interactive trace viewer in compatible MCP hosts whenever Tempo query tools are enabled. Its existing text output remains available. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
+The `render_grafana_app` tool displays metrics and traces in compatible MCP hosts when the rendering and corresponding query categories are enabled. Source query tools return text and structured data for analysis. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
 
 ## CLI Flags Reference
 
@@ -631,8 +631,10 @@ When `--disable-query` is enabled, the following tools are not registered:
 
 **Prometheus Tools:**
 - `query_prometheus`
-- `render_prometheus_chart`
 - `query_prometheus_histogram`
+
+**Rendering Tools:**
+- `render_grafana_app`
 
 **Loki Tools:**
 - `query_loki_logs`

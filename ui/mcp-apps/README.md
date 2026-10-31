@@ -1,6 +1,6 @@
 # Grafana MCP Apps UI
 
-Reusable React shell, a visualization library, and the self-contained trace and metrics MCP Apps. The package uses public npm dependencies only. Its standalone theme values are scoped to each app root, so light and dark previews can appear together.
+Reusable React shell, a visualization library, and the shared, self-contained Grafana MCP App. The package uses public npm dependencies only. Its standalone theme values are scoped to each app root, so light and dark previews can appear together.
 
 ## Build and check
 
@@ -11,14 +11,14 @@ npm test
 npm run build
 ```
 
-`npm run build` creates the reusable library (`dist/index.js` and declarations) and the single-file MCP resources `dist/trace.html` and `dist/metrics.html`. The HTML files are committed for the Go server's `go:embed`. Regenerate them after changing app source; do not edit generated HTML. `mise run build-ui` runs the same install and build sequence. To build one resource, use `npm run build:trace` or `npm run build:metrics`.
+`npm run build` creates the reusable library (`dist/index.js` and declarations) and the shared `dist/app.html` resource embedded by Go. Regenerate and commit the HTML after app source changes. `npm run build:apps` builds only the resource; `mise run build-ui` builds all UI packages.
 
 Run `npm run dev` for component and host previews. The preview fixtures are synthetic and do not query a Grafana server.
 
 `preview/localhost.html` runs a built app against a real host: an `AppBridge` over
 `PostMessageTransport`, with `dist/` served same-origin so the app's console and
 errors are reachable. Use it when an app misbehaves inside a real host, which
-sandboxes the iframe and may refuse to expose a debugger. `?app=metrics.html`
+sandboxes the iframe and may refuse to expose a debugger. `?app=app.html`
 selects the bundle and `?mode=dark` the colour mode.
 
 ## Use the shell
@@ -63,18 +63,18 @@ ECharts features are registered once, in `src/viz/echartsSetup.ts`.
 
 ## Metrics app
 
-`render_prometheus_chart` renders its own result. `query_prometheus` returns data without opening a view and handles refresh requests from an existing App. The visualization is derived from the
+`render_grafana_app` with `toolName: "query_prometheus"` renders the source query's result. `query_prometheus` returns data without opening a view and handles refresh requests from an existing App. The visualization is derived from the
 response shape and the inferred unit rather than chosen by the model: a range
 query is a time series, an instant query over several series is ranked bars, and
 a single value is a stat — or a bullet when the unit bounds it. Alternatives that
 suit the same data appear as a toggle. Refresh re-runs the query through the
 host's MCP session, and selecting a window sends the agent a follow-up question.
 
-Host state lives in `app/metricsHostState.ts` and is created with the `App`,
+Host state lives in `app/appHostState.ts` and is created with the `App`,
 before React renders: a host may deliver `tool-input` and `tool-result` before
 the first commit and does not replay them, so handlers registered in an effect
 can miss them.
 
 ## Trace app
 
-`get_tempo_trace` displays a Tempo trace with span search, error filtering, a focused ancestor path, and a virtualized waterfall. Selecting a span shows attributes and events, with exception information first. Wide layouts show the inspector beside the waterfall; narrow layouts switch between Trace and Span views. The MCP host supplies result data, color mode, and navigation. The browser does not query Grafana directly.
+`render_grafana_app` with `toolName: "get_tempo_trace"` displays a Tempo trace with span search, error filtering, a focused ancestor path, and a virtualized waterfall. Selecting a span shows attributes and events, with exception information first. Wide layouts show the inspector beside the waterfall; narrow layouts switch between Trace and Span views. The MCP host supplies result data, color mode, and navigation. The browser does not query Grafana directly.

@@ -298,19 +298,6 @@ var QueryPrometheus = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
-var RenderPrometheusChart = mcpgrafana.MustTool(
-	"render_prometheus_chart",
-	"Query a PromQL-compatible datasource and display the result in an interactive chart. Supports instant queries and range queries over time. The view is inferred from the response shape. Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
-	queryPrometheusTool,
-	mcpgrafana.WithUIResource(mcpgrafana.MetricsViewerResourceURI),
-	mcpgrafana.WithTitleAnnotation("Show Prometheus metrics chart"),
-	mcpgrafana.WithIdempotentHintAnnotation(true),
-	mcpgrafana.WithReadOnlyHintAnnotation(true),
-	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions(datasourceQuery...),
-)
-
 const maxPrometheusMetricNames = 10_000
 
 type ListPrometheusMetricNamesParams struct {
@@ -758,7 +745,6 @@ func AddPrometheusTools(s *mcp.Server, enableQueryTools bool) {
 	ListPrometheusMetricMetadata.Register(s)
 	if enableQueryTools {
 		QueryPrometheus.Register(s)
-		RenderPrometheusChart.Register(s)
 		QueryPrometheusHistogram.Register(s)
 	}
 	ListPrometheusMetricNames.Register(s)
