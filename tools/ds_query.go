@@ -85,7 +85,11 @@ func newDSQueryHTTPClient(ctx context.Context) (*http.Client, string, error) {
 		return nil, "", fmt.Errorf("failed to create transport: %w", err)
 	}
 
-	return &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: refuseRedirect}, baseURL, nil
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = mcpgrafana.DefaultGrafanaClientTimeout
+	}
+	return &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: refuseRedirect}, baseURL, nil
 }
 
 // framesToTabularRows converts SDK data frames into row-oriented maps — the
