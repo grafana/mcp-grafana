@@ -2,24 +2,13 @@ import type { App } from '@modelcontextprotocol/ext-apps';
 
 import type { McpAppColorMode, McpAppFeedback } from '../src/McpAppShell';
 import type { ParsedMetrics } from '../src/metrics/pickViz';
+import type { TraceViewResult } from '../src/trace/types';
 import { applyHostContext } from './hostContext';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
+import { parseTraceResult } from './parseTraceResult';
 
-/**
- * Host state for the metrics app, owned outside React.
- *
- * Handlers must be attached the moment the `App` exists, not in an effect: the
- * host may complete the handshake and fire `tool-input` / `tool-result` before
- * React commits its first render, and those notifications are not replayed. An
- * app that registers handlers in `useEffect` therefore renders correctly or
- * stays stuck on "waiting" depending on timing — which is exactly the kind of
- * bug that looks like a host problem.
- *
- * So the entry point calls `createMetricsHostState(app)` before `render`, and
- * the component subscribes to it.
- */
-
-/** The arguments `query_prometheus` was called with, as the host reports them. */
+// Attach handlers before connecting: hosts may deliver results before React's first commit.
+/** Source query inputs retained for refresh and range selection. */
 export type QueryArgs = {
   expr?: string;
   datasourceUid?: string;
@@ -27,10 +16,13 @@ export type QueryArgs = {
   startTime?: string;
   endTime?: string;
   stepSeconds?: number;
+  orgId?: number;
 };
 
-export type MetricsHostSnapshot = {
+export type AppHostSnapshot = {
   result?: ParsedMetrics;
+  trace?: TraceViewResult;
+  toolName?: string;
   args?: QueryArgs;
   colorMode: McpAppColorMode;
   status: string;
@@ -46,8 +38,8 @@ export type MetricsHostSnapshot = {
   generation: number;
 };
 
-export type MetricsHostState = {
-  getSnapshot: () => MetricsHostSnapshot;
+export type AppHostState = {
+  getSnapshot: () => AppHostSnapshot;
   subscribe: (listener: () => void) => () => void;
   /** Re-run the same query under the host's authenticated MCP session. */
   refresh: () => Promise<void>;
@@ -58,13 +50,12 @@ export type MetricsHostState = {
   close: () => void;
 };
 
-const TOOL_NAME = 'query_prometheus';
 const WAITING = 'Waiting for query results…';
 
 const error = (message: string): McpAppFeedback => ({ tone: 'error', message });
 
-export function createMetricsHostState(app: App): MetricsHostState {
-  let snapshot: MetricsHostSnapshot = {
+export function createAppHostState(app: App): AppHostState {
+  let snapshot: AppHostSnapshot = {
     colorMode: 'light',
     status: WAITING,
     isError: false,
@@ -73,7 +64,7 @@ export function createMetricsHostState(app: App): MetricsHostState {
   };
   const listeners = new Set<() => void>();
 
-  const set = (patch: Partial<MetricsHostSnapshot>) => {
+  const set = (patch: Partial<AppHostSnapshot>) => {
     snapshot = { ...snapshot, ...patch };
     for (const listener of listeners) listener();
   };
@@ -82,7 +73,7 @@ export function createMetricsHostState(app: App): MetricsHostState {
    * Parse a tool result onto the snapshot. Shared by the first render and refresh.
    * `patch` rides along in the same update, so listeners see one change.
    */
-  const applyResult = (response: unknown, patch: Partial<MetricsHostSnapshot> = {}): boolean => {
+  const applyResult = (response: unknown, patch: Partial<AppHostSnapshot> = {}): boolean => {
     const { payload, channel } = extractToolPayload(response);
 
     if (channel === 'oversized') {
@@ -104,33 +95,48 @@ export function createMetricsHostState(app: App): MetricsHostState {
       return false;
     }
 
-    const parsed = parsePrometheusResult(payload);
+    const trace = snapshot.toolName === 'get_tempo_trace' ? parseTraceResult(payload) : undefined;
+    if (trace) {
+      set({ ...patch, trace, result: undefined, isError: false });
+      return true;
+    }
+
+    const parsed = snapshot.toolName === 'get_tempo_trace' ? undefined : parsePrometheusResult(payload);
     if (!parsed) {
       set({
         ...patch,
         isError: true,
-        status: `Received a payload via ${channel}, but it did not parse as a Prometheus result.`,
+        status: 'Interactive view unavailable; data remains available in the tool output.',
       });
       return false;
     }
 
-    set({ ...patch, result: parsed, isError: false });
+    set({ ...patch, result: parsed, trace: undefined, isError: false });
     return true;
   };
 
   /** A new tool call from the host supersedes any refresh still in flight. */
-  const nextCall = (): Partial<MetricsHostSnapshot> => ({
+  const nextCall = (): Partial<AppHostSnapshot> => ({
     generation: snapshot.generation + 1,
     notice: undefined,
     refreshing: false,
   });
 
   app.ontoolinput = (params) => {
-    const incoming = (params as { arguments?: QueryArgs } | undefined)?.arguments;
-    if (!incoming || typeof incoming !== 'object') return;
+    const call = params.arguments;
+    const incoming = call?.arguments;
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return;
     // The previous chart is not this query's; keeping it would title old data
     // with the new expression until the result arrives.
-    set({ ...nextCall(), args: incoming, result: undefined, isError: false, status: WAITING });
+    set({
+      ...nextCall(),
+      toolName: typeof call.toolName === 'string' ? call.toolName : undefined,
+      args: { ...incoming, ...(typeof call.orgId === 'number' ? { orgId: call.orgId } : {}) } as QueryArgs,
+      result: undefined,
+      trace: undefined,
+      isError: false,
+      status: WAITING,
+    });
   };
 
   app.ontoolresult = (response) => {
@@ -138,17 +144,18 @@ export function createMetricsHostState(app: App): MetricsHostState {
       set({
         ...nextCall(),
         result: undefined,
+        trace: undefined,
         isError: true,
-        status: 'The query failed. Check the expression and datasource access, then run query_prometheus again.',
+        status: 'The query failed. Check the query inputs and datasource access, then run render_grafana_app again.',
       });
       return;
     }
     // An unreadable result replaces the previous chart rather than sitting under it.
-    applyResult(response, { ...nextCall(), result: undefined });
+    applyResult(response, { ...nextCall(), result: undefined, trace: undefined });
   };
 
   app.ontoolcancelled = () => {
-    set({ ...nextCall(), result: undefined, isError: true, status: 'The query was cancelled.' });
+    set({ ...nextCall(), result: undefined, trace: undefined, isError: true, status: 'The query was cancelled.' });
   };
 
   app.onhostcontextchanged = (context) => {
@@ -157,7 +164,7 @@ export function createMetricsHostState(app: App): MetricsHostState {
   };
 
   app.onteardown = async () => {
-    set({ result: undefined, status: 'Metrics app closed.' });
+    set({ ...nextCall(), result: undefined, trace: undefined, isError: true, status: 'Grafana App closed.' });
     return {};
   };
 
@@ -171,20 +178,21 @@ export function createMetricsHostState(app: App): MetricsHostState {
     .catch(() => {
       set({
         result: undefined,
+        trace: undefined,
         isError: true,
-        status: 'Could not connect to the MCP host. Reopen the metrics app to try again.',
+        status: 'Could not connect to the MCP host. Reopen the Grafana App to try again.',
       });
     });
 
   const refresh = async () => {
     const args = snapshot.args;
-    if (!args?.expr || !args.datasourceUid) return;
+    if (!args?.expr || !args.datasourceUid || snapshot.toolName !== 'query_prometheus') return;
     const generation = snapshot.generation;
     // Once the host has delivered a newer call, this refresh's outcome is stale.
     const superseded = () => snapshot.generation !== generation;
     set({ refreshing: true, notice: undefined });
     try {
-      const response = await app.callServerTool({ name: TOOL_NAME, arguments: { ...args } });
+      const response = await app.callServerTool({ name: snapshot.toolName, arguments: { ...args } });
       if (superseded()) return;
       if (response.isError) {
         set({ notice: error('The refresh query failed. The chart still shows the previous result.') });

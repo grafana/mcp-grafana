@@ -6,7 +6,7 @@
  * `AppBridge` over `PostMessageTransport`, the same handshake — so the app runs
  * in an iframe with a reachable console and the error can be read.
  *
- * Load with `?app=metrics.html` (default) and open the console, or drive it
+ * Load with `?app=app.html` (default) and open the console, or drive it
  * headlessly and read the captured log from `window.__hostLog`.
  */
 
@@ -64,7 +64,7 @@ function instantResult(kind: string) {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
     structuredContent: payload,
     isError: false,
-    _meta: { ui: { resourceUri: 'ui://grafana/metrics.html' } },
+    _meta: { ui: { resourceUri: 'ui://grafana/app.html' } },
   };
 }
 
@@ -91,7 +91,7 @@ function bucketResult() {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
     structuredContent: payload,
     isError: false,
-    _meta: { ui: { resourceUri: 'ui://grafana/metrics.html' } },
+    _meta: { ui: { resourceUri: 'ui://grafana/app.html' } },
   };
 }
 
@@ -115,13 +115,13 @@ function toolResult(generation = 0) {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
     structuredContent: payload,
     isError: false,
-    _meta: { ui: { resourceUri: 'ui://grafana/metrics.html' } },
+    _meta: { ui: { resourceUri: 'ui://grafana/app.html' } },
   };
 }
 
 async function main() {
   const params = new URLSearchParams(location.search);
-  const appFile = params.get('app') ?? 'metrics.html';
+  const appFile = params.get('app') ?? 'app.html';
   const theme = params.get('mode') === 'dark' ? 'dark' : 'light';
 
   const iframe = document.getElementById('app') as HTMLIFrameElement;
@@ -177,12 +177,12 @@ async function main() {
     buckets: 'rate(http_request_duration_seconds_bucket[5m])',
   };
   await bridge.sendToolInput({
-    toolName: 'query_prometheus',
-    arguments: {
+    toolName: 'render_grafana_app',
+    arguments: { toolName: 'query_prometheus', arguments: {
       expr: fixtureName ? (fixtureExpr[fixtureName] ?? fixtureName) : 'node_load1',
       datasourceUid: 'grafanacloud-prom',
       queryType: fixtureName && fixtureName !== 'buckets' ? 'instant' : 'range',
-    },
+    } },
   } as never);
   record('tool-input sent');
 

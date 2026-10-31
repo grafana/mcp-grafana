@@ -31,7 +31,7 @@ const (
 	testSpanID  = "1111111111111111"
 )
 
-func TestRenderTraceToolDefinition(t *testing.T) {
+func TestTraceQueryToolDefinition(t *testing.T) {
 	tool := GetTempoTraceTool.Tool
 	assert.Equal(t, "get_tempo_trace", tool.Name)
 	require.NotNil(t, tool.Annotations)
@@ -39,9 +39,7 @@ func TestRenderTraceToolDefinition(t *testing.T) {
 	assert.True(t, tool.Annotations.IdempotentHint)
 	require.NotNil(t, tool.Meta)
 
-	ui, ok := tool.Meta["ui"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, mcpgrafana.TraceViewerResourceURI, ui["resourceUri"])
+	assert.NotContains(t, tool.Meta, "ui")
 
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`

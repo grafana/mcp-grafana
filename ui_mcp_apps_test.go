@@ -19,7 +19,7 @@ func TestMCPAppResources(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	resources, err := c.ListResources(ctx, nil)
 	require.NoError(t, err)
-	for _, uri := range []string{TraceViewerResourceURI, PanelViewerResourceURI} {
+	for _, uri := range []string{GrafanaAppResourceURI, PanelViewerResourceURI} {
 		t.Run(uri, func(t *testing.T) {
 			var found bool
 			for _, resource := range resources.Resources {
@@ -44,7 +44,7 @@ func TestMCPAppResources(t *testing.T) {
 			require.True(t, ok)
 			require.Empty(t, csp["connectDomains"])
 			require.Equal(t, []any{"data:"}, csp["resourceDomains"])
-			if uri == TraceViewerResourceURI {
+			if uri == GrafanaAppResourceURI {
 				require.Contains(t, ui, "permissions")
 			} else {
 				require.NotContains(t, ui, "permissions")

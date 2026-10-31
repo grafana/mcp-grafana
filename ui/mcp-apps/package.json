@@ -12,13 +12,11 @@
   "scripts": {
     "build": "npm run build:lib && npm run build:apps",
     "build:lib": "vite build && tsc -p tsconfig.build.json",
-    "build:trace": "vite build --config trace.vite.config.ts",
-    "build:apps": "npm run build:trace && npm run build:metrics",
+    "build:apps": "vite build --config grafana.vite.config.ts",
     "build:preview": "vite build --config preview/vite.config.ts",
     "dev": "vite --config preview/vite.config.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "build:metrics": "vite build --config metrics.vite.config.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@emotion/css": "11.13.5",
