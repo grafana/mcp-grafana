@@ -80,6 +80,15 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string, params ur
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		_ = resp.Body.Close() //nolint:errcheck
+		if resp.StatusCode == http.StatusBadRequest && path != rulesEndpointPath &&
+			strings.HasPrefix(path, "/api/prometheus/") && strings.HasSuffix(path, "/api/v1/rules") {
+			var apiError struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(bodyBytes, &apiError) == nil && apiError.Message == "Authentication to data source failed" {
+				return nil, fmt.Errorf("grafana API returned status code %d: %s; Grafana could not authenticate to the datasource; check the datasource's credentials and ruler configuration in Grafana", resp.StatusCode, string(bodyBytes))
+			}
+		}
 		return nil, fmt.Errorf("grafana API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
