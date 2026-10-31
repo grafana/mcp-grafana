@@ -1,0 +1,31 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # Builds docs/sources with Hugo, with broken reference links promoted to
+      # errors, so a bad relref in a docs page fails here rather than on the
+      # website build after merge.
+      - name: Build docs
+        run: make -C docs test
