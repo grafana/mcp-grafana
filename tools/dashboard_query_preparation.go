@@ -42,8 +42,13 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 			return nil, err
 		}
 		references = substituteGrafanaMacros(references, from, to)
-		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
-		for _, variable := range query.RequiredVariables {
+		query.RequiredVariables = nil
+		for _, variable := range findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables) {
+			// ClickHouse expands this plugin macro after frontend preparation.
+			if variable.Name == "__interval_s" && normalizeDatasourceType(query.Datasource.Type) == "clickhouse" {
+				continue
+			}
+			query.RequiredVariables = append(query.RequiredVariables, variable)
 			if warning := allWarnings[variable.Name]; warning != "" {
 				query.Warnings = append(query.Warnings, warning)
 			}
@@ -51,10 +56,12 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery, err = substituteInspectionMacros(substituteQueryTemplateVariableValues(query.Query, values, query.Datasource.Type), query.Datasource.Type, from, to)
+		// Expand the source macros before inserting literal selected values.
+		query.ProcessedQuery, err = substituteInspectionMacros(query.Query, query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
+		query.ProcessedQuery = substituteQueryTemplateVariableValues(query.ProcessedQuery, values, query.Datasource.Type)
 		query.Datasource.UID = substituteTemplateVariableValues(query.Datasource.UID, values)
 	}
 	return queries, nil

@@ -263,7 +263,8 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		}
 	}
 
-	// Substitute variables in the query
+	// Keep the displayed query separate from the source passed to executors,
+	// which expand macros before inserting literal variable values.
 	query := substituteQueryTemplateVariableValues(panelData.Query, templateVariables, datasourceType)
 
 	// Route to appropriate datasource and execute query
@@ -274,11 +275,11 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 	switch normalizeDatasourceType(datasourceType) {
 	case "prometheus":
-		results, err = executePrometheusQuery(ctx, datasourceUID, query, params.Start, params.End)
+		results, err = executePrometheusQuery(ctx, datasourceUID, panelData.Query, params.Start, params.End, templateVariables)
 	case "loki":
-		results, err = executeLokiQuery(ctx, datasourceUID, query, params.Start, params.End)
+		results, err = executeLokiQuery(ctx, datasourceUID, panelData.Query, params.Start, params.End, templateVariables)
 	case "clickhouse":
-		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
+		results, err = executeClickHouseQuery(ctx, datasourceUID, panelData.Query, params.Start, params.End, templateVariables)
 	case "cloudwatch":
 		results, target, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
 	case "infinity":
@@ -293,16 +294,16 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.BigQueryDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, panelData.Query, params.Start, params.End, templateVariables, sqldialect.BigQueryDatasourceType)
 	case "mysql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MySQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, panelData.Query, params.Start, params.End, templateVariables, sqldialect.MySQLDatasourceType)
 	case "mssql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MSSQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, panelData.Query, params.Start, params.End, templateVariables, sqldialect.MSSQLDatasourceType)
 	case "postgres":
 		// PostgreSQL exposes two datasource identifiers (grafana-postgresql-datasource
 		// and the legacy postgres); pass the resolved type through so the datasource
 		// object sent to Grafana matches what the panel actually declared.
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, datasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, panelData.Query, params.Start, params.End, templateVariables, datasourceType)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus, query_loki_logs, query_sql, query_cloudwatch, query_influxdb) directly", datasourceType)
 	}
@@ -351,20 +352,32 @@ func substituteTemplateVariableValues(query string, variables templateVariableVa
 }
 
 func substituteTemplateVariableValuesWithFormatter(query string, variables templateVariableValues, formatter func([]string, string) string) string {
-	for name, values := range variables {
-		variableRe := regexp.MustCompile(fmt.Sprintf(
-			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
-			regexp.QuoteMeta(name), regexp.QuoteMeta(name), regexp.QuoteMeta(name),
-		))
-		query = variableRe.ReplaceAllStringFunc(query, func(match string) string {
-			format, hasFormat := templateVariableFormat(match)
-			if !hasFormat {
-				return firstTemplateVariableValue(values)
-			}
-			return formatter(values, format)
-		})
+	if len(variables) == 0 {
+		return query
 	}
-	return query
+	names := slices.Collect(maps.Keys(variables))
+	slices.SortFunc(names, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
+		}
+		return strings.Compare(a, b)
+	})
+	patterns := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted := regexp.QuoteMeta(name)
+		patterns = append(patterns, fmt.Sprintf(`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`, quoted, quoted, quoted))
+	}
+	variableRe := regexp.MustCompile(strings.Join(patterns, "|"))
+	// Visit only source references so inserted values cannot become variables.
+	return variableRe.ReplaceAllStringFunc(query, func(match string) string {
+		name, _, _ := strings.Cut(extractVariableName(match), ":")
+		values := variables[name]
+		format, hasFormat := templateVariableFormat(match)
+		if !hasFormat {
+			return firstTemplateVariableValue(values)
+		}
+		return formatter(values, format)
+	})
 }
 
 func templateVariableFormat(match string) (string, bool) {
@@ -611,7 +624,7 @@ func firstTemplateVariableValues(values templateVariableValues) map[string]strin
 }
 
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
-func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
+func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string, variables templateVariableValues) (model.Value, error) {
 	// Parse time range for macro substitution
 	startTime, err := parseTime(start)
 	if err != nil {
@@ -624,6 +637,7 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 
 	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
 	query = substituteGrafanaMacros(query, startTime, endTime)
+	query = substituteQueryTemplateVariableValues(query, variables, "prometheus")
 
 	return queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: datasourceUID,
@@ -636,7 +650,7 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 }
 
 // executeLokiQuery runs a Loki query using the existing queryLokiLogs function
-func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end string) ([]LogEntry, error) {
+func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end string, variables templateVariableValues) ([]LogEntry, error) {
 	// Convert relative times to RFC3339 for Loki
 	startTime, err := parseTime(start)
 	if err != nil {
@@ -649,6 +663,7 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 
 	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
 	query = substituteGrafanaMacros(query, startTime, endTime)
+	query = substituteQueryTemplateVariableValues(query, variables, "loki")
 
 	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
@@ -667,13 +682,13 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 	return result.Data, nil
 }
 
-func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string) (*sqldialect.SQLQueryResult, error) {
-	return querySQLHandler(ctx, sqldialect.QuerySQLParams{
+func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string, variables templateVariableValues) (*sqldialect.SQLQueryResult, error) {
+	return querySQLWithTemplateVariables(ctx, sqldialect.QuerySQLParams{
 		DatasourceUID: datasourceUID,
 		Query:         query,
 		Start:         start,
 		End:           end,
-	})
+	}, variables)
 }
 
 // executeCloudWatchPanelQuery runs a CloudWatch query using Grafana's /api/ds/query endpoint
@@ -710,8 +725,10 @@ func executeStructuredPanelQuery(ctx context.Context, datasourceUID, datasourceT
 		return nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
+	// Work on a private copy and expand only macros in the saved target.
+	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, nil)
 	substituteGrafanaMacrosInMap(target, startTime, endTime)
+	target = substituteTemplateVariablesInMapWithValues(target, variables)
 
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
@@ -927,6 +944,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 
 	// Substitute Grafana frontend macros; leave SQL macros for the backend plugin.
 	processedQuery := substituteGrafanaMacros(query, startTime, endTime)
+	processedQuery = substituteQueryTemplateVariableValues(processedQuery, variables, datasourceType)
 
 	// Deep copy the raw target and substitute variables in its fields (e.g. location).
 	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
@@ -1023,50 +1041,30 @@ func autoInterval(start, end time.Time) time.Duration {
 	return d
 }
 
-// substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
-// used across datasource types (Prometheus, Loki, etc.)
+var grafanaTemporalMacroRE = regexp.MustCompile(`\$(?:\{__\w+\}|__\w+\b)`)
+
+// substituteGrafanaMacros expands only whole frontend temporal macro names.
 func substituteGrafanaMacros(query string, start, end time.Time) string {
 	duration := end.Sub(start)
-
-	// Substitute $__range_ms and $__range_s BEFORE $__range to avoid partial replacement
-	rangeSec := int64(duration.Seconds())
-	rangeMs := duration.Milliseconds()
-	query = strings.ReplaceAll(query, "${__range_ms}", fmt.Sprintf("%d", rangeMs))
-	query = strings.ReplaceAll(query, "$__range_ms", fmt.Sprintf("%d", rangeMs))
-	query = strings.ReplaceAll(query, "${__range_s}", fmt.Sprintf("%d", rangeSec))
-	query = strings.ReplaceAll(query, "$__range_s", fmt.Sprintf("%d", rangeSec))
-
-	// $__range - total time range as duration string
-	rangeStr := formatPrometheusDuration(duration)
-	query = strings.ReplaceAll(query, "${__range}", rangeStr)
-	query = strings.ReplaceAll(query, "$__range", rangeStr)
-
-	// Substitute $__rate_interval_ms BEFORE $__rate_interval to avoid partial replacement
-	query = strings.ReplaceAll(query, "${__rate_interval_ms}", "60000")
-	query = strings.ReplaceAll(query, "$__rate_interval_ms", "60000")
-
-	// $__rate_interval - default to "1m"
-	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
-	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
-
 	interval := macroInterval(start, end)
-
-	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
-	intervalMs := int64(interval / time.Millisecond)
-	query = strings.ReplaceAll(query, "${__interval_ms}", fmt.Sprintf("%d", intervalMs))
-	query = strings.ReplaceAll(query, "$__interval_ms", fmt.Sprintf("%d", intervalMs))
-
-	// $__interval - duration string
 	intervalStr := formatPrometheusDuration(interval)
-	query = strings.ReplaceAll(query, "${__interval}", intervalStr)
-	query = strings.ReplaceAll(query, "$__interval", intervalStr)
-
-	// $__auto - Grafana fills this in with the step for range queries, which
-	// is all run_panel_query issues.
-	query = strings.ReplaceAll(query, "${__auto}", intervalStr)
-	query = strings.ReplaceAll(query, "$__auto", intervalStr)
-
-	return query
+	values := map[string]string{
+		"__range_ms":         fmt.Sprintf("%d", duration.Milliseconds()),
+		"__range_s":          fmt.Sprintf("%d", int64(duration.Seconds())),
+		"__range":            formatPrometheusDuration(duration),
+		"__rate_interval_ms": "60000",
+		"__rate_interval":    "1m",
+		"__interval_ms":      fmt.Sprintf("%d", int64(interval/time.Millisecond)),
+		"__interval":         intervalStr,
+		"__auto":             intervalStr,
+	}
+	return grafanaTemporalMacroRE.ReplaceAllStringFunc(query, func(match string) string {
+		// Match whole names so a variable such as $__interval_env survives.
+		if value, ok := values[strings.Trim(match, "${}")]; ok {
+			return value
+		}
+		return match
+	})
 }
 
 // formatPrometheusDuration formats a duration for Prometheus and Loki (e.g. "14m", "1h30m",
