@@ -17,6 +17,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	"github.com/grafana/pyroscope/api/gen/proto/go/querier/v1/querierv1connect"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
@@ -250,7 +251,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 		Timeout:   10 * time.Second,
 	}
 
-	_, err = getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	_, err = datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -53,7 +54,7 @@ type InfluxDBQueryResult struct {
 // newInfluxDBDatasource verifies the datasource exists and is an InfluxDB
 // datasource, returning the datasource metadata for dialect inference.
 func newInfluxDBDatasource(ctx context.Context, uid string) (*models.DataSource, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}

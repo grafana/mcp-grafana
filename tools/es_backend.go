@@ -15,6 +15,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
 const (
@@ -50,7 +51,7 @@ type esBackend interface {
 
 // esBackendForDatasource looks up the datasource type and returns the appropriate backend.
 func esBackendForDatasource(ctx context.Context, uid string) (esBackend, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +126,7 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 }
 
 // esPluginVersions caches elasticsearchPluginVersion results per Grafana
-// instance and credential (see fallbackProxyIDKey). Lookups that fail are
+// instance and credential (see datasource.ScopedKey). Lookups that fail are
 // cached briefly so they don't add a round trip to every call.
 var esPluginVersions sync.Map
 
@@ -147,7 +148,7 @@ const (
 // without access to the settings gets Grafana's error from /api/ds/query
 // rather than a silent fallback to the proxy.
 func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafanaURL string) (major, minor int) {
-	key := fallbackProxyIDKey(ctx, "es-plugin-version", "")
+	key := datasource.ScopedKey(ctx, "es-plugin-version", "")
 	if v, ok := esPluginVersions.Load(key); ok && time.Now().Before(v.(esPluginVersion).expires) {
 		return v.(esPluginVersion).major, v.(esPluginVersion).minor
 	}

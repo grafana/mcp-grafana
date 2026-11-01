@@ -11,6 +11,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -55,7 +56,7 @@ func newTempoBackend(ctx context.Context, datasourceUID string) (*tempoBackend, 
 }
 
 func tempoBackendForDatasource(ctx context.Context, uid string) (*tempoBackend, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}

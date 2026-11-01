@@ -14,6 +14,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -88,7 +89,7 @@ func newQuickwitBackend(ctx context.Context, ds *models.DataSource) (*quickwitBa
 }
 
 func quickwitBackendForDatasource(ctx context.Context, uid string) (*quickwitBackend, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}

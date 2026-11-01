@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
@@ -13,7 +14,7 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 	// Bound the entire scan, rather than giving every page a fresh timeout.
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
+	ds, err := datasource.ByUID(ctx, dsUID)
 	if err != nil {
 		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +87,7 @@ func TestElasticsearchBackendRoutesByPluginVersion(t *testing.T) {
 			// The version is cached per Grafana instance, including failed
 			// lookups, which expire sooner. An empty version (Grafana 8) is a
 			// successful lookup.
-			v, ok := esPluginVersions.Load(fallbackProxyIDKey(ctx, "es-plugin-version", ""))
+			v, ok := esPluginVersions.Load(datasource.ScopedKey(ctx, "es-plugin-version", ""))
 			require.True(t, ok)
 			ttl := time.Until(v.(esPluginVersion).expires)
 			if tc.version == "fail" {

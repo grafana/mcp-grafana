@@ -92,7 +92,7 @@ run = "go run ./cmd/linters/jsonschema --path . --fix"
 
 [tasks.lint-openapi]
 description = "Lint for openapi client calls missing context propagation"
-run = "go run ./cmd/linters/openapi ./tools/... ./"
+run = "go run ./cmd/linters/openapi ./tools/... ./internal/datasource/... ./"
 
 # =============================================================================
 # TEST

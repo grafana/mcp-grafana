@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
 // lokiBackend abstracts the differences between datasource types that serve
@@ -76,7 +77,7 @@ type lokiQueryResult struct {
 // they don't have to re-fetch it (mirroring backendForDatasource in
 // prom_backend.go).
 func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
