@@ -54,9 +54,20 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 				if err != nil {
 					return nil, fmt.Errorf("marshal app query arguments: %w", err)
 				}
-				return source.Handler(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+				result, err := source.Handler(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
 					Name: args.ToolName, Arguments: body,
 				}})
+				if err != nil || result.IsError {
+					return result, err
+				}
+				if result.StructuredContent == nil {
+					return nil, fmt.Errorf("result too large or unsupported for the interactive view; use %s directly", args.ToolName)
+				}
+				view := *result
+				view.Content = []mcp.Content{&mcp.TextContent{
+					Text: fmt.Sprintf("Displayed %s result in the Grafana App.", args.ToolName),
+				}}
+				return &view, nil
 			}
 			return nil, fmt.Errorf("tool %q is not an enabled app source", args.ToolName)
 		},

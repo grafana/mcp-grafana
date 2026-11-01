@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -135,9 +136,10 @@ func TestPrometheusQueryAndChartProtocolResults(t *testing.T) {
 			chart, err := c.CallTool(t.Context(), &mcp.CallToolParams{Name: "render_grafana_app", Arguments: map[string]any{"toolName": "query_prometheus", "arguments": args}})
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantError, query.IsError)
-			assert.Equal(t, query, chart)
-			if !tc.wantError {
-				assert.NotNil(t, chart.StructuredContent)
+			if tc.wantError {
+				assert.Equal(t, query, chart)
+			} else {
+				assertAppDisplayResult(t, "query_prometheus", query, chart)
 			}
 		})
 	}
@@ -205,13 +207,28 @@ func TestTraceQueryAndAppProtocolResults(t *testing.T) {
 			}})
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantError, view.IsError)
-			assert.Equal(t, query, view)
-			if !tc.wantError {
-				assert.NotNil(t, view.StructuredContent)
+			if tc.wantError {
+				assert.Equal(t, query, view)
+			} else {
+				assertAppDisplayResult(t, "get_tempo_trace", query, view)
 			}
 		})
 	}
 	assert.Equal(t, 4, requests)
+}
+
+func assertAppDisplayResult(t *testing.T, source string, query, view *mcp.CallToolResult) {
+	t.Helper()
+	require.False(t, view.IsError)
+	require.NotNil(t, query.StructuredContent)
+	assert.Equal(t, query.StructuredContent, view.StructuredContent)
+	assert.Equal(t, query.Meta, view.Meta)
+	require.Len(t, query.Content, 1)
+	assert.True(t, json.Valid([]byte(query.Content[0].(*mcp.TextContent).Text)))
+	require.Len(t, view.Content, 1)
+	text, ok := view.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, fmt.Sprintf("Displayed %s result in the Grafana App.", source), text.Text)
 }
 
 func TestAppRejectsUnavailableSourcesAndInvalidArguments(t *testing.T) {
