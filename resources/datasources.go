@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,7 +38,11 @@ func AddDatasources(s *mcp.Server) {
 
 func readDatasource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	uri := req.Params.URI
-	ds, err := datasource.ByUID(ctx, strings.TrimPrefix(uri, datasourceURIPrefix))
+	uid, err := url.PathUnescape(strings.TrimPrefix(uri, datasourceURIPrefix))
+	if err != nil {
+		return nil, mcp.ResourceNotFoundError(uri)
+	}
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +51,9 @@ func readDatasource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.Rea
 		return nil, fmt.Errorf("marshal datasource: %w", err)
 	}
 	return &mcp.ReadResourceResult{
-		Contents: []*mcp.ResourceContents{{URI: uri, MIMEType: "application/json", Text: string(body)}},
+		// The datasource depends on the caller's credentials.
+		Cacheable: mcp.Cacheable{CacheScope: "private"},
+		Contents:  []*mcp.ResourceContents{{URI: uri, MIMEType: "application/json", Text: string(body)}},
 	}, nil
 }
 
@@ -65,7 +72,7 @@ func listDatasourcesMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 		}
 		// The list depends on the caller's credentials.
 		r.CacheScope = "private"
-		if r.NextCursor != "" {
+		if r.NextCursor != "" || mcpgrafana.GrafanaClientFromContext(ctx) == nil {
 			return r, nil
 		}
 		list, err := datasource.List(ctx)
@@ -79,7 +86,7 @@ func listDatasourcesMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 				desc += " (default)"
 			}
 			r.Resources = append(r.Resources, &mcp.Resource{
-				URI:         datasourceURIPrefix + ds.UID,
+				URI:         datasourceURIPrefix + url.PathEscape(ds.UID),
 				Name:        ds.Name,
 				Description: desc,
 				MIMEType:    "application/json",

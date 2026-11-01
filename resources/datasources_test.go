@@ -37,12 +37,14 @@ func newGrafana(t *testing.T) *httptest.Server {
 	return server
 }
 
-// connect serves AddDatasources plus a static resource, with a Grafana
+// connect serves AddDatasources plus two static resources, with a Grafana
 // client for grafanaURL injected the way GrafanaContextMiddleware does.
-func connect(t *testing.T, grafanaURL string) *mcp.ClientSession {
+func connect(t *testing.T, grafanaURL string, opts *mcp.ServerOptions) *mcp.ClientSession {
 	t.Helper()
-	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, opts)
 	s.AddResource(&mcp.Resource{URI: "ui://test/app.html", Name: "app"},
+		func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) { return nil, nil })
+	s.AddResource(&mcp.Resource{URI: "ui://test/other.html", Name: "other"},
 		func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) { return nil, nil })
 	AddDatasources(s)
 	s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -65,7 +67,7 @@ func connect(t *testing.T, grafanaURL string) *mcp.ClientSession {
 }
 
 func TestListDatasourceResources(t *testing.T) {
-	session := connect(t, newGrafana(t).URL)
+	session := connect(t, newGrafana(t).URL, nil)
 
 	result, err := session.ListResources(t.Context(), nil)
 	require.NoError(t, err)
@@ -73,7 +75,7 @@ func TestListDatasourceResources(t *testing.T) {
 	for _, r := range result.Resources {
 		byURI[r.URI] = r
 	}
-	require.Len(t, byURI, 3)
+	require.Len(t, byURI, 4)
 	assert.Contains(t, byURI, "ui://test/app.html")
 	assert.Equal(t, "Prometheus", byURI["grafana://datasources/prom"].Name)
 	assert.Equal(t, "prometheus datasource (default)", byURI["grafana://datasources/prom"].Description)
@@ -91,25 +93,47 @@ func TestListDatasourceResources_GrafanaUnavailable(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
-	session := connect(t, server.URL)
+	session := connect(t, server.URL, nil)
 
 	result, err := session.ListResources(t.Context(), nil)
 	require.NoError(t, err)
-	require.Len(t, result.Resources, 1)
+	require.Len(t, result.Resources, 2)
 	assert.Equal(t, "ui://test/app.html", result.Resources[0].URI)
 }
 
 func TestReadDatasourceResource(t *testing.T) {
-	session := connect(t, newGrafana(t).URL)
+	session := connect(t, newGrafana(t).URL, nil)
 
 	result, err := session.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: "grafana://datasources/prom"})
 	require.NoError(t, err)
 	require.Len(t, result.Contents, 1)
 	assert.Equal(t, "grafana://datasources/prom", result.Contents[0].URI)
 	assert.Equal(t, "application/json", result.Contents[0].MIMEType)
+	assert.Equal(t, "private", result.CacheScope)
 	assert.Contains(t, result.Contents[0].Text, `"url":"http://prometheus:9090"`)
 
 	_, err = session.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: "grafana://datasources/missing"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+// Datasources go on the last page only, so a paging client sees each once.
+func TestListDatasourceResources_Paginated(t *testing.T) {
+	session := connect(t, newGrafana(t).URL, &mcp.ServerOptions{PageSize: 1})
+
+	var uris []string
+	params := &mcp.ListResourcesParams{}
+	for {
+		result, err := session.ListResources(t.Context(), params)
+		require.NoError(t, err)
+		assert.Equal(t, "private", result.CacheScope)
+		for _, r := range result.Resources {
+			uris = append(uris, r.URI)
+		}
+		if result.NextCursor == "" {
+			break
+		}
+		params.Cursor = result.NextCursor
+	}
+	assert.Equal(t, []string{"ui://test/app.html", "ui://test/other.html", "grafana://datasources/prom", "grafana://datasources/loki"}, uris)
 }
