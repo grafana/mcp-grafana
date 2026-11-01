@@ -22,7 +22,8 @@ func TestRunSinglePanelQuery_DatasourceVariableWithoutValue(t *testing.T) {
 		{"id":1,"uid":"loki-uid","name":"A logs","type":"loki","isDefault":true},
 		{"id":2,"uid":"zeta-uid","name":"Zeta","type":"prometheus"},
 		{"id":3,"uid":"alpha-uid","name":"alpha","type":"prometheus"},
-		{"id":4,"uid":"prod-uid","name":"PROD metrics","type":"prometheus"}
+		{"id":4,"uid":"prod-uid","name":"PROD metrics","type":"prometheus"},
+		{"id":5,"uid":"staging-uid","name":"staging-Zeta","type":"prometheus"}
 	]`
 	tests := []struct {
 		name, regex, want, wantErr string
@@ -36,6 +37,10 @@ func TestRunSinglePanelQuery_DatasourceVariableWithoutValue(t *testing.T) {
 		{name: "regex filters names", pluginID: "prometheus", regex: "/^Z/", want: "zeta-uid"},
 		{name: "regex flags", pluginID: "prometheus", regex: "/prod/i", want: "prod-uid"},
 		{name: "bare regex", pluginID: "prometheus", regex: "^Zeta$", want: "zeta-uid"},
+		// Grafana anchors a bare pattern, so "Zeta" skips "staging-Zeta", which sorts first.
+		{name: "bare regex is anchored", pluginID: "prometheus", regex: "Zeta", want: "zeta-uid"},
+		{name: "slash regex is not anchored", pluginID: "prometheus", regex: "/Zeta/", want: "staging-uid"},
+		{name: "unknown regex flag", pluginID: "prometheus", regex: "/PROD/x", wantErr: "datasource variable '${ds}' not found"},
 		{name: "schema v2 variable", pluginID: "prometheus", v2: true, want: "alpha-uid"},
 		{name: "no datasource of the type", pluginID: "tempo", wantErr: "datasource variable '${ds}' not found"},
 		{name: "no name matches the regex", pluginID: "prometheus", regex: "/^nope/", wantErr: "datasource variable '${ds}' not found"},
@@ -48,7 +53,7 @@ func TestRunSinglePanelQuery_DatasourceVariableWithoutValue(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/datasources":
 					_, _ = io.WriteString(w, list)
-				case "/api/datasources/uid/alpha-uid", "/api/datasources/uid/zeta-uid", "/api/datasources/uid/prod-uid":
+				case "/api/datasources/uid/alpha-uid", "/api/datasources/uid/zeta-uid", "/api/datasources/uid/prod-uid", "/api/datasources/uid/staging-uid":
 					uid := r.URL.Path[len("/api/datasources/uid/"):]
 					_, _ = io.WriteString(w, `{"uid":"`+uid+`","type":"prometheus"}`)
 				case "/api/ds/query":

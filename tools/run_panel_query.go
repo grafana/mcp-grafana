@@ -1058,17 +1058,31 @@ func defaultDatasourceVariableValue(ctx context.Context, db map[string]interface
 	return "", false
 }
 
-// jsRegexp compiles a Grafana variable regex, which is written in JavaScript's
-// "/pattern/flags" form or as a bare pattern.
+// jsRegexFlags matches the "/pattern/flags" form the way Grafana's
+// stringToJsRegex does.
+var jsRegexFlags = regexp.MustCompile(`^/(.*?)/(g?i?m?y?s?)$`)
+
+// jsRegexp compiles a Grafana variable regex like stringToJsRegex: a bare
+// pattern must match the whole name, and the "/pattern/flags" form is
+// unanchored, with the i, m and s flags applied (g and y don't affect a match).
 func jsRegexp(pattern string) (*regexp.Regexp, error) {
-	if end := strings.LastIndex(pattern, "/"); strings.HasPrefix(pattern, "/") && end > 0 {
-		flags := pattern[end+1:]
-		pattern = pattern[1:end]
-		if strings.Contains(flags, "i") {
-			pattern = "(?i)" + pattern
+	if !strings.HasPrefix(pattern, "/") {
+		return regexp.Compile("^" + pattern + "$")
+	}
+	match := jsRegexFlags.FindStringSubmatch(pattern)
+	if match == nil {
+		return nil, fmt.Errorf("'%s' is not a valid regular expression", pattern)
+	}
+	var flags string
+	for _, f := range "ims" {
+		if strings.ContainsRune(match[2], f) {
+			flags += string(f)
 		}
 	}
-	return regexp.Compile(pattern)
+	if flags != "" {
+		return regexp.Compile("(?" + flags + ")" + match[1])
+	}
+	return regexp.Compile(match[1])
 }
 
 // getAvailableDatasourceUIDs returns UIDs of datasources matching the given type
