@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,8 +114,9 @@ func TestReadDatasourceResource(t *testing.T) {
 	assert.Contains(t, result.Contents[0].Text, `"url":"http://prometheus:9090"`)
 
 	_, err = session.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: "grafana://datasources/missing"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	var rpcErr *jsonrpc.Error
+	require.ErrorAs(t, err, &rpcErr)
+	assert.Equal(t, int64(mcp.CodeResourceNotFound), rpcErr.Code)
 }
 
 // Datasources go on the last page only, so a paging client sees each once.

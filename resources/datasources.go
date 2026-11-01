@@ -6,6 +6,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -43,6 +44,9 @@ func readDatasource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.Rea
 		return nil, mcp.ResourceNotFoundError(uri)
 	}
 	ds, err := datasource.ByUID(ctx, uid)
+	if errors.Is(err, datasource.ErrNotFound) {
+		return nil, mcp.ResourceNotFoundError(uri)
+	}
 	if err != nil {
 		return nil, err
 	}
