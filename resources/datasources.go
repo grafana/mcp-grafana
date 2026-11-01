@@ -85,7 +85,9 @@ func listDatasourcesMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 			return r, nil
 		}
 		for _, ds := range list {
-			desc := ds.Type + " datasource"
+			// Clients such as Claude Code show the URI and description but
+			// not the name, so lead with the name.
+			desc := ds.Name + " · " + ds.Type
 			if ds.IsDefault {
 				desc += " (default)"
 			}

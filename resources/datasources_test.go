@@ -79,8 +79,8 @@ func TestListDatasourceResources(t *testing.T) {
 	require.Len(t, byURI, 4)
 	assert.Contains(t, byURI, "ui://test/app.html")
 	assert.Equal(t, "Prometheus", byURI["grafana://datasources/prom"].Name)
-	assert.Equal(t, "prometheus datasource (default)", byURI["grafana://datasources/prom"].Description)
-	assert.Equal(t, "loki datasource", byURI["grafana://datasources/loki"].Description)
+	assert.Equal(t, "Prometheus · prometheus (default)", byURI["grafana://datasources/prom"].Description)
+	assert.Equal(t, "Loki · loki", byURI["grafana://datasources/loki"].Description)
 	assert.Equal(t, "private", result.CacheScope)
 
 	templates, err := session.ListResourceTemplates(t.Context(), nil)
