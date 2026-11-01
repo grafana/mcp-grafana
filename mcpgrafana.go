@@ -257,6 +257,18 @@ const (
 	LokiGuardrailFailureBlock = "block"
 )
 
+// Prometheus guardrail modes for GrafanaConfig.PrometheusGuardrailMode.
+const (
+	// PrometheusGuardrailOff disables the Prometheus query guardrail (default).
+	PrometheusGuardrailOff = "off"
+	// PrometheusGuardrailShadow evaluates the guardrail and logs queries
+	// that would be blocked, but always lets them run.
+	PrometheusGuardrailShadow = "shadow"
+	// PrometheusGuardrailEnforce rejects blocked queries with a tool error
+	// containing rewrite guidance.
+	PrometheusGuardrailEnforce = "enforce"
+)
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -360,6 +372,25 @@ type GrafanaConfig struct {
 	// applies to native Loki: on VictoriaLogs, brace-less LogsQL is the normal
 	// shape and is always run.
 	LokiGuardrailOnEstimateFailure string
+
+	// PrometheusGuardrailMode controls the query guardrail for PromQL queries
+	// (query_prometheus, query_prometheus_histogram, and the Prometheus
+	// queries of run_panel_query). One of PrometheusGuardrailOff (default),
+	// PrometheusGuardrailShadow, or PrometheusGuardrailEnforce. The
+	// guardrail bounds the time range a query reads and the resolution it
+	// asks for, before the query reaches the datasource.
+	PrometheusGuardrailMode string
+
+	// PrometheusGuardrailMaxRange is the maximum effective time range for a
+	// single PromQL query: the query's own range plus the longest range
+	// vector or subquery window in the expression. Zero disables the range
+	// check.
+	PrometheusGuardrailMaxRange time.Duration
+
+	// PrometheusGuardrailMaxPoints is the maximum number of points per
+	// series a range query may request, computed from its time range and
+	// step. Zero disables the points check.
+	PrometheusGuardrailMaxPoints int64
 
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server

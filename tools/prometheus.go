@@ -153,6 +153,10 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		}
 	}
 
+	if err := guardPrometheusQuery(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds); err != nil {
+		return nil, nil, err
+	}
+
 	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting backend: %w", err)
