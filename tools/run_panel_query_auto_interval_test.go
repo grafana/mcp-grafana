@@ -99,6 +99,48 @@ func TestRunSinglePanelQuery_AutoIntervalVariable(t *testing.T) {
 }
 
 // grafanaCalculateInterval matches Grafana's rangeutil.calculateInterval output.
+func TestRunSinglePanelQuery_AutoIntervalVariableV2(t *testing.T) {
+	var sentExpr string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/datasources/uid/prometheus-uid":
+			_, _ = io.WriteString(w, `{"uid":"prometheus-uid","type":"prometheus"}`)
+		case "/api/ds/query":
+			var payload struct {
+				Queries []map[string]interface{} `json:"queries"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			sentExpr = safeString(payload.Queries[0], "expr")
+			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"B": {}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	spec := map[string]interface{}{
+		"elements": map[string]interface{}{
+			"panel-7": map[string]interface{}{
+				"kind": "Panel",
+				"spec": v2PanelWithQuery("prometheus", map[string]interface{}{"expr": "rate(q[$interval])"}),
+			},
+		},
+		"variables": []interface{}{map[string]interface{}{
+			"kind": "IntervalVariable",
+			"spec": map[string]interface{}{
+				"name": "interval", "query": "1m,5m,1h", "auto": true, "auto_count": float64(200), "auto_min": "1s",
+				"current": map[string]interface{}{"text": "auto", "value": "$__auto_interval_interval"},
+			},
+		}},
+	}
+	_, err := runSinglePanelQuery(enforceTestCtx(server, false), singlePanelQueryParams{
+		DB: spec, IsV2: true, PanelID: 7, Start: "2024-01-15T10:00:00Z", End: "2024-01-15T11:00:00Z",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "rate(q[20s])", sentExpr)
+}
+
 func TestGrafanaCalculateInterval(t *testing.T) {
 	assert.Equal(t, "20s", grafanaCalculateInterval(3600e9, 200, "1s"))
 	assert.Equal(t, "500ms", grafanaCalculateInterval(60e9, 100, "1ms"))
