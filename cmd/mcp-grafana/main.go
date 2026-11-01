@@ -408,7 +408,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddNavigationTools(s, dt.deeplinkShorteningEnabled()) }, dt.navigation, "navigation"},
 		{func(s *mcp.Server) { tools.AddTempoTools(s, enableQueryTools) }, dt.tempo, "tempo"},
 		{func(s *mcp.Server) { tools.AddAnnotationTools(s, enableWriteTools) }, dt.annotations, "annotations"},
-		{tools.AddRenderingTools, dt.rendering, "rendering"},
+		{func(s *mcp.Server) { tools.AddRenderingTools(s, dt.appSources()...) }, dt.rendering, "rendering"},
 		{func(s *mcp.Server) { tools.AddSnapshotTools(s, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{func(s *mcp.Server) { tools.AddCloudWatchTools(s, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
 		{func(s *mcp.Server) { tools.AddCloudLoggingTools(s, enableQueryTools) }, dt.cloudlogging, "cloudlogging"},
@@ -425,6 +425,21 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddDocsTools, dt.docs, "docs"},
 		{tools.AddUserTools, dt.user, "user"},
 	}
+}
+
+func (dt *disabledTools) appSources() []mcpgrafana.Tool {
+	if dt.query {
+		return nil
+	}
+	enabled := strings.Split(dt.enabledTools, ",")
+	var sources []mcpgrafana.Tool
+	if isCategoryEnabled(enabled, dt.prometheus, "prometheus") {
+		sources = append(sources, tools.QueryPrometheus)
+	}
+	if isCategoryEnabled(enabled, dt.tempo, "tempo") {
+		sources = append(sources, tools.GetTempoTraceTool)
+	}
+	return sources
 }
 
 // categoryReport lists the tool categories that are actually active and the
