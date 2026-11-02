@@ -11,7 +11,7 @@ import (
 const RequiredPermissionsMetaKey = "grafana.com/requiredPermissions"
 
 // RequiresPermissions declares Grafana RBAC actions the tool's calls need. A
-// caller missing any of them gets a 403 from the tool. Every tool must declare
+// caller missing a required action gets a 403 from the tool. Every tool must declare
 // its actions, including tools that need none (call it with no arguments); a
 // test fails otherwise. Repeated calls add to the list, so a shared group can
 // be combined with extra actions:
@@ -23,6 +23,10 @@ const RequiredPermissionsMetaKey = "grafana.com/requiredPermissions"
 // verb as mapped by Grafana, e.g. dashboards:read) and, for on-behalf-of
 // tokens, the token's group/resource:verb permission (e.g.
 // dashboard.grafana.app/dashboards:get). Tools that use /apis declare both.
+//
+// When a Grafana route accepts any of several actions, such as a legacy action
+// or its fine-grained replacement, declare each one so the on-behalf-of token
+// carries whichever the user holds.
 //
 // Declare the actions for every operation the tool can perform, including
 // write operations behind a read-write variant.

@@ -37,6 +37,8 @@ Ask for a link to Grafana Explore with a specific datasource (by UID). Optionall
 
 Explore links can get long when they include encoded `left` state. Ask the assistant to call `generate_deeplink` with `shorten=true`. The server will try Grafana's `POST /api/short-urls` endpoint and return a compact `/goto/<uid>` URL; if shortening is unavailable, it returns the full deeplink instead.
 
+If you start the server with `--disable-write`, it ignores `shorten=true` and returns the full deeplink. Add `--enable-write-tools=generate_deeplink` to keep shortening.
+
 ## Next steps
 
 - [Search and inspect dashboards](../search-and-inspect-dashboards/) to find dashboard and panel IDs.

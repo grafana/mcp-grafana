@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"reflect"
 	"strings"
 
 	aapi "github.com/grafana/amixr-api-go-client"
@@ -76,46 +75,28 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 		return nil, fmt.Errorf("creating OnCall client: %w", err)
 	}
 
-	// Customize the HTTP client's transport using reflection since the
-	// OnCall client doesn't expose its HTTP client directly. Auth is
-	// handled by the OnCall library (API key passed above), so we skip it.
-	transportInstalled := false
-	clientValue := reflect.ValueOf(client)
-	if clientValue.Kind() == reflect.Pointer && !clientValue.IsNil() {
-		clientValue = clientValue.Elem()
-		if clientValue.Kind() == reflect.Struct {
-			httpClientField := clientValue.FieldByName("HTTPClient")
-			if !httpClientField.IsValid() {
-				httpClientField = clientValue.FieldByName("HttpClient")
-			}
-			if !httpClientField.IsValid() {
-				httpClientField = clientValue.FieldByName("Client")
-			}
-			if httpClientField.IsValid() && httpClientField.CanSet() {
-				if httpClient, ok := httpClientField.Interface().(*http.Client); ok {
-					transport, err := mcpgrafana.BuildTransport(&cfg, nil, mcpgrafana.WithoutAuth())
-					if err != nil {
-						if cfg.SOCKS5ProxyURL != "" {
-							// Fail closed: a default transport would bypass the configured proxy.
-							return nil, fmt.Errorf("building transport for OnCall client: %w", err)
-						}
-						mcpgrafana.LoggerFromContext(ctx).Error("Failed to build transport for OnCall client", "error", err)
-					} else {
-						httpClient.Transport = transport
-						transportInstalled = true
-					}
-				}
-			}
+	transport, err := oncallTransport(cfg, grafanaOnCallURL)
+	if err != nil {
+		if cfg.SOCKS5ProxyURL != "" || cfg.OverrideURL != "" {
+			// Fail closed: a default transport would bypass the proxy or URL guard.
+			return nil, fmt.Errorf("building transport for OnCall client: %w", err)
 		}
+		mcpgrafana.LoggerFromContext(ctx).Error("Failed to build transport for OnCall client", "error", err)
+		return client, nil
 	}
-	if cfg.SOCKS5ProxyURL != "" && !transportInstalled {
-		// Fail closed: the reflection above could not reach the OnCall
-		// client's HTTP client, so its default transport would bypass the
-		// configured proxy.
-		return nil, fmt.Errorf("SOCKS5 proxy is configured but the OnCall client's transport could not be replaced")
-	}
+	client.SetHTTPClient(&http.Client{Transport: transport})
 
 	return client, nil
+}
+
+// oncallTransport builds the transport for public OnCall API requests to
+// oncallURL. Auth is handled by the OnCall library, so it is skipped here.
+func oncallTransport(cfg mcpgrafana.GrafanaConfig, oncallURL string) (http.RoundTripper, error) {
+	if cfg.OverrideURL != "" {
+		// Trust the onCallApiUrl reported by the allowlisted Grafana, and nothing else.
+		cfg.OverrideURL = oncallURL
+	}
+	return mcpgrafana.BuildTransport(&cfg, nil, mcpgrafana.WithoutAuth())
 }
 
 // --- Schedules ---

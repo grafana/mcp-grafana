@@ -202,6 +202,7 @@ func TestGetQueryExamples_CaseInsensitive(t *testing.T) {
 		{"CloudWatch", "cloudwatch"},
 		{"INFLUXDB", "influxdb"},
 		{"InfluxDB", "influxdb"},
+		{"grafana-clickhouse-datasource", "clickhouse"},
 	}
 
 	for _, tc := range testCases {
@@ -223,6 +224,7 @@ func TestGetQueryExamples_UnsupportedDatasource(t *testing.T) {
 		"postgres",
 		"elasticsearch",
 		"unknown",
+		"grafana-athena-datasource",
 		"",
 	}
 

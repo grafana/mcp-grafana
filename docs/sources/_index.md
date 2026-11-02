@@ -8,7 +8,7 @@ keywords:
   - Grafana
   - AI
   - LLM
-weight: 1
+weight: 20
 aliases:
   - /docs/grafana-cloud/machine-learning/mcp/
 ---

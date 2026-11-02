@@ -129,7 +129,7 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 		"format":     "table",
 	})
 
-	result, err := doDSQueryWithLimit(ctx, b.httpClient, b.baseURL, payload, 48*1024*1024)
+	result, err := doDSQueryWithLimit(ctx, b.httpClient, b.baseURL, payload, rawDocumentResponseLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -142,8 +142,12 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 		return nil, fmt.Errorf("opensearch query error: %s", queryResult.Error.Error())
 	}
 
-	return framesToDocuments(queryResult.Frames, b.timeField)
+	return framesToDocuments(queryResult.Frames, b.timeField, false)
 }
+
+// rawDocumentResponseLimit caps /api/ds/query responses holding raw_document
+// frames, which carry whole documents.
+const rawDocumentResponseLimit = 48 * 1024 * 1024
 
 // framesToDocuments converts the OpenSearch plugin's raw_document
 // frame response to ElasticsearchDocument objects.
@@ -151,7 +155,11 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 // The OpenSearch plugin returns a single frame with one column (named after the refId)
 // of type json.RawMessage. Each value in that column is a complete document object
 // containing _id, _index, _type, the configured time field (as array), and all source fields.
-func framesToDocuments(frames data.Frames, timeField string) ([]ElasticsearchDocument, error) {
+//
+// keepUnderscored keeps unknown `_` prefixed keys as source fields. The
+// Elasticsearch plugin adds no metadata keys beyond _id, _index and _type, so
+// any other such key is a source field.
+func framesToDocuments(frames data.Frames, timeField string, keepUnderscored bool) ([]ElasticsearchDocument, error) {
 	if len(frames) == 0 {
 		return []ElasticsearchDocument{}, nil
 	}
@@ -213,12 +221,17 @@ func framesToDocuments(frames data.Frames, timeField string) ([]ElasticsearchDoc
 						if ts, ok := arr[0].(string); ok {
 							doc.Timestamp = ts
 							doc.Source[key] = ts
+						} else {
+							doc.Source[key] = arr[0]
 						}
 					} else if ts, ok := val.(string); ok {
 						doc.Timestamp = ts
 						doc.Source[key] = ts
+					} else {
+						// e.g. epoch milliseconds; keep the value rather than dropping it.
+						doc.Source[key] = val
 					}
-				} else if strings.HasPrefix(key, "_") {
+				} else if strings.HasPrefix(key, "_") && !keepUnderscored {
 					// Skip unknown `_` prefixed metadata fields
 					continue
 				} else {

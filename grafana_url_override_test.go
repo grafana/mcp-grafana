@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -321,4 +322,87 @@ func TestGrafanaURLOverrideReachesToolCallsOverStreamableHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Content, 1)
 	assert.Equal(t, "https://selected.example.com caller-token", res.Content[0].(*mcp.TextContent).Text)
+}
+
+// Building a client does not dial Grafana, so the context middleware can run
+// on every method. initialize, tools/list and tools/call must all see the
+// resolved config, including a URL override sent on each request.
+func TestResolvedConfigReachesEveryMethodOverStreamableHTTP(t *testing.T) {
+	t.Setenv("GRAFANA_URL", "https://default.example.com")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "env-token")
+
+	for _, tc := range []struct {
+		name   string
+		header http.Header
+		want   string
+	}{
+		{name: "configured URL", header: http.Header{}, want: "https://default.example.com env-token"},
+		{
+			name: "URL override",
+			header: http.Header{
+				grafanaURLHeader:                  {"https://selected.example.com"},
+				"X-Grafana-Service-Account-Token": {"caller-token"},
+			},
+			want: "https://selected.example.com caller-token",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			seen := map[string]string{}
+			spy := func(next mcp.MethodHandler) mcp.MethodHandler {
+				return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+					cfg := GrafanaConfigFromContext(ctx)
+					mu.Lock()
+					seen[method] = cfg.URL + " " + cfg.APIKey
+					mu.Unlock()
+					return next(ctx, method, req)
+				}
+			}
+
+			s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+			mcp.AddTool(s, &mcp.Tool{Name: "noop"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+				return &mcp.CallToolResult{}, nil, nil
+			})
+			// The last-registered middleware runs first, so the spy sees the
+			// context GrafanaContextMiddleware built.
+			s.AddReceivingMiddleware(spy)
+			s.AddReceivingMiddleware(GrafanaContextMiddleware(ExtractGrafanaInfoFromHeaders))
+			handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+			ts := httptest.NewServer(GrafanaURLOverrideMiddleware(true, nil, handler))
+			t.Cleanup(ts.Close)
+
+			// The go-sdk client opens with server/discover, so send a plain
+			// initialize request as older clients do.
+			initReq, err := http.NewRequest(http.MethodPost, ts.URL, strings.NewReader(
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`))
+			require.NoError(t, err)
+			initReq.Header = tc.header.Clone()
+			initReq.Header.Set("Content-Type", "application/json")
+			initReq.Header.Set("Accept", "application/json, text/event-stream")
+			initResp, err := http.DefaultClient.Do(initReq)
+			require.NoError(t, err)
+			body, _ := io.ReadAll(initResp.Body)
+			_ = initResp.Body.Close()
+			require.Equal(t, http.StatusOK, initResp.StatusCode, string(body))
+
+			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+			session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+				Endpoint:   ts.URL,
+				HTTPClient: &http.Client{Transport: headerRoundTripper{header: tc.header, next: http.DefaultTransport}},
+			}, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = session.Close() })
+
+			_, err = session.ListTools(context.Background(), nil)
+			require.NoError(t, err)
+			_, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "noop"})
+			require.NoError(t, err)
+
+			mu.Lock()
+			defer mu.Unlock()
+			for _, method := range []string{"initialize", "tools/list", "tools/call"} {
+				assert.Equal(t, tc.want, seen[method], "%s (seen %v)", method, seen)
+			}
+		})
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 
 	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
@@ -362,69 +363,31 @@ func TestAlertingClient_GetRules_WithOpts(t *testing.T) {
 }
 
 func TestAlertingClient_GetDatasourceRules(t *testing.T) {
-	mockDatasourceResponse := struct {
-		Status string `json:"status"`
-		Data   struct {
-			Groups []struct{} `json:"groups"`
-		} `json:"data"`
-	}{
-		Status: "success",
-	}
-
 	tests := []struct {
-		name          string
-		dsUID         string
-		opts          *GetRulesOpts
-		assertRequest func(t *testing.T, r *http.Request)
+		name      string
+		opts      *GetRulesOpts
+		nextToken string
+		want      url.Values
 	}{
-		{
-			name:  "nil opts produces no query params",
-			dsUID: "my-datasource",
-			opts:  nil,
-			assertRequest: func(t *testing.T, r *http.Request) {
-				t.Helper()
-				require.Equal(t, "/api/prometheus/my-datasource/api/v1/rules", r.URL.Path)
-				require.Empty(t, r.URL.RawQuery)
-			},
-		},
-		{
-			name:  "opts are forwarded as query params",
-			dsUID: "prom-ds",
-			opts: &GetRulesOpts{
-				FolderUID: "test-folder",
-				RuleGroup: "test-group",
-				RuleType:  "alerting",
-				RuleName:  "cpu",
-				States:    []string{"firing"},
-				RuleLimit: 10,
-			},
-			assertRequest: func(t *testing.T, r *http.Request) {
-				t.Helper()
-				require.Equal(t, "/api/prometheus/prom-ds/api/v1/rules", r.URL.Path)
-				q := r.URL.Query()
-				require.Equal(t, "test-folder", q.Get("folder_uid"))
-				require.Equal(t, "test-group", q.Get("rule_group"))
-				require.Equal(t, "alerting", q.Get("rule_type"))
-				require.Equal(t, "cpu", q.Get("search.rule_name"))
-				require.Equal(t, []string{"firing"}, q["state"])
-				require.Equal(t, "10", q.Get("rule_limit"))
-			},
-		},
+		{name: "defaults", want: url.Values{"group_limit": {"20"}, "exclude_alerts": {"true"}}},
+		{name: "alerting filter and group", opts: &GetRulesOpts{
+			FolderUID: "folder", RuleGroup: "group", RuleType: "alerting", RuleName: "cpu", States: []string{"firing"}, RuleLimit: 10,
+		}, want: url.Values{"group_limit": {"20"}, "exclude_alerts": {"true"}, "type": {"alert"}, "rule_group[]": {"group"}, "rule_group": {"group"}}},
+		{name: "recording filter and continuation", opts: &GetRulesOpts{RuleType: "recording"}, nextToken: "opaque+/=token",
+			want: url.Values{"group_limit": {"20"}, "exclude_alerts": {"true"}, "type": {"record"}, "group_next_token": {"opaque+/=token"}}},
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
-				tc.assertRequest(t, r)
+				require.Equal(t, "/api/prometheus/prom-ds/api/v1/rules", r.URL.Path)
+				require.Equal(t, tt.want, r.URL.Query())
 				w.Header().Set("Content-Type", "application/json")
-				err := json.NewEncoder(w).Encode(mockDatasourceResponse)
-				require.NoError(t, err)
+				_, _ = w.Write([]byte(`{"status":"success","data":{"groups":[],"groupNextToken":"next-page"}}`))
 			})
 			defer server.Close()
-
-			result, err := client.GetDatasourceRules(context.Background(), tc.dsUID, tc.opts)
+			result, err := client.GetDatasourceRules(t.Context(), "prom-ds", tt.opts, tt.nextToken)
 			require.NoError(t, err)
-			require.NotNil(t, result)
+			require.Equal(t, "next-page", result.NextToken)
 		})
 	}
 }
@@ -493,4 +456,48 @@ func TestNewAlertingClientFromContext(t *testing.T) {
 	require.Equal(t, "http://localhost:3000", client.baseURL.String())
 	require.NotNil(t, client.httpClient)
 	require.NotNil(t, client.httpClient.Transport)
+}
+
+func TestAlertingClient_DatasourceRulesAuthenticationError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		wantTip bool
+	}{
+		{"datasource authentication", 400, `{"message":"Authentication to data source failed"}`, true},
+		{"ordinary bad request", 400, `{"message":"invalid query"}`, false},
+		{"unrelated message", 400, `{"message":"Authentication to data source failed during a previous request"}`, false},
+		{"caller authentication", 401, `{"message":"Unauthorized"}`, false},
+		{"server failure", 500, `{"message":"Authentication to data source failed"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/api/prometheus/prom-ds/api/v1/rules", r.URL.Path)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			defer server.Close()
+			_, err := client.GetDatasourceRules(t.Context(), "prom-ds", nil, "")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.body)
+			require.Contains(t, err.Error(), "status code "+strconv.Itoa(tc.status))
+			if tc.wantTip {
+				require.Contains(t, err.Error(), "datasource's credentials and ruler configuration")
+			} else {
+				require.NotContains(t, err.Error(), "datasource's credentials and ruler configuration")
+			}
+		})
+	}
+}
+
+func TestAlertingClient_GrafanaRulesDoesNotSuggestDatasourceCredentials(t *testing.T) {
+	server, client := setupMockServer(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"Authentication to data source failed"}`))
+	})
+	defer server.Close()
+	_, err := client.GetRules(t.Context(), nil)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "datasource's credentials and ruler configuration")
 }

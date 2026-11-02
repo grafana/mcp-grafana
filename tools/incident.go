@@ -383,7 +383,7 @@ var UpdateIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithTitleAnnotation("Update incident"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
-	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(incidentAccess...),
 )

@@ -3,21 +3,15 @@ import os
 import asyncio
 import gc
 import base64
-from dotenv import load_dotenv
+import httpx
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp import ClientSession, StdioServerParameters
-
-load_dotenv()
 
 DEFAULT_GRAFANA_URL = "http://localhost:3000"
 DEFAULT_MCP_URL = "http://localhost:8000"
 DEFAULT_MCP_TRANSPORT = "sse"
-
-# litellm requires provider prefix for Claude models
-# Claude Sonnet 4.5
-models = ["gpt-4o", "anthropic/claude-sonnet-4-5-20250929"]
 
 pytestmark = pytest.mark.anyio
 
@@ -98,6 +92,21 @@ def grafana_headers():
 
 
 @pytest.fixture
+async def grafana_http(grafana_env):
+    """An HTTP client for Grafana's own API, for test setup and cleanup."""
+    auth = None
+    headers = {}
+    if key := grafana_env.get("GRAFANA_SERVICE_ACCOUNT_TOKEN") or grafana_env.get("GRAFANA_API_KEY"):
+        headers["Authorization"] = f"Bearer {key}"
+    elif "GRAFANA_USERNAME" in grafana_env:
+        auth = (grafana_env["GRAFANA_USERNAME"], grafana_env["GRAFANA_PASSWORD"])
+    async with httpx.AsyncClient(
+        base_url=grafana_env["GRAFANA_URL"], headers=headers, auth=auth
+    ) as client:
+        yield client
+
+
+@pytest.fixture
 async def mcp_client(mcp_transport, mcp_url, grafana_env, grafana_headers):
     if mcp_transport == "stdio":
         enabled_tools = "search,datasource,incident,prometheus,loki,elasticsearch,influxdb,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,admin,sql,cloudwatch"
@@ -119,13 +128,12 @@ async def mcp_client(mcp_transport, mcp_url, grafana_env, grafana_headers):
     elif mcp_transport == "streamable-http":
         # Use HTTP client for streamable-http transport
         url = f"{mcp_url}/mcp"
-        async with streamablehttp_client(url, headers=grafana_headers) as (
-            read,
-            write,
-            _,
+        async with (
+            create_mcp_http_client(headers=grafana_headers) as http_client,
+            streamable_http_client(url, http_client=http_client) as (read, write),
+            ClientSession(read, write) as session,
         ):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+            await session.initialize()
+            yield session
     else:
         raise ValueError(f"Unsupported transport: {mcp_transport}")

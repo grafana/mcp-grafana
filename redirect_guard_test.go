@@ -155,8 +155,8 @@ func TestNewGrafanaClientHonorsCrossOriginRedirectOptOut(t *testing.T) {
 
 	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{AllowCrossOriginRedirects: true})
 	client := NewGrafanaClient(ctx, source.URL, "grafana-token", nil)
-	if client.PublicURL != "https://public.grafana.example.com" {
-		t.Fatalf("public URL = %q", client.PublicURL)
+	if got := GrafanaPublicURL(WithGrafanaClient(ctx, client)); got != "https://public.grafana.example.com" {
+		t.Fatalf("public URL = %q", got)
 	}
 	if _, err := client.Search.Search(nil, nil); err != nil {
 		t.Fatal(err)

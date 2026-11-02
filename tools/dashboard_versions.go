@@ -83,7 +83,8 @@ var ListDashboardVersions = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
-	mcpgrafana.RequiresPermissions("dashboards:read"), // legacy versions API only
+	// Grafana's legacy versions API requires dashboards:write, even to read.
+	mcpgrafana.RequiresPermissions("dashboards:read", "dashboards:write"),
 )
 
 // fetchDashboardVersion uses Grafana's legacy versions API because dashboard

@@ -30,7 +30,7 @@ Some tool categories are disabled by default:
 
 - **runpanelquery** – Run dashboard panel queries.
 - **examples** – Query examples for datasource types.
-- **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
+- **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
 - **cloudwatch** – CloudWatch tools.
 - **cloudlogging** – Google Cloud Logging tools (requires the `googlecloud-logging-datasource` plugin, version 1.8.0 or later).
 - **elasticsearch** – Elasticsearch query tool.
@@ -59,6 +59,10 @@ Tempo tools can be disabled with `--disable-tempo` or removed from `--enabled-to
 Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert groups, alert rules, annotations, snapshots, or Agent Observability evaluators, eval rules, guards, saved conversations, and collections.
 
 Read-only mode also removes `query_sql` and `query_influxdb`: they pass the query to the datasource unfiltered, so they can write whenever the datasource credentials permit it. Add `--enable-query` to keep them when those credentials are known to be read-only.
+
+In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through a `POST` request. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
+
+The alerting write tools can be opted back in individually the same way. For example, `--enable-write-tools=alerting_rules_write` allows alert rule changes while silences, contact points, and every other write tool stay disabled.
 
 ## Run without query execution
 

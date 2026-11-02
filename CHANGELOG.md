@@ -5,6 +5,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-11-02
+
+### Added
+
+- CloudWatch Logs Insights tools in the opt-in `cloudwatch` category: `list_cloudwatch_log_groups`, `list_cloudwatch_log_group_fields` and `query_cloudwatch_logs`. Queries run through `/api/ds/query` with a server-side row limit (default 100, max 1000), support cross-account log groups by ARN, and are stopped if the tool gives up waiting ([#1404](https://github.com/grafana/mcp-grafana/pull/1404))
+- Datasources are exposed as MCP resources at `grafana://datasources/{uid}`, listed per caller with their own credentials, so clients with a resource picker (such as `@` in Claude Code) can attach a datasource to a conversation directly. They are registered with the datasource tools and turned off with them ([#1459](https://github.com/grafana/mcp-grafana/pull/1459))
+- `render_grafana_app` displays the result of an enabled query tool (`query_prometheus` or `get_tempo_trace`) in the interactive Grafana App in MCP hosts that support MCP Apps. **Breaking:** `query_prometheus` and `get_tempo_trace` no longer open an App themselves, so intermediate queries don't render charts while the agent is still gathering data. Their text and structured output is unchanged ([#1401](https://github.com/grafana/mcp-grafana/pull/1401))
+- `search_dashboards` hits carry a `folderPath` (for example `Ops/Production/Services`), and a new optional `folderPath` input restricts results to a folder and all of its subfolders ([#1450](https://github.com/grafana/mcp-grafana/pull/1450))
+- An opt-in Prometheus query guardrail for `query_prometheus`, `query_prometheus_histogram` and Prometheus panels in `run_panel_query`. `--prometheus-guardrail-mode=shadow|enforce` checks each query's effective time range (`--prometheus-guardrail-max-range`, default `192h`) and points per series (`--prometheus-guardrail-max-points`, default `11000`) before it reaches the datasource, and in enforce mode rejects it with rewrite guidance ([#1453](https://github.com/grafana/mcp-grafana/pull/1453))
+- The Loki cost guardrail is built on the new standalone `github.com/grafana/mcp-grafana/lokiguard` module, so other callers can share one implementation. It now also guards `query_loki_patterns`, adds `--loki-guardrail-on-estimate-failure=allow|block` to reject queries whose cost can't be assessed, and records an `mcp.loki_guardrail.estimated_bytes` histogram ([#1355](https://github.com/grafana/mcp-grafana/pull/1355), [#1374](https://github.com/grafana/mcp-grafana/pull/1374))
+- BigQuery support in `query_sql`, `list_sql_databases`, `list_sql_tables` and `describe_sql_table`, without querying `INFORMATION_SCHEMA`, so metadata lookups don't incur billable usage ([#1417](https://github.com/grafana/mcp-grafana/pull/1417))
+- `run_panel_query` runs Infinity panels that use a backend parser ([#1345](https://github.com/grafana/mcp-grafana/pull/1345)) and Neo4j panels on the `kniepdennis-neo4j-datasource` plugin ([#1391](https://github.com/grafana/mcp-grafana/pull/1391))
+- `get_tempo_trace` accepts optional `start` and `end` bounds, so Tempo doesn't have to scan every block for the trace ([#1437](https://github.com/grafana/mcp-grafana/pull/1437))
+- `--sse-keepalive` pings SSE clients at the given interval, so an idle reverse proxy or load balancer doesn't close the event stream and end the session. Off by default ([#1389](https://github.com/grafana/mcp-grafana/pull/1389))
+
+### Fixed
+
+- `run_panel_query` and dashboard inspection handle many more real-world dashboards:
+  - Panels using the `default` datasource, legacy string datasource references (`"Prometheus"`, `"$ds"`) or no reference at all are resolved ([#1406](https://github.com/grafana/mcp-grafana/pull/1406), [#1442](https://github.com/grafana/mcp-grafana/pull/1442))
+  - Interval variables set to `auto` are computed like Grafana, instead of sending an invalid placeholder ([#1457](https://github.com/grafana/mcp-grafana/pull/1457))
+  - Multi-value variables are formatted with the datasource's default, for example `(api|web)` for Prometheus and `'east','west'` for SQL, instead of sending only the first value ([#1441](https://github.com/grafana/mcp-grafana/pull/1441))
+  - `$__auto` is substituted, and Loki range queries send it as the step, so `count_over_time(...[$__auto])` windows no longer overlap ([#1406](https://github.com/grafana/mcp-grafana/pull/1406), [#1432](https://github.com/grafana/mcp-grafana/pull/1432))
+  - `$__range` and `$__interval` keep their seconds (`1m30s`, not `1m`), and `$__rate_interval_ms` is substituted ([#1419](https://github.com/grafana/mcp-grafana/pull/1419), [#1433](https://github.com/grafana/mcp-grafana/pull/1433))
+  - Inspection shares execution's variable and macro handling, so `processedQuery` matches the query that runs; it accepts optional `start`/`end` and warns when a referenced variable is set to All. In `query_sql`, `${x:sqlstring}` now quotes and escapes the value ([#1373](https://github.com/grafana/mcp-grafana/pull/1373), [#1375](https://github.com/grafana/mcp-grafana/pull/1375))
+  - A target pointing at a different datasource UID no longer inherits the panel's datasource type ([#1440](https://github.com/grafana/mcp-grafana/pull/1440))
+- `search_tempo_traces` no longer returns every span twice, accepts `limit` (default 20) and `spss`, and notes when a search returned partial results ([#1407](https://github.com/grafana/mcp-grafana/pull/1407))
+- The row limit appended to SQL queries is no longer swallowed by a trailing line comment, and ClickHouse queries get it before a top-level `SETTINGS` clause ([#1424](https://github.com/grafana/mcp-grafana/pull/1424), [#1418](https://github.com/grafana/mcp-grafana/pull/1418))
+- `--enable-write-tools` keeps individual alerting write tools (`alerting_rules_write`, `alerting_routing_write`, `alerting_silences_write`) registered under `--disable-write` ([#1421](https://github.com/grafana/mcp-grafana/pull/1421))
+- Datasource-managed alert rules from `alerting_rules_read` include their `namespace` and `last_error`, and omit the empty `uid` ([#1425](https://github.com/grafana/mcp-grafana/pull/1425)). When Grafana reports an authentication failure against the ruler, the error suggests checking the datasource credentials and ruler configuration ([#1448](https://github.com/grafana/mcp-grafana/pull/1448))
+- `query_loki_patterns` includes the detected `level` of each pattern ([#1422](https://github.com/grafana/mcp-grafana/pull/1422))
+- `list_prometheus_label_names` and `list_prometheus_label_values` accept PromQL selector strings such as `{job="api"}` in `matches` ([#1340](https://github.com/grafana/mcp-grafana/pull/1340))
+- `get_query_examples` accepts datasource plugin IDs such as `grafana-clickhouse-datasource` ([#1388](https://github.com/grafana/mcp-grafana/pull/1388))
+- `update_incident` is annotated as destructive, so clients that ask before destructive tools ask before it changes an incident ([#1427](https://github.com/grafana/mcp-grafana/pull/1427))
+- With `--tls-*` flags or a SOCKS5 proxy, connections to Grafana are reused across tool calls instead of doing a new TLS handshake every call. Rotated certificate files are still picked up without a restart ([#1455](https://github.com/grafana/mcp-grafana/pull/1455))
+- OnCall requests use the configured TLS settings, extra headers, SOCKS5 proxy and redirect guard ([#1393](https://github.com/grafana/mcp-grafana/pull/1393)), and Prometheus requests use a configured `BaseTransport` ([#1370](https://github.com/grafana/mcp-grafana/pull/1370))
+- Over the HTTP transports, `initialize` and `tools/list` no longer call Grafana, so they work and stay quiet when Grafana is unreachable ([#1392](https://github.com/grafana/mcp-grafana/pull/1392))
+
+### Changed
+
+- Datasource queries go through Grafana's `/api/ds/query` endpoint instead of the datasource proxy, so they get the same query service handling as dashboard and Explore queries. This covers Prometheus ([#1409](https://github.com/grafana/mcp-grafana/pull/1409)), Loki ([#1410](https://github.com/grafana/mcp-grafana/pull/1410)), Quickwit ([#1411](https://github.com/grafana/mcp-grafana/pull/1411)), Graphite ([#1412](https://github.com/grafana/mcp-grafana/pull/1412)), Pyroscope ([#1413](https://github.com/grafana/mcp-grafana/pull/1413)), VictoriaLogs ([#1414](https://github.com/grafana/mcp-grafana/pull/1414)), Elasticsearch ([#1415](https://github.com/grafana/mcp-grafana/pull/1415)) and Tempo ([#1416](https://github.com/grafana/mcp-grafana/pull/1416)). Label, metadata and other discovery calls are unchanged. **Breaking:**
+  - Grafana before 9.0 is no longer supported for these queries, and a token without permission to query a datasource gets Grafana's error instead of being routed around the query service
+  - Query errors carry Grafana's message
+  - `search_tempo_traces` (on Grafana 12.3 and later) and `get_tempo_trace` return a new output shape with millisecond times; search no longer returns job counts, `serviceStats` or the partial-results note
+  - `query_pyroscope` metrics for cumulative profile types are rates (for example cores instead of CPU nanoseconds per step), with a new `unit` field, and the step is at least the datasource's `minStep`
+  - `query_graphite` rejects Graphite absolute time formats other than Unix seconds, `YYYYMMDD` and RFC3339, and `tags.name` is the series target
+  - Native histograms from `query_prometheus_histogram` no longer include their sum
+  - A few cases still use the proxy, such as Tempo search before Grafana 12.3, Pyroscope DOT output, older Elasticsearch plugins and Quickwit Query DSL ([#1444](https://github.com/grafana/mcp-grafana/issues/1444))
+
+### Security
+
+- Bump `github.com/andybalholm/brotli` to v1.2.7 (CVE-2026-111497) ([#1420](https://github.com/grafana/mcp-grafana/pull/1420))
+- Bump the Go toolchain to 1.26.10 and the release builder images to Go 1.27.3 for `crypto/x509` fixes ([#1376](https://github.com/grafana/mcp-grafana/pull/1376))
+
+## [2.1.1] - 2026-10-20
+
+### Fixed
+
+- Classic (v1) dashboards are read and patched as v1 again on Grafana versions whose v1→v2 conversion adds a default grid layout preference, such as Grafana Cloud 13.3. Since v2.1.0, `get_dashboard_by_uid` reported every such dashboard as v2, so `update_dashboard` patches with `$.panels[...]` paths failed, and retrying with v2 paths migrated the dashboard to v2 ([#1369](https://github.com/grafana/mcp-grafana/pull/1369))
+
+## [2.1.0] - 2026-10-20
+
+### Added
+
+- `alerting_rules_write` and `alerting_routing_write` can create Mimir/Cortex or Loki ruler alert rules and Mimir/Cortex Alertmanager receivers with `managed_by: "datasource"`. Grafana-managed creation stays the default. The target datasource comes from `datasource_uid` or, when exactly one compatible datasource exists, is selected automatically; existing rules in the group and the rest of the Alertmanager configuration are preserved ([#1342](https://github.com/grafana/mcp-grafana/pull/1342))
+- `query_prometheus` renders its results as an interactive chart (time series, heatmap, bars, stat or table, chosen from the response shape) in MCP hosts that support MCP Apps. The text output is unchanged ([#1309](https://github.com/grafana/mcp-grafana/pull/1309))
+- Every tool declares the Grafana RBAC actions it needs in its `_meta` (`grafana.com/requiredPermissions`), and the README's permissions column is generated from those declarations, adding 20 missing tools and correcting stale entries ([#1306](https://github.com/grafana/mcp-grafana/pull/1306))
+
+### Fixed
+
+- `update_dashboard` detects v2 dashboards that Grafana still reports as stored at v1, instead of saving them as v1 and silently dropping auto grid, tabs and conditional rendering ([#1357](https://github.com/grafana/mcp-grafana/pull/1357))
+- `query_sql` and `run_panel_query` replace `$__from`, `$__to` and `$__interval` only as whole tokens, so plugin macros such as ClickHouse's `$__fromTime`, `$__toTime` and `$__interval_s` (and tokens like `$__to_date` in other dialects) are no longer corrupted ([#1346](https://github.com/grafana/mcp-grafana/pull/1346))
+- `query_prometheus` returns `endTime is required` or `startTime must be provided when queryType is 'range'` instead of a PromQL parser error when those times are missing ([#1347](https://github.com/grafana/mcp-grafana/pull/1347))
+- `--enable-write-tools=generate_deeplink` now works with `--disable-write`, so `shorten=true` returns a short link ([#1337](https://github.com/grafana/mcp-grafana/pull/1337))
+- `get_panel_image` uses separate default sizes for panels (1000x750), dashboards (1200x900) and Explore (1000x1000) at scale 1, clamps scale to 1-3, and caps each rendered dimension at 3000 pixels ([#1323](https://github.com/grafana/mcp-grafana/pull/1323))
+- Listing datasource-managed (Prometheus, Mimir, Loki) alert rules pages through results and stops once enough matches are found, with a 10 MiB per-page and 30s overall bound, instead of decoding every rule at once ([#1335](https://github.com/grafana/mcp-grafana/pull/1335))
+- Several tool bugs ([#1313](https://github.com/grafana/mcp-grafana/pull/1313)):
+  - `create_annotation` converts Graphite `when` from milliseconds to seconds
+  - `update_dashboard` returns the saved title instead of `null`
+  - Pyroscope label tools return `[]` instead of `null`
+  - `get_tempo_trace` returns a not-found error for unknown trace IDs instead of `{}`
+  - Incident results no longer include empty placeholder assignments
+  - `install_plugin` only suggests creating a datasource for datasource plugins
+- Generic empty-result hints for Prometheus and Loki are shorter, using fewer tokens per empty response ([#1336](https://github.com/grafana/mcp-grafana/pull/1336))
+- The MCP apps no longer ship duplicate `woff` fonts, shrinking the trace viewer by about 19% ([#1312](https://github.com/grafana/mcp-grafana/pull/1312))
+- Docker images report their real version from `--version` ([#1315](https://github.com/grafana/mcp-grafana/pull/1315))
+
+### Changed
+
+- **Breaking:** `list_users_by_org` is paginated, with new `query`, `limit` (default 100, max 1000) and `page` inputs, and returns `{totalCount, page, perPage, orgUsers}` instead of an array of users. Agents pick up the new shape from the tool description and need no changes; only code that parses the tool output directly must read `orgUsers` ([#1313](https://github.com/grafana/mcp-grafana/pull/1313))
+- `generate_deeplink` with `shorten: true` returns an error containing the full link when a short URL cannot be created, instead of silently returning the long URL ([#1313](https://github.com/grafana/mcp-grafana/pull/1313))
+- `grafana_api_request` times out after the Grafana client timeout (10s by default; raise it with `--grafana-timeout`). `get_panel_image` render timeouts default to 60s and are capped at 120s. The client cache is bounded to 1000 entries per client type ([#1315](https://github.com/grafana/mcp-grafana/pull/1315))
+- Prometheus query and metadata responses larger than 10 MiB fail with an error asking you to narrow the query, instead of being read without limit ([#1331](https://github.com/grafana/mcp-grafana/pull/1331))
+
+### Security
+
+- Bump the Go toolchain to 1.26.9, `golang.org/x/net` to v0.60.0 and the builder images to Go 1.27.2 for CVEs ([#1333](https://github.com/grafana/mcp-grafana/pull/1333))
+- Bump vite in the bundled UI apps to remediate a `source-map-js` CVE ([#1332](https://github.com/grafana/mcp-grafana/pull/1332))
+- Releases are signed with keyless cosign: the binaries checksums file, the `.mcpb` bundle and the Docker images, each with SPDX SBOMs ([#1314](https://github.com/grafana/mcp-grafana/pull/1314))
+
 ## [2.0.2] - 2026-10-07
 
 ### Added
@@ -594,6 +693,9 @@ This is the last 1.x release; the next release will be 2.0.
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[2.2.0]: https://github.com/grafana/mcp-grafana/compare/v2.1.1...v2.2.0
+[2.1.1]: https://github.com/grafana/mcp-grafana/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/grafana/mcp-grafana/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/grafana/mcp-grafana/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/grafana/mcp-grafana/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/grafana/mcp-grafana/compare/v1.6.3...v2.0.0

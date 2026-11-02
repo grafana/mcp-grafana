@@ -285,69 +285,12 @@ func TestExtractQueryExpression(t *testing.T) {
 	}
 }
 
-func TestSubstituteVariables(t *testing.T) {
-	variables := map[string]string{
-		"job":         "api-server",
-		"instance":    "localhost:9090",
-		"environment": "prod",
-	}
-
-	tests := []struct {
-		name     string
-		query    string
-		expected string
-	}{
-		{
-			name:     "dollar sign variable",
-			query:    "up{job=\"$job\"}",
-			expected: "up{job=\"api-server\"}",
-		},
-		{
-			name:     "curly brace variable",
-			query:    "up{job=\"${job}\"}",
-			expected: "up{job=\"api-server\"}",
-		},
-		{
-			name:     "curly brace with option",
-			query:    "up{job=\"${job:regex}\"}",
-			expected: "up{job=\"api-server\"}",
-		},
-		{
-			name:     "double bracket variable",
-			query:    "up{job=\"[[job]]\"}",
-			expected: "up{job=\"api-server\"}",
-		},
-		{
-			name:     "multiple variables",
-			query:    "up{job=\"$job\", instance=\"$instance\"}",
-			expected: "up{job=\"api-server\", instance=\"localhost:9090\"}",
-		},
-		{
-			name:     "mixed variable formats",
-			query:    "up{job=\"$job\", env=\"${environment}\"}",
-			expected: "up{job=\"api-server\", env=\"prod\"}",
-		},
-		{
-			name:     "unknown variable unchanged",
-			query:    "up{job=\"$unknown\"}",
-			expected: "up{job=\"$unknown\"}",
-		},
-		{
-			name:     "no variables",
-			query:    "up{job=\"static\"}",
-			expected: "up{job=\"static\"}",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := substituteVariables(tt.query, variables)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestFindVariablesInQuery(t *testing.T) {
+	t.Run("ignores capture replacements", func(t *testing.T) {
+		vars := findVariablesInQuery(`label_replace(up, "dst", "$1", "src", "(.*)")`, nil, nil)
+		assert.Empty(t, vars)
+	})
+
 	dashboardVars := map[string]VariableInfo{
 		"job": {
 			Name:         "job",
@@ -411,64 +354,6 @@ func TestFindVariablesInQuery(t *testing.T) {
 	})
 }
 
-func TestBuildEffectiveVariables(t *testing.T) {
-	t.Run("uses current values from dashboard", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{
-			"job": {
-				Name:         "job",
-				CurrentValue: "api-server",
-				DefaultValue: "default-job",
-			},
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, nil)
-
-		assert.Equal(t, "api-server", effective["job"])
-	})
-
-	t.Run("falls back to default when no current value", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{
-			"job": {
-				Name:         "job",
-				CurrentValue: "",
-				DefaultValue: "default-job",
-			},
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, nil)
-
-		assert.Equal(t, "default-job", effective["job"])
-	})
-
-	t.Run("overrides take precedence", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{
-			"job": {
-				Name:         "job",
-				CurrentValue: "api-server",
-				DefaultValue: "default-job",
-			},
-		}
-		overrides := map[string]string{
-			"job": "overridden-job",
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, overrides)
-
-		assert.Equal(t, "overridden-job", effective["job"])
-	})
-
-	t.Run("overrides can add new variables", func(t *testing.T) {
-		dashboardVars := map[string]VariableInfo{}
-		overrides := map[string]string{
-			"new_var": "new_value",
-		}
-
-		effective := buildEffectiveVariables(dashboardVars, overrides)
-
-		assert.Equal(t, "new_value", effective["new_var"])
-	})
-}
-
 func TestExtractPanelQueries(t *testing.T) {
 	t.Run("extracts prometheus queries", func(t *testing.T) {
 		panel := map[string]interface{}{
@@ -491,7 +376,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, dashboardVars, nil)
+		queries := prepareTestPanelQueries(t, panel, dashboardVars)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "A", queries[0].RefID)
@@ -521,11 +406,44 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "target-ds", queries[0].Datasource.UID)
 		assert.Equal(t, "loki", queries[0].Datasource.Type)
+	})
+
+	t.Run("does not inherit panel datasource type for a different target uid", func(t *testing.T) {
+		panel := map[string]interface{}{
+			"datasource": map[string]interface{}{
+				"uid":  "prom-uid",
+				"type": "prometheus",
+			},
+			"targets": []interface{}{
+				map[string]interface{}{
+					"refId":  "A",
+					"rawSql": "SELECT 1",
+					"datasource": map[string]interface{}{
+						"uid": "other-uid",
+					},
+				},
+				map[string]interface{}{
+					"refId": "B",
+					"expr":  "up",
+					"datasource": map[string]interface{}{
+						"uid": "prom-uid",
+					},
+				},
+			},
+		}
+
+		queries := extractPanelQueries(panel)
+
+		require.Len(t, queries, 2)
+		assert.Equal(t, "other-uid", queries[0].Datasource.UID)
+		assert.Empty(t, queries[0].Datasource.Type)
+		assert.Equal(t, "prom-uid", queries[1].Datasource.UID)
+		assert.Equal(t, "prometheus", queries[1].Datasource.Type)
 	})
 
 	t.Run("substitutes datasource variable", func(t *testing.T) {
@@ -548,7 +466,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, dashboardVars, nil)
+		queries := prepareTestPanelQueries(t, panel, dashboardVars)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "prometheus-prod", queries[0].Datasource.UID)
@@ -560,7 +478,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			"type":  "text",
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		assert.Empty(t, queries)
 	})
@@ -579,7 +497,7 @@ func TestExtractPanelQueries(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 2)
 		assert.Equal(t, "A", queries[0].RefID)
@@ -764,7 +682,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "EC2 CPU", queries[0].Title)
@@ -795,7 +713,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 2)
 		assert.Equal(t, "up", queries[0].Query)
@@ -817,7 +735,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		assert.Empty(t, queries)
 	})
@@ -848,7 +766,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			},
 		}
 
-		queries := extractPanelQueries(panel, nil, nil)
+		queries := extractPanelQueries(panel)
 
 		require.Len(t, queries, 1)
 		assert.Equal(t, "A", queries[0].RefID)
@@ -869,7 +787,7 @@ func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 			"instance": {Name: "instance", CurrentValue: "i-1234567890"},
 		}
 
-		queries := extractPanelQueries(panel, dashboardVars, nil)
+		queries := prepareTestPanelQueries(t, panel, dashboardVars)
 
 		require.Len(t, queries, 1)
 		require.Len(t, queries[0].RequiredVariables, 1)
@@ -1033,71 +951,4 @@ func TestCollectAllPanels(t *testing.T) {
 		require.Len(t, panels, 1)
 		assert.Equal(t, "Modern Panel", panels[0]["title"])
 	})
-}
-
-func TestReplaceSimpleDollarVar(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		varName  string
-		value    string
-		expected string
-	}{
-		{
-			name:     "simple replacement",
-			input:    "up{job=\"$job\"}",
-			varName:  "job",
-			value:    "api-server",
-			expected: "up{job=\"api-server\"}",
-		},
-		{
-			name:     "end of string",
-			input:    "metric $job",
-			varName:  "job",
-			value:    "api-server",
-			expected: "metric api-server",
-		},
-		{
-			name:     "no match - partial variable name",
-			input:    "$jobname",
-			varName:  "job",
-			value:    "api-server",
-			expected: "$jobname",
-		},
-		{
-			name:     "multiple occurrences",
-			input:    "$job and $job",
-			varName:  "job",
-			value:    "api-server",
-			expected: "api-server and api-server",
-		},
-		{
-			name:     "no match",
-			input:    "no variables here",
-			varName:  "job",
-			value:    "api-server",
-			expected: "no variables here",
-		},
-		{
-			name:     "word boundary with underscore",
-			input:    "$my_var_extra",
-			varName:  "my_var",
-			value:    "replaced",
-			expected: "$my_var_extra",
-		},
-		{
-			name:     "followed by non-word char",
-			input:    "$job)",
-			varName:  "job",
-			value:    "api-server",
-			expected: "api-server)",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := replaceSimpleDollarVar(tt.input, tt.varName, tt.value)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }

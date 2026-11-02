@@ -2,12 +2,20 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
+	"math"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
@@ -164,16 +172,23 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
 
-	// Extract template variables from the dashboard. Keep both the first value
-	// (used for datasource references) and the complete value list (used for
-	// formatted query interpolation).
-	templateVariables := extractTemplateVariableValues(db)
-	vars := firstTemplateVariableValues(templateVariables)
-
-	// Apply variable overrides from user
-	for name, value := range params.Variables {
-		vars[name] = value
-		templateVariables[name] = []string{value}
+	// Resolve the dashboard's template variables, with the caller's overrides,
+	// and the interval variables set to "auto" for the query's time range.
+	interp := newDashboardInterpolator(db, params.Variables)
+	interp.resolveAutoIntervals(db, params.Start, params.End)
+	templateVariables := interp.values
+	referenceDatasource := panelData.DatasourceUID
+	if params.DsUID != "" {
+		referenceDatasource = params.DsUID
+	}
+	// Executors replace the target datasource with the resolved UID below.
+	referenceTarget := maps.Clone(panelData.RawTarget)
+	delete(referenceTarget, "datasource")
+	references := variableSearchText(panelQuery{Query: panelData.Query, Target: referenceTarget})
+	for _, variable := range findVariablesInQuery(references+" "+referenceDatasource, nil, nil) {
+		if warning := interp.allSelectionWarning(variable.Name); warning != "" {
+			return nil, errors.New(warning)
+		}
 	}
 
 	// Resolve datasource UID and type
@@ -189,7 +204,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	} else if isVariableReference(datasourceUID) {
 		// Resolve variable reference only if no explicit override
 		varName := extractVariableName(datasourceUID)
-		if resolvedUID, ok := vars[varName]; ok {
+		if resolvedUID, ok := interp.firstValue(varName); ok {
 			datasourceUID = resolvedUID
 			// Reset type so it gets looked up from the resolved datasource
 			datasourceType = ""
@@ -197,6 +212,17 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 			availableDS := getAvailableDatasourceUIDs(ctx, panelData.DatasourceType)
 			return nil, fmt.Errorf("datasource variable '%s' not found. Hint: Use 'datasourceUid' and 'datasourceType' to override. Available %s datasources: %v", datasourceUID, panelData.DatasourceType, availableDS)
 		}
+	}
+
+	// Grafana resolves the "default" datasource reference to the org's default
+	// datasource; it is not a real UID the datasource API knows about.
+	if datasourceUID == "default" {
+		ds, err := datasource.Default(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("resolving default datasource: %w", err)
+		}
+		datasourceUID = ds.UID
+		datasourceType = ""
 	}
 
 	// Resolve the datasource type authoritatively from its UID whenever the
@@ -210,7 +236,15 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// loki_enforce.go). A type declared in the panel JSON (no override) is
 	// trusted as-is: it comes from the dashboard, not the caller.
 	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
-		ds, lookupErr := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
+		ds, lookupErr := datasource.ByUID(ctx, datasourceUID)
+		if lookupErr != nil && params.DsUID == "" {
+			// Dashboards saved before schema version 33 reference a
+			// datasource, or a datasource variable's value, by name.
+			if byName, err := datasource.ByName(ctx, datasourceUID); err == nil {
+				ds, lookupErr = byName, nil
+				datasourceUID = byName.UID
+			}
+		}
 		switch {
 		case lookupErr == nil:
 			// The datasource's real type wins over any caller-supplied type.
@@ -234,10 +268,13 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}
 
 	// Substitute variables in the query
-	query := substituteTemplateVariableValues(panelData.Query, templateVariables)
+	query := interp.interpolateQuery(panelData.Query, datasourceType)
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
+	// Structured targets (CloudWatch, Infinity) have no query expression; the executors
+	// return the substituted target so the fetched URL can be reported as the query.
+	var target map[string]interface{}
 
 	switch normalizeDatasourceType(datasourceType) {
 	case "prometheus":
@@ -247,7 +284,16 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "clickhouse":
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
-		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
+		results, target, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
+	case "infinity":
+		// Pass the resolved type through, so a renamed or forked plugin ID reaches Grafana as declared.
+		results, target, err = executeInfinityPanelQuery(ctx, datasourceUID, datasourceType, panelData, params.Start, params.End, templateVariables)
+	case Neo4jDatasourceType:
+		results, target, err = executeStructuredPanelQuery(ctx, datasourceUID, Neo4jDatasourceType, panelData, params.Start, params.End, templateVariables)
+		if err == nil {
+			// Report the Cypher that ran, with macros substituted as well as variables.
+			query = safeString(target, "cypherQuery")
+		}
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
@@ -268,6 +314,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	if err != nil {
 		return nil, fmt.Errorf("executing query: %w", err)
 	}
+	if query == "" && target != nil {
+		query = safeString(target, "url")
+	}
 
 	// Check for empty results and generate hints
 	var hints []string
@@ -286,119 +335,19 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}, nil
 }
 
-type templateVariableValues map[string][]string
-
-// substituteTemplateVariableValues interpolates variables while retaining
-// multi-select values for formatters such as sqlstring. Explicitly supported
-// formatters follow Grafana's formatting syntax; unknown formatters fall back
-// to Grafana's glob representation.
-func substituteTemplateVariableValues(query string, variables templateVariableValues) string {
-	for name, values := range variables {
-		variableRe := regexp.MustCompile(fmt.Sprintf(
-			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
-			regexp.QuoteMeta(name), regexp.QuoteMeta(name), regexp.QuoteMeta(name),
-		))
-		query = variableRe.ReplaceAllStringFunc(query, func(match string) string {
-			format, hasFormat := templateVariableFormat(match)
-			if !hasFormat {
-				return firstTemplateVariableValue(values)
-			}
-			return formatTemplateVariable(values, format)
-		})
-	}
-	return query
-}
-
-func templateVariableFormat(match string) (string, bool) {
-	var inner string
-	switch {
-	case strings.HasPrefix(match, "${") && strings.HasSuffix(match, "}"):
-		inner = match[2 : len(match)-1]
-	case strings.HasPrefix(match, "[[") && strings.HasSuffix(match, "]]"):
-		inner = match[2 : len(match)-2]
-	default:
-		return "", false
-	}
-
-	separator := strings.IndexByte(inner, ':')
-	if separator < 0 {
-		return "", false
-	}
-	return inner[separator+1:], true
-}
-
-func firstTemplateVariableValue(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
-}
-
-func formatTemplateVariable(values []string, format string) string {
-	formatName := format
-	if separator := strings.IndexByte(format, ':'); separator >= 0 {
-		formatName = format[:separator]
-	}
-
-	if formatName == "sqlstring" {
-		return formatSQLStringVariable(values)
-	}
-
-	// Grafana uses glob as the fallback for unknown formatting options.
-	if len(values) > 1 {
-		return "{" + strings.Join(values, ",") + "}"
-	}
-	return firstTemplateVariableValue(values)
-}
-
-func formatSQLStringVariable(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-
-	formatted := make([]string, len(values))
-	for i, value := range values {
-		// Match Grafana's SQLString formatter: pair single quotes and escape
-		// double quotes with a backslash before surrounding the value in quotes.
-		value = strings.ReplaceAll(value, "'", "''")
-		value = strings.ReplaceAll(value, `"`, `\"`)
-		formatted[i] = "'" + value + "'"
-	}
-	return strings.Join(formatted, ",")
-}
-
-func substituteTemplateVariablesInMapWithValues(target map[string]interface{}, variables templateVariableValues) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range target {
-		switch val := v.(type) {
-		case string:
-			result[k] = substituteTemplateVariableValues(val, variables)
-		case map[string]interface{}:
-			result[k] = substituteTemplateVariablesInMapWithValues(val, variables)
-		case []interface{}:
-			result[k] = substituteTemplateVariablesInSliceWithValues(val, variables)
-		default:
-			result[k] = v
+// panelDatasourceRef reads a panel or target datasource reference. Dashboards
+// saved before schema version 33 store it as a plain string: a datasource name
+// or a variable. runSinglePanelQuery resolves a name to its UID.
+func panelDatasourceRef(ref interface{}) (uid, dsType string) {
+	switch ref := ref.(type) {
+	case map[string]interface{}:
+		return safeString(ref, "uid"), safeString(ref, "type")
+	case string:
+		if ref != "-- Mixed --" {
+			return ref, ""
 		}
 	}
-	return result
-}
-
-func substituteTemplateVariablesInSliceWithValues(slice []interface{}, variables templateVariableValues) []interface{} {
-	result := make([]interface{}, len(slice))
-	for i, v := range slice {
-		switch val := v.(type) {
-		case string:
-			result[i] = substituteTemplateVariableValues(val, variables)
-		case map[string]interface{}:
-			result[i] = substituteTemplateVariablesInMapWithValues(val, variables)
-		case []interface{}:
-			result[i] = substituteTemplateVariablesInSliceWithValues(val, variables)
-		default:
-			result[i] = v
-		}
-	}
-	return result
+	return "", ""
 }
 
 // extractPanelInfo extracts query and datasource information from a panel
@@ -430,17 +379,16 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 
 	// Extract datasource - prefer target-level (more specific) over panel-level.
 	// This handles "Mixed" datasource panels where each target specifies its own datasource.
-	if targetDS := safeObject(target, "datasource"); targetDS != nil {
-		info.DatasourceUID = safeString(targetDS, "uid")
-		info.DatasourceType = safeString(targetDS, "type")
-	}
+	info.DatasourceUID, info.DatasourceType = panelDatasourceRef(target["datasource"])
 
 	// Fall back to panel-level datasource
 	if info.DatasourceUID == "" {
-		if dsField := safeObject(panel, "datasource"); dsField != nil {
-			info.DatasourceUID = safeString(dsField, "uid")
-			info.DatasourceType = safeString(dsField, "type")
-		}
+		info.DatasourceUID, info.DatasourceType = panelDatasourceRef(panel["datasource"])
+	}
+
+	// Grafana runs a panel without any datasource reference on the default one.
+	if info.DatasourceUID == "" && target["datasource"] == nil && panel["datasource"] == nil {
+		info.DatasourceUID = "default"
 	}
 
 	if info.DatasourceUID == "" {
@@ -448,108 +396,109 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	}
 
 	// Try to get query expression - different datasources use different field names
-	query := extractQueryExpression(target)
+	query := panelQueryExpression(target, info.DatasourceType)
 
-	// CloudWatch panels use structured targets rather than string expressions
-	if query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
-		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery, target)")
+	// CloudWatch and Infinity panels use structured targets rather than string expressions
+	if query == "" && !usesStructuredTarget(info.DatasourceType) {
+		return nil, errNoQueryExpression
 	}
 	info.Query = query
 
 	return info, nil
 }
 
-// extractTemplateVariableValues extracts all selected values of each dashboard
-// template variable. Grafana stores multi-select values in current.value as an
-// array, and formatted interpolation needs to retain that array.
-func extractTemplateVariableValues(db map[string]interface{}) templateVariableValues {
-	variables := make(templateVariableValues)
-
-	templating := safeObject(db, "templating")
-	if templating == nil {
-		return variables
+// resolveAutoIntervalVariables gives interval variables set to "auto" the value
+// Grafana computes for the query's time range. Grafana stores the selection as
+// "$__auto_interval_<name>" and fills it in from the range, the variable's step
+// count and its minimum interval; left as is, the placeholder reaches the
+// datasource as an invalid duration. The legacy $__auto_interval_<name> and
+// $__auto_interval references resolve to the same value.
+func resolveAutoIntervalVariables(db map[string]interface{}, values templateVariableValues, start, end string) {
+	from, err := parseTime(start)
+	if err != nil {
+		return
 	}
-
-	list := safeArray(templating, "list")
-	for _, v := range list {
-		variable, ok := v.(map[string]interface{})
-		if !ok {
+	to, err := parseTime(end)
+	if err != nil {
+		return
+	}
+	for _, item := range safeArray(safeObject(db, "templating"), "list") {
+		variable, ok := item.(map[string]interface{})
+		if !ok || safeString(variable, "type") != "interval" {
 			continue
 		}
-
 		name := safeString(variable, "name")
-		if name == "" {
+		if auto, _ := variable["auto"].(bool); !auto || name == "" {
 			continue
 		}
-
-		// Get current value - can be in different formats
-		current := safeObject(variable, "current")
-		currentValueSet := false
-		if current != nil {
-			// Try "value" field first (can be string or array).
-			if val, ok := current["value"]; ok {
-				currentValueSet = true
-				switch v := val.(type) {
-				case string:
-					if v != "$__all" {
-						variables[name] = []string{v}
-					}
-				case nil:
-					// Grafana formats a defined null/undefined value as an empty
-					// string. Keep the empty slice distinguishable from a missing
-					// variable so formatted expressions are still replaced.
-					variables[name] = []string{}
-				case []interface{}:
-					if len(v) == 0 {
-						variables[name] = []string{}
-					} else if first, ok := v[0].(string); ok && first != "$__all" {
-						values := make([]string, 0, len(v))
-						for _, item := range v {
-							if str, ok := item.(string); ok {
-								values = append(values, str)
-							}
-						}
-						variables[name] = values
-					}
-				case []string:
-					if len(v) == 0 || v[0] != "$__all" {
-						variables[name] = append([]string(nil), v...)
-					}
-				}
-			}
-			// Fall back to "text" field
-			if !currentValueSet {
-				if text, ok := current["text"].(string); ok && text != "" && text != "All" {
-					variables[name] = []string{text}
-				}
-			}
+		steps := 30.0
+		if count, ok := variable["auto_count"].(float64); ok && count > 0 {
+			steps = count
 		}
-
-		// Constant and textbox variables hold their value in "query" and are
-		// frequently saved without a "current" at all. Without this fallback
-		// the raw $name survives substitution and reaches the datasource,
-		// which for SQL datasources is a syntax error.
-		if !currentValueSet {
-			switch safeString(variable, "type") {
-			case "constant", "textbox":
-				if q := safeString(variable, "query"); q != "" {
-					variables[name] = []string{q}
-				}
-			}
+		minimum := "10s"
+		if m, ok := variable["auto_min"].(string); ok && m != "" {
+			minimum = m
 		}
+		interval := grafanaCalculateInterval(to.Sub(from), steps, minimum)
+		placeholder := "$__auto_interval_" + name
+		if current := values[name]; len(current) == 1 && current[0] == placeholder {
+			values[name] = []string{interval}
+		}
+		values["__auto_interval_"+name] = []string{interval}
+		values["__auto_interval"] = []string{interval}
 	}
-
-	return variables
 }
 
-func firstTemplateVariableValues(values templateVariableValues) map[string]string {
-	variables := make(map[string]string, len(values))
-	for name, value := range values {
-		if len(value) > 0 {
-			variables[name] = value[0]
+// grafanaCalculateInterval mirrors rangeutil.calculateInterval in Grafana: the
+// range divided by the step count, rounded to a "nice" interval, no lower than
+// the minimum, and formatted with secondsToHms.
+func grafanaCalculateInterval(span time.Duration, steps float64, minimum string) string {
+	ms := grafanaRoundInterval(float64(span.Milliseconds()) / steps)
+	if low, err := gtime.ParseInterval(minimum); err == nil && float64(low.Milliseconds()) > ms {
+		ms = float64(low.Milliseconds())
+	}
+	return grafanaSecondsToHms(ms / 1000)
+}
+
+// grafanaRoundInterval is rangeutil.roundInterval: thresholds in milliseconds
+// and the interval each one rounds to.
+func grafanaRoundInterval(ms float64) float64 {
+	steps := [][2]float64{
+		{10, 1}, {15, 10}, {35, 20}, {75, 50}, {150, 100}, {350, 200}, {750, 500},
+		{1500, 1000}, {3500, 2000}, {7500, 5000}, {12500, 10000}, {17500, 15000},
+		{25000, 20000}, {45000, 30000}, {90000, 60000}, {210000, 120000},
+		{450000, 300000}, {750000, 600000}, {1050000, 900000}, {1500000, 1200000},
+		{2700000, 1800000}, {5400000, 3600000}, {9000000, 7200000},
+		{16200000, 10800000}, {32400000, 21600000}, {86400000, 43200000},
+		{604800000, 86400000}, {1814400000, 604800000}, {3628800000, 2592000000},
+	}
+	for _, s := range steps {
+		if ms < s[0] {
+			return s[1]
 		}
 	}
-	return variables
+	return 31536000000
+}
+
+// grafanaSecondsToHms is rangeutil.secondsToHms: the largest whole unit only.
+func grafanaSecondsToHms(seconds float64) string {
+	s := int64(math.Floor(seconds))
+	switch {
+	case s/31536000 > 0:
+		return fmt.Sprintf("%dy", s/31536000)
+	case s%31536000/86400 > 0:
+		return fmt.Sprintf("%dd", s%31536000/86400)
+	case s%86400/3600 > 0:
+		return fmt.Sprintf("%dh", s%86400/3600)
+	case s%3600/60 > 0:
+		return fmt.Sprintf("%dm", s%3600/60)
+	case s%60 > 0:
+		return fmt.Sprintf("%ds", s%60)
+	}
+	if ms := int64(math.Floor(seconds * 1000)); ms > 0 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return "less than a millisecond"
 }
 
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
@@ -572,9 +521,23 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 		Expr:          query,
 		StartTime:     start,
 		EndTime:       end,
-		StepSeconds:   60, // Default 1-minute resolution
+		StepSeconds:   panelPrometheusStep(ctx, endTime.Sub(startTime)),
 		QueryType:     "range",
 	})
+}
+
+// panelPrometheusStep is a 1-minute step, widened for long ranges to stay
+// within Prometheus' per-series limit, as Grafana would, or within a lower
+// enforced guardrail points cap. The tool has no step parameter, so a points
+// block would leave the caller nothing to change. Shadow mode only observes,
+// so it keeps the step and records the would-be block.
+func panelPrometheusStep(ctx context.Context, window time.Duration) int {
+	limit := int64(prometheusMaxPointsPerSeries)
+	config := mcpgrafana.GrafanaConfigFromContext(ctx)
+	if mode := config.PrometheusGuardrailMode; mode != "" && mode != mcpgrafana.PrometheusGuardrailOff && mode != mcpgrafana.PrometheusGuardrailShadow && config.PrometheusGuardrailMaxPoints > 0 {
+		limit = min(limit, config.PrometheusGuardrailMaxPoints)
+	}
+	return int(max(60, promMinStepSeconds(max(window, 0), limit)))
 }
 
 // executeLokiQuery runs a Loki query using the existing queryLokiLogs function
@@ -600,6 +563,8 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Limit:         100,
 		Direction:     "backward",
 		QueryType:     "range",
+		// $__auto is substituted with this interval, and Grafana defines it as the step.
+		StepSeconds: int(autoInterval(startTime, endTime) / time.Second),
 	})
 	if err != nil {
 		return nil, err
@@ -617,41 +582,191 @@ func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, en
 }
 
 // executeCloudWatchPanelQuery runs a CloudWatch query using Grafana's /api/ds/query endpoint
-func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, error) {
-	if panelData.RawTarget == nil {
-		return nil, fmt.Errorf("CloudWatch panel target not available")
+func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, map[string]interface{}, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, nil, fmt.Errorf("cloudwatch panel target not available")
 	}
 
 	// Check for math expression panels
 	if dsField := safeObject(panelData.RawTarget, "datasource"); dsField != nil {
 		if dsType := safeString(dsField, "type"); dsType == "__expr__" || dsType == "expression" {
-			return nil, fmt.Errorf("math expression panels require executing multiple queries; use query_cloudwatch directly for the underlying metrics")
+			return nil, nil, fmt.Errorf("math expression panels require executing multiple queries; use query_cloudwatch directly for the underlying metrics")
 		}
 	}
 
-	// Parse time range
+	return executeStructuredPanelQuery(ctx, datasourceUID, "cloudwatch", panelData, start, end, variables)
+}
+
+// executeStructuredPanelQuery runs a structured panel target (CloudWatch, Infinity) through
+// Grafana's /api/ds/query endpoint. Template variables and Grafana macros are substituted in
+// every string field of a deep copy of the target, the datasource is set to the resolved UID
+// and type, and refId defaults to "A". The substituted target is returned with the responses.
+func executeStructuredPanelQuery(ctx context.Context, datasourceUID, datasourceType string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, map[string]interface{}, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, nil, fmt.Errorf("panel target not available")
+	}
+
 	startTime, err := parseTime(start)
 	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
+		return nil, nil, fmt.Errorf("parsing start time: %w", err)
 	}
 	endTime, err := parseTime(end)
 	if err != nil {
-		return nil, fmt.Errorf("parsing end time: %w", err)
+		return nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Deep copy and substitute variables in target fields
-	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
+	target := newVariableInterpolator(variables, nil).interpolateTarget(panelData.RawTarget)
+	substituteGrafanaMacrosInMap(target, startTime, endTime)
 
-	// Ensure datasource is set correctly
-	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": "cloudwatch"}
-
-	// Ensure refId is set
+	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
 	}
 
-	return executeGrafanaDSQuery(ctx, dsQueryPayload(startTime, endTime, target))
+	results, err := executeGrafanaDSQuery(ctx, dsQueryPayload(startTime, endTime, target))
+	return results, target, err
 }
+
+// timeRangeMacroRe matches $__from, $__to, ${__from} and ${__to} as whole tokens, so
+// plugin-side macros such as $__fromTime and formatted forms such as ${__from:date} are kept.
+var timeRangeMacroRe = regexp.MustCompile(`\$\{__(from|to)\}|\$__(from|to)\b`)
+
+// substituteStructuredTargetMacros applies substituteGrafanaMacros and replaces $__from and
+// $__to with the range bounds in epoch milliseconds, as Grafana's frontend does before it
+// sends a structured target to /api/ds/query.
+func substituteStructuredTargetMacros(s string, start, end time.Time) string {
+	s = substituteGrafanaMacros(s, start, end)
+	return timeRangeMacroRe.ReplaceAllStringFunc(s, func(match string) string {
+		if strings.Contains(match, "from") {
+			return strconv.FormatInt(start.UnixMilli(), 10)
+		}
+		return strconv.FormatInt(end.UnixMilli(), 10)
+	})
+}
+
+// substituteGrafanaMacrosInMap applies substituteStructuredTargetMacros to every string in target,
+// which must already be a private deep copy (variableInterpolator.interpolateTarget).
+func substituteGrafanaMacrosInMap(target map[string]interface{}, start, end time.Time) {
+	for k, v := range target {
+		switch val := v.(type) {
+		case string:
+			target[k] = substituteStructuredTargetMacros(val, start, end)
+		case map[string]interface{}:
+			substituteGrafanaMacrosInMap(val, start, end)
+		case []interface{}:
+			substituteGrafanaMacrosInSlice(val, start, end)
+		}
+	}
+}
+
+func substituteGrafanaMacrosInSlice(slice []interface{}, start, end time.Time) {
+	for i, v := range slice {
+		switch val := v.(type) {
+		case string:
+			slice[i] = substituteStructuredTargetMacros(val, start, end)
+		case map[string]interface{}:
+			substituteGrafanaMacrosInMap(val, start, end)
+		case []interface{}:
+			substituteGrafanaMacrosInSlice(val, start, end)
+		}
+	}
+}
+
+// InfinityDatasourceType is the plugin ID of the Infinity datasource (yesoreyeram-infinity-datasource),
+// which fetches JSON, CSV, XML, GraphQL or HTML from a URL or inline content.
+const InfinityDatasourceType = "yesoreyeram-infinity-datasource"
+
+// panelQueryExpression returns the query string of a panel target. Neo4j targets are read
+// from cypherQuery directly, so a leftover field such as query (copied or migrated panels)
+// cannot stand in for the Cypher that runs.
+func panelQueryExpression(target map[string]interface{}, datasourceType string) string {
+	if normalizeDatasourceType(datasourceType) == Neo4jDatasourceType {
+		return safeString(target, "cypherQuery")
+	}
+	return extractQueryExpression(target)
+}
+
+// usesStructuredTarget reports whether a datasource keeps its query in structured
+// target fields rather than in a string expression such as expr or rawSql.
+func usesStructuredTarget(datasourceType string) bool {
+	switch normalizeDatasourceType(datasourceType) {
+	case "cloudwatch", "infinity":
+		return true
+	default:
+		return false
+	}
+}
+
+// Infinity query types the plugin backend parses with the "backend" parser (the plugin's
+// isBackendQuerySupported), and the subset it also parses with "jq-backend". A missing type
+// is "json", the plugin default.
+var (
+	infinityBackendTypes   = map[string]bool{"json": true, "csv": true, "tsv": true, "xml": true, "graphql": true, "html": true}
+	infinityJQBackendTypes = map[string]bool{"json": true, "xml": true, "graphql": true, "html": true}
+)
+
+// infinityBackendQueryError reports why the Infinity plugin backend would not execute the
+// target, mirroring the plugin's isBackendQuery: data types need the backend or jq-backend
+// parser; google-sheets always runs in the backend; transformations run in the backend but
+// only over the panel's other queries; series, global, uql and groq run in the browser, where
+// Grafana's API would return the response untransformed.
+func infinityBackendQueryError(target map[string]interface{}) error {
+	typ := safeString(target, "type")
+	if typ == "" {
+		typ = "json"
+	}
+	switch typ {
+	case "google-sheets":
+		return nil
+	case "transformations":
+		return fmt.Errorf("infinity transformations query combines the panel's other queries inside the plugin and cannot run on its own; run those queries instead")
+	case "series":
+		return fmt.Errorf("infinity series query generates random-walk data in the browser; there is nothing to execute through the API")
+	case "global":
+		return fmt.Errorf("infinity global query is resolved from the datasource settings in the browser and cannot be executed through the API")
+	case "uql", "groq":
+		return fmt.Errorf("infinity %q query is transformed in the browser; only the backend and jq-backend parsers can be executed through the API", typ)
+	}
+	if !infinityBackendTypes[typ] {
+		return fmt.Errorf("unsupported infinity query type %q", typ)
+	}
+
+	parser := safeString(target, "parser")
+	if parser == "" {
+		parser = "simple"
+	}
+	switch parser {
+	case "backend":
+		return nil
+	case "jq-backend":
+		if infinityJQBackendTypes[typ] {
+			return nil
+		}
+		return fmt.Errorf("infinity %q query with the jq-backend parser runs in the browser; use the backend parser", typ)
+	default:
+		return fmt.Errorf("infinity panel uses the %q parser, which runs in the browser; only the backend and jq-backend parsers can be executed through the API. Change the query's parser in the panel", parser)
+	}
+}
+
+// executeInfinityPanelQuery runs an Infinity panel target through Grafana's /api/ds/query
+// endpoint. The target is sent as saved (URL, root_selector, parser, headers, ...) with
+// template variables and Grafana macros substituted, so the plugin backend does the fetch
+// and the parsing.
+func executeInfinityPanelQuery(ctx context.Context, datasourceUID, datasourceType string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, map[string]interface{}, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, nil, fmt.Errorf("infinity panel target not available")
+	}
+	if err := infinityBackendQueryError(panelData.RawTarget); err != nil {
+		return nil, nil, err
+	}
+	return executeStructuredPanelQuery(ctx, datasourceUID, datasourceType, panelData, start, end, variables)
+}
+
+// Neo4jDatasourceType is the plugin ID of the Neo4j datasource (kniepdennis-neo4j-datasource),
+// which runs the Cypher query in the target's cypherQuery field. Only this plugin is routed:
+// run_panel_query is read-only because this plugin opens its Neo4j sessions in read access
+// mode, which another Neo4j plugin need not do.
+const Neo4jDatasourceType = "kniepdennis-neo4j-datasource"
 
 // executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
 // panel's queryType field tells us which dialect to use (influxql vs flux);
@@ -719,7 +834,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 	processedQuery := substituteGrafanaMacros(query, startTime, endTime)
 
 	// Deep copy the raw target and substitute variables in its fields (e.g. location).
-	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
+	target := newVariableInterpolator(variables, nil).interpolateTarget(panelData.RawTarget)
 
 	// Override the SQL with the fully-processed query and ensure required fields are set.
 	target["rawSql"] = processedQuery
@@ -754,7 +869,9 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 	}, nil
 }
 
-// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint.
+// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint. Grafana
+// answers 200 even when the datasource fails a query (unreachable URL, upstream 404, bad
+// query) and reports that per refId, so those failures are returned as an error here.
 func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	client, baseURL, err := newDSQueryHTTPClient(ctx)
 	if err != nil {
@@ -765,8 +882,50 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 	if err != nil {
 		return nil, err
 	}
+	if err := dsQueryResponsesError(resp.Responses); err != nil {
+		return nil, err
+	}
 
 	return resp.Responses, nil
+}
+
+// dsQueryResponsesError collects the per-refId failures of a /api/ds/query response: a
+// response whose error is set, or whose status is set and not 2xx.
+func dsQueryResponsesError(responses backend.Responses) error {
+	var failures []string
+	for _, refID := range slices.Sorted(maps.Keys(responses)) {
+		r := responses[refID]
+		source := ""
+		if r.ErrorSource != "" {
+			source = fmt.Sprintf(" (%s)", r.ErrorSource)
+		}
+		switch {
+		case r.Error != nil:
+			failures = append(failures, fmt.Sprintf("refId %s%s: %v", refID, source, r.Error))
+		case r.Status != 0 && (r.Status < 200 || r.Status >= 300):
+			failures = append(failures, fmt.Sprintf("refId %s%s: status %d", refID, source, r.Status))
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(failures, "; "))
+}
+
+// macroInterval is the value of $__interval and $__auto: the time range over ~100 data points,
+// at least one second.
+func macroInterval(start, end time.Time) time.Duration {
+	return max(end.Sub(start)/100, time.Second)
+}
+
+// autoInterval is the duration $__auto is written as in the query. It parses the formatted string
+// back, so a step derived from it always matches the substituted window.
+func autoInterval(start, end time.Time) time.Duration {
+	d := macroInterval(start, end)
+	if parsed, err := time.ParseDuration(formatPrometheusDuration(d)); err == nil {
+		return parsed
+	}
+	return d
 }
 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
@@ -787,15 +946,15 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	query = strings.ReplaceAll(query, "${__range}", rangeStr)
 	query = strings.ReplaceAll(query, "$__range", rangeStr)
 
+	// Substitute $__rate_interval_ms BEFORE $__rate_interval to avoid partial replacement
+	query = strings.ReplaceAll(query, "${__rate_interval_ms}", "60000")
+	query = strings.ReplaceAll(query, "$__rate_interval_ms", "60000")
+
 	// $__rate_interval - default to "1m"
 	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
 	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
 
-	// Calculate interval based on time range / max data points (~100 points)
-	interval := duration / 100
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := macroInterval(start, end)
 
 	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
 	intervalMs := int64(interval / time.Millisecond)
@@ -807,23 +966,31 @@ func substituteGrafanaMacros(query string, start, end time.Time) string {
 	query = strings.ReplaceAll(query, "${__interval}", intervalStr)
 	query = strings.ReplaceAll(query, "$__interval", intervalStr)
 
+	// $__auto - Grafana fills this in with the step for range queries, which
+	// is all run_panel_query issues.
+	query = strings.ReplaceAll(query, "${__auto}", intervalStr)
+	query = strings.ReplaceAll(query, "$__auto", intervalStr)
+
 	return query
 }
 
-// formatPrometheusDuration formats a duration for Prometheus (e.g., "14m", "1h30m", "36s")
+// formatPrometheusDuration formats a duration for Prometheus and Loki (e.g. "14m", "1h30m",
+// "36s", "1m30s"). Every unit is kept, so the result matches the _s and _ms macros; only
+// sub-second precision is dropped.
 func formatPrometheusDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
+	secs := int64(d / time.Second)
+	hours, mins, rem := secs/3600, secs/60%60, secs%60
+	var b strings.Builder
+	if hours > 0 {
+		fmt.Fprintf(&b, "%dh", hours)
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
+	if mins > 0 {
+		fmt.Fprintf(&b, "%dm", mins)
 	}
-	hours := int(d.Hours())
-	mins := int(d.Minutes()) % 60
-	if mins == 0 {
-		return fmt.Sprintf("%dh", hours)
+	if rem > 0 || b.Len() == 0 {
+		fmt.Fprintf(&b, "%ds", rem)
 	}
-	return fmt.Sprintf("%dh%dm", hours, mins)
+	return b.String()
 }
 
 // isVariableReference checks if a string is a Grafana variable reference
@@ -893,6 +1060,8 @@ func normalizeDatasourceType(dsType string) string {
 		return "postgres"
 	case strings.Contains(lower, "bigquery"):
 		return "bigquery"
+	case strings.Contains(lower, "infinity"):
+		return "infinity"
 	default:
 		return lower
 	}
@@ -919,34 +1088,58 @@ func isEmptyPanelResult(results interface{}) bool {
 		case model.Vector:
 			return len(m) == 0
 		}
+	case backend.Responses:
+		// /api/ds/query results (CloudWatch, Infinity): empty unless some frame has rows.
+		for _, r := range v {
+			for _, frame := range r.Frames {
+				if frame != nil && frame.Rows() > 0 {
+					return false
+				}
+			}
+		}
+		return true
 	}
 	return false
 }
 
 // generatePanelQueryHints generates helpful hints when panel query returns no data
 func generatePanelQueryHints(datasourceType, query string) []string {
+	typ := normalizeDatasourceType(datasourceType)
+	if typ == "prometheus" || typ == "loki" {
+		shared := GenerateEmptyResultHints(HintContext{DatasourceType: typ, Query: query})
+		hints := []string{shared.Summary, "Possible causes:"}
+		for _, cause := range shared.PossibleCauses {
+			hints = append(hints, "- "+cause)
+		}
+		hints = append(hints, "Try:")
+		for _, action := range shared.SuggestedActions {
+			hints = append(hints, "- "+action)
+		}
+		if query != "" {
+			hints = append(hints, "- Query executed: "+truncateString(query, 100))
+		}
+		return hints
+	}
 	hints := []string{"No data found for the panel query. Possible reasons:"}
 
 	hints = append(hints, "- Time range may have no data - try extending with start='now-6h' or start='now-24h'")
 
 	switch normalizeDatasourceType(datasourceType) {
-	case "prometheus":
-		hints = append(hints,
-			"- Metric may not exist - use list_prometheus_metric_names to discover available metrics",
-			"- Label selectors may be too restrictive - try removing some filters",
-			"- Prometheus may not have scraped data for this time range",
-		)
-	case "loki":
-		hints = append(hints,
-			"- Log stream selectors may not match any streams - use list_loki_label_names to discover labels",
-			"- Pipeline filters may be filtering out all logs - try simplifying the query",
-			"- Use query_loki_stats to check if logs exist in this time range",
-		)
 	case "clickhouse":
 		hints = append(hints,
 			"- Table may be empty for this time range - use query_sql with a COUNT(*) to verify",
 			"- Column names or WHERE clause may not match - use describe_sql_table to check schema",
 			"- Time filter may not match the actual timestamp column format",
+		)
+	case "infinity":
+		hints = append(hints,
+			"- The URL or inline content may have returned no rows for these variables - the query field shows the substituted URL",
+			"- root_selector may not match the response shape - verify it against a sample response in the panel editor",
+		)
+	case Neo4jDatasourceType:
+		hints = append(hints,
+			"- The MATCH pattern, labels or property filters may not match any nodes for these variables - the query field shows the substituted Cypher",
+			"- The datasource may point at a different Neo4j database than the panel expects - check the database setting in the datasource",
 		)
 	case "cloudwatch":
 		hints = append(hints,
@@ -1003,7 +1196,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval), and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcpgrafana.WithTitleAnnotation("Run panel query"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

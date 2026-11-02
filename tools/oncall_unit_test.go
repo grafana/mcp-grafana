@@ -5,8 +5,12 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -198,4 +202,70 @@ func TestGetAlertGroupEscapesID(t *testing.T) {
 	_, err := getAlertGroup(ctx, GetAlertGroupParams{AlertGroupID: "../alert_groups"})
 	require.Error(t, err)
 	assert.NotContains(t, *requests, "GET /api/v1/alert_groups/")
+}
+
+func TestGetAlertGroupUsesConfiguredTLS(t *testing.T) {
+	oncall := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id": "AG1", "state": "new", "created_at": "2026-10-19T00:00:00Z",
+		}))
+	}))
+	t.Cleanup(oncall.Close)
+	grafana := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"jsonData": map[string]string{"onCallApiUrl": oncall.URL},
+		}))
+	}))
+	t.Cleanup(grafana.Close)
+
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: grafana.Certificate().Raw,
+	}), 0o600))
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		URL:       grafana.URL,
+		APIKey:    "oncall-token",
+		TLSConfig: &mcpgrafana.TLSConfig{CAFile: caFile},
+	})
+
+	result, err := getAlertGroup(ctx, GetAlertGroupParams{AlertGroupID: "AG1"})
+	require.NoError(t, err)
+	assert.Equal(t, "AG1", result.ID)
+}
+
+func TestOnCallTransportUnderOverrideRefusesRedirectOffOnCallHost(t *testing.T) {
+	var thirdHits atomic.Int32
+	third := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		thirdHits.Add(1)
+	}))
+	t.Cleanup(third.Close)
+
+	oncall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect/" {
+			http.Redirect(w, r, third.URL+"/", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(oncall.Close)
+
+	// Allow cross-origin redirects so that only the target guard can refuse them.
+	cfg := mcpgrafana.GrafanaConfig{
+		URL:                       "http://grafana.example",
+		OverrideURL:               "http://grafana.example",
+		AllowCrossOriginRedirects: true,
+	}
+	transport, err := oncallTransport(cfg, oncall.URL)
+	require.NoError(t, err)
+	client := &http.Client{Transport: transport}
+
+	resp, err := client.Get(oncall.URL + "/api/v1/alert_groups/")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	_, err = client.Get(oncall.URL + "/redirect/")
+	require.ErrorContains(t, err, "grafana URL override blocked request outside selected target")
+	assert.Zero(t, thirdHits.Load())
 }

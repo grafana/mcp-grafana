@@ -340,3 +340,33 @@ func labelEnumerationQuery(ctx context.Context, matcher string) (string, error) 
 	}
 	return enforceLogQL(ctx, matcher)
 }
+
+// indexOutsideStrings returns the index of the first target byte at or after
+// from, skipping bytes inside quoted strings.
+func indexOutsideStrings(s string, from int, target byte) int {
+	var inStr byte
+	for i := from; i < len(s); i++ {
+		c := s[i]
+		if inStr != 0 {
+			if c == '\\' && inStr != '`' {
+				i++
+			} else if c == inStr {
+				inStr = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '`', '\'':
+			inStr = c
+		case target:
+			return i
+		}
+	}
+	return -1
+}
+
+// closingBrace finds the index of the '}' closing the brace at open,
+// skipping braces inside quoted matcher values.
+func closingBrace(s string, open int) int {
+	return indexOutsideStrings(s, open+1, '}')
+}

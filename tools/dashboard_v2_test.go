@@ -113,7 +113,7 @@ func TestExtractPanelQueriesV2_StructuredTarget(t *testing.T) {
 		},
 	}
 
-	queries := extractPanelQueriesV2(panel, nil, nil)
+	queries := extractPanelQueriesV2(panel)
 
 	require.Len(t, queries, 1)
 	assert.Equal(t, "EC2 CPU", queries[0].Title)

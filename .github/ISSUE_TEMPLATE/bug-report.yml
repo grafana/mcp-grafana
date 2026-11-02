@@ -78,7 +78,7 @@ body:
         - Docker image
         - Binary from a GitHub release
         - Desktop extension (.mcpb / .dxt)
-        - Built from source with `go build` or `make build`
+        - Built from source with `go build` or `mise run build`
         - Other / not sure
     validations:
       required: true

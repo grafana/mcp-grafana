@@ -58,10 +58,13 @@ func (d *snowflakeDialect) SubstituteMacros(query string, from, to time.Time) st
 
 	query = strings.ReplaceAll(query, "$__timeFrom", fmt.Sprintf("TO_TIMESTAMP_NTZ('%s')", fromStr))
 	query = strings.ReplaceAll(query, "$__timeTo", fmt.Sprintf("TO_TIMESTAMP_NTZ('%s')", toStr))
-	query = strings.ReplaceAll(query, "$__from", strconv.FormatInt(fromMillis, 10))
-	query = strings.ReplaceAll(query, "$__to", strconv.FormatInt(toMillis, 10))
-	query = strings.ReplaceAll(query, "$__interval_ms", strconv.FormatInt(intervalSeconds*1000, 10))
-	query = strings.ReplaceAll(query, "$__interval", strconv.FormatInt(intervalSeconds, 10))
+	// Whole-token replacement: $__to must not touch $__toTime or a $__to_date variable.
+	query = replaceWholeMacros(query, map[string]string{
+		"from":        strconv.FormatInt(fromMillis, 10),
+		"to":          strconv.FormatInt(toMillis, 10),
+		"interval_ms": strconv.FormatInt(intervalSeconds*1000, 10),
+		"interval":    strconv.FormatInt(intervalSeconds, 10),
+	})
 
 	return query
 }

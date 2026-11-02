@@ -3,6 +3,8 @@
 package tools
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,39 @@ import (
 )
 
 func TestGenerateEmptyResultHints(t *testing.T) {
+	t.Run("concise Prometheus and Loki guidance", func(t *testing.T) {
+		// This budget covers only Prometheus/Loki generic guidance, per issue
+		// #1279. Query-specific advice has a separate allowance. Debug metadata
+		// is excluded. Each empty query incurs this response cost.
+		for _, tc := range []struct {
+			name, datasource, query string
+			budget                  int
+			want                    []string
+		}{
+			{"prometheus generic", "prometheus", "up", 400, []string{"list_prometheus_metric_names", "list_prometheus_label_values", "target health", "last 6h or 24h"}},
+			{"loki generic", "loki", `{job="app"}`, 400, []string{"list_loki_label_names", "list_loki_label_values", "query_loki_stats", "last 6h or 24h"}},
+			{"prometheus rate", "prometheus", `rate(http_requests_total{job="x"}[5m])`, 650, []string{"at least two data points", "simplifying label matchers", "target health"}},
+			{"loki pipeline", "loki", `{job="app"} |= "x" | json`, 650, []string{"filtering out all", "Log parsing", "removing pipeline stages"}},
+			{"loki parsed label filter", "loki", `{job="app"} | json | status="500"`, 650, []string{"or filters", "removing pipeline stages"}},
+			{"loki regex", "loki", `{job=~"app.*"}`, 650, []string{"Verify regex"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				hints := GenerateEmptyResultHints(HintContext{DatasourceType: tc.datasource, Query: tc.query})
+				data, err := json.Marshal(hints)
+				require.NoError(t, err)
+				t.Logf("hint JSON: %d bytes", len(data))
+				require.LessOrEqual(t, len(data), tc.budget)
+				for _, text := range tc.want {
+					require.Contains(t, string(data), text)
+				}
+				require.NotContains(t, string(data), "start='")
+				if tc.datasource == "loki" {
+					require.Equal(t, 1, strings.Count(string(data), "list_loki_label_values"))
+				}
+			})
+		}
+	})
+
 	t.Run("prometheus hints", func(t *testing.T) {
 		ctx := HintContext{
 			DatasourceType: "prometheus",

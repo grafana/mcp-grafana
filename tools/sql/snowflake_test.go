@@ -39,6 +39,11 @@ func TestSnowflakeDialect_SubstituteMacros(t *testing.T) {
 			"SELECT TIME_SLICE(ts, $__interval, 'SECOND')",
 			"SELECT TIME_SLICE(ts, 3, 'SECOND')",
 		},
+		{
+			"macro prefixes stay intact",
+			"SELECT $__to_date, $__to, $__interval_ms, $__interval",
+			"SELECT $__to_date, 1705316400000, 3000, 3",
+		},
 	}
 
 	for _, tt := range tests {

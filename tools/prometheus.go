@@ -2,14 +2,17 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -79,6 +82,9 @@ type QueryPrometheusResult struct {
 	Data     model.Value       `json:"data"`
 	Hints    *EmptyResultHints `json:"hints,omitempty"`
 	Warnings []string          `json:"warnings,omitempty"`
+	// ExploreURL opens this query in Grafana Explore. Populated best-effort from
+	// the instance's public URL; omitted when it cannot be resolved.
+	ExploreURL string `json:"exploreUrl,omitempty"`
 }
 
 func parseTime(timeStr string) (time.Time, error) {
@@ -118,9 +124,8 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 // queryPrometheusWithWarnings is like queryPrometheus but also returns any
 // warnings the datasource reported, such as partial responses from Thanos.
 func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
-	if err != nil {
-		return nil, nil, fmt.Errorf("getting backend: %w", err)
+	if strings.TrimSpace(args.EndTime) == "" {
+		return nil, nil, fmt.Errorf("endTime is required")
 	}
 
 	queryType := args.QueryType
@@ -128,8 +133,7 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		queryType = "range"
 	}
 
-	var endTime time.Time
-	endTime, err = parseTime(args.EndTime)
+	endTime, err := parseTime(args.EndTime)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -140,10 +144,22 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		if args.StepSeconds == 0 {
 			return nil, nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
+		if strings.TrimSpace(args.StartTime) == "" {
+			return nil, nil, fmt.Errorf("startTime must be provided when queryType is 'range'")
+		}
 		startTime, err = parseTime(args.StartTime)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parsing start time: %w", err)
 		}
+	}
+
+	if err := guardPrometheusQuery(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds); err != nil {
+		return nil, nil, err
+	}
+
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting backend: %w", err)
 	}
 
 	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
@@ -177,10 +193,107 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 	return response, nil
 }
 
+// exploreURLForQuery builds an Explore deeplink for a PromQL query, reusing the
+// navigation tool's generator so the URL state matches the target Grafana
+// version (`panes` on 10.2+, legacy `left` below that).
+func exploreURLForQuery(ctx context.Context, args QueryPrometheusParams) string {
+	if args.DatasourceUID == "" || args.Expr == "" {
+		return ""
+	}
+	query := map[string]any{"refId": "A", "expr": args.Expr}
+	if args.QueryType == "instant" {
+		query["instant"] = true
+	} else {
+		query["range"] = true
+		// Explore otherwise picks its own step, and shows different points from
+		// the result the app drew. `interval` is the query's min step.
+		if args.StepSeconds > 0 {
+			query["interval"] = fmt.Sprintf("%ds", args.StepSeconds)
+		}
+	}
+	uid := args.DatasourceUID
+	params := GenerateDeeplinkParams{
+		ResourceType:  "explore",
+		DatasourceUID: &uid,
+		Queries:       []map[string]any{query},
+		TimeRange:     exploreTimeRangeForQuery(args),
+	}
+	url, err := generateDeeplinkReadOnly(ctx, params)
+	if err != nil {
+		// A missing public URL is normal on some deployments; the app simply
+		// omits its "Open in Grafana" action.
+		return ""
+	}
+	return url
+}
+
+// instantExploreWindow is how far back an instant query's Explore link starts.
+// Explore needs a complete range, and an instant query only has its end; an
+// hour matches Explore's own default.
+const instantExploreWindow = time.Hour
+
+// exploreTimeRangeForQuery returns the Explore time range for a query, or nil
+// when it ran over the default range. Instant queries ignore startTime, so
+// their range ends at the instant evaluated, in absolute time on both ends: a
+// relative end would drift away from the start computed here.
+func exploreTimeRangeForQuery(args QueryPrometheusParams) *TimeRange {
+	if args.QueryType != "instant" {
+		if args.StartTime == "" && args.EndTime == "" {
+			return nil
+		}
+		return &TimeRange{From: args.StartTime, To: args.EndTime}
+	}
+	if args.EndTime == "" {
+		return nil
+	}
+	end, err := parseTime(args.EndTime)
+	if err != nil {
+		return nil
+	}
+	return &TimeRange{
+		From: end.Add(-instantExploreWindow).UTC().Format(time.RFC3339),
+		To:   end.UTC().Format(time.RFC3339),
+	}
+}
+
+// maxMetricsViewBytes bounds the payload handed to the metrics app, matching the
+// trace viewer's budget. Past it the tool keeps its text output and no
+// interactive view, rather than handing a host something it cannot render.
+const maxMetricsViewBytes = 1 << 20
+
+// queryPrometheusTool returns text and structured data shared by query and chart calls.
+func queryPrometheusTool(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
+	result, err := queryPrometheusWithHints(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	result.ExploreURL = exploreURLForQuery(ctx, args)
+	return newMetricsAppResult(result)
+}
+
+// newMetricsAppResult builds the tool result: the JSON payload as a text block —
+// what the model reads, and what a host without MCP Apps support falls back to —
+// then, within the view budget, the same payload as structured content for the
+// app. The tool definition's _meta.ui.resourceUri is what tells the host to
+// render it.
+//
+// Separate from the query so the shape is testable without a Grafana.
+func newMetricsAppResult(result *QueryPrometheusResult) (*mcp.CallToolResult, error) {
+	body, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Prometheus query result: %w", err)
+	}
+	raw := mcpgrafana.NewToolResultText(string(body))
+	if len(body) <= maxMetricsViewBytes {
+		raw.StructuredContent = result
+	}
+	return raw, nil
+}
+
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
-	queryPrometheusWithHints,
+	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Returns data without opening a chart. Supports instant and range queries. Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
+	queryPrometheusTool,
 	mcpgrafana.WithTitleAnnotation("Query Prometheus metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
@@ -275,20 +388,67 @@ type Selector struct {
 	Filters []LabelMatcher `json:"filters"`
 }
 
+// JSONSchemaExtend advertises the selector string form accepted by UnmarshalJSON
+// alongside the reflected filters object.
+func (Selector) JSONSchemaExtend(schema *jsonschema.Schema) {
+	object := *schema
+	*schema = jsonschema.Schema{
+		OneOf: []*jsonschema.Schema{
+			{Type: "string", Description: `A Prometheus selector such as {job="api"}`},
+			&object,
+		},
+	}
+}
+
+// UnmarshalJSON also accepts a Prometheus selector string such as '{job="api"}',
+// the form LLM callers commonly send instead of the filters object.
+func (s *Selector) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var selector string
+		if err := json.Unmarshal(data, &selector); err != nil {
+			return err
+		}
+		parsed, err := parseSelectorStrings([]string{selector})
+		if err != nil {
+			return err
+		}
+		*s = parsed[0]
+		return nil
+	}
+
+	type plainSelector Selector
+	return json.Unmarshal(data, (*plainSelector)(s))
+}
+
 func (s Selector) String() string {
 	b := strings.Builder{}
 	b.WriteRune('{')
 	for i, f := range s.Filters {
-		if f.Type == "" {
-			f.Type = "="
+		if matchType, ok := matchTypeMap[f.Type]; ok {
+			m := labels.Matcher{Type: matchType, Name: f.Name, Value: f.Value}
+			b.WriteString(m.String())
+		} else {
+			fmt.Fprintf(&b, "%s%s%s", f.Name, f.Type, strconv.Quote(f.Value))
 		}
-		fmt.Fprintf(&b, `%s%s'%s'`, f.Name, f.Type, f.Value)
 		if i < len(s.Filters)-1 {
 			b.WriteString(", ")
 		}
 	}
 	b.WriteRune('}')
 	return b.String()
+}
+
+// selectorMatchers renders selectors as match[] values. Empty selectors (often ""
+// from LLMs) filter nothing and Prometheus rejects match[]={}, so they are skipped.
+func selectorMatchers(selectors []Selector) []string {
+	var matchers []string
+	for _, s := range selectors {
+		if len(s.Filters) == 0 {
+			continue
+		}
+		matchers = append(matchers, s.String())
+	}
+	return matchers
 }
 
 // Matches runs the matchers against the given labels and returns whether they match the selector.
@@ -341,10 +501,7 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	var matchers []string
-	for _, m := range args.Matches {
-		matchers = append(matchers, m.String())
-	}
+	matchers := selectorMatchers(args.Matches)
 
 	labelNames, err := backend.LabelNames(ctx, matchers, startTime, endTime)
 	if err != nil {
@@ -401,10 +558,7 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	var matchers []string
-	for _, m := range args.Matches {
-		matchers = append(matchers, m.String())
-	}
+	matchers := selectorMatchers(args.Matches)
 
 	values, err := backend.LabelValues(ctx, args.LabelName, matchers, startTime, endTime)
 	if err != nil {

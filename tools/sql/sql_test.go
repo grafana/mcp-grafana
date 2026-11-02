@@ -49,12 +49,40 @@ func TestEnforceSQLLimit(t *testing.T) {
 		{"trailing semicolon", "SELECT * FROM t;", 100, "SELECT * FROM t LIMIT 100"},
 		{"case insensitive", "SELECT * FROM t limit 50", 100, "SELECT * FROM t limit 50"},
 		{"negative uses default", "SELECT * FROM t", -1, "SELECT * FROM t LIMIT 100"},
+		{"trailing line comment", "SELECT * FROM t -- c", 100, "SELECT * FROM t -- c\nLIMIT 100"},
+		{"trailing hash comment", "SELECT * FROM t # c", 100, "SELECT * FROM t # c\nLIMIT 100"},
+		{"trailing slash comment", "SELECT * FROM t // c", 100, "SELECT * FROM t // c\nLIMIT 100"},
+		{"comment on earlier line", "SELECT * -- c\nFROM t", 100, "SELECT * -- c\nFROM t LIMIT 100"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := EnforceSQLLimit(tt.query, tt.limit, DefaultSQLLimit, MaxSQLLimit)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestReplaceWholeMacros(t *testing.T) {
+	values := map[string]string{"from": "1", "to": "2", "interval": "3", "interval_ms": "3000"}
+
+	tests := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{"whole tokens are replaced", "$__from $__to $__interval $__interval_ms", "1 2 3 3000"},
+		{"plugin macros sharing a prefix are untouched", "$__fromTime $__toTime $__toTime_ms $__interval_s $__timeInterval(ts)", "$__fromTime $__toTime $__toTime_ms $__interval_s $__timeInterval(ts)"},
+		{"variable sharing a prefix is untouched", "SELECT $__to_date, $__to", "SELECT $__to_date, 2"},
+		{"punctuation and end of query", "t > $__from/1000 AND t < ($__to) AND t <= $__to", "t > 1/1000 AND t < (2) AND t <= 2"},
+		{"braced template form is not a macro", "${__from} ${__to:date}", "${__from} ${__to:date}"},
+		{"unknown macro is untouched", "$__timeFilter(ts) $__unknown", "$__timeFilter(ts) $__unknown"},
+		{"no macros", "SELECT 1", "SELECT 1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, replaceWholeMacros(tt.query, values))
 		})
 	}
 }
@@ -175,6 +203,10 @@ func TestMySQLSubstituteMacros(t *testing.T) {
 		assert.NotContains(t, result, "$__interval")
 		assert.NotContains(t, result, "s")
 	})
+	t.Run("macro prefixes stay intact", func(t *testing.T) {
+		result := d.SubstituteMacros("SELECT $__to_date, $__to", from, to)
+		assert.Equal(t, "SELECT $__to_date, 1767229200000", result)
+	})
 }
 
 func TestPostgresSubstituteMacros(t *testing.T) {
@@ -196,6 +228,10 @@ func TestPostgresSubstituteMacros(t *testing.T) {
 	t.Run("interval is bare integer", func(t *testing.T) {
 		result := d.SubstituteMacros("SELECT $__interval AS i", from, to)
 		assert.NotContains(t, result, "$__interval")
+	})
+	t.Run("macro prefixes stay intact", func(t *testing.T) {
+		result := d.SubstituteMacros("SELECT $__to_date, $__to", from, to)
+		assert.Equal(t, "SELECT $__to_date, 1767229200000", result)
 	})
 }
 
@@ -220,6 +256,10 @@ func TestMSSQLSubstituteMacros(t *testing.T) {
 		result := d.SubstituteMacros("SELECT $__from, $__to", from, to)
 		assert.NotContains(t, result, "$__from")
 		assert.NotContains(t, result, "$__to")
+	})
+	t.Run("macro prefixes stay intact", func(t *testing.T) {
+		result := d.SubstituteMacros("SELECT $__to_date, $__to", from, to)
+		assert.Equal(t, "SELECT $__to_date, 1767229200000", result)
 	})
 }
 

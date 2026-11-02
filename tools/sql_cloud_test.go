@@ -240,7 +240,16 @@ func TestSQLCloud_MSSQL_Query(t *testing.T) {
 
 // Snowflake cloud tests
 
+// skipSnowflakeCloud skips the Snowflake cloud tests while the datasourcedev
+// Snowflake datasource is broken: its account identifier is wrong and the
+// account is locked. Remove once grafana/data-sources#2299 is fixed.
+func skipSnowflakeCloud(t *testing.T) {
+	t.Helper()
+	t.Skip("snowflake-ds-m on datasourcedev is broken; see https://github.com/grafana/data-sources/issues/2299")
+}
+
 func TestSQLCloud_Snowflake_ListDatabases(t *testing.T) {
+	skipSnowflakeCloud(t)
 	skipIfNoSQLCloudDatasource(t)
 	ctx := createSQLCloudTestContext(t)
 
@@ -258,6 +267,7 @@ func TestSQLCloud_Snowflake_ListDatabases(t *testing.T) {
 }
 
 func TestSQLCloud_Snowflake_ListTables(t *testing.T) {
+	skipSnowflakeCloud(t)
 	skipIfNoSQLCloudDatasource(t)
 	ctx := createSQLCloudTestContext(t)
 
@@ -276,6 +286,7 @@ func TestSQLCloud_Snowflake_ListTables(t *testing.T) {
 }
 
 func TestSQLCloud_Snowflake_DescribeTable(t *testing.T) {
+	skipSnowflakeCloud(t)
 	skipIfNoSQLCloudDatasource(t)
 	ctx := createSQLCloudTestContext(t)
 
@@ -302,6 +313,7 @@ func TestSQLCloud_Snowflake_DescribeTable(t *testing.T) {
 }
 
 func TestSQLCloud_Snowflake_Query(t *testing.T) {
+	skipSnowflakeCloud(t)
 	skipIfNoSQLCloudDatasource(t)
 	ctx := createSQLCloudTestContext(t)
 

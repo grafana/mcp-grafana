@@ -1,4 +1,4 @@
-FROM httpd:2.4-alpine@sha256:4e585da9d0125dec36d4500a9f5c5df7b2c0a01f67cb47865a91a4b05bdbec1b
+FROM httpd:2.4-alpine@sha256:070da7661f0be8a05430b2c125c0cde9e53176b4048c813024021969a0e3893c
 
 # git-http-backend ships in the git-daemon subpackage, not git itself.
 RUN apk add --no-cache git git-daemon
