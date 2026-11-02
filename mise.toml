@@ -22,8 +22,8 @@ goreleaser = "2.19.0"
 # Used by goreleaser in release.yml: cosign signs the checksums, syft writes SBOMs.
 cosign = "3.1.4"
 syft = "1.55.0"
-node = "24.22.1"
-uv = "0.13.5"
+node = "24.22.2"
+uv = "0.13.6"
 "github:sd2k/mcp-tokens" = "0.2.5"
 
 [vars]
