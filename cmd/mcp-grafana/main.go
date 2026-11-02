@@ -22,6 +22,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/observability"
+	"github.com/grafana/mcp-grafana/v2/resources"
 	"github.com/grafana/mcp-grafana/v2/tools"
 	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -435,7 +436,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	enableQueryTools := !dt.query
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
-		{func(s *mcp.Server) { tools.AddDatasourceTools(s, enableWriteTools) }, dt.datasource, "datasource"},
+		{func(s *mcp.Server) { tools.AddDatasourceTools(s, enableWriteTools); resources.AddDatasources(s) }, dt.datasource, "datasource"},
 		{func(s *mcp.Server) { tools.AddIncidentTools(s, enableWriteTools) }, dt.incident, "incident"},
 		{func(s *mcp.Server) { tools.AddPrometheusTools(s, enableQueryTools) }, dt.prometheus, "prometheus"},
 		{func(s *mcp.Server) { tools.AddLokiTools(s, enableQueryTools) }, dt.loki, "loki"},

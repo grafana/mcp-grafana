@@ -68,6 +68,7 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
   - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch, OpenSearch, Snowflake, Athena._
+- **Datasource resources:** Each datasource you can access is also exposed as an MCP resource at `grafana://datasources/{uid}`, so you can attach one to a conversation directly (for example with `@` in Claude Code) instead of the model looking it up. Disabled along with the datasource tools.
 
 ### Query Examples
 

@@ -2230,3 +2230,24 @@ func TestApplyLokiGuardrailEnvOnEstimateFailure(t *testing.T) {
 	require.NoError(t, gc.applyLokiGuardrailEnv(map[string]bool{"loki-guardrail-on-estimate-failure": true}))
 	assert.Equal(t, "allow", gc.lokiGuardrailOnFailure, "an explicit flag wins over the environment")
 }
+
+func TestDatasourceResourcesFollowDatasourceCategory(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		config  disabledTools
+		enabled bool
+	}{
+		{"enabled", disabledTools{enabledTools: "datasource"}, true},
+		{"disabled", disabledTools{enabledTools: "datasource", datasource: true}, false},
+		{"not enabled", disabledTools{enabledTools: "search"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			tc.config.processTools(s)
+			mcpgrafana.RegisterAppResources(s) // advertises the resources capability either way
+			result, err := connectTestClient(t, s).ListResourceTemplates(t.Context(), nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.enabled, len(result.ResourceTemplates) == 1)
+		})
+	}
+}
