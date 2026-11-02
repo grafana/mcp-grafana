@@ -1,6 +1,7 @@
 // This file holds the opt-in Prometheus query guardrail: a pure assessment of
-// a PromQL query against a range and resolution budget, and the policy shell
-// that logs, records metrics, and turns a block into guidance for the agent.
+// a PromQL query against a range and resolution budget and a selector rule, and
+// the policy shell that logs, records metrics, and turns a block into guidance
+// for the agent.
 package tools
 
 import (
@@ -8,12 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp/syntax"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
@@ -28,8 +34,9 @@ var promGuardParser = parser.NewParser(parser.Options{EnableExperimentalFunction
 var warnUnknownPromGuardrailModeOnce sync.Once
 
 type promGuardPolicy struct {
-	MaxRange  time.Duration // 0 disables the range check
-	MaxPoints int64         // 0 disables the points check
+	MaxRange        time.Duration // 0 disables the range check
+	MaxPoints       int64         // 0 disables the points check
+	RequireSelector bool          // false disables the selector check
 }
 
 // promGuardReason values become the `reason` metric attribute, so the set is
@@ -37,6 +44,7 @@ type promGuardPolicy struct {
 type promGuardReason string
 
 const (
+	promGuardReasonSelector    promGuardReason = "selector"
 	promGuardReasonRange       promGuardReason = "range"
 	promGuardReasonPoints      promGuardReason = "points"
 	promGuardReasonUnparseable promGuardReason = "unparseable"
@@ -48,7 +56,7 @@ const (
 	promGuardAllow promGuardVerdict = iota
 	promGuardBlock
 	// promGuardUnknown means no check was violated but the expression could
-	// not be parsed, so its range windows were not counted.
+	// not be parsed, so its selectors and range windows were not checked.
 	promGuardUnknown
 )
 
@@ -60,7 +68,7 @@ type promGuardViolation struct {
 
 type promGuardDecision struct {
 	Verdict    promGuardVerdict
-	Violations []promGuardViolation // Block only; range before points
+	Violations []promGuardViolation // Block only; selector, then range, then points
 	ParseErr   error                // Unknown only
 }
 
@@ -75,10 +83,21 @@ func assessPromQuery(expr, queryType string, start, end time.Time, stepSeconds i
 	}
 
 	var d promGuardDecision
+	var ast parser.Expr
 	var parseErr error
+	if p.MaxRange > 0 || p.RequireSelector {
+		ast, parseErr = promGuardParser.ParseExpr(promGuardSubstituteMacros(expr, window, stepSeconds))
+	}
+	if p.RequireSelector && parseErr == nil {
+		if v, ok := checkPromSelectors(ast); ok {
+			d.Violations = append(d.Violations, v)
+		}
+	}
 	if p.MaxRange > 0 {
 		var extension time.Duration
-		extension, parseErr = promExprWindow(promGuardSubstituteMacros(expr, window, stepSeconds))
+		if parseErr == nil {
+			extension = promExprWindow(ast)
+		}
 		if v, ok := checkPromRange(window, extension, p.MaxRange); ok {
 			d.Violations = append(d.Violations, v)
 		}
@@ -132,11 +151,7 @@ func promGuardSubstituteMacros(expr string, window time.Duration, stepSeconds in
 // window is its own range plus the ranges of every subquery above it. offset
 // and @ are ignored: offset shifts the window rather than widening it, and @
 // pins it, so ignoring @ can only overestimate.
-func promExprWindow(expr string) (time.Duration, error) {
-	ast, err := promGuardParser.ParseExpr(expr)
-	if err != nil {
-		return 0, err
-	}
+func promExprWindow(ast parser.Expr) time.Duration {
 	var longest time.Duration
 	parser.Inspect(ast, func(node parser.Node, path []parser.Node) error {
 		if _, ok := node.(*parser.VectorSelector); !ok {
@@ -154,7 +169,83 @@ func promExprWindow(expr string) (time.Duration, error) {
 		longest = max(longest, w)
 		return nil
 	})
-	return longest, nil
+	return longest
+}
+
+// checkPromSelectors requires every vector selector to have a selective
+// matcher. Message is logged at WARN, so only Hint names the selectors: they
+// may embed sensitive label values.
+func checkPromSelectors(ast parser.Expr) (promGuardViolation, bool) {
+	var offending []string
+	parser.Inspect(ast, func(node parser.Node, _ []parser.Node) error {
+		vs, ok := node.(*parser.VectorSelector)
+		// BypassEmptyMatcherCheck marks info()'s second argument, which narrows
+		// the info series using labels from its first argument, so it does not
+		// select series on its own.
+		if !ok || vs.BypassEmptyMatcherCheck || slices.ContainsFunc(vs.LabelMatchers, promMatcherIsSelective) {
+			return nil
+		}
+		offending = append(offending, vs.String())
+		return nil
+	})
+	if len(offending) == 0 {
+		return promGuardViolation{}, false
+	}
+	slices.Sort(offending)
+	return promGuardViolation{
+		Reason:  promGuardReasonSelector,
+		Message: "the expression has a selector with no label matcher that narrows the series it reads",
+		Hint: fmt.Sprintf("add a label matcher to %s (list_prometheus_label_values shows the values of a label, and query_prometheus_histogram takes matchers in its labels parameter)",
+			strings.Join(slices.Compact(offending), ", ")),
+	}, true
+}
+
+// promMatcherIsSelective rejects any matcher that accepts the empty string,
+// because it also selects every series missing the label.
+func promMatcherIsSelective(m *labels.Matcher) bool {
+	if m.Name == model.MetricNameLabel || m.Matches("") {
+		return false
+	}
+	switch m.Type {
+	case labels.MatchEqual:
+		return true
+	case labels.MatchRegexp:
+		return !promRegexAcceptsAllNonEmpty(m.Value)
+	default:
+		return false
+	}
+}
+
+// promRegexAcceptsAllNonEmpty recognizes the usual spellings of "any value",
+// not every regex with that meaning. It treats . as any character because
+// Prometheus compiles matchers with DotNL.
+func promRegexAcceptsAllNonEmpty(pattern string) bool {
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	return err == nil && promRegexCovers(re.Simplify())
+}
+
+func promRegexCovers(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpStar, syntax.OpPlus:
+		sub := re.Sub[0]
+		for sub.Op == syntax.OpCapture {
+			sub = sub.Sub[0]
+		}
+		// Simplify leaves [\s\S] as a character class spanning every rune.
+		anyChar := sub.Op == syntax.OpAnyChar || sub.Op == syntax.OpAnyCharNotNL ||
+			sub.Op == syntax.OpCharClass && len(sub.Rune) == 2 && sub.Rune[0] == 0 && sub.Rune[1] == unicode.MaxRune
+		return anyChar || promRegexCovers(sub)
+	case syntax.OpCapture:
+		return promRegexCovers(re.Sub[0])
+	case syntax.OpConcat:
+		return !slices.ContainsFunc(re.Sub, func(sub *syntax.Regexp) bool {
+			return sub.Op != syntax.OpBeginText && sub.Op != syntax.OpEndText && !promRegexCovers(sub)
+		})
+	case syntax.OpAlternate:
+		return slices.ContainsFunc(re.Sub, promRegexCovers)
+	default:
+		return false
+	}
 }
 
 func checkPromRange(window, extension, maxRange time.Duration) (promGuardViolation, bool) {
@@ -244,8 +335,9 @@ func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, en
 	enforced := mode != mcpgrafana.PrometheusGuardrailShadow
 
 	policy := promGuardPolicy{
-		MaxRange:  config.PrometheusGuardrailMaxRange,
-		MaxPoints: config.PrometheusGuardrailMaxPoints,
+		MaxRange:        config.PrometheusGuardrailMaxRange,
+		MaxPoints:       config.PrometheusGuardrailMaxPoints,
+		RequireSelector: config.PrometheusGuardrailRequireSelector,
 	}
 	d := assessPromQuery(expr, queryType, start, end, stepSeconds, policy)
 

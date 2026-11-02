@@ -68,7 +68,8 @@ func (m promGuardrailMetrics) recordAdmitted(ctx context.Context) {
 	m.admitted.Add(ctx, 1)
 }
 
-// recordBlocked counts a query once, under the first check it failed.
+// recordBlocked counts a query once, under the first check it failed: selector,
+// then range, then points.
 func (m promGuardrailMetrics) recordBlocked(ctx context.Context, enforced bool, reason promGuardReason) {
 	counter := m.wouldBlock
 	if enforced {

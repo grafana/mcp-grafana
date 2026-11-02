@@ -392,6 +392,11 @@ type GrafanaConfig struct {
 	// step. Zero disables the points check.
 	PrometheusGuardrailMaxPoints int64
 
+	// PrometheusGuardrailRequireSelector requires every vector selector in a
+	// PromQL expression to have a label matcher that narrows the series it
+	// reads. False (the default) disables the selector check.
+	PrometheusGuardrailRequireSelector bool
+
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server
 	// issues (query, stats, patterns, and label enumeration). It lets an

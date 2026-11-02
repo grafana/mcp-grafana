@@ -790,6 +790,48 @@ func TestApplyPrometheusGuardrailEnv(t *testing.T) {
 	}
 }
 
+func TestApplyPrometheusGuardrailRequireSelectorEnv(t *testing.T) {
+	const envVar = "GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTOR"
+	const flagName = "prometheus-guardrail-require-selector"
+
+	tests := []struct {
+		name          string
+		env           string
+		envSet        bool
+		flagValue     bool
+		flagSet       bool
+		want          bool
+		wantErrSubstr string
+	}{
+		{name: "unset stays off"},
+		{name: "env enables", env: "true", envSet: true, want: true},
+		{name: "env accepts ParseBool forms", env: "1", envSet: true, want: true},
+		{name: "env false stays off", env: "false", envSet: true},
+		{name: "explicit flag true wins over env false", env: "false", envSet: true, flagValue: true, flagSet: true, want: true},
+		{name: "explicit flag false wins over env true", env: "true", envSet: true, flagSet: true},
+		{name: "explicit flag skips an invalid env value", env: "maybe", envSet: true, flagSet: true},
+		{name: "invalid env errors", env: "maybe", envSet: true, wantErrSubstr: envVar},
+		{name: "empty env errors like the other boolean env vars", envSet: true, wantErrSubstr: envVar},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envVar, tc.env)
+			if !tc.envSet {
+				require.NoError(t, os.Unsetenv(envVar))
+			}
+			gc := grafanaConfig{prometheusGuardrailRequireSelector: tc.flagValue}
+			err := gc.applyPrometheusGuardrailEnv(map[string]bool{flagName: tc.flagSet})
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, gc.prometheusGuardrailRequireSelector)
+		})
+	}
+}
+
 func TestValidatePrometheusGuardrail(t *testing.T) {
 	tests := []struct {
 		name          string

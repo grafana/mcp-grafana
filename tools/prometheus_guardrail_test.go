@@ -15,8 +15,10 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
 var promGuardEnd = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -257,6 +259,132 @@ func TestAssessPromQueryViolationOrder(t *testing.T) {
 	d := assessPromQuery(`up`, "range", promGuardEnd.Add(-30*24*time.Hour), promGuardEnd, 1, promGuardPolicy{MaxRange: 192 * time.Hour, MaxPoints: 11000})
 	require.Equal(t, promGuardBlock, d.Verdict)
 	assert.Equal(t, []promGuardReason{promGuardReasonRange, promGuardReasonPoints}, promGuardReasons(d))
+
+	d = assessPromQuery(`up`, "range", promGuardEnd.Add(-30*24*time.Hour), promGuardEnd, 1, promGuardPolicy{MaxRange: 192 * time.Hour, MaxPoints: 11000, RequireSelector: true})
+	require.Equal(t, promGuardBlock, d.Verdict)
+	assert.Equal(t, []promGuardReason{promGuardReasonSelector, promGuardReasonRange, promGuardReasonPoints}, promGuardReasons(d))
+}
+
+func TestAssessPromQuerySelectorBlocks(t *testing.T) {
+	tests := []struct {
+		expr  string
+		named string // the selectors the hint lists
+	}{
+		{`up`, `up`},
+		{`{__name__="up"}`, `{__name__="up"}`},
+		{`{"http.requests"}`, `{__name__="http.requests"}`},
+		{`{__name__=~"http_.*"}`, `{__name__=~"http_.*"}`},
+		{`{job=~".+"}`, `{job=~".+"}`},
+		{`x{job=~".*"}`, `x{job=~".*"}`},
+		{`x{job=~".+"}`, `x{job=~".+"}`},
+		{`x{job=~"(.+)"}`, `x{job=~"(.+)"}`},
+		{`x{job=~"(.+)+"}`, `x{job=~"(.+)+"}`},
+		{`x{job=~"(.)+"}`, `x{job=~"(.)+"}`},
+		{`x{job=~".+.*"}`, `x{job=~".+.*"}`},
+		{`x{job=~".*.+"}`, `x{job=~".*.+"}`},
+		{`x{job=~".+|foo"}`, `x{job=~".+|foo"}`},
+		{`x{job=~"(?s).+"}`, `x{job=~"(?s).+"}`},
+		{`x{job=~"[\\s\\S]+"}`, `x{job=~"[\\s\\S]+"}`},
+		{`x{job=~"^.+$"}`, `x{job=~"^.+$"}`},
+		{`x{job=""}`, `x{job=""}`},
+		{`x{job!="a"}`, `x{job!="a"}`},
+		{`x{job!=""}`, `x{job!=""}`},
+		{`x{job!~"a"}`, `x{job!~"a"}`},
+		{`x{job=~"a|"}`, `x{job=~"a|"}`},
+		{`x{job=~"(foo)?"}`, `x{job=~"(foo)?"}`},
+		{`rate(x[5m])`, `x`},
+		{`a{job="x"} / b`, `b`},
+		{`max_over_time(x[1d:1m])`, `x`},
+		{`x{job="a"} * on(instance) group_left node_uname_info`, `node_uname_info`},
+		{`zeta + alpha + alpha`, `alpha, zeta`},
+		{`info(x, {k=~".+"})`, `x`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.expr, func(t *testing.T) {
+			d := assessPromQuery(tc.expr, "instant", time.Time{}, promGuardEnd, 0, promGuardPolicy{RequireSelector: true})
+			require.Equal(t, promGuardBlock, d.Verdict)
+			assert.Equal(t, []promGuardReason{promGuardReasonSelector}, promGuardReasons(d))
+			hint := d.Violations[0].Hint
+			assert.Contains(t, hint, "add a label matcher to "+tc.named+" (")
+			assert.Contains(t, hint, "list_prometheus_label_values")
+			assert.Contains(t, hint, "query_prometheus_histogram takes matchers in its labels parameter")
+		})
+	}
+}
+
+func TestAssessPromQuerySelectorPasses(t *testing.T) {
+	exprs := []string{
+		`x{job="api"}`,
+		`x{job=~"a.*"}`,
+		`x{job=~".*api.*"}`,
+		`x{job=~".+-api"}`,
+		`x{job=~"^api$"}`,
+		`x{job=~"foo|bar"}`,
+		`x{job=~"$job"}`,
+		`{job="api"}`,
+		`{__name__=~"http_.*",job="api"}`,
+		`x{job="a",env!="b"}`,
+		`vector(1)`,
+		`time()`,
+		`info(x{job="a"}, {k=~".+"})`,
+	}
+	for _, expr := range exprs {
+		t.Run(expr, func(t *testing.T) {
+			d := assessPromQuery(expr, "instant", time.Time{}, promGuardEnd, 0, promGuardPolicy{RequireSelector: true})
+			assert.Equal(t, promGuardAllow, d.Verdict)
+		})
+	}
+}
+
+// The selector check skips BypassEmptyMatcherCheck on the promise that the
+// parser sets it on info()'s second argument and nowhere else in the call.
+func TestPromGuardParserMarksInfoSecondArgument(t *testing.T) {
+	ast, err := promGuardParser.ParseExpr(`info(x{job="a"}, {k=~".*"})`)
+	require.NoError(t, err)
+	call, ok := ast.(*parser.Call)
+	require.True(t, ok)
+	require.Len(t, call.Args, 2)
+
+	first, ok := call.Args[0].(*parser.VectorSelector)
+	require.True(t, ok)
+	assert.False(t, first.BypassEmptyMatcherCheck)
+	second, ok := call.Args[1].(*parser.VectorSelector)
+	require.True(t, ok)
+	assert.True(t, second.BypassEmptyMatcherCheck)
+}
+
+func TestAssessPromQuerySelectorPolicy(t *testing.T) {
+	hour := promGuardEnd.Add(-time.Hour)
+
+	t.Run("disabled leaves a bare metric allowed", func(t *testing.T) {
+		d := assessPromQuery(`up`, "instant", time.Time{}, promGuardEnd, 0, promGuardPolicy{})
+		assert.Equal(t, promGuardAllow, d.Verdict)
+	})
+
+	t.Run("unparseable expression is Unknown", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$window])`, "range", hour, promGuardEnd, 60, promGuardPolicy{RequireSelector: true})
+		assert.Equal(t, promGuardUnknown, d.Verdict)
+		assert.Error(t, d.ParseErr)
+		assert.Empty(t, d.Violations)
+	})
+
+	t.Run("unparseable expression still blocks on the range check", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$window])`, "range", promGuardEnd.Add(-9*24*time.Hour), promGuardEnd, 3600, promGuardPolicy{MaxRange: 192 * time.Hour, RequireSelector: true})
+		assert.Equal(t, promGuardBlock, d.Verdict)
+		assert.Equal(t, []promGuardReason{promGuardReasonRange}, promGuardReasons(d))
+	})
+
+	t.Run("a macro expression is checked after substitution", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[$__rate_interval])`, "range", hour, promGuardEnd, 60, promGuardPolicy{RequireSelector: true})
+		assert.Equal(t, promGuardBlock, d.Verdict)
+		assert.Equal(t, []promGuardReason{promGuardReasonSelector}, promGuardReasons(d))
+	})
+
+	t.Run("selector and range violations list the selector first", func(t *testing.T) {
+		d := assessPromQuery(`rate(x[30d])`, "instant", time.Time{}, promGuardEnd, 0, promGuardPolicy{MaxRange: 192 * time.Hour, RequireSelector: true})
+		assert.Equal(t, promGuardBlock, d.Verdict)
+		assert.Equal(t, []promGuardReason{promGuardReasonSelector, promGuardReasonRange}, promGuardReasons(d))
+	})
 }
 
 // promGuardConfig returns a GrafanaConfig with the Prometheus guardrail in
@@ -316,6 +444,70 @@ func TestGuardPrometheusQueryModes(t *testing.T) {
 		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
 		assert.NoError(t, guardPrometheusQuery(ctx, `rate(x[$window])`, "range", start, promGuardEnd, 10))
 	})
+}
+
+func TestGuardPrometheusQuerySelector(t *testing.T) {
+	selectorConfig := func(mode string) (mcpgrafana.GrafanaConfig, *bytes.Buffer) {
+		config, buf := promGuardConfig(mode, 0, 0)
+		config.PrometheusGuardrailRequireSelector = true
+		return config, buf
+	}
+	// The label value stands in for a sensitive literal: the hint names the
+	// selector for the agent, and the WARN log must not.
+	expr := `up{customer!="acme-secret"}`
+
+	t.Run("off by default", func(t *testing.T) {
+		config, buf := promGuardConfig(mcpgrafana.PrometheusGuardrailEnforce, 0, 0)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		assert.NoError(t, guardPrometheusQuery(ctx, expr, "instant", time.Time{}, promGuardEnd, 0))
+		assert.Empty(t, buf.String())
+	})
+
+	t.Run("shadow admits and keeps the selector out of the WARN log", func(t *testing.T) {
+		config, buf := selectorConfig(mcpgrafana.PrometheusGuardrailShadow)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		assert.NoError(t, guardPrometheusQuery(ctx, expr, "instant", time.Time{}, promGuardEnd, 0))
+		assert.Contains(t, buf.String(), "level=WARN")
+		assert.Contains(t, buf.String(), "would block")
+		assert.NotContains(t, buf.String(), "acme-secret")
+	})
+
+	t.Run("enforce names the selector to the agent only", func(t *testing.T) {
+		config, buf := selectorConfig(mcpgrafana.PrometheusGuardrailEnforce)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		err := guardPrometheusQuery(ctx, expr, "instant", time.Time{}, promGuardEnd, 0)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Prometheus query guardrail")
+		assert.Contains(t, err.Error(), "add a label matcher to "+expr)
+		assert.Contains(t, buf.String(), "level=WARN")
+		assert.Contains(t, buf.String(), "blocked query")
+		assert.NotContains(t, buf.String(), "acme-secret")
+	})
+
+	t.Run("enforce passes a selective query", func(t *testing.T) {
+		config, _ := selectorConfig(mcpgrafana.PrometheusGuardrailEnforce)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
+		assert.NoError(t, guardPrometheusQuery(ctx, `up{job="api"}`, "instant", time.Time{}, promGuardEnd, 0))
+	})
+
+	for _, tc := range []struct {
+		mode    string
+		counter string
+	}{
+		{mcpgrafana.PrometheusGuardrailShadow, "mcp.prometheus_guardrail.would_block"},
+		{mcpgrafana.PrometheusGuardrailEnforce, "mcp.prometheus_guardrail.blocked"},
+	} {
+		t.Run(tc.mode+" counts selector and range under selector", func(t *testing.T) {
+			reader := sdkmetric.NewManualReader()
+			ctx := newPromGuardMetricsContext(t, reader, tc.mode, 192*time.Hour, 0)
+			config := mcpgrafana.GrafanaConfigFromContext(ctx)
+			config.PrometheusGuardrailRequireSelector = true
+			ctx = mcpgrafana.WithGrafanaConfig(ctx, config)
+
+			_ = guardPrometheusQuery(ctx, `rate(x[30d])`, "instant", time.Time{}, promGuardEnd, 0)
+			assert.Equal(t, map[string]map[string]int64{tc.counter: {"reason=selector": 1}}, promGuardCounts(t, reader))
+		})
+	}
 }
 
 // TestGuardPrometheusQueryUnknownModeWarnsOnce is the single test asserting
@@ -383,6 +575,37 @@ func TestQueryPrometheusGuardrailBlocksBeforeHTTP(t *testing.T) {
 		ctx, hits := promGuardGrafana(t, config)
 		_, _ = queryPrometheusWithHints(ctx, args)
 		assert.NotZero(t, *hits)
+	})
+}
+
+func TestPrometheusHandlersRequireSelector(t *testing.T) {
+	selectorContext := func(t *testing.T) (context.Context, *int) {
+		t.Helper()
+		config, _ := promGuardConfig(mcpgrafana.PrometheusGuardrailEnforce, 192*time.Hour, 11000)
+		config.PrometheusGuardrailRequireSelector = true
+		return promGuardGrafana(t, config)
+	}
+
+	t.Run("query_prometheus_histogram without labels makes no request", func(t *testing.T) {
+		ctx, hits := selectorContext(t)
+		_, err := queryPrometheusHistogram(ctx, QueryPrometheusHistogramParams{DatasourceUID: "prometheus", Metric: "http_duration", Percentile: 95})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "add a label matcher to http_duration_bucket (")
+		assert.Zero(t, *hits, "a blocked query must not reach Grafana")
+	})
+
+	t.Run("query_prometheus_histogram with labels reaches Grafana", func(t *testing.T) {
+		ctx, hits := selectorContext(t)
+		_, _ = queryPrometheusHistogram(ctx, QueryPrometheusHistogramParams{DatasourceUID: "prometheus", Metric: "http_duration", Percentile: 95, Labels: `job="api"`})
+		assert.NotZero(t, *hits)
+	})
+
+	t.Run("a panel query makes no request", func(t *testing.T) {
+		ctx, hits := selectorContext(t)
+		_, err := executePrometheusQuery(ctx, "prometheus", "up", "now-1h", "now")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Prometheus query guardrail")
+		assert.Zero(t, *hits, "a blocked query must not reach Grafana")
 	})
 }
 
