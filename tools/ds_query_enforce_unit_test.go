@@ -20,15 +20,17 @@ import (
 )
 
 // dsQueryGuardServer serves the datasource-lookup endpoint (mapping uid -> type)
-// and records whether /api/ds/query was ever reached.
+// and records the last payload that reached /api/ds/query in *sent (nil means
+// /api/ds/query was never reached).
 // dsList is an optional /api/datasources list response (for default-datasource
 // resolution); nil means the endpoint is not expected to be called.
-func dsQueryGuardServer(t *testing.T, typeByUID map[string]string, dsList []map[string]interface{}, dsQueryHit *bool) *httptest.Server {
+func dsQueryGuardServer(t *testing.T, typeByUID map[string]string, dsList []map[string]interface{}, sent *map[string]interface{}) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/ds/query":
-			*dsQueryHit = true
+			*sent = map[string]interface{}{}
+			_ = json.NewDecoder(r.Body).Decode(sent)
 			resp := backend.QueryDataResponse{Responses: backend.Responses{
 				"A": backend.DataResponse{Frames: data.Frames{data.NewFrame("",
 					data.NewField("v", nil, []int64{1}))}},
@@ -75,6 +77,30 @@ func dsQueryGuardCtx(srv *httptest.Server, enforce bool) context.Context {
 	return mcpgrafana.WithGrafanaConfig(ctx, gc)
 }
 
+// runDSQuery sends payload through doDSQuery against srv.
+func runDSQuery(t *testing.T, srv *httptest.Server, enforce bool, payload map[string]interface{}) error {
+	t.Helper()
+	ctx := dsQueryGuardCtx(srv, enforce)
+	client, base, err := newDSQueryHTTPClient(ctx)
+	require.NoError(t, err)
+	_, err = doDSQuery(ctx, client, base, payload)
+	return err
+}
+
+// sentExprs returns the expr of each query in a payload received by
+// dsQueryGuardServer, in order ("" for a query without one).
+func sentExprs(t *testing.T, sent map[string]interface{}) []string {
+	t.Helper()
+	queries, ok := sent["queries"].([]interface{})
+	require.True(t, ok, "sent payload has no query list")
+	exprs := make([]string, 0, len(queries))
+	for _, q := range queries {
+		expr, _ := q.(map[string]interface{})["expr"].(string)
+		exprs = append(exprs, expr)
+	}
+	return exprs
+}
+
 func lokiPayload(uid string) map[string]interface{} {
 	return dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
 		map[string]interface{}{
@@ -84,152 +110,160 @@ func lokiPayload(uid string) map[string]interface{} {
 		})
 }
 
-// TestDoDSQuery_LokiEnforcementGuard covers the /api/ds/query chokepoint: under
-// enforcement a Loki datasource must be refused before any request is sent,
-// regardless of the type declared in the payload.
-func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
-	t.Run("loki datasource refused, ds/query never sent", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &hit)
-		client, base, err := newDSQueryHTTPClient(dsQueryGuardCtx(srv, true))
-		require.NoError(t, err)
-		_, err = doDSQuery(dsQueryGuardCtx(srv, true), client, base, lokiPayload("loki-uid"))
+const enforcedSecretExpr = `{app="secret", agent_safe="true"}`
+
+// TestDoDSQuery_LokiEnforcement covers the /api/ds/query chokepoint: under
+// enforcement every query that reaches a Loki datasource carries the enforced
+// matchers, whatever type the payload declares, and anything that cannot be
+// enforced is refused before any request is sent.
+func TestDoDSQuery_LokiEnforcement(t *testing.T) {
+	t.Run("loki expr rewritten with the enforced matchers", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &sent)
+		require.NoError(t, runDSQuery(t, srv, true, lokiPayload("loki-uid")))
+		assert.Equal(t, []string{enforcedSecretExpr}, sentExprs(t, sent))
+	})
+
+	t.Run("caller's payload is not modified, so a reused query is enforced once", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &sent)
+		payload := lokiPayload("loki-uid")
+		for range 2 {
+			require.NoError(t, runDSQuery(t, srv, true, payload))
+			assert.Equal(t, []string{enforcedSecretExpr}, sentExprs(t, sent))
+		}
+		assert.Equal(t, `{app="secret"}`, payload["queries"].([]map[string]interface{})[0]["expr"])
+	})
+
+	t.Run("only the Loki queries of a mixed payload are rewritten", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki", "prom-uid": "prometheus"}, nil, &sent)
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{"refId": "A", "datasource": map[string]interface{}{"uid": "prom-uid"}, "expr": `up{job="x"}`},
+			map[string]interface{}{"refId": "B", "datasource": map[string]interface{}{"uid": "loki-uid"}, "expr": `{app="secret"}`},
+		)
+		require.NoError(t, runDSQuery(t, srv, true, payload))
+		assert.Equal(t, []string{`up{job="x"}`, enforcedSecretExpr}, sentExprs(t, sent))
+	})
+
+	t.Run("loki query without an expr refused", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &sent)
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{"refId": "A", "datasource": map[string]interface{}{"uid": "loki-uid"}, "query": `{app="secret"}`})
+		err := runDSQuery(t, srv, true, payload)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "log datasource")
-		assert.False(t, hit, "/api/ds/query must not be reached for a Loki datasource under enforcement")
+		assert.Contains(t, err.Error(), "without a LogQL expr")
+		assert.Nil(t, sent)
+	})
+
+	t.Run("loki expr the matchers cannot be injected into refused", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &sent)
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{"refId": "A", "datasource": map[string]interface{}{"uid": "loki-uid"}, "expr": `vector(1)`})
+		require.Error(t, runDSQuery(t, srv, true, payload))
+		assert.Nil(t, sent)
 	})
 
 	t.Run("victorialogs datasource refused", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{"vl-uid": victoriaLogsDatasourceType}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, lokiPayload("vl-uid"))
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"vl-uid": victoriaLogsDatasourceType}, nil, &sent)
+		err := runDSQuery(t, srv, true, lokiPayload("vl-uid"))
 		require.Error(t, err)
-		assert.False(t, hit)
+		assert.Contains(t, err.Error(), "VictoriaLogs")
+		assert.Nil(t, sent)
 	})
 
-	t.Run("non-loki datasource passes through under enforcement", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{"pg-uid": "grafana-postgresql-datasource"}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, lokiPayload("pg-uid"))
-		require.NoError(t, err)
-		assert.True(t, hit, "a non-log datasource must still reach /api/ds/query")
+	t.Run("non-loki datasource passes through unchanged under enforcement", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"pg-uid": "grafana-postgresql-datasource"}, nil, &sent)
+		require.NoError(t, runDSQuery(t, srv, true, lokiPayload("pg-uid")))
+		assert.Equal(t, []string{`{app="secret"}`}, sentExprs(t, sent))
 	})
 
-	t.Run("no enforcement: guard is a no-op, no lookup, ds/query sent", func(t *testing.T) {
-		var hit bool
-		// typeByUID intentionally empty: if the guard tried to resolve the type
-		// it would 404 and fail; with enforcement off it must not look up at all.
-		srv := dsQueryGuardServer(t, map[string]string{}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, false)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, lokiPayload("loki-uid"))
-		require.NoError(t, err)
-		assert.True(t, hit)
+	t.Run("no enforcement: no lookup, payload sent unchanged", func(t *testing.T) {
+		var sent map[string]interface{}
+		// typeByUID intentionally empty: if the chokepoint tried to resolve the
+		// type it would 404 and fail; with enforcement off it must not look up.
+		srv := dsQueryGuardServer(t, map[string]string{}, nil, &sent)
+		require.NoError(t, runDSQuery(t, srv, false, lokiPayload("loki-uid")))
+		assert.Equal(t, []string{`{app="secret"}`}, sentExprs(t, sent))
 	})
 
 	t.Run("unverifiable datasource fails closed under enforcement", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{}, nil, &hit) // lookup 404s
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, lokiPayload("mystery-uid"))
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{}, nil, &sent) // lookup 404s
+		err := runDSQuery(t, srv, true, lokiPayload("mystery-uid"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "could not be verified")
-		assert.False(t, hit)
+		assert.Nil(t, sent)
 	})
 
 	t.Run("no-uid query refused when the org default is a log datasource", func(t *testing.T) {
-		var hit bool
+		var sent map[string]interface{}
 		dsList := []map[string]interface{}{
 			{"uid": "mimir", "type": "prometheus", "isDefault": false},
 			{"uid": "loki", "type": "loki", "isDefault": true},
 		}
-		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, noUIDPayload())
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &sent)
+		err := runDSQuery(t, srv, true, noUIDPayload())
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "default log datasource")
-		assert.False(t, hit)
+		assert.Contains(t, err.Error(), "default datasource")
+		assert.Nil(t, sent)
 	})
 
 	t.Run("no-uid query allowed when the org default is not a log datasource", func(t *testing.T) {
-		var hit bool
+		var sent map[string]interface{}
 		dsList := []map[string]interface{}{
 			{"uid": "mimir", "type": "prometheus", "isDefault": true},
 			{"uid": "loki", "type": "loki", "isDefault": false},
 		}
-		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, noUIDPayload())
-		require.NoError(t, err)
-		assert.True(t, hit)
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &sent)
+		require.NoError(t, runDSQuery(t, srv, true, noUIDPayload()))
+		assert.NotNil(t, sent)
 	})
 
 	t.Run("magic \"default\" UID resolves against the org default (log default refused)", func(t *testing.T) {
-		var hit bool
+		var sent map[string]interface{}
 		dsList := []map[string]interface{}{
 			{"uid": "mimir", "type": "prometheus", "isDefault": false},
 			{"uid": "loki", "type": "loki", "isDefault": true},
 		}
-		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &sent)
+		err := runDSQuery(t, srv, true, defaultUIDPayload())
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "default log datasource")
-		assert.False(t, hit)
+		assert.Contains(t, err.Error(), "default datasource")
+		assert.Nil(t, sent)
 	})
 
 	t.Run("magic \"default\" UID allowed when the org default is not a log datasource", func(t *testing.T) {
-		var hit bool
+		var sent map[string]interface{}
 		dsList := []map[string]interface{}{
 			{"uid": "mimir", "type": "prometheus", "isDefault": true},
 			{"uid": "loki", "type": "loki", "isDefault": false},
 		}
-		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
-		require.NoError(t, err)
-		assert.True(t, hit)
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &sent)
+		require.NoError(t, runDSQuery(t, srv, true, defaultUIDPayload()))
+		assert.NotNil(t, sent)
 	})
 
 	t.Run("literal \"default\"-UID log datasource refused even when the org default is not a log datasource", func(t *testing.T) {
-		var hit bool
+		var sent map[string]interface{}
 		// A real datasource whose UID is literally "default" is a log datasource,
 		// while the org default is Prometheus. Grafana >= 13 routes uid "default"
-		// to this literal datasource, so it must be refused (Bugbot #2).
+		// to this literal datasource, so it must be refused.
 		dsList := []map[string]interface{}{
 			{"uid": "mimir", "type": "prometheus", "isDefault": true},
 			{"uid": "default", "type": "loki", "isDefault": false},
 		}
-		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
-		require.Error(t, err)
-		assert.False(t, hit)
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &sent)
+		require.Error(t, runDSQuery(t, srv, true, defaultUIDPayload()))
+		assert.Nil(t, sent)
 	})
 
-	// Maintainer review (sd2k) findings.
-
 	t.Run("magic \"default\": log ORG default refused even when a literal \"default\" DS is non-log", func(t *testing.T) {
-		var hit bool
+		var sent map[string]interface{}
 		// Inverse of the case above: the literal "default" DS is Prometheus but
 		// the org default is Loki. On any Grafana that resolves "default" to the
 		// org default, the query would reach Loki, so both candidates must be
@@ -238,81 +272,58 @@ func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
 			{"uid": "default", "type": "prometheus", "isDefault": false},
 			{"uid": "lokids", "type": "loki", "isDefault": true},
 		}
-		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
-		_, err = doDSQuery(ctx, client, base, defaultUIDPayload())
-		require.Error(t, err)
-		assert.False(t, hit)
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &sent)
+		require.Error(t, runDSQuery(t, srv, true, defaultUIDPayload()))
+		assert.Nil(t, sent)
 	})
 
-	t.Run("bare-string datasource resolves as a UID and is refused for Loki", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
+	t.Run("bare-string datasource resolves as a UID and is enforced for Loki", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &sent)
 		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
 			map[string]interface{}{"refId": "A", "datasource": "loki-uid", "expr": `{app="secret"}`})
-		_, err = doDSQuery(ctx, client, base, payload)
-		require.Error(t, err)
-		assert.False(t, hit)
+		require.NoError(t, runDSQuery(t, srv, true, payload))
+		assert.Equal(t, []string{enforcedSecretExpr}, sentExprs(t, sent))
 	})
 
 	t.Run("unparseable datasource shape fails closed", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{}, nil, &sent)
 		// datasource object with a non-string uid: present but not understood.
 		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
 			map[string]interface{}{"refId": "A", "datasource": map[string]interface{}{"uid": 7}, "expr": `{app="secret"}`})
-		_, err = doDSQuery(ctx, client, base, payload)
-		require.Error(t, err)
-		assert.False(t, hit)
+		require.Error(t, runDSQuery(t, srv, true, payload))
+		assert.Nil(t, sent)
 	})
 
 	t.Run("legacy numeric datasourceId fails closed", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{}, nil, &sent)
 		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
 			map[string]interface{}{"refId": "A", "datasourceId": 7, "expr": `{app="secret"}`})
-		_, err = doDSQuery(ctx, client, base, payload)
-		require.Error(t, err)
-		assert.False(t, hit)
+		require.Error(t, runDSQuery(t, srv, true, payload))
+		assert.Nil(t, sent)
 	})
 
 	t.Run("a valid datasource.uid wins over a leftover datasourceId", func(t *testing.T) {
-		var hit bool
+		var sent map[string]interface{}
 		// run_panel_query copies raw panel targets that keep datasourceId after
 		// overwriting datasource; a real non-log uid must still resolve on the
-		// uid, not be refused for the stale numeric id (Bugbot).
-		srv := dsQueryGuardServer(t, map[string]string{"cw-uid": "cloudwatch"}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
+		// uid, not be refused for the stale numeric id.
+		srv := dsQueryGuardServer(t, map[string]string{"cw-uid": "cloudwatch"}, nil, &sent)
 		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
 			map[string]interface{}{
 				"refId":        "A",
 				"datasource":   map[string]interface{}{"uid": "cw-uid", "type": "cloudwatch"},
 				"datasourceId": 7,
 			})
-		_, err = doDSQuery(ctx, client, base, payload)
-		require.NoError(t, err)
-		assert.True(t, hit)
+		require.NoError(t, runDSQuery(t, srv, true, payload))
+		assert.NotNil(t, sent)
 	})
 
-	t.Run("queries as []interface{} are still inspected (Loki refused)", func(t *testing.T) {
-		var hit bool
-		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &hit)
-		ctx := dsQueryGuardCtx(srv, true)
-		client, base, err := newDSQueryHTTPClient(ctx)
-		require.NoError(t, err)
+	t.Run("queries as []interface{} are still inspected (Loki enforced)", func(t *testing.T) {
+		var sent map[string]interface{}
+		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &sent)
 		// Envelope built with a []interface{} query list, as a JSON round-trip
 		// would produce.
 		payload := map[string]interface{}{
@@ -321,9 +332,8 @@ func TestDoDSQuery_LokiEnforcementGuard(t *testing.T) {
 				map[string]interface{}{"refId": "A", "datasource": map[string]interface{}{"uid": "loki-uid"}, "expr": `{app="secret"}`},
 			},
 		}
-		_, err = doDSQuery(ctx, client, base, payload)
-		require.Error(t, err)
-		assert.False(t, hit)
+		require.NoError(t, runDSQuery(t, srv, true, payload))
+		assert.Equal(t, []string{enforcedSecretExpr}, sentExprs(t, sent))
 	})
 }
 
@@ -345,14 +355,33 @@ func defaultUIDPayload() map[string]interface{} {
 		})
 }
 
-// TestBackendForDatasource_RejectsLoki covers the Prometheus-client route: a
-// Loki datasource must be rejected outright rather than sent to the Prometheus
-// proxy endpoint (which Loki does not serve).
-func TestBackendForDatasource_RejectsLoki(t *testing.T) {
-	var hit bool
-	srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &hit)
-	ctx := dsQueryGuardCtx(srv, false) // rejection is unconditional, no enforcement needed
-	_, err := backendForDatasource(ctx, "loki-uid")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "log datasource")
+// TestQueryLokiLogs_EnforcedOnce checks the Loki tool's own path: its query
+// reaches /api/ds/query with the enforced matchers injected exactly once.
+func TestQueryLokiLogs_EnforcedOnce(t *testing.T) {
+	server, payload := lokiQueryStub([2]string{"1000000001", "a1"})
+	defer server.Close()
+
+	_, err := queryLokiLogs(enforceTestCtx(server, true), QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `{app="a"}`, Limit: 10,
+		StartRFC3339: "1970-01-01T00:00:00Z", EndRFC3339: "1970-01-01T00:00:02Z",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{`{app="a", agent_safe="true"}`}, sentExprs(t, *payload))
+}
+
+// TestBackendForDatasource_RejectsLogDatasources covers the Prometheus tools:
+// they send the caller's expr to /api/ds/query, where a log datasource would
+// run it as LogQL/LogsQL, so log datasources are rejected outright, with or
+// without enforcement.
+func TestBackendForDatasource_RejectsLogDatasources(t *testing.T) {
+	for _, typ := range []string{"loki", victoriaLogsDatasourceType} {
+		t.Run(typ, func(t *testing.T) {
+			var sent map[string]interface{}
+			srv := dsQueryGuardServer(t, map[string]string{"log-uid": typ}, nil, &sent)
+			_, err := backendForDatasource(dsQueryGuardCtx(srv, false), "log-uid")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "log datasource")
+			assert.Nil(t, sent)
+		})
+	}
 }

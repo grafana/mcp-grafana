@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
@@ -146,6 +147,47 @@ func TestLokiEnforcedMatchers(t *testing.T) {
 			LabelName:     "container",
 		})
 		assert.Error(t, err, "purely-negative enforcement must fail closed for label enumeration")
+	})
+
+	t.Run("query_prometheus cannot reach a Loki datasource", func(t *testing.T) {
+		ctx := ctxWithEnforcedMatchers(t, allow, LabelEnumFallbackReject)
+		_, err := queryPrometheus(ctx, QueryPrometheusParams{
+			DatasourceUID: "loki",
+			Expr:          `sum by (container) (count_over_time({container=~".+"}[5m]))`,
+			EndTime:       "now",
+			QueryType:     "instant",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "log datasource")
+	})
+
+	t.Run("any /api/ds/query request to Loki is enforced", func(t *testing.T) {
+		ctx := ctxWithEnforcedMatchers(t, allow, LabelEnumFallbackReject)
+		client, baseURL, err := newDSQueryHTTPClient(ctx)
+		require.NoError(t, err)
+		// A metric query built outside the Loki tools, as another tool or a
+		// copied panel target would send it.
+		resp, err := doDSQuery(ctx, client, baseURL, dsQueryPayload(time.Now().Add(-5*time.Minute), time.Now(),
+			map[string]interface{}{
+				"refId":      "A",
+				"datasource": map[string]string{"uid": "loki"},
+				"expr":       `sum by (container) (count_over_time({container=~".+"}[5m]))`,
+				"queryType":  "instant",
+			}))
+		require.NoError(t, err)
+		require.NoError(t, resp.Responses["A"].Error)
+		var containers []string
+		for _, frame := range resp.Responses["A"].Frames {
+			for _, field := range frame.Fields {
+				if c, ok := field.Labels["container"]; ok {
+					containers = append(containers, c)
+				}
+			}
+		}
+		require.NotEmpty(t, containers, "expected series from the allowed container")
+		for _, c := range containers {
+			assert.Equal(t, grafanaC, c, "enforcement must restrict series to the allowed container")
+		}
 	})
 
 	t.Run("negative matcher still enforces content queries", func(t *testing.T) {
