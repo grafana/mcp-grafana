@@ -145,7 +145,9 @@ func enforceLokiDSQuery(ctx context.Context, payload map[string]interface{}) (ma
 	if !ok {
 		return nil, fmt.Errorf("loki label-matcher enforcement is active but the /api/ds/query payload could not be inspected for its target datasources")
 	}
-	defaultChecked := false
+	// "" and "default" resolve to different candidate sets, so each is checked
+	// on its own.
+	defaultChecked := make(map[string]bool, 2)
 	typeByUID := make(map[string]string, len(queries))
 	enforced := make([]map[string]interface{}, 0, len(queries))
 	for _, q := range queries {
@@ -156,9 +158,9 @@ func enforceLokiDSQuery(ctx context.Context, payload map[string]interface{}) (ma
 		if uid == "" || uid == "default" {
 			// No explicit datasource, or the magic "default" UID: refuse if any
 			// datasource Grafana might resolve it to is a log datasource. Checked
-			// once per payload.
-			if !defaultChecked {
-				defaultChecked = true
+			// once per payload for each of the two forms.
+			if !defaultChecked[uid] {
+				defaultChecked[uid] = true
 				isLog, resolvable, err := defaultTargetIsLogDatasource(ctx, uid)
 				if err != nil {
 					return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query whose default datasource could not be verified: %w", err)

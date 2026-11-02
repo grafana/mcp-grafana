@@ -277,6 +277,24 @@ func TestDoDSQuery_LokiEnforcement(t *testing.T) {
 		assert.Nil(t, sent)
 	})
 
+	t.Run("a no-uid query does not stand in for a later \"default\"-uid query", func(t *testing.T) {
+		var sent map[string]interface{}
+		// The no-uid query only resolves to the org default (Prometheus); the
+		// "default"-uid query can also reach the literal "default" datasource,
+		// which is Loki, so it must be checked on its own and refused.
+		dsList := []map[string]interface{}{
+			{"uid": "mimir", "type": "prometheus", "isDefault": true},
+			{"uid": "default", "type": "loki", "isDefault": false},
+		}
+		srv := dsQueryGuardServer(t, map[string]string{}, dsList, &sent)
+		payload := dsQueryPayload(time.Now().Add(-time.Hour), time.Now(),
+			map[string]interface{}{"refId": "A", "expr": `up`},
+			map[string]interface{}{"refId": "B", "datasource": map[string]interface{}{"uid": "default"}, "expr": `{app="secret"}`},
+		)
+		require.Error(t, runDSQuery(t, srv, true, payload))
+		assert.Nil(t, sent)
+	})
+
 	t.Run("bare-string datasource resolves as a UID and is enforced for Loki", func(t *testing.T) {
 		var sent map[string]interface{}
 		srv := dsQueryGuardServer(t, map[string]string{"loki-uid": "loki"}, nil, &sent)
