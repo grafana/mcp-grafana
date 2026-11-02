@@ -28,7 +28,7 @@ type DashboardVersionSummary struct {
 type ListDashboardVersionsParams struct {
 	UID   string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 	Limit int    `json:"limit,omitempty" jsonschema:"minimum=1,description=Maximum number of versions to return"`
-	Start int    `json:"start,omitempty" jsonschema:"minimum=1,description=Version to start from. Only versions at or below this number are returned"`
+	Start int    `json:"start,omitempty" jsonschema:"minimum=1,description=Number of newest versions to skip. This is an offset and not a version number"`
 }
 
 func listDashboardVersions(ctx context.Context, args ListDashboardVersionsParams) ([]DashboardVersionSummary, error) {
