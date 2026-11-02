@@ -44,6 +44,7 @@ func TestSearchTools(t *testing.T) {
 //	PathOps/Production/Services
 //	PathOpsx
 //	PathStaging/Production
+//	Path/Slash (one folder whose title contains a slash)
 func createNestedFolders(t *testing.T) {
 	t.Helper()
 	c := mcpgrafana.GrafanaClientFromContext(newTestContext())
@@ -54,6 +55,7 @@ func createNestedFolders(t *testing.T) {
 		{"path-opsx", "PathOpsx", "", "Path Probe Opsx"},
 		{"path-staging", "PathStaging", "", "Path Probe Staging"},
 		{"path-staging-prod", "Production", "path-staging", "Path Probe Staging Production"},
+		{"path-slash", "Path/Slash", "", "Path Probe Slash"},
 	}
 	for _, f := range tree {
 		_, err := c.Folders.CreateFolder(&models.CreateFolderCommand{UID: f.uid, Title: f.title, ParentUID: f.parent})
@@ -112,6 +114,13 @@ func TestSearchDashboardsFolderPath(t *testing.T) {
 		}
 		assert.Equal(t, "PathOps/Production", paths["path-ops-prod-dash"])
 		assert.Equal(t, "PathStaging/Production", paths["path-staging-prod-dash"])
+	})
+
+	t.Run("slash in a folder title is escaped", func(t *testing.T) {
+		result, err := searchDashboards(ctx, SearchDashboardsParams{FolderPath: `Path\/Slash`})
+		require.NoError(t, err)
+		require.Equal(t, []string{"path-slash-dash"}, dashboardUIDs(result))
+		assert.Equal(t, `Path\/Slash`, result.Dashboards[0].FolderPath)
 	})
 
 	t.Run("unknown folderPath returns nothing", func(t *testing.T) {

@@ -270,18 +270,50 @@ func TestFolderTree_Path(t *testing.T) {
 func TestFolderTree_Subtree(t *testing.T) {
 	tree := testFolderTree()
 
-	assert.Equal(t, []string{"ops", "ops-prod", "ops-prod-svc"}, tree.subtree("Ops"))
-	assert.Equal(t, []string{"ops-prod", "ops-prod-svc"}, tree.subtree("ops/PRODUCTION"))
-	assert.Equal(t, []string{"ops-prod-svc"}, tree.subtree("Ops/Production/Services"))
-	assert.Empty(t, tree.subtree("Op"), "partial segments must not match")
-	assert.Empty(t, tree.subtree("Production"), "paths start at the root")
-	assert.Empty(t, tree.subtree("Orphan"))
+	assert.Equal(t, []string{"ops", "ops-prod", "ops-prod-svc"}, tree.subtree(splitFolderPath("Ops")))
+	assert.Equal(t, []string{"ops-prod", "ops-prod-svc"}, tree.subtree(splitFolderPath("ops/PRODUCTION")))
+	assert.Equal(t, []string{"ops-prod-svc"}, tree.subtree(splitFolderPath("Ops/Production/Services")))
+	assert.Empty(t, tree.subtree(splitFolderPath("Op")), "partial segments must not match")
+	assert.Empty(t, tree.subtree(splitFolderPath("Production")), "paths start at the root")
+	assert.Empty(t, tree.subtree(splitFolderPath("Orphan")))
 
 	dup := folderTree{
 		"a": {title: "Ops"},
 		"b": {title: "Ops"},
 	}
-	assert.Equal(t, []string{"a", "b"}, dup.subtree("Ops"), "folders sharing a path all match")
+	assert.Equal(t, []string{"a", "b"}, dup.subtree(splitFolderPath("Ops")), "folders sharing a path all match")
+}
+
+func TestFolderTree_SlashInTitle(t *testing.T) {
+	tree := folderTree{
+		"ab":        {title: "a/b"},
+		"a":         {title: "a"},
+		"a-b":       {title: "b", parentUID: "a"},
+		"backslash": {title: `team\ops`},
+	}
+
+	assert.Equal(t, `a\/b`, tree.path("ab"))
+	assert.Equal(t, "a/b", tree.path("a-b"))
+	assert.Equal(t, `team\\ops`, tree.path("backslash"))
+
+	assert.Equal(t, []string{"ab"}, tree.subtree(splitFolderPath(`a\/b`)))
+	assert.Equal(t, []string{"a-b"}, tree.subtree(splitFolderPath("a/b")))
+	assert.Equal(t, []string{"backslash"}, tree.subtree(splitFolderPath(tree.path("backslash"))), "a path from a hit round-trips")
+}
+
+func TestSplitFolderPath(t *testing.T) {
+	for in, want := range map[string][]string{
+		"Ops/Production":    {"Ops", "Production"},
+		"/Ops//Production/": {"Ops", "Production"},
+		`a\/b/c`:            {"a/b", "c"},
+		`a\\/b`:             {`a\`, "b"},
+		`team\ops`:          {`team\ops`},
+		`trailing\`:         {`trailing\`},
+		"/":                 nil,
+		"":                  nil,
+	} {
+		assert.Equal(t, want, splitFolderPath(in), "input %q", in)
+	}
 }
 
 // folderSearchServer serves folders for type=dash-folder and dashboards for
@@ -337,6 +369,11 @@ func TestSearchDashboards_FolderPath(t *testing.T) {
 		assert.NotNil(t, result.Dashboards)
 		assert.Empty(t, result.Dashboards)
 		assert.Nil(t, dashQuery, "dashboard search must not run unfiltered")
+	})
+
+	t.Run("folderPath without a folder name is rejected", func(t *testing.T) {
+		_, err := searchDashboards(context.Background(), SearchDashboardsParams{FolderPath: " / "})
+		require.ErrorContains(t, err, "names no folder")
 	})
 
 	t.Run("folderUid and folderPath together are rejected", func(t *testing.T) {

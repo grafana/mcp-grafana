@@ -103,39 +103,89 @@ func listFolderTree(ctx context.Context) (folderTree, error) {
 	}
 }
 
-// path returns the folder titles from the root down to uid, joined by "/".
-// It returns "" if the chain is incomplete (a parent the caller cannot see)
-// or loops, so a partial path is never mistaken for a root path.
-func (t folderTree) path(uid string) string {
+// titles returns the folder titles from the root down to uid. It returns nil
+// if the chain is incomplete (a parent the caller cannot see) or loops, so a
+// partial path is never mistaken for a root path.
+func (t folderTree) titles(uid string) []string {
 	var titles []string
 	seen := map[string]bool{}
 	for uid != "" {
 		node, ok := t[uid]
 		if !ok || seen[uid] {
-			return ""
+			return nil
 		}
 		seen[uid] = true
 		titles = append(titles, node.title)
 		uid = node.parentUID
 	}
 	slices.Reverse(titles)
+	return titles
+}
+
+// path returns the folder path of uid, built like Grafana's folder fullpath:
+// escaped titles joined by "/". It returns "" if titles returns nil.
+func (t folderTree) path(uid string) string {
+	titles := t.titles(uid)
+	for i, title := range titles {
+		titles[i] = escapeFolderTitle(title)
+	}
 	return strings.Join(titles, "/")
 }
 
-// subtree returns the UIDs of every folder at path, and of all folders below
-// them. Paths match on whole segments, case-insensitively. Several folders can
-// share a path, and all of them match.
-func (t folderTree) subtree(path string) []string {
-	want := strings.ToLower(path)
+// subtree returns the UIDs of every folder whose path starts with want, that
+// is the folders at want and all folders below them. Titles match whole,
+// case-insensitively. Several folders can share a path, and all of them match.
+func (t folderTree) subtree(want []string) []string {
 	var uids []string
 	for uid := range t {
-		p := strings.ToLower(t.path(uid))
-		if p != "" && (p == want || strings.HasPrefix(p, want+"/")) {
+		titles := t.titles(uid)
+		if len(titles) >= len(want) && slices.EqualFunc(titles[:len(want)], want, strings.EqualFold) {
 			uids = append(uids, uid)
 		}
 	}
 	slices.Sort(uids)
 	return uids
+}
+
+// escapeFolderTitle escapes a title the way Grafana does when it builds a
+// folder fullpath, so a title containing "/" is not read as two folders.
+func escapeFolderTitle(title string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(title, `\`, `\\`), "/", `\/`)
+}
+
+// splitFolderPath splits a folder path into titles on unescaped "/", the
+// inverse of escapeFolderTitle. Like Grafana's SplitFullpath, a backslash
+// that starts no escape sequence is kept, and empty titles are dropped.
+func splitFolderPath(path string) []string {
+	var titles []string
+	var current strings.Builder
+	escaped := false
+	for _, r := range path {
+		switch {
+		case escaped:
+			if r != '\\' && r != '/' {
+				current.WriteRune('\\')
+			}
+			current.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '/':
+			if current.Len() > 0 {
+				titles = append(titles, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if current.Len() > 0 {
+		titles = append(titles, current.String())
+	}
+	return titles
 }
 
 // withRepeatedFolderUIDs sends uids as repeated folderUIDs query parameters.
@@ -151,10 +201,6 @@ func withRepeatedFolderUIDs(uids []string) search.ClientOption {
 			return r.SetQueryParam("folderUIDs", uids...)
 		})
 	}
-}
-
-func normalizeFolderPath(path string) string {
-	return strings.Trim(strings.TrimSpace(path), "/")
 }
 
 // addFolderPaths sets FolderPath on each hit. tree may be nil, in which case it
@@ -177,8 +223,14 @@ func addFolderPaths(ctx context.Context, hits []dashboardSearchHit, tree folderT
 }
 
 func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*SearchDashboardsResult, error) {
-	folderPath := normalizeFolderPath(args.FolderPath)
-	if folderPath != "" && args.FolderUID != "" {
+	var folderPath []string
+	if strings.TrimSpace(args.FolderPath) != "" {
+		folderPath = splitFolderPath(strings.TrimSpace(args.FolderPath))
+		if len(folderPath) == 0 {
+			return nil, fmt.Errorf("folderPath %q names no folder; omit it to search all folders", args.FolderPath)
+		}
+	}
+	if folderPath != nil && args.FolderUID != "" {
 		return nil, fmt.Errorf("set either folderUid or folderPath, not both")
 	}
 
@@ -196,7 +248,7 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*Search
 	// folderPath is expanded to the folder and all its subfolders first.
 	var tree folderTree
 	var opts []search.ClientOption
-	if folderPath != "" {
+	if folderPath != nil {
 		var err error
 		if tree, err = listFolderTree(ctx); err != nil {
 			return nil, err
