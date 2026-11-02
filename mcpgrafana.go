@@ -892,30 +892,85 @@ func WithoutUserAgent() TransportOption {
 	return func(o *transportOptions) { o.withoutUserAgent = true }
 }
 
-// BuildTransport constructs an http.RoundTripper with the standard middleware
-// chain derived from cfg. The default chain (innermost to outermost) is:
-//
-//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
-//
-// Auth is innermost among the header-setting layers so that credentials take
-// precedence over any forwarded/extra headers with the same keys.
-//
-// When cfg.Debug is true a debug-logging layer is added just above the base
-// transport. It sees the fully-decorated request (all headers set by outer
-// layers) and redacts sensitive values (Authorization, X-Access-Token, etc.)
-// before writing request/response details to the logger.
-//
-// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
-func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
-	var options transportOptions
-	for _, o := range opts {
-		o(&options)
+// transportCacheKey identifies the settings a cached transport was built from.
+type transportCacheKey struct {
+	socks5ProxyURL string
+	hasTLSConfig   bool
+	tlsConfig      TLSConfig
+}
+
+// fileStamp tells whether a file changed since it was read.
+type fileStamp struct {
+	size    int64
+	modTime int64
+}
+
+// cachedTransport is a transport with the state of the TLS files it was built from.
+type cachedTransport struct {
+	transport http.RoundTripper
+	files     [3]fileStamp
+}
+
+var (
+	transportCacheMu sync.Mutex
+	transportCache   = map[transportCacheKey]cachedTransport{}
+)
+
+// fileStamps returns the state of the certificate, key and CA files.
+func (tc *TLSConfig) fileStamps() [3]fileStamp {
+	var stamps [3]fileStamp
+	if tc == nil {
+		return stamps
+	}
+	for i, path := range []string{tc.CertFile, tc.KeyFile, tc.CAFile} {
+		if path == "" {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil {
+			stamps[i] = fileStamp{size: info.Size(), modTime: info.ModTime().UnixNano()}
+		}
+	}
+	return stamps
+}
+
+// baseTransport returns base with the SOCKS5 proxy and TLS settings from cfg
+// applied. An *http.Transport owns its connection pool and tools build a
+// transport on every call, so the one derived from http.DefaultTransport is
+// shared until the TLS files change on disk. A transport passed in by the
+// caller is not cached, because its lifetime belongs to the caller.
+func baseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+	if (cfg.SOCKS5ProxyURL == "" && cfg.TLSConfig == nil) || base != http.DefaultTransport {
+		return newBaseTransport(cfg, base)
 	}
 
-	if base == nil {
-		base = cfg.HTTPTransport()
+	key := transportCacheKey{socks5ProxyURL: cfg.SOCKS5ProxyURL}
+	if cfg.TLSConfig != nil {
+		key.hasTLSConfig = true
+		key.tlsConfig = *cfg.TLSConfig
 	}
+	files := cfg.TLSConfig.fileStamps()
 
+	transportCacheMu.Lock()
+	defer transportCacheMu.Unlock()
+
+	cached, ok := transportCache[key]
+	if ok && cached.files == files {
+		return cached.transport, nil
+	}
+	transport, err := newBaseTransport(cfg, base)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if t, isTransport := cached.transport.(*http.Transport); isTransport {
+			t.CloseIdleConnections()
+		}
+	}
+	transportCache[key] = cachedTransport{transport: transport, files: files}
+	return transport, nil
+}
+
+func newBaseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
 	// SOCKS5 proxy (applied to the innermost *http.Transport so the TLS layer
 	// below clones it with the proxy already in place).
 	if cfg.SOCKS5ProxyURL != "" {
@@ -944,6 +999,37 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
 		}
+	}
+	return transport, nil
+}
+
+// BuildTransport constructs an http.RoundTripper with the standard middleware
+// chain derived from cfg. The default chain (innermost to outermost) is:
+//
+//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//
+// Auth is innermost among the header-setting layers so that credentials take
+// precedence over any forwarded/extra headers with the same keys.
+//
+// When cfg.Debug is true a debug-logging layer is added just above the base
+// transport. It sees the fully-decorated request (all headers set by outer
+// layers) and redacts sensitive values (Authorization, X-Access-Token, etc.)
+// before writing request/response details to the logger.
+//
+// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
+func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
+	var options transportOptions
+	for _, o := range opts {
+		o(&options)
+	}
+
+	if base == nil {
+		base = cfg.HTTPTransport()
+	}
+
+	transport, err := baseTransport(cfg, base)
+	if err != nil {
+		return nil, err
 	}
 	if !cfg.AllowCrossOriginRedirects {
 		transport = &redirectGuardTransport{next: transport}
