@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -180,6 +182,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		vars[name] = value
 		templateVariables[name] = []string{value}
 	}
+	resolveAutoIntervalVariables(db, templateVariables, vars, params.Start, params.End)
 	allWarnings := allTemplateSelectionWarnings(db, params.Variables, templateVariables)
 	referenceDatasource := panelData.DatasourceUID
 	if params.DsUID != "" {
@@ -707,6 +710,101 @@ func extractTemplateVariableValues(db map[string]interface{}) templateVariableVa
 	}
 
 	return variables
+}
+
+// resolveAutoIntervalVariables gives interval variables set to "auto" the value
+// Grafana computes for the query's time range. Grafana stores the selection as
+// "$__auto_interval_<name>" and fills it in from the range, the variable's step
+// count and its minimum interval; left as is, the placeholder reaches the
+// datasource as an invalid duration. The legacy $__auto_interval_<name> and
+// $__auto_interval references resolve to the same value.
+func resolveAutoIntervalVariables(db map[string]interface{}, values templateVariableValues, firstValues map[string]string, start, end string) {
+	from, err := parseTime(start)
+	if err != nil {
+		return
+	}
+	to, err := parseTime(end)
+	if err != nil {
+		return
+	}
+	for _, item := range safeArray(safeObject(db, "templating"), "list") {
+		variable, ok := item.(map[string]interface{})
+		if !ok || safeString(variable, "type") != "interval" {
+			continue
+		}
+		name := safeString(variable, "name")
+		if auto, _ := variable["auto"].(bool); !auto || name == "" {
+			continue
+		}
+		steps := 30.0
+		if count, ok := variable["auto_count"].(float64); ok && count > 0 {
+			steps = count
+		}
+		minimum := "10s"
+		if m, ok := variable["auto_min"].(string); ok && m != "" {
+			minimum = m
+		}
+		interval := grafanaCalculateInterval(to.Sub(from), steps, minimum)
+		placeholder := "$__auto_interval_" + name
+		if current := values[name]; len(current) == 1 && current[0] == placeholder {
+			values[name] = []string{interval}
+			firstValues[name] = interval
+		}
+		values["__auto_interval_"+name] = []string{interval}
+		values["__auto_interval"] = []string{interval}
+	}
+}
+
+// grafanaCalculateInterval mirrors rangeutil.calculateInterval in Grafana: the
+// range divided by the step count, rounded to a "nice" interval, no lower than
+// the minimum, and formatted with secondsToHms.
+func grafanaCalculateInterval(span time.Duration, steps float64, minimum string) string {
+	ms := grafanaRoundInterval(float64(span.Milliseconds()) / steps)
+	if low, err := gtime.ParseInterval(minimum); err == nil && float64(low.Milliseconds()) > ms {
+		ms = float64(low.Milliseconds())
+	}
+	return grafanaSecondsToHms(ms / 1000)
+}
+
+// grafanaRoundInterval is rangeutil.roundInterval: thresholds in milliseconds
+// and the interval each one rounds to.
+func grafanaRoundInterval(ms float64) float64 {
+	steps := [][2]float64{
+		{10, 1}, {15, 10}, {35, 20}, {75, 50}, {150, 100}, {350, 200}, {750, 500},
+		{1500, 1000}, {3500, 2000}, {7500, 5000}, {12500, 10000}, {17500, 15000},
+		{25000, 20000}, {45000, 30000}, {90000, 60000}, {210000, 120000},
+		{450000, 300000}, {750000, 600000}, {1050000, 900000}, {1500000, 1200000},
+		{2700000, 1800000}, {5400000, 3600000}, {9000000, 7200000},
+		{16200000, 10800000}, {32400000, 21600000}, {86400000, 43200000},
+		{604800000, 86400000}, {1814400000, 604800000}, {3628800000, 2592000000},
+	}
+	for _, s := range steps {
+		if ms < s[0] {
+			return s[1]
+		}
+	}
+	return 31536000000
+}
+
+// grafanaSecondsToHms is rangeutil.secondsToHms: the largest whole unit only.
+func grafanaSecondsToHms(seconds float64) string {
+	s := int64(math.Floor(seconds))
+	switch {
+	case s/31536000 > 0:
+		return fmt.Sprintf("%dy", s/31536000)
+	case s%31536000/86400 > 0:
+		return fmt.Sprintf("%dd", s%31536000/86400)
+	case s%86400/3600 > 0:
+		return fmt.Sprintf("%dh", s%86400/3600)
+	case s%3600/60 > 0:
+		return fmt.Sprintf("%dm", s%3600/60)
+	case s%60 > 0:
+		return fmt.Sprintf("%ds", s%60)
+	}
+	if ms := int64(math.Floor(seconds * 1000)); ms > 0 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return "less than a millisecond"
 }
 
 func firstTemplateVariableValues(values templateVariableValues) map[string]string {

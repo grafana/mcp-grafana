@@ -364,7 +364,7 @@ func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
 		}
 
 		variable := map[string]interface{}{}
-		for _, key := range []string{"name", "current", "query", "multi", "includeAll"} {
+		for _, key := range []string{"name", "current", "query", "multi", "includeAll", "auto", "auto_min", "auto_count"} {
 			if val, ok := vspec[key]; ok {
 				variable[key] = val
 			}
@@ -376,6 +376,8 @@ func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
 			variable["type"] = "constant"
 		case "TextVariable":
 			variable["type"] = "textbox"
+		case "IntervalVariable":
+			variable["type"] = "interval"
 		}
 		list = append(list, variable)
 	}
