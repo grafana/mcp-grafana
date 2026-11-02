@@ -27,19 +27,26 @@ func testTemplateVariableValues(variables map[string]string) templateVariableVal
 }
 
 func substituteTemplateVariables(query string, variables map[string]string) string {
-	return substituteTemplateVariableValues(query, testTemplateVariableValues(variables))
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolate(query)
 }
 
 func substituteTemplateVariablesInMap(target map[string]interface{}, variables map[string]string) map[string]interface{} {
-	return substituteTemplateVariablesInMapWithValues(target, testTemplateVariableValues(variables))
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolateTarget(target)
 }
 
 func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
-	return substituteTemplateVariablesInSliceWithValues(slice, testTemplateVariableValues(variables))
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolateValue(slice).([]interface{})
 }
 
 func extractTemplateVariables(db map[string]interface{}) map[string]string {
-	return firstTemplateVariableValues(extractTemplateVariableValues(db))
+	in := newDashboardInterpolator(db, nil)
+	first := make(map[string]string)
+	for name := range in.values {
+		if value, ok := in.firstValue(name); ok {
+			first[name] = value
+		}
+	}
+	return first
 }
 
 func TestFindPanelByIDForRunPanelQuery(t *testing.T) {
@@ -737,7 +744,7 @@ func TestSubstituteTemplateVariableValuesSQLString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, substituteTemplateVariableValues(tt.query, tt.variables))
+			assert.Equal(t, tt.want, newVariableInterpolator(tt.variables, nil).interpolate(tt.query))
 		})
 	}
 }

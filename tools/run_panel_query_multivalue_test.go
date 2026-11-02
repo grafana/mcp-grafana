@@ -40,7 +40,7 @@ func TestSubstituteQueryTemplateVariableValuesMultiValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := substituteQueryTemplateVariableValues(tt.query, templateVariableValues{"job": tt.values}, tt.datasourceType, tt.multi)
+			got := newVariableInterpolator(templateVariableValues{"job": tt.values}, tt.multi).interpolateQuery(tt.query, tt.datasourceType)
 			assert.Equal(t, tt.want, got)
 		})
 	}
