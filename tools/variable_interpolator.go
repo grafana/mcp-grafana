@@ -186,13 +186,19 @@ func (v *variableInterpolator) formatReference(s string, m []int, f datasourceFo
 	}
 	values := v.values[name]
 	if hasFormat {
+		// Unlike the other formats, lucene depends on whether the variable
+		// holds a list: Grafana passes a multi-value selection as an array,
+		// even with one value or none.
+		if formatName, _, _ := strings.Cut(format, ":"); formatName == "lucene" {
+			return formatLucene(values, v.multi[name])
+		}
 		return f.explicit(values, format)
+	}
+	if f.unformatted != nil {
+		return f.unformatted(values, v.multi[name])
 	}
 	if f.multi != nil && v.multi[name] && len(values) > 0 {
 		return f.multi(values)
-	}
-	if f.single != nil {
-		return f.single(values)
 	}
 	return firstTemplateVariableValue(values)
 }
@@ -208,9 +214,9 @@ type datasourceFormat struct {
 	// variable, as Grafana's interpolateQueryExpr (Prometheus, Loki) and
 	// interpolateVariable (SQL) do. nil keeps the first value.
 	multi func(values []string) string
-	// single formats an unformatted reference to any other variable, as the
-	// lucene format does for Elasticsearch. nil keeps the first value.
-	single func(values []string) string
+	// unformatted, when set, formats every unformatted reference instead of
+	// multi; list is whether the variable is multi-value or include-All.
+	unformatted func(values []string, list bool) string
 }
 
 var genericFormat = datasourceFormat{explicit: formatTemplateVariable}
@@ -233,8 +239,7 @@ func formatForDatasource(datasourceType string) datasourceFormat {
 	case "postgres", "grafana-postgresql-datasource", "mysql", "mssql":
 		f.multi = formatSQLLiteralList
 	case elasticsearchDatasourceType:
-		f.multi = formatLuceneList
-		f.single = func(values []string) string { return luceneEscape(firstTemplateVariableValue(values)) }
+		f.unformatted = formatLucene
 	}
 	return f
 }
@@ -252,9 +257,16 @@ func luceneEscape(value string) string {
 	return luceneSpecialCharacters.ReplaceAllString(value, `\${0}`)
 }
 
-// formatLuceneList formats a list of values as Grafana's lucene format does:
-// ("a" OR "b"), each value escaped.
-func formatLuceneList(values []string) string {
+// formatLucene formats values as Grafana's lucene format does. A list is
+// written as ("a" OR "b"), each value escaped, and an empty list as __empty__,
+// which matches nothing; otherwise the first value is escaped.
+func formatLucene(values []string, list bool) string {
+	if !list {
+		return luceneEscape(firstTemplateVariableValue(values))
+	}
+	if len(values) == 0 {
+		return "__empty__"
+	}
 	quoted := make([]string, len(values))
 	for i, value := range values {
 		quoted[i] = `"` + luceneEscape(value) + `"`
@@ -298,22 +310,16 @@ func firstTemplateVariableValue(values []string) string {
 	return values[0]
 }
 
-// formatTemplateVariable applies an explicit format. sqlstring and lucene follow
-// Grafana's formatters; unknown formats fall back to Grafana's glob.
+// formatTemplateVariable applies an explicit format. sqlstring follows
+// Grafana's formatter (lucene is handled in formatReference); unknown formats fall back to Grafana's glob.
 func formatTemplateVariable(values []string, format string) string {
 	formatName := format
 	if separator := strings.IndexByte(format, ':'); separator >= 0 {
 		formatName = format[:separator]
 	}
 
-	switch formatName {
-	case "sqlstring":
+	if formatName == "sqlstring" {
 		return formatSQLStringVariable(values)
-	case "lucene":
-		if len(values) > 1 {
-			return formatLuceneList(values)
-		}
-		return luceneEscape(firstTemplateVariableValue(values))
 	}
 
 	// Grafana uses glob as the fallback for unknown formatting options.
