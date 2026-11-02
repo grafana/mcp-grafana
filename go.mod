@@ -15,6 +15,7 @@ require (
 	github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42
 	github.com/grafana/mcp-grafana/lokiguard v0.1.0
 	github.com/grafana/pyroscope/api v1.6.0
+	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.19
@@ -143,7 +144,6 @@ require (
 	github.com/grafana/mcp-doc-server v1.0.0
 	github.com/grafana/otel-profiling-go v0.7.0 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.12 // indirect
-	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0 // indirect

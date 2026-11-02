@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"log/slog"
 	"net"
 	"net/http"
@@ -2249,5 +2250,47 @@ func TestDatasourceResourcesFollowDatasourceCategory(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.enabled, len(result.ResourceTemplates) == 1)
 		})
+	}
+}
+
+func TestPrometheusSelectiveLabelsEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name, value                       string
+		flagSet, initial, want, wantError bool
+	}{
+		{"default off", "", false, false, false, false},
+		{"env enables", "true", false, false, true, false},
+		{"env disables", "false", false, true, false, false},
+		{"explicit false wins", "true", true, false, false, false},
+		{"explicit true wins", "false", true, true, true, false},
+		{"invalid env", "enabled", false, false, false, true},
+		{"explicit flag ignores invalid env", "enabled", true, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range []string{"MODE", "MAX_RANGE", "MAX_POINTS"} {
+				t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_"+name, "")
+			}
+			t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS", tc.value)
+			gc := grafanaConfig{prometheusGuardrailRequireSelectiveLabels: tc.initial}
+			err := gc.applyPrometheusGuardrailEnv(map[string]bool{"prometheus-guardrail-require-selective-labels": tc.flagSet})
+			if tc.wantError {
+				require.ErrorContains(t, err, "GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, gc.prometheusGuardrailRequireSelectiveLabels)
+			}
+		})
+	}
+}
+
+func TestPrometheusSelectiveLabelsFlag(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	for _, args := range [][]string{nil, {"--prometheus-guardrail-require-selective-labels"}, {"--prometheus-guardrail-require-selective-labels=false"}} {
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		gc := grafanaConfig{}
+		gc.addFlags()
+		require.NoError(t, flag.CommandLine.Parse(args))
+		assert.Equal(t, len(args) > 0 && args[0] == "--prometheus-guardrail-require-selective-labels", gc.prometheusGuardrailRequireSelectiveLabels)
 	}
 }
