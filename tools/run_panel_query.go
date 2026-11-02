@@ -15,6 +15,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
@@ -224,7 +225,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// Grafana resolves the "default" datasource reference to the org's default
 	// datasource; it is not a real UID the datasource API knows about.
 	if datasourceUID == "default" {
-		ds, err := getDefaultDatasource(ctx)
+		ds, err := datasource.Default(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("resolving default datasource: %w", err)
 		}
@@ -243,11 +244,11 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// loki_enforce.go). A type declared in the panel JSON (no override) is
 	// trusted as-is: it comes from the dashboard, not the caller.
 	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
-		ds, lookupErr := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
+		ds, lookupErr := datasource.ByUID(ctx, datasourceUID)
 		if lookupErr != nil && params.DsUID == "" {
 			// Dashboards saved before schema version 33 reference a
 			// datasource, or a datasource variable's value, by name.
-			if byName, err := getDatasourceByName(ctx, GetDatasourceByNameParams{Name: datasourceUID}); err == nil {
+			if byName, err := datasource.ByName(ctx, datasourceUID); err == nil {
 				ds, lookupErr = byName, nil
 				datasourceUID = byName.UID
 			}

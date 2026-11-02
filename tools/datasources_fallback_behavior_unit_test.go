@@ -261,7 +261,7 @@ func TestQueryPrometheus_ModernPathUnchanged(t *testing.T) {
 	}
 }
 
-// Callers may reference a datasource by name (fallbackDatasourceByUID
+// Callers may reference a datasource by name (datasource.ByUID
 // resolves names as a convenience). The uid-based transport fallback must
 // then be built from the datasource's *resolved* uid, not the caller's
 // string: on a deployment with the numeric routes disabled,

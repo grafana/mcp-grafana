@@ -14,6 +14,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -29,7 +30,7 @@ type GraphiteClient struct {
 }
 
 func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +43,7 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := proxyBase, resourcesBase
 	legacyMode := false
-	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
+	if numericBase, uidBase, ok := datasource.ProxyBases(ctx, uid); ok {
 		// Legacy-compatible routing — see newPrometheusBackend for the full
 		// rationale: route through the numeric-id proxy path directly, keeping
 		// the uid-based proxy route as the transport-level fallback.
@@ -175,7 +176,7 @@ func graphiteRender(ctx context.Context, uid, target, fromStr, untilStr string, 
 		maxDataPoints = max(int(until.Sub(from)/time.Second), 1)
 	}
 
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, from, until, err
 	}

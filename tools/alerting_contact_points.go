@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/alertmanager/config"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
 type ListContactPointsParams struct {
@@ -112,7 +113,7 @@ func applyLimitToContactPoints(items []*models.EmbeddedContactPoint, limit int) 
 func listAlertmanagerReceivers(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
 	dsUID := *args.DatasourceUID
 
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
+	ds, err := datasource.ByUID(ctx, dsUID)
 	if err != nil {
 		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
 	}

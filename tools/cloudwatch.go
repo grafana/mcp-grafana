@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -56,7 +57,7 @@ type cloudWatchClient struct {
 // newCloudWatchClient creates a new CloudWatch client for the given datasource
 func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, error) {
 	// Verify the datasource exists and is a CloudWatch datasource
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}

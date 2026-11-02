@@ -14,6 +14,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -73,7 +74,7 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := proxyBase, resourcesBase
 	legacyMode := false
-	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
+	if numericBase, uidBase, ok := datasource.ProxyBases(ctx, uid); ok {
 		// Legacy-compatible routing — see newPrometheusBackend for the full
 		// rationale: route through the numeric-id proxy path directly, keeping
 		// the uid-based proxy route as the transport-level fallback.

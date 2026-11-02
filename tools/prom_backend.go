@@ -16,6 +16,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -46,7 +47,7 @@ type promBackend interface {
 // An optional projectOverride can be passed for Cloud Monitoring datasources to override
 // (or substitute for) the defaultProject configured on the datasource.
 func backendForDatasource(ctx context.Context, uid string, projectOverride ...string) (promBackend, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +88,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := resourcesBase, proxyBase
 	legacyMode := false
-	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
+	if numericBase, uidBase, ok := datasource.ProxyBases(ctx, uid); ok {
 		// The datasource was resolved through the frontend-settings fallback,
 		// meaning this deployment's metadata API is inaccessible — in practice
 		// Grafana before 9.0, which has no uid-based routes at all (8.x answers

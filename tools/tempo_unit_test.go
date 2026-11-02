@@ -23,13 +23,13 @@ import (
 )
 
 // tempoTestServer creates a mock server that handles both the Grafana datasource
-// API (for getDatasourceByUID) and the Tempo proxy and /api/ds/query endpoints.
+// API (for datasource.ByUID) and the Tempo proxy and /api/ds/query endpoints.
 func tempoTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, func()) {
 	t.Helper()
 
 	mux := http.NewServeMux()
 
-	// Mock the Grafana datasource API — getDatasourceByUID calls this
+	// Mock the Grafana datasource API — datasource.ByUID calls this
 	mux.HandleFunc("/api/datasources/uid/test-tempo", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
