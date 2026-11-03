@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -204,9 +205,12 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	} else if isVariableReference(datasourceUID) {
 		// Resolve variable reference only if no explicit override
 		varName := extractVariableName(datasourceUID)
-		if resolvedUID, ok := interp.firstValue(varName); ok {
+		if resolvedUID, ok := interp.firstValue(varName); ok && resolvedUID != "" {
 			datasourceUID = resolvedUID
 			// Reset type so it gets looked up from the resolved datasource
+			datasourceType = ""
+		} else if defaultUID, ok := defaultDatasourceVariableValue(ctx, db, varName); ok {
+			datasourceUID = defaultUID
 			datasourceType = ""
 		} else {
 			availableDS := getAvailableDatasourceUIDs(ctx, panelData.DatasourceType)
@@ -1010,6 +1014,75 @@ func extractVariableName(s string) string {
 		return strings.TrimPrefix(s, "$")
 	}
 	return s
+}
+
+// defaultDatasourceVariableValue resolves a datasource variable saved without a
+// value, as Grafana does when the dashboard loads: the first datasource of the
+// variable's plugin type, by name, whose name matches the variable's regex.
+// Dashboards imported from grafana.com are commonly saved this way.
+func defaultDatasourceVariableValue(ctx context.Context, db map[string]interface{}, name string) (string, bool) {
+	for _, item := range safeArray(safeObject(db, "templating"), "list") {
+		variable, ok := item.(map[string]interface{})
+		if !ok || safeString(variable, "name") != name || safeString(variable, "type") != "datasource" {
+			continue
+		}
+		pluginID := safeString(variable, "query")
+		if pluginID == "" {
+			return "", false
+		}
+		var filter *regexp.Regexp
+		if pattern := safeString(variable, "regex"); pattern != "" {
+			var err error
+			if filter, err = jsRegexp(pattern); err != nil {
+				return "", false
+			}
+		}
+		list, err := datasource.List(ctx)
+		if err != nil {
+			return "", false
+		}
+		var candidates []*models.DataSourceListItemDTO
+		for _, ds := range list {
+			if ds != nil && ds.Type == pluginID && (filter == nil || filter.MatchString(ds.Name)) {
+				candidates = append(candidates, ds)
+			}
+		}
+		if len(candidates) == 0 {
+			return "", false
+		}
+		slices.SortStableFunc(candidates, func(a, b *models.DataSourceListItemDTO) int {
+			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		})
+		return candidates[0].UID, true
+	}
+	return "", false
+}
+
+// jsRegexFlags matches the "/pattern/flags" form the way Grafana's
+// stringToJsRegex does.
+var jsRegexFlags = regexp.MustCompile(`^/(.*?)/(g?i?m?y?s?)$`)
+
+// jsRegexp compiles a Grafana variable regex like stringToJsRegex: a bare
+// pattern must match the whole name, and the "/pattern/flags" form is
+// unanchored, with the i, m and s flags applied (g and y don't affect a match).
+func jsRegexp(pattern string) (*regexp.Regexp, error) {
+	if !strings.HasPrefix(pattern, "/") {
+		return regexp.Compile("^" + pattern + "$")
+	}
+	match := jsRegexFlags.FindStringSubmatch(pattern)
+	if match == nil {
+		return nil, fmt.Errorf("'%s' is not a valid regular expression", pattern)
+	}
+	var flags string
+	for _, f := range "ims" {
+		if strings.ContainsRune(match[2], f) {
+			flags += string(f)
+		}
+	}
+	if flags != "" {
+		return regexp.Compile("(?" + flags + ")" + match[1])
+	}
+	return regexp.Compile(match[1])
 }
 
 // getAvailableDatasourceUIDs returns UIDs of datasources matching the given type
