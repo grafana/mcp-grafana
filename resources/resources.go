@@ -26,7 +26,9 @@ import (
 type Kind struct {
 	template *mcp.ResourceTemplate
 	read     mcp.ResourceHandler
-	// list returns the resources currently visible to the caller.
+	// list returns the resources currently visible to the caller. It should
+	// honour ctx: a list still running at the deadline is left out, but keeps
+	// running in the background until it returns.
 	list func(context.Context) ([]*mcp.Resource, error)
 }
 
@@ -86,24 +88,40 @@ func listMiddleware(kinds []Kind) mcp.Middleware {
 	}
 }
 
-func listKind(ctx context.Context, k Kind) (resources []*mcp.Resource) {
+// listKind returns k's resources, or nil if listing fails, panics or misses
+// the deadline, even when k.list ignores its context.
+func listKind(ctx context.Context, k Kind) []*mcp.Resource {
 	logger := mcpgrafana.LoggerFromContext(ctx).With("kind", k.template.Name)
-	// This runs on its own goroutine, out of reach of the recovery
-	// middleware, so a panic here would take down the server.
-	defer func() {
-		if recover() != nil {
-			logger.ErrorContext(ctx, "Listing resources panicked", "stack", string(debug.Stack()))
-			resources = nil
-		}
-	}()
 	ctx, cancel := context.WithTimeout(ctx, listTimeout)
 	defer cancel()
-	resources, err := k.list(ctx)
-	if err != nil {
-		logger.DebugContext(ctx, "Not listing resources", "error", err)
+	type listed struct {
+		resources []*mcp.Resource
+		err       error
+	}
+	done := make(chan listed, 1) // buffered, so an abandoned list can still finish
+	go func() {
+		// This goroutine is out of reach of the recovery middleware, so a
+		// panic here would take down the server.
+		defer func() {
+			if p := recover(); p != nil {
+				logger.ErrorContext(ctx, "Listing resources panicked", "panic", p, "stack", string(debug.Stack()))
+				done <- listed{err: fmt.Errorf("panic: %v", p)}
+			}
+		}()
+		resources, err := k.list(ctx)
+		done <- listed{resources, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			logger.DebugContext(ctx, "Not listing resources", "error", r.err)
+			return nil
+		}
+		return r.resources
+	case <-ctx.Done():
+		logger.DebugContext(ctx, "Not listing resources", "error", ctx.Err())
 		return nil
 	}
-	return resources
 }
 
 // jsonResource returns v as the private JSON contents of uri.

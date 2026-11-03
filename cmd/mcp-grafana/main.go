@@ -492,6 +492,7 @@ func (dt *disabledTools) appSources() []mcpgrafana.Tool {
 // resourceKinds returns the MCP resource kinds to serve: each follows its
 // tool category.
 func (dt *disabledTools) resourceKinds() []resources.Kind {
+	dt.normalizeEnabledTools()
 	enabled := strings.Split(dt.enabledTools, ",")
 	var kinds []resources.Kind
 	if isCategoryEnabled(enabled, dt.datasource, "datasource") {

@@ -33,6 +33,9 @@ func readDatasource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.Rea
 	if err != nil {
 		return nil, err
 	}
+	if mcpgrafana.GrafanaClientFromContext(ctx) == nil {
+		return nil, errors.New("no Grafana client is configured")
+	}
 	ds, err := datasource.ByUID(ctx, uid)
 	if errors.Is(err, datasource.ErrNotFound) {
 		return nil, mcp.ResourceNotFoundError(uri)

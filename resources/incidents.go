@@ -46,6 +46,9 @@ func readIncident(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadR
 	if err != nil {
 		return nil, err
 	}
+	if mcpgrafana.IncidentClientFromContext(ctx) == nil {
+		return nil, errors.New("no IRM incident client is configured")
+	}
 	incident, err := tools.Incident(ctx, id)
 	var apiErr *mcpgrafana.IncidentAPIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
@@ -72,7 +75,9 @@ func listActiveIncidents(ctx context.Context) ([]*mcp.Resource, error) {
 		if started == "" {
 			started = inc.CreatedTime
 		}
-		if t, err := time.Parse(time.RFC3339, started); err != nil || t.Before(since) {
+		// An unreadable time keeps the incident: better a stale entry than
+		// silently hiding a live one.
+		if t, err := time.Parse(time.RFC3339, started); err == nil && t.Before(since) {
 			continue
 		}
 		desc := inc.Title + " · active incident"

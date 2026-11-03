@@ -66,22 +66,25 @@ func connectIncidents(t *testing.T, previews []incident.IncidentPreview) *mcp.Cl
 }
 
 // Only incidents that started in the last 30 days are listed; one without a
-// start time falls back to when it was created.
+// start time falls back to when it was created, and one with no usable time
+// is kept rather than hidden.
 func TestListActiveIncidents(t *testing.T) {
 	ago := func(d time.Duration) string { return time.Now().Add(-d).UTC().Format(time.RFC3339) }
 	session := connectIncidents(t, []incident.IncidentPreview{
 		{IncidentID: "1", Title: "checkout is down", SeverityLabel: "Critical", IncidentStart: ago(time.Hour)},
 		{IncidentID: "2", Title: "slow logins", CreatedTime: ago(10 * 24 * time.Hour)},
 		{IncidentID: "3", Title: "forgotten", SeverityLabel: "Minor", IncidentStart: ago(400 * 24 * time.Hour)},
+		{IncidentID: "4", Title: "no times"},
 	})
 
 	result, err := session.ListResources(t.Context(), nil)
 	require.NoError(t, err)
-	require.Len(t, result.Resources, 2)
+	require.Len(t, result.Resources, 3)
 	assert.Equal(t, "grafana://irm/incidents/1", result.Resources[0].URI)
 	assert.Equal(t, "checkout is down · active incident (Critical)", result.Resources[0].Description)
 	assert.Equal(t, "grafana://irm/incidents/2", result.Resources[1].URI)
 	assert.Equal(t, "slow logins · active incident", result.Resources[1].Description)
+	assert.Equal(t, "grafana://irm/incidents/4", result.Resources[2].URI)
 }
 
 func TestReadIncidentResource(t *testing.T) {

@@ -34,7 +34,8 @@ func listing(uris ...string) func(context.Context) ([]*mcp.Resource, error) {
 }
 
 // Every kind is listed, in registration order, except those that fail, time
-// out or panic: those are left out without failing the list.
+// out or panic: those are left out without failing the list, and one that
+// ignores its context doesn't hold the list up.
 func TestListSkipsFailingKinds(t *testing.T) {
 	old := listTimeout
 	listTimeout = 50 * time.Millisecond
@@ -49,6 +50,10 @@ func TestListSkipsFailingKinds(t *testing.T) {
 			return nil, ctx.Err()
 		}),
 		fakeKind("panicking", func(context.Context) ([]*mcp.Resource, error) { panic("boom") }),
+		fakeKind("ignoring", func(context.Context) ([]*mcp.Resource, error) {
+			time.Sleep(time.Second)
+			return listing("test://ignoring/1")(context.Background())
+		}),
 		fakeKind("b", listing("test://b/1")),
 	)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -57,8 +62,10 @@ func TestListSkipsFailingKinds(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 
+	start := time.Now()
 	result, err := session.ListResources(t.Context(), nil)
 	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 500*time.Millisecond, "a kind ignoring its context held up the list")
 	var uris []string
 	for _, r := range result.Resources {
 		uris = append(uris, r.URI)
