@@ -6,6 +6,7 @@ import type { TraceViewResult } from '../src/trace/types';
 import { applyHostContext } from './hostContext';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
+import { parseDsQueryResult, type DsQueryPayload } from './beyondRenderer';
 
 // Attach handlers before connecting: hosts may deliver results before React's first commit.
 /** Source query inputs retained for refresh and range selection. */
@@ -22,6 +23,8 @@ export type QueryArgs = {
 export type AppHostSnapshot = {
   result?: ParsedMetrics;
   trace?: TraceViewResult;
+  /** SPIKE C′: query_datasource payload for the Beyond renderer. */
+  beyond?: DsQueryPayload;
   toolName?: string;
   args?: QueryArgs;
   colorMode: McpAppColorMode;
@@ -43,6 +46,8 @@ export type AppHostState = {
   subscribe: (listener: () => void) => () => void;
   /** Re-run the same query under the host's authenticated MCP session. */
   refresh: () => Promise<void>;
+  /** SPIKE C′: re-run query_datasource through render_grafana_app, optionally with a new range. */
+  refreshDatasource: (range: { from?: string; to?: string }) => Promise<boolean>;
   /** Hand a brushed window back to the agent as a question. */
   askAboutRange: (fromMs: number, toMs: number) => void;
   /** Ask the host to open a Grafana URL; the iframe cannot navigate itself. */
@@ -95,6 +100,16 @@ export function createAppHostState(app: App): AppHostState {
       return false;
     }
 
+    if (snapshot.toolName === 'query_datasource') {
+      const beyond = parseDsQueryResult(payload);
+      if (!beyond) {
+        set({ ...patch, isError: true, status: 'Interactive view unavailable; data remains available in the tool output.' });
+        return false;
+      }
+      set({ ...patch, beyond, result: undefined, trace: undefined, isError: false });
+      return true;
+    }
+
     const trace = snapshot.toolName === 'get_tempo_trace' ? parseTraceResult(payload) : undefined;
     if (trace) {
       set({ ...patch, trace, result: undefined, isError: false });
@@ -134,6 +149,7 @@ export function createAppHostState(app: App): AppHostState {
       args: { ...incoming, ...(typeof call.orgId === 'number' ? { orgId: call.orgId } : {}) } as QueryArgs,
       result: undefined,
       trace: undefined,
+      beyond: undefined,
       isError: false,
       status: WAITING,
     });
@@ -145,17 +161,18 @@ export function createAppHostState(app: App): AppHostState {
         ...nextCall(),
         result: undefined,
         trace: undefined,
+        beyond: undefined,
         isError: true,
         status: 'The query failed. Check the query inputs and datasource access, then run render_grafana_app again.',
       });
       return;
     }
     // An unreadable result replaces the previous chart rather than sitting under it.
-    applyResult(response, { ...nextCall(), result: undefined, trace: undefined });
+    applyResult(response, { ...nextCall(), result: undefined, trace: undefined, beyond: undefined });
   };
 
   app.ontoolcancelled = () => {
-    set({ ...nextCall(), result: undefined, trace: undefined, isError: true, status: 'The query was cancelled.' });
+    set({ ...nextCall(), result: undefined, trace: undefined, beyond: undefined, isError: true, status: 'The query was cancelled.' });
   };
 
   app.onhostcontextchanged = (context) => {
@@ -164,7 +181,7 @@ export function createAppHostState(app: App): AppHostState {
   };
 
   app.onteardown = async () => {
-    set({ ...nextCall(), result: undefined, trace: undefined, isError: true, status: 'Grafana App closed.' });
+    set({ ...nextCall(), result: undefined, trace: undefined, beyond: undefined, isError: true, status: 'Grafana App closed.' });
     return {};
   };
 
@@ -179,6 +196,7 @@ export function createAppHostState(app: App): AppHostState {
       set({
         result: undefined,
         trace: undefined,
+        beyond: undefined,
         isError: true,
         status: 'Could not connect to the MCP host. Reopen the Grafana App to try again.',
       });
@@ -205,6 +223,31 @@ export function createAppHostState(app: App): AppHostState {
       set({ notice: error(`Could not refresh: ${cause instanceof Error ? cause.message : String(cause)}`) });
     } finally {
       if (!superseded()) set({ refreshing: false });
+    }
+  };
+
+  // SPIKE C′: the source is not registered on its own, so refresh goes through
+  // render_grafana_app. The result reaches only this app; the host opens no new view.
+  const refreshDatasource = async (range: { from?: string; to?: string }): Promise<boolean> => {
+    if (snapshot.toolName !== 'query_datasource' || !snapshot.args) return false;
+    const generation = snapshot.generation;
+    const { orgId, ...source } = snapshot.args as QueryArgs & Record<string, unknown>;
+    const args = { ...source, ...range };
+    set({ refreshing: true, notice: undefined });
+    try {
+      const response = await app.callServerTool({
+        name: 'render_grafana_app',
+        arguments: { toolName: 'query_datasource', arguments: args, ...(orgId ? { orgId } : {}) },
+      });
+      if (snapshot.generation !== generation) return false;
+      if (response.isError || !applyResult(response)) return false;
+      // Keep the new range for the next Refresh (contract 19.2, rule 4).
+      set({ args: { ...args, ...(orgId ? { orgId } : {}) } as QueryArgs });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (snapshot.generation === generation) set({ refreshing: false });
     }
   };
 
@@ -244,6 +287,7 @@ export function createAppHostState(app: App): AppHostState {
       return () => listeners.delete(listener);
     },
     refresh,
+    refreshDatasource,
     askAboutRange,
     openInGrafana,
     close: () => void app.close(),

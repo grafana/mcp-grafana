@@ -480,6 +480,8 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddAssistantTools(s, enableWriteTools) }, dt.assistant, "assistant"},
 		{tools.AddDocsTools, dt.docs, "docs"},
 		{tools.AddUserTools, dt.user, "user"},
+		// SPIKE: option C (visible query_datasource) for the token comparison only.
+		{func(s *mcp.Server) { tools.QueryDatasourceSource.Register(s) }, false, "dsqueryvisible"},
 	}
 }
 
@@ -494,6 +496,11 @@ func (dt *disabledTools) appSources() []mcpgrafana.Tool {
 	}
 	if isCategoryEnabled(enabled, dt.tempo, "tempo") {
 		sources = append(sources, tools.GetTempoTraceTool)
+	}
+	// SPIKE option C′: opt-in. Raw queries pass through unfiltered (SQL can
+	// write), so gate it like query_sql.
+	if slices.Contains(enabled, "dsquery") && dt.mutatingQueryToolsEnabled() {
+		sources = append(sources, tools.QueryDatasourceSource)
 	}
 	return sources
 }
