@@ -269,3 +269,38 @@ func TestOnCallTransportUnderOverrideRefusesRedirectOffOnCallHost(t *testing.T) 
 	require.ErrorContains(t, err, "grafana URL override blocked request outside selected target")
 	assert.Zero(t, thirdHits.Load())
 }
+
+// Without a requested page, the public API path follows every page, as the
+// proxy path already does; with one, it returns just that page.
+func TestListOnCallSchedulesFollowsPages(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/plugins/grafana-irm-app/settings" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonData": map[string]string{"onCallApiUrl": server.URL}})
+			return
+		}
+		require.Equal(t, "/api/v1/schedules/", r.URL.Path)
+		page := r.URL.Query().Get("page")
+		var next any
+		if page == "" || page == "1" {
+			next = server.URL + "/api/v1/schedules/?page=2"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"next":    next,
+			"results": []map[string]any{{"id": "S" + page, "name": "schedule " + page}},
+		})
+	}))
+	t.Cleanup(server.Close)
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "oncall-token"})
+
+	all, err := OnCallSchedules(ctx)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	assert.Equal(t, "S", all[0].ID)
+	assert.Equal(t, "S2", all[1].ID)
+
+	one, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{Page: 2})
+	require.NoError(t, err)
+	require.Len(t, one, 1)
+	assert.Equal(t, "S2", one[0].ID)
+}

@@ -38,7 +38,7 @@ func newGrafana(t *testing.T) *httptest.Server {
 	return server
 }
 
-// connect serves AddDatasources plus two static resources, with a Grafana
+// connect serves Datasources plus two static resources, with a Grafana
 // client for grafanaURL injected the way GrafanaContextMiddleware does.
 func connect(t *testing.T, grafanaURL string, opts *mcp.ServerOptions) *mcp.ClientSession {
 	t.Helper()
@@ -47,7 +47,7 @@ func connect(t *testing.T, grafanaURL string, opts *mcp.ServerOptions) *mcp.Clie
 		func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) { return nil, nil })
 	s.AddResource(&mcp.Resource{URI: "ui://test/other.html", Name: "other"},
 		func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) { return nil, nil })
-	AddDatasources(s)
+	Register(s, Datasources)
 	s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			u, _ := url.Parse(grafanaURL)

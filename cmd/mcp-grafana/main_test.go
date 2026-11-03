@@ -22,6 +22,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/observability"
+	"github.com/grafana/mcp-grafana/v2/resources"
 	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -2231,23 +2232,34 @@ func TestApplyLokiGuardrailEnvOnEstimateFailure(t *testing.T) {
 	assert.Equal(t, "allow", gc.lokiGuardrailOnFailure, "an explicit flag wins over the environment")
 }
 
-func TestDatasourceResourcesFollowDatasourceCategory(t *testing.T) {
+func TestResourceKindsFollowToolCategories(t *testing.T) {
+	const (
+		datasources = "grafana://datasources/{uid}"
+		schedules   = "grafana://oncall/schedules/{id}"
+		incidents   = "grafana://incidents/{id}"
+	)
 	for _, tc := range []struct {
-		name    string
-		config  disabledTools
-		enabled bool
+		name   string
+		config disabledTools
+		want   []string
 	}{
-		{"enabled", disabledTools{enabledTools: "datasource"}, true},
-		{"disabled", disabledTools{enabledTools: "datasource", datasource: true}, false},
-		{"not enabled", disabledTools{enabledTools: "search"}, false},
+		{"all", disabledTools{enabledTools: "datasource,oncall,incident"}, []string{datasources, schedules, incidents}},
+		{"datasource disabled", disabledTools{enabledTools: "datasource,oncall,incident", datasource: true}, []string{schedules, incidents}},
+		{"oncall disabled", disabledTools{enabledTools: "datasource,oncall,incident", oncall: true}, []string{datasources, incidents}},
+		{"incident disabled", disabledTools{enabledTools: "datasource,oncall,incident", incident: true}, []string{datasources, schedules}},
+		{"none enabled", disabledTools{enabledTools: "search"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-			tc.config.processTools(s)
 			mcpgrafana.RegisterAppResources(s) // advertises the resources capability either way
+			resources.Register(s, tc.config.resourceKinds()...)
 			result, err := connectTestClient(t, s).ListResourceTemplates(t.Context(), nil)
 			require.NoError(t, err)
-			assert.Equal(t, tc.enabled, len(result.ResourceTemplates) == 1)
+			var got []string
+			for _, rt := range result.ResourceTemplates {
+				got = append(got, rt.URITemplate)
+			}
+			assert.ElementsMatch(t, tc.want, got)
 		})
 	}
 }
