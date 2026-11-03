@@ -710,13 +710,9 @@ type BulkDatasourceHealthResult struct {
 }
 
 func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-
-	resp, err := c.Datasources.GetDataSourcesWithParams(
-		datasources.NewGetDataSourcesParamsWithContext(ctx),
-	)
+	list, err := datasource.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list datasources: %w", err)
+		return nil, err
 	}
 
 	var all models.DataSourceList
@@ -725,13 +721,13 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		for _, u := range args.UIDs {
 			uidSet[u] = true
 		}
-		for _, ds := range resp.Payload {
+		for _, ds := range list {
 			if uidSet[ds.UID] {
 				all = append(all, ds)
 			}
 		}
 	} else {
-		all = filterDatasources(resp.Payload, args.Type, "")
+		all = filterDatasources(list, args.Type, "")
 	}
 
 	limit := 10

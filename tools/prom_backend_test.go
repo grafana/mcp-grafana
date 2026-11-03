@@ -117,6 +117,39 @@ func TestBackendForDatasource_AcceptsPrometheusDatasource(t *testing.T) {
 	assert.NotNil(t, backend)
 }
 
+func TestBackendForDatasource_QueryOnlyCallerUsesUIDRoute(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/datasources/uid/prom-uid":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"Permission denied"}`))
+		case "/api/frontend/settings":
+			_, _ = w.Write([]byte(`{
+				"datasources":{"Prometheus":{"id":1,"uid":"prom-uid","type":"prometheus","jsonData":{}}},
+				"defaultDatasource":"Prometheus"
+			}`))
+		case "/api/datasources/uid/prom-uid/resources/api/v1/labels":
+			_, _ = w.Write([]byte(`{"status":"success","data":["job"]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	backend, err := backendForDatasource(mockDatasourcesCtx(server), "prom-uid")
+	require.NoError(t, err)
+	names, err := backend.LabelNames(context.Background(), nil, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"job"}, names)
+	assert.Contains(t, paths, "/api/datasources/uid/prom-uid/resources/api/v1/labels")
+	for _, path := range paths {
+		assert.NotContains(t, path, "/api/datasources/proxy/1", "numeric datasource route used: %v", paths)
+	}
+}
+
 func TestNewPrometheusBackend_UsesBaseTransport(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

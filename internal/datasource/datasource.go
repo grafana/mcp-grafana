@@ -32,10 +32,15 @@ func List(ctx context.Context) (models.DataSourceList, error) {
 	resp, err := c.Datasources.GetDataSourcesWithParams(
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("list datasources: %w", err)
+	if err == nil {
+		return resp.Payload, nil
 	}
-	return resp.Payload, nil
+	if hasStatus(err, http.StatusForbidden) {
+		if list, fallbackErr := datasourceListFromFrontendSettings(ctx); fallbackErr == nil {
+			return list, nil
+		}
+	}
+	return nil, fmt.Errorf("list datasources: %w", err)
 }
 
 // Default returns the organization's default datasource.
@@ -60,9 +65,17 @@ func ByUID(ctx context.Context, uid string) (*models.DataSource, error) {
 		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(uid),
 	)
 	if err != nil {
-		var status interface{ IsCode(int) bool }
-		if errors.As(err, &status) && status.IsCode(http.StatusNotFound) {
+		if hasStatus(err, http.StatusNotFound) {
 			return nil, notFoundError{"UID", uid}
+		}
+		if hasStatus(err, http.StatusForbidden) {
+			ds, fallbackErr := datasourceByUIDFromFrontendSettings(ctx, uid)
+			if fallbackErr == nil {
+				return ds, nil
+			}
+			if errors.Is(fallbackErr, errFrontendSettingsDatasourceNotFound) {
+				return nil, notFoundError{"UID", uid}
+			}
 		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", uid, err)
 	}
@@ -77,11 +90,24 @@ func ByName(ctx context.Context, name string) (*models.DataSource, error) {
 		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(name),
 	)
 	if err != nil {
-		var status interface{ IsCode(int) bool }
-		if errors.As(err, &status) && status.IsCode(http.StatusNotFound) {
+		if hasStatus(err, http.StatusNotFound) {
 			return nil, notFoundError{"name", name}
+		}
+		if hasStatus(err, http.StatusForbidden) {
+			ds, fallbackErr := datasourceByNameFromFrontendSettings(ctx, name)
+			if fallbackErr == nil {
+				return ds, nil
+			}
+			if errors.Is(fallbackErr, errFrontendSettingsDatasourceNotFound) {
+				return nil, notFoundError{"name", name}
+			}
 		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", name, err)
 	}
 	return datasource.Payload, nil
+}
+
+func hasStatus(err error, code int) bool {
+	var status interface{ IsCode(int) bool }
+	return errors.As(err, &status) && status.IsCode(code)
 }
