@@ -9,17 +9,17 @@ import (
 	"github.com/grafana/mcp-grafana/v2/tools"
 )
 
-const scheduleURIPrefix = "grafana://oncall/schedules/"
+const scheduleURIPrefix = "grafana://irm/schedules/"
 
-// OnCallSchedules exposes each OnCall schedule as a
-// grafana://oncall/schedules/{id} resource. Reading one includes who is on
-// call now.
-var OnCallSchedules = Kind{
+// Schedules exposes each IRM on-call schedule as a
+// grafana://irm/schedules/{id} resource. Reading one includes who is on call
+// now.
+var Schedules = Kind{
 	template: &mcp.ResourceTemplate{
 		URITemplate: scheduleURIPrefix + "{id}",
-		Name:        "oncall_schedule",
-		Title:       "Grafana OnCall schedule",
-		Description: "A Grafana OnCall schedule and the users currently on call for it.",
+		Name:        "irm_schedule",
+		Title:       "Grafana IRM schedule",
+		Description: "A Grafana IRM on-call schedule and the users currently on call for it.",
 		MIMEType:    "application/json",
 	},
 	read: readSchedule,

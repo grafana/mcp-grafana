@@ -10,20 +10,20 @@ import (
 	"github.com/grafana/mcp-grafana/v2/tools"
 )
 
-const incidentURIPrefix = "grafana://incidents/"
+const incidentURIPrefix = "grafana://irm/incidents/"
 
 // maxActiveIncidents caps the active incidents listed. There are normally a
 // handful; this only guards against something pathological.
 const maxActiveIncidents = 100
 
 // ActiveIncidents exposes each active, non-drill incident as a
-// grafana://incidents/{id} resource. Any incident can be read, including
+// grafana://irm/incidents/{id} resource. Any incident can be read, including
 // resolved ones.
 var ActiveIncidents = Kind{
 	template: &mcp.ResourceTemplate{
 		URITemplate: incidentURIPrefix + "{id}",
-		Name:        "incident",
-		Title:       "Grafana incident",
+		Name:        "irm_incident",
+		Title:       "Grafana IRM incident",
 		Description: "Full details of a Grafana IRM incident, including status, severity, labels and custom fields.",
 		MIMEType:    "application/json",
 	},

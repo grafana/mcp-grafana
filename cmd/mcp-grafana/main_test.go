@@ -2235,8 +2235,8 @@ func TestApplyLokiGuardrailEnvOnEstimateFailure(t *testing.T) {
 func TestResourceKindsFollowToolCategories(t *testing.T) {
 	const (
 		datasources = "grafana://datasources/{uid}"
-		schedules   = "grafana://oncall/schedules/{id}"
-		incidents   = "grafana://incidents/{id}"
+		schedules   = "grafana://irm/schedules/{id}"
+		incidents   = "grafana://irm/incidents/{id}"
 	)
 	for _, tc := range []struct {
 		name   string
