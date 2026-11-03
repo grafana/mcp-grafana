@@ -126,6 +126,10 @@ var QueryDatasourceSource = mcpgrafana.MustTool(
 	"query_datasource",
 	"Query any datasource through Grafana /api/ds/query.",
 	queryDatasourceTool,
-	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	// Same hints as query_sql: raw queries pass through unfiltered and can write.
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
