@@ -1,5 +1,5 @@
 // This file holds the opt-in Prometheus query guardrail: a pure assessment of
-// a PromQL query against a range and resolution budget, and the policy shell
+// a PromQL query against selector, range and resolution policies, and the policy shell
 // that logs, records metrics, and turns a block into guidance for the agent.
 package tools
 
@@ -14,6 +14,8 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
@@ -28,8 +30,9 @@ var promGuardParser = parser.NewParser(parser.Options{EnableExperimentalFunction
 var warnUnknownPromGuardrailModeOnce sync.Once
 
 type promGuardPolicy struct {
-	MaxRange  time.Duration // 0 disables the range check
-	MaxPoints int64         // 0 disables the points check
+	RequireSelectiveLabels bool          // false disables the selector check
+	MaxRange               time.Duration // 0 disables the range check
+	MaxPoints              int64         // 0 disables the points check
 }
 
 // promGuardReason values become the `reason` metric attribute, so the set is
@@ -39,6 +42,7 @@ type promGuardReason string
 const (
 	promGuardReasonRange       promGuardReason = "range"
 	promGuardReasonPoints      promGuardReason = "points"
+	promGuardReasonSelector    promGuardReason = "selector"
 	promGuardReasonUnparseable promGuardReason = "unparseable"
 )
 
@@ -48,7 +52,7 @@ const (
 	promGuardAllow promGuardVerdict = iota
 	promGuardBlock
 	// promGuardUnknown means no check was violated but the expression could
-	// not be parsed, so its range windows were not counted.
+	// not be parsed, so its selectors and range windows could not be fully assessed.
 	promGuardUnknown
 )
 
@@ -60,7 +64,7 @@ type promGuardViolation struct {
 
 type promGuardDecision struct {
 	Verdict    promGuardVerdict
-	Violations []promGuardViolation // Block only; range before points
+	Violations []promGuardViolation // Block only; selector, then range, then points
 	ParseErr   error                // Unknown only
 }
 
@@ -76,9 +80,24 @@ func assessPromQuery(expr, queryType string, start, end time.Time, stepSeconds i
 
 	var d promGuardDecision
 	var parseErr error
+
+	var extension time.Duration
+	if p.MaxRange > 0 || p.RequireSelectiveLabels {
+		ast, err := promGuardParser.ParseExpr(promGuardSubstituteMacros(expr, window, stepSeconds))
+		if err != nil {
+			parseErr = err
+		} else {
+			if p.RequireSelectiveLabels {
+				if v, ok := checkPromSelectors(ast); ok {
+					d.Violations = append(d.Violations, v)
+				}
+			}
+			if p.MaxRange > 0 {
+				extension = promAstWindow(ast)
+			}
+		}
+	}
 	if p.MaxRange > 0 {
-		var extension time.Duration
-		extension, parseErr = promExprWindow(promGuardSubstituteMacros(expr, window, stepSeconds))
 		if v, ok := checkPromRange(window, extension, p.MaxRange); ok {
 			d.Violations = append(d.Violations, v)
 		}
@@ -127,16 +146,47 @@ func promGuardSubstituteMacros(expr string, window time.Duration, stepSeconds in
 	).Replace(expr)
 }
 
-// promExprWindow returns how far back the expression reads beyond each
-// evaluation step: the longest window over its selectors, where a selector's
-// window is its own range plus the ranges of every subquery above it. offset
-// and @ are ignored: offset shifts the window rather than widening it, and @
-// pins it, so ignoring @ can only overestimate.
-func promExprWindow(expr string) (time.Duration, error) {
-	ast, err := promGuardParser.ParseExpr(expr)
-	if err != nil {
-		return 0, err
+// checkPromSelectors requires a positive, non-empty, non-blanket label
+// constraint other than the metric name in EACH selector. This is a static
+// heuristic, not a cardinality estimate. A negative universal matcher makes
+// the selector empty and is exempt, regardless of the other matchers.
+func checkPromSelectors(ast parser.Node) (promGuardViolation, bool) {
+	var blocked bool
+	parser.Inspect(ast, func(node parser.Node, _ []parser.Node) error {
+		vs, ok := node.(*parser.VectorSelector)
+		if !ok {
+			return nil
+		}
+		for _, m := range vs.LabelMatchers {
+			if m.Type == labels.MatchNotRegexp && classifyPromRegex(m.Value) == promRegexAll {
+				return nil
+			}
+			if m.Name == model.MetricNameLabel || m.Matches("") {
+				continue
+			}
+			if m.Type == labels.MatchEqual || (m.Type == labels.MatchRegexp && classifyPromRegex(m.Value) == promRegexOther) {
+				return nil
+			}
+		}
+		blocked = true
+		return errPromUnscopedSelector
+	})
+	if !blocked {
+		return promGuardViolation{}, false
 	}
+	return promGuardViolation{
+		Reason:  promGuardReasonSelector,
+		Message: "a vector selector has no selective positive label matcher beyond the metric name",
+		Hint:    `add a non-empty exact label value or a constrained positive regex to each unscoped selector (for example, up{job="api"} or up{job=~"api|worker"}), using values appropriate to the intended scope; removing a wildcard alone does not reduce the selected series`,
+	}, true
+}
+
+var errPromUnscopedSelector = errors.New("unscoped Prometheus selector")
+
+// promAstWindow returns the longest selector window: its own range plus
+// all enclosing subquery ranges. offset shifts rather than widens the window,
+// and ignoring @ can only overestimate.
+func promAstWindow(ast parser.Node) time.Duration {
 	var longest time.Duration
 	parser.Inspect(ast, func(node parser.Node, path []parser.Node) error {
 		if _, ok := node.(*parser.VectorSelector); !ok {
@@ -154,7 +204,7 @@ func promExprWindow(expr string) (time.Duration, error) {
 		longest = max(longest, w)
 		return nil
 	})
-	return longest, nil
+	return longest
 }
 
 func checkPromRange(window, extension, maxRange time.Duration) (promGuardViolation, bool) {
@@ -244,8 +294,9 @@ func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, en
 	enforced := mode != mcpgrafana.PrometheusGuardrailShadow
 
 	policy := promGuardPolicy{
-		MaxRange:  config.PrometheusGuardrailMaxRange,
-		MaxPoints: config.PrometheusGuardrailMaxPoints,
+		RequireSelectiveLabels: config.PrometheusGuardrailRequireSelectiveLabels,
+		MaxRange:               config.PrometheusGuardrailMaxRange,
+		MaxPoints:              config.PrometheusGuardrailMaxPoints,
 	}
 	d := assessPromQuery(expr, queryType, start, end, stepSeconds, policy)
 
@@ -261,7 +312,7 @@ func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, en
 		// Dashboard variables such as $window are the usual cause, and a real
 		// syntax error comes back from the datasource anyway, so this is not
 		// worth a warning per query; the fail_open counter tracks the rate.
-		logger.DebugContext(ctx, "prometheus guardrail could not parse the expression; checked the query's own time range only (fail-open)", "error", d.ParseErr, "expr", expr)
+		logger.DebugContext(ctx, "prometheus guardrail could not parse the expression; selector and expression-window checks unavailable; checked request time range and points (fail-open)", "error", d.ParseErr, "expr", expr)
 		metrics.recordFailOpen(ctx, promGuardReasonUnparseable)
 		return nil
 

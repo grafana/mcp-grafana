@@ -120,19 +120,20 @@ When the [Prometheus query guardrail](../../configure/command-line-flags/) is en
 | `mcp_prometheus_guardrail_admitted_total` | Counter | The query passed every enabled check |
 | `mcp_prometheus_guardrail_would_block_total` | Counter | The query failed a check in `shadow` mode and ran anyway |
 | `mcp_prometheus_guardrail_blocked_total` | Counter | The query failed a check in `enforce` mode and was rejected |
-| `mcp_prometheus_guardrail_fail_open_total` | Counter | No check failed, but the guardrail could not parse the expression, so its range-vector and subquery windows were not counted |
+| `mcp_prometheus_guardrail_fail_open_total` | Counter | No check failed, but the guardrail could not parse the expression, so enabled selector and expression-window checks could not be completed |
 
 **Labels:**
 
 | Label | On | Values |
 |-------|-----|--------|
-| `reason` | `would_block`, `blocked` | `range` (effective time range over `--prometheus-guardrail-max-range`), `points` (requested points per series over `--prometheus-guardrail-max-points`) |
+| `reason` | `would_block`, `blocked` | `selector` (a vector selector lacks a selective positive label constraint when the selector policy is enabled), `range` (effective time range over `--prometheus-guardrail-max-range`), `points` (requested points per series over `--prometheus-guardrail-max-points`) |
 | `reason` | `fail_open` | `unparseable` |
 
-A query that fails both checks is counted once, as `range`. The time range and step are checked even when the expression does not parse, so a macro-bearing query over too long a range is still blocked rather than counted as a fail-open. Unlike the Loki counters, these have no `backend` label, because every Prometheus-compatible backend gets the same checks.
+A query that fails multiple checks is counted once, under the first failure in the order `selector`, `range`, `points`. Selector checks are enabled independently of the numeric budgets. The time range and step are checked even when the expression does not parse, so a macro-bearing query over too long a range is still blocked rather than counted as a fail-open. Unlike the Loki counters, these have no `backend` label, because every Prometheus-compatible backend gets the same checks.
 
-A steady `fail_open` rate usually means queries that carry Grafana macros such as `$__rate_interval`, which the guardrail parses as sent. The guardrail has these limits:
+Built-in Grafana macros such as `$__rate_interval` are substituted before parsing. A steady `fail_open` rate can indicate unresolved dashboard variables such as `$window` or unsupported syntax; a low `would_block` rate is meaningful only alongside a low fail-open rate. The guardrail has these limits:
 
+- The optional selector check is a static heuristic, not a bound on series count or backend work. Neither query text nor label names/values are exported as metric attributes.
 - The points check budgets the requested resolution, `floor(range / step) + 1`. It does not bound the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step.
 - `offset` and `@` modifiers are ignored. `offset` shifts a window without widening it; ignoring `@` can only overestimate.
 - Expressions that need Grafana macro substitution or a dialect-only feature fail open on the expression part.

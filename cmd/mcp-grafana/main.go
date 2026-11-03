@@ -204,9 +204,10 @@ type grafanaConfig struct {
 	lokiGuardrailMaxRange  time.Duration
 	lokiGuardrailOnFailure string
 
-	prometheusGuardrailMode      string
-	prometheusGuardrailMaxRange  time.Duration
-	prometheusGuardrailMaxPoints int64
+	prometheusGuardrailRequireSelectiveLabels bool
+	prometheusGuardrailMode                   string
+	prometheusGuardrailMaxRange               time.Duration
+	prometheusGuardrailMaxPoints              int64
 
 	includeArgsInSpans bool
 
@@ -282,6 +283,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.lokiGuardrailOnFailure, "loki-guardrail-on-estimate-failure", mcpgrafana.LokiGuardrailFailureAllow, "What the Loki guardrail does when it cannot assess a query (no stream selector it understands, or the index/stats estimate failed): 'allow' (default) runs the query, 'block' rejects it in enforce mode. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_ON_ESTIMATE_FAILURE environment variable when the flag is not set.")
 	flag.DurationVar(&gc.lokiGuardrailMaxRange, "loki-guardrail-max-range", 24*time.Hour, "Maximum effective time range for a single query_loki_logs or query_loki_patterns call, including range-vector durations like [30d]. Accepts Go duration strings, e.g. 24h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
 	flag.StringVar(&gc.prometheusGuardrailMode, "prometheus-guardrail-mode", mcpgrafana.PrometheusGuardrailOff, "Prometheus query guardrail mode for query_prometheus, query_prometheus_histogram and the Prometheus queries of run_panel_query: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run), or 'enforce' (reject blocked queries with rewrite guidance). Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MODE environment variable when the flag is not set.")
+	flag.BoolVar(&gc.prometheusGuardrailRequireSelectiveLabels, "prometheus-guardrail-require-selective-labels", false, "Require a non-empty positive label constraint beyond the metric name in each PromQL vector selector. Blanket regexes and negative matchers do not provide scope. Independent of range and points limits; only applies when the guardrail is not 'off'. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS when the flag is not set.")
 	flag.DurationVar(&gc.prometheusGuardrailMaxRange, "prometheus-guardrail-max-range", 192*time.Hour, "Maximum effective time range for a single PromQL query: its time range plus the longest range vector or subquery window in the expression. Accepts Go duration strings, e.g. 192h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.prometheusGuardrailMaxPoints, "prometheus-guardrail-max-points", 11000, "Maximum points per series a PromQL range query may request, computed from its time range and step. 0 disables the points check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS environment variable when the flag is not set.")
 
@@ -375,6 +377,13 @@ func (gc *grafanaConfig) applyPrometheusGuardrailEnv(setFlags map[string]bool) e
 			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS %q: %w", v, err)
 		}
 		gc.prometheusGuardrailMaxPoints = n
+	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS"); v != "" && !setFlags["prometheus-guardrail-require-selective-labels"] {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS %q: %w", v, err)
+		}
+		gc.prometheusGuardrailRequireSelectiveLabels = b
 	}
 	return nil
 }
@@ -1541,7 +1550,7 @@ func main() {
 		os.Exit(2)
 	}
 	if gc.prometheusGuardrailMode != mcpgrafana.PrometheusGuardrailOff {
-		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints)
+		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints, "require_selective_labels", gc.prometheusGuardrailRequireSelectiveLabels)
 	}
 
 	if err := validateMountFlags(transport, *basePath, *endpointPath, *healthzAddress, obs); err != nil {
@@ -1562,20 +1571,21 @@ func main() {
 	mcpgrafana.DynamicMultiOrgEnabled = gc.dynamicMultiOrg
 
 	grafanaConfig := mcpgrafana.GrafanaConfig{
-		Debug:                          gc.debug,
-		AllowGrafanaURLOverride:        gc.allowURLOverride,
-		AllowCrossOriginRedirects:      gc.allowCrossOriginRedirects,
-		MaxLokiLogLimit:                gc.maxLokiLogLimit,
-		LokiGuardrailMode:              gc.lokiGuardrailMode,
-		LokiGuardrailMaxBytes:          gc.lokiGuardrailMaxBytes,
-		LokiGuardrailMaxRange:          gc.lokiGuardrailMaxRange,
-		LokiGuardrailOnEstimateFailure: gc.lokiGuardrailOnFailure,
-		PrometheusGuardrailMode:        gc.prometheusGuardrailMode,
-		PrometheusGuardrailMaxRange:    gc.prometheusGuardrailMaxRange,
-		PrometheusGuardrailMaxPoints:   gc.prometheusGuardrailMaxPoints,
-		IncludeArgumentsInSpans:        gc.includeArgsInSpans,
-		Timeout:                        gc.timeout,
-		SOCKS5ProxyURL:                 socks5Proxy,
+		Debug:                                     gc.debug,
+		AllowGrafanaURLOverride:                   gc.allowURLOverride,
+		AllowCrossOriginRedirects:                 gc.allowCrossOriginRedirects,
+		MaxLokiLogLimit:                           gc.maxLokiLogLimit,
+		LokiGuardrailMode:                         gc.lokiGuardrailMode,
+		LokiGuardrailMaxBytes:                     gc.lokiGuardrailMaxBytes,
+		LokiGuardrailMaxRange:                     gc.lokiGuardrailMaxRange,
+		LokiGuardrailOnEstimateFailure:            gc.lokiGuardrailOnFailure,
+		PrometheusGuardrailRequireSelectiveLabels: gc.prometheusGuardrailRequireSelectiveLabels,
+		PrometheusGuardrailMode:                   gc.prometheusGuardrailMode,
+		PrometheusGuardrailMaxRange:               gc.prometheusGuardrailMaxRange,
+		PrometheusGuardrailMaxPoints:              gc.prometheusGuardrailMaxPoints,
+		IncludeArgumentsInSpans:                   gc.includeArgsInSpans,
+		Timeout:                                   gc.timeout,
+		SOCKS5ProxyURL:                            socks5Proxy,
 	}
 	grafanaConfig.AllowedGrafanaURLs, err = mcpgrafana.ParseGrafanaURLOverrides(gc.allowedURLs)
 	if err != nil {

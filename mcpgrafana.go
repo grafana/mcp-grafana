@@ -381,6 +381,13 @@ type GrafanaConfig struct {
 	// asks for, before the query reaches the datasource.
 	PrometheusGuardrailMode string
 
+	// PrometheusGuardrailRequireSelectiveLabels requires each vector selector
+	// to have a non-empty positive label constraint beyond the metric name.
+	// Blanket regexes and negative matchers do not provide scope; selectors
+	// proven empty by a negative universal regex are exempt. Default false.
+	// Independent of MaxRange and MaxPoints; only active when mode is not off.
+	PrometheusGuardrailRequireSelectiveLabels bool
+
 	// PrometheusGuardrailMaxRange is the maximum effective time range for a
 	// single PromQL query: the query's own range plus the longest range
 	// vector or subquery window in the expression. Zero disables the range

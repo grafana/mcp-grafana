@@ -157,11 +157,37 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
 
 - `--prometheus-guardrail-mode`: Prometheus query guardrail for `query_prometheus`, `query_prometheus_histogram`, and the Prometheus queries of `run_panel_query`: `off` (default), `shadow` (log queries that would be blocked, but let them run), or `enforce` (reject them with rewrite guidance). Falls back to the `GRAFANA_PROMETHEUS_GUARDRAIL_MODE` environment variable.
+- `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
 - `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query: its own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, with nested subquery ranges added up. Defaults to `192h`. Takes a Go duration, so write `192h`, not `8d`. `0` disables the range check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
 - `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1`. Defaults to `11000`; `0` disables the points check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
 
 The points check budgets the requested resolution, not the number of series, samples, or subquery evaluations. The range check ignores `offset` and `@`. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured. An expression the guardrail still cannot parse, such as one with a dashboard variable like `$window`, is checked against its time range and step only. Decisions are exported as `mcp_prometheus_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, and `_fail_open_total`. See [Observability](../../developer/observability-metrics-and-tracing/#prometheus-guardrail-metrics).
+
 - `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
+
+#### Prometheus selector policy
+
+Enable `--prometheus-guardrail-require-selective-labels` alongside `--prometheus-guardrail-mode=shadow` to measure the impact before enforcing it. Existing range and points policies are unchanged when this new flag is false (the default).
+
+Each vector selector must have a positive exact or regex matcher on a label other than `__name__` that does not match the empty string and is not recognized as a blanket regex. An exact metric name alone is not sufficient. Matchers on another operand of a binary expression cannot provide scope for this selector.
+
+| Query | Selector policy |
+|-------|-----------------|
+| `up` or `up{job=~".*"}` | Block: neither constrains a label beyond the metric name |
+| `{__name__=~"up\|http_requests_total"}` | Block: metric-name constraints alone are insufficient |
+| `up{job=~".+"}` or `up{job!=""}` | Block: an existence check alone is insufficient |
+| `up{job!~".+"}` or `up{job=""}` | Block: an absence/empty-value check alone is insufficient |
+| `up{job="api",instance=~".*"}` | Allow: a non-empty positive exact constraint provides scope |
+| `up{job=~"api\|worker",instance=~".+"}` | Allow: a constrained positive regex provides scope |
+| `up{job="api",instance!~".+"}` | Allow: the absence check is scoped by `job` |
+| `up{job!~".*"}` | Allow: the negative universal regex proves this selector empty |
+| `up{job="api"} or up` | Block: the second selector is unscoped |
+
+The regex recognizer handles common universal and non-empty-universal forms, including outer anchors, capture/non-capture groups, duplicate alternatives, and unbounded dot repeats such as `.{0,}`. It respects Prometheus' full anchoring and dot/newline behavior. Whitespace inside the regex is literal: `".* "` is not equivalent to `".*"`. Negative matchers never count as positive scope; a recognized negative universal matcher exempts only its own empty selector.
+
+This is a static heuristic, not a query-cost or cardinality bound and not an exhaustive regex-equivalence checker. Unrecognized non-empty positive regexes can satisfy the policy. Even `job="api"` can select many series. Blanket regexes do not inherently disable the inverted index: Prometheus can skip `=~".*"` and short-circuit `!~".*"`. Backend limits remain necessary. Removing a wildcard alone does not reduce the selected series; use actual label values that narrow the intended query scope. The guardrail returns guidance and does not rewrite query semantics automatically.
+
+The check applies to instant and range queries, including selectors inside range vectors and subqueries, across all three guarded tool paths. If parsing fails, selector and expression-window checks are unavailable; request time range and points are still checked. If neither blocks, the query fails open with `reason="unparseable"`.
 
 ## Run without query execution
 
