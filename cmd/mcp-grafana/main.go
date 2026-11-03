@@ -436,7 +436,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	enableQueryTools := !dt.query
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
-		{func(s *mcp.Server) { tools.AddDatasourceTools(s, enableWriteTools); resources.AddDatasources(s) }, dt.datasource, "datasource"},
+		{func(s *mcp.Server) { tools.AddDatasourceTools(s, enableWriteTools) }, dt.datasource, "datasource"},
 		{func(s *mcp.Server) { tools.AddIncidentTools(s, enableWriteTools) }, dt.incident, "incident"},
 		{func(s *mcp.Server) { tools.AddPrometheusTools(s, enableQueryTools) }, dt.prometheus, "prometheus"},
 		{func(s *mcp.Server) { tools.AddLokiTools(s, enableQueryTools) }, dt.loki, "loki"},
@@ -487,6 +487,21 @@ func (dt *disabledTools) appSources() []mcpgrafana.Tool {
 		sources = append(sources, tools.GetTempoTraceTool)
 	}
 	return sources
+}
+
+// resourceKinds returns the MCP resource kinds to serve: each follows its
+// tool category.
+func (dt *disabledTools) resourceKinds() []resources.Kind {
+	dt.normalizeEnabledTools()
+	enabled := strings.Split(dt.enabledTools, ",")
+	var kinds []resources.Kind
+	if isCategoryEnabled(enabled, dt.datasource, "datasource") {
+		kinds = append(kinds, resources.Datasources)
+	}
+	if isCategoryEnabled(enabled, dt.incident, "incident") {
+		kinds = append(kinds, resources.ActiveIncidents)
+	}
+	return kinds
 }
 
 // categoryReport lists the tool categories that are actually active and the
@@ -670,6 +685,7 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
+	resources.Register(s, dt.resourceKinds()...)
 
 	s.AddReceivingMiddleware(obs.MCPMiddleware())
 	s.AddReceivingMiddleware(usage.MCPMiddleware())

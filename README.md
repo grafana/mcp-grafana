@@ -173,6 +173,7 @@ BigQuery queries require qualified table references such as `` `my-project.my_da
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, adding activities, and reading or setting custom fields.
+- **Incident resources:** Active incidents that started in the last 30 days are also exposed as MCP resources at `grafana://irm/incidents/{id}`, so you can attach one to a conversation directly (for example with `@` in Claude Code). Disabled along with the incident tools.
 
 ### Alerting
 
