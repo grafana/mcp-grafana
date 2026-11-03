@@ -77,6 +77,10 @@ func ByName(ctx context.Context, name string) (*models.DataSource, error) {
 		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(name),
 	)
 	if err != nil {
+		var status interface{ IsCode(int) bool }
+		if errors.As(err, &status) && status.IsCode(http.StatusNotFound) {
+			return nil, notFoundError{"name", name}
+		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", name, err)
 	}
 	return datasource.Payload, nil

@@ -41,6 +41,22 @@ func TestByUID_NotFound(t *testing.T) {
 	assert.Equal(t, "datasource with UID 'missing' not found. Please check if the datasource exists and is accessible", err.Error())
 }
 
+func TestByName_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Data source not found"}`))
+	}))
+	defer server.Close()
+
+	_, err := ByName(mockDatasourcesCtx(server), "missing")
+	require.ErrorIs(t, err, ErrNotFound)
+	assert.Equal(t,
+		"datasource with name 'missing' not found. Please check if the datasource exists and is accessible",
+		err.Error(),
+	)
+}
+
 // Only a 404 status means not found. Other failures remain server errors even
 // when their text mentions 404.
 func TestByUID_ServerErrorMentioning404IsNotNotFound(t *testing.T) {
