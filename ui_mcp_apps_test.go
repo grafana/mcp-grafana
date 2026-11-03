@@ -52,3 +52,30 @@ func TestMCPAppResources(t *testing.T) {
 		})
 	}
 }
+
+// TestGrafanaAppDatasourceView: only the datasource view build embeds the
+// Grafana ECharts renderer, so the default App stays small.
+func TestGrafanaAppDatasourceView(t *testing.T) {
+	const renderer = `id="grafana-echarts-renderer" type="application/gzip;base64"`
+	for name, tc := range map[string]struct {
+		opts []AppResourceOption
+		want bool
+	}{
+		"default":         {nil, false},
+		"datasource view": {[]AppResourceOption{WithDatasourceView()}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
+			RegisterAppResources(s, tc.opts...)
+			serverTransport, clientTransport := mcp.NewInMemoryTransports()
+			go func() { _ = s.Run(t.Context(), serverTransport) }()
+			c, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil).Connect(t.Context(), clientTransport, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = c.Close() })
+			result, err := c.ReadResource(t.Context(), &mcp.ReadResourceParams{URI: GrafanaAppResourceURI})
+			require.NoError(t, err)
+			require.Len(t, result.Contents, 1)
+			require.Equal(t, tc.want, strings.Contains(result.Contents[0].Text, renderer))
+		})
+	}
+}

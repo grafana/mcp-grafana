@@ -1,0 +1,6 @@
+{
+  "name": "grafana-echarts-viz",
+  "version": "0.1.0-standalone.13",
+  "sha256": "c3aaa823f184b805450539a3e0ab4e5ffaae8f85cfd659c9f93633a08fa9dda5",
+  "license": "AGPL-3.0-only"
+}

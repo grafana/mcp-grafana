@@ -1,0 +1,25 @@
+{
+  "datasourceUid": "testdata",
+  "queries": [
+    {
+      "refId": "A",
+      "maxDataPoints": 1000,
+      "intervalMs": 60000
+    }
+  ],
+  "from": "now-1h",
+  "to": "now",
+  "type": "auto",
+  "options": {
+    "seriesType": "bar",
+    "legend": {
+      "showLegend": false
+    }
+  },
+  "fieldConfig": {
+    "defaults": {
+      "unit": "reqps"
+    },
+    "overrides": []
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "metrics": "query_prometheus",
+  "trace": "get_tempo_trace",
+  "datasource": "query_datasource"
+}

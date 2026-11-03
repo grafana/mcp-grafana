@@ -1,0 +1,13 @@
+{
+  "pick": {
+    "rule": "node-graph",
+    "type": "grafana-relations-panel"
+  },
+  "panel": {
+    "type": "grafana-relations-panel",
+    "options": {
+      "seriesType": "graph"
+    },
+    "fieldConfig": {}
+  }
+}

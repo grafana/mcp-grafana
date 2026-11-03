@@ -1,0 +1,21 @@
+{
+  "pick": {
+    "rule": "time-series",
+    "type": "grafana-echartscartesian-panel"
+  },
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "bar",
+      "legend": {
+        "showLegend": false
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "reqps"
+      },
+      "overrides": []
+    }
+  }
+}

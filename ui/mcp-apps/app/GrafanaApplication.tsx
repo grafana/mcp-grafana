@@ -1,7 +1,8 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import type { AppHostState } from './appHostState';
 import { AppErrorBoundary } from './AppErrorBoundary';
-import { BeyondApplication } from './BeyondApplication';
+import sources from './appSources.json';
+import { DatasourceApplication } from './DatasourceApplication';
 import { MetricsApplication } from './MetricsApplication';
 import { TraceApplication } from './TraceApplication';
 
@@ -10,9 +11,9 @@ export function GrafanaApplication({ host }: { host: AppHostState }) {
   useEffect(() => () => host.close(), [host]);
   return (
     <AppErrorBoundary label="Grafana App" colorMode={state.colorMode}>
-      {state.toolName === 'query_datasource' || state.beyond
-        ? <BeyondApplication host={host} />
-        : state.toolName === 'get_tempo_trace' || state.trace
+      {state.toolName === sources.datasource || state.datasource
+        ? <DatasourceApplication host={host} />
+        : state.toolName === sources.trace || state.trace
           ? <TraceApplication host={host} />
           : <MetricsApplication host={host} />}
     </AppErrorBoundary>

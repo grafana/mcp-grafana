@@ -133,6 +133,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-pyroscope`: Disable Pyroscope tools.
 - `--disable-navigation`: Disable navigation (deeplink) tools.
 - `--disable-rendering`: Disable rendering tools (panel or dashboard image export).
+- `--disable-dsquery`: Disable the any-datasource view of `render_grafana_app` (opt-in `dsquery` category).
 - `--disable-snapshot`: Disable snapshot tools.
 - `--disable-cloudwatch`: Disable CloudWatch tools.
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools.
@@ -214,7 +215,7 @@ The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/qu
 
 ### Query execution and read-only mode
 
-The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. Read-only mode removes them along with the other write tools.
+The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. Read-only mode removes them along with the other write tools. The same applies to the `query_datasource` source of `render_grafana_app` (opt-in `dsquery` category).
 
 `--enable-query` puts them back. Use it when the datasource credentials are known to be read-only and you want query execution in an otherwise read-only server. It doesn't re-enable any other write tool, and it has no effect alongside `--disable-query`, which always wins.
 

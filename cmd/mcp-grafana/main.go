@@ -93,6 +93,7 @@ var categoryDescription = map[string]string{
 	"tempo":         "Tempo: Search traces with TraceQL, compute trace-derived metrics, fetch and diff traces, and explore trace attributes.",
 	"annotations":   "Annotations: Create and manage dashboard annotations.",
 	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
+	"dsquery":       "Datasource view: render_grafana_app can display a query to any datasource, sent through Grafana's /api/ds/query, as an interactive Grafana panel.",
 	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
@@ -126,7 +127,7 @@ var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "run
 
 var mutatingQueryCategories = []string{"sql", "influxdb"}
 
-var enableQueryToolNames = []string{"query_sql", "query_influxdb"}
+var enableQueryToolNames = []string{"query_sql", "query_influxdb", tools.QueryDatasourceToolName}
 
 func (dt *disabledTools) writeToolOverridden(names ...string) bool {
 	overrides := strings.Split(dt.writeToolOverrides, ",")
@@ -177,7 +178,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, admin,
-	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
+	pyroscope, navigation, tempo, annotations, rendering, dsquery, cloudwatch, cloudlogging, write, query, enableQuery,
 	snapshot, examples, sql, graphite,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -241,10 +242,11 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.tempo, "disable-proxied", false, "Deprecated: use --disable-tempo instead")
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
-	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
+	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw query tools (query_sql, query_influxdb, and the query_datasource source of render_grafana_app) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb,query_datasource; kept as a shorthand for that common case.")
 	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
+	flag.BoolVar(&dt.dsquery, "disable-dsquery", false, "Disable the any-datasource view of render_grafana_app")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.cloudlogging, "disable-cloudlogging", false, "Disable Google Cloud Logging tools")
@@ -480,6 +482,8 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddAssistantTools(s, enableWriteTools) }, dt.assistant, "assistant"},
 		{tools.AddDocsTools, dt.docs, "docs"},
 		{tools.AddUserTools, dt.user, "user"},
+		// No tool of its own: appSources adds query_datasource to render_grafana_app.
+		{func(*mcp.Server) {}, dt.dsquery, "dsquery"},
 	}
 }
 
@@ -495,12 +499,21 @@ func (dt *disabledTools) appSources() []mcpgrafana.Tool {
 	if isCategoryEnabled(enabled, dt.tempo, "tempo") {
 		sources = append(sources, tools.GetTempoTraceTool)
 	}
-	// SPIKE option C′: opt-in. Raw queries pass through unfiltered (SQL can
-	// write), so gate it like query_sql.
-	if slices.Contains(enabled, "dsquery") && dt.mutatingQueryToolsEnabled() {
+	if dt.datasourceViewEnabled(enabled) {
 		sources = append(sources, tools.QueryDatasourceSource)
 	}
 	return sources
+}
+
+// datasourceViewEnabled reports whether render_grafana_app displays any
+// datasource query (the opt-in dsquery category). The source passes queries
+// through unfiltered, so raw SQL can write: like query_sql, it needs write
+// tools, --enable-query or --enable-write-tools=query_datasource.
+func (dt *disabledTools) datasourceViewEnabled(enabled []string) bool {
+	return isCategoryEnabled(enabled, dt.dsquery, "dsquery") &&
+		isCategoryEnabled(enabled, dt.rendering, "rendering") &&
+		!dt.query &&
+		dt.writeToolEnabled(tools.QueryDatasourceToolName)
 }
 
 // resourceKinds returns the MCP resource kinds to serve: each follows its
@@ -557,6 +570,10 @@ func (dt *disabledTools) categoryRegistersTools(e toolEntry, enabledTools []stri
 	// AddAssistantTools registers nothing when write tools are disabled.
 	if e.category == "assistant" && dt.write {
 		return false
+	}
+	// dsquery registers no tool of its own; it adds a render_grafana_app source.
+	if e.category == "dsquery" {
+		return dt.datasourceViewEnabled(enabledTools)
 	}
 	// A category whose every tool executes a query registers nothing once
 	// query tools are gated off.
@@ -698,7 +715,11 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 	})
 
 	dt.processTools(s)
-	mcpgrafana.RegisterAppResources(s)
+	var appResourceOptions []mcpgrafana.AppResourceOption
+	if dt.datasourceViewEnabled(strings.Split(dt.enabledTools, ",")) {
+		appResourceOptions = append(appResourceOptions, mcpgrafana.WithDatasourceView())
+	}
+	mcpgrafana.RegisterAppResources(s, appResourceOptions...)
 	resources.Register(s, dt.resourceKinds()...)
 
 	s.AddReceivingMiddleware(obs.MCPMiddleware())
@@ -842,6 +863,7 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 	for _, b := range []bypass{
 		{"api", dt.api, "--disable-api", "grafana_api_request can query the Loki datasource proxy directly, fully bypassing enforcement"},
 		{"rendering", dt.rendering, "--disable-rendering", "get_panel_image renders Loki panels server-side via the Grafana renderer, producing images that contain unrestricted log lines"},
+		{"dsquery", dt.dsquery, "--disable-dsquery", "render_grafana_app's query_datasource source sends queries to /api/ds/query unchanged, including Loki queries"},
 	} {
 		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
 			slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",

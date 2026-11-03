@@ -1,0 +1,13 @@
+{
+  "pick": {
+    "rule": "few-parts",
+    "type": "grafana-echartsparttowhole-panel"
+  },
+  "panel": {
+    "type": "grafana-echartsparttowhole-panel",
+    "options": {
+      "seriesType": "pie"
+    },
+    "fieldConfig": {}
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "pick": {
+    "rule": "default",
+    "type": "grafana-echartscartesian-panel"
+  },
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "Auto"
+    },
+    "fieldConfig": {}
+  }
+}

@@ -25,7 +25,15 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 	var names []any
 	var schemas []*jsonschema.Schema
 	var permissions []string
+	// The viewer is as safe as its least safe source: a source that passes raw
+	// queries through (and so can write) makes the viewer non-read-only too.
+	readOnly, idempotent, destructive := true, true, false
 	for _, source := range sources {
+		if a := source.Tool.Annotations; a != nil {
+			readOnly = readOnly && a.ReadOnlyHint
+			idempotent = idempotent && a.IdempotentHint
+			destructive = destructive || (a.DestructiveHint != nil && *a.DestructiveHint)
+		}
 		names = append(names, source.Tool.Name)
 		schema := new(jsonschema.Schema)
 		if err := json.Unmarshal(source.Tool.InputSchema.(json.RawMessage), schema); err != nil {
@@ -86,9 +94,9 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 		},
 		mcpgrafana.WithUIResource(mcpgrafana.GrafanaAppResourceURI),
 		mcpgrafana.WithTitleAnnotation("Show Grafana App"),
-		mcpgrafana.WithIdempotentHintAnnotation(true),
-		mcpgrafana.WithReadOnlyHintAnnotation(true),
-		mcpgrafana.WithDestructiveHintAnnotation(false),
+		mcpgrafana.WithIdempotentHintAnnotation(idempotent),
+		mcpgrafana.WithReadOnlyHintAnnotation(readOnly),
+		mcpgrafana.WithDestructiveHintAnnotation(destructive),
 		mcpgrafana.WithOpenWorldHintAnnotation(false),
 		mcpgrafana.RequiresPermissions(permissions...),
 	)

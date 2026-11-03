@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { resolve } from 'node:path';
@@ -7,27 +8,34 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 
-// SPIKE option C′: BEYOND_RENDERER=<path to grafana-echarts-viz.js> embeds the
-// grafana-beyond renderer as gzip + base64, the fork's ui/grafana-viz scheme.
-const beyondRenderer = (): Plugin => ({
-  name: 'beyond-renderer',
+/**
+ * Embeds the vendored Grafana ECharts renderer as gzip + base64, after checking
+ * it against vendor/renderer.json. The App decodes it on first use
+ * (app/datasourceRenderer.ts).
+ */
+const echartsRenderer = (): Plugin => ({
+  name: 'grafana-echarts-renderer',
   transformIndexHtml() {
-    const path = process.env.BEYOND_RENDERER;
-    if (!path) return [];
+    const bundle = readFileSync(resolve(packageRoot, 'vendor', 'grafana-echarts-viz.js'));
+    const pin = JSON.parse(readFileSync(resolve(packageRoot, 'vendor', 'renderer.json'), 'utf8'));
+    const sha256 = createHash('sha256').update(bundle).digest('hex');
+    if (sha256 !== pin.sha256) {
+      throw new Error(`vendor/grafana-echarts-viz.js has SHA-256 ${sha256}, not the ${pin.sha256} of vendor/renderer.json.`);
+    }
     return [{
       tag: 'script',
-      attrs: { id: 'grafana-viz-renderer', type: 'application/gzip;base64' },
-      children: gzipSync(readFileSync(path), { level: 9 }).toString('base64'),
+      attrs: { id: 'grafana-echarts-renderer', type: 'application/gzip;base64', 'data-version': pin.version },
+      children: gzipSync(bundle, { level: 9 }).toString('base64'),
       injectTo: 'body-prepend',
     }];
   },
 });
 
 /** Build config for one app bundle, `app/<entry>` → `dist/<entry>`. */
-export function appBuildConfig(entry: string) {
+export function appBuildConfig(entry: string, { renderer = false }: { renderer?: boolean } = {}) {
   return defineConfig({
     base: './',
-    plugins: [beyondRenderer(), viteSingleFile()],
+    plugins: [...(renderer ? [echartsRenderer()] : []), viteSingleFile()],
     root: resolve(packageRoot, 'app'),
     build: {
       // MCP hosts read this app as one text resource. Force every font, image,

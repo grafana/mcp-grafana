@@ -1,0 +1,35 @@
+{
+  "A": {
+    "status": 200,
+    "frames": [
+      {
+        "schema": {
+          "fields": [
+            {
+              "name": "a",
+              "type": "number"
+            },
+            {
+              "name": "b",
+              "type": "number"
+            }
+          ]
+        },
+        "data": {
+          "values": [
+            [
+              1,
+              2,
+              3
+            ],
+            [
+              4,
+              5,
+              6
+            ]
+          ]
+        }
+      }
+    ]
+  }
+}

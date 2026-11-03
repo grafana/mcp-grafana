@@ -437,7 +437,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
-The `render_grafana_app` tool displays metrics and traces in compatible MCP hosts when the rendering and corresponding query categories are enabled. Source query tools return text and structured data for analysis. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
+The `render_grafana_app` tool displays metrics and traces in compatible MCP hosts when the rendering and corresponding query categories are enabled. Source query tools return text and structured data for analysis. Add the opt-in `dsquery` category to also display a query to any datasource as an interactive Grafana panel. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
 
 ## CLI Flags Reference
 
@@ -535,7 +535,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
-- `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
+- `--enable-query`: Keep the raw query tools (`query_sql`, `query_influxdb`, and the `query_datasource` source of `render_grafana_app`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb,query_datasource`; kept as a shorthand for that common case.
 - `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
@@ -549,6 +549,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
+- `--disable-dsquery`: Disable the any-datasource view of `render_grafana_app` (opt-in `dsquery` category)
 - `--disable-snapshot`: Disable snapshot tools
 - `--disable-cloudwatch`: Disable CloudWatch tools
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools
@@ -611,6 +612,7 @@ These execute whatever query you give them without inspecting it, so they can wr
 
 - `query_sql`
 - `query_influxdb`
+- `render_grafana_app` with `toolName: "query_datasource"` (opt-in `dsquery` category); the rest of `render_grafana_app` stays
 
 **Agent Observability Tools:**
 - `agento11y_manage_evaluators` (upsert, delete, fork, test evaluator operations)
@@ -1482,6 +1484,7 @@ How it works:
 >
 > - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 > - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
+> - `--disable-dsquery` — the `query_datasource` source of `render_grafana_app` sends queries to `/api/ds/query` unchanged, including Loki queries. Opt-in, so only relevant when `dsquery` is in `--enabled-tools`.
 > - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too.
 >
 > The server logs a warning at startup naming each of these that is still enabled.

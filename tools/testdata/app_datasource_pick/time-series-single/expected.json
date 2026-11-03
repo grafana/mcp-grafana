@@ -1,0 +1,13 @@
+{
+  "pick": {
+    "rule": "time-series",
+    "type": "grafana-echartscartesian-panel"
+  },
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "line"
+    },
+    "fieldConfig": {}
+  }
+}

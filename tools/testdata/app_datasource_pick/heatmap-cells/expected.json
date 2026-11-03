@@ -1,0 +1,11 @@
+{
+  "pick": {
+    "rule": "heatmap-cells",
+    "type": "grafana-echartsheatmap-panel"
+  },
+  "panel": {
+    "type": "grafana-echartsheatmap-panel",
+    "options": {},
+    "fieldConfig": {}
+  }
+}
