@@ -661,6 +661,8 @@ func appendInstructions(base, extra string) string {
 	return base
 }
 
+const runtimeGrafanaURLInstructions = `Before using a Grafana-dependent tool, call set_grafana_url when the user names a store or Grafana target. Pass the user's value exactly as provided; a single-label store name such as tesco-6 resolves to http://tesco-6/grafana.`
+
 // sseKeepAliveFailureThreshold is how many keepalive pings in a row a client
 // may miss before its session is closed. go-sdk closes on the first miss by
 // default, so one slow reply would end a session the pings exist to keep.
@@ -674,8 +676,16 @@ const minSSEKeepAlive = time.Second
 // keepAlive is the interval between pings the server sends to each connected
 // client; 0 disables them. run() passes a non-zero value only for the SSE
 // transport (see effectiveSSEKeepAlive).
-func newServer(serverName string, dt disabledTools, obs *observability.Observability, usage *usagestats.Reporter, instructionsAppend string, keepAlive time.Duration) *mcp.Server {
-	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)
+func newServer(serverName string, dt disabledTools, obs *observability.Observability, usage *usagestats.Reporter, instructionsAppend string, keepAlive time.Duration, runtimeGrafanaURLs ...*mcpgrafana.RuntimeGrafanaURL) *mcp.Server {
+	var runtimeGrafanaURL *mcpgrafana.RuntimeGrafanaURL
+	if len(runtimeGrafanaURLs) > 0 {
+		runtimeGrafanaURL = runtimeGrafanaURLs[0]
+	}
+	instructions := dt.buildInstructions()
+	if runtimeGrafanaURL != nil {
+		instructions = appendInstructions(instructions, runtimeGrafanaURLInstructions)
+	}
+	instructions = appendInstructions(instructions, instructionsAppend)
 
 	s := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: mcpgrafana.Version()}, &mcp.ServerOptions{
 		Instructions:              instructions,
@@ -684,6 +694,10 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 	})
 
 	dt.processTools(s)
+	if runtimeGrafanaURL != nil {
+		setGrafanaURLTool := mcpgrafana.NewSetGrafanaURLTool(runtimeGrafanaURL)
+		setGrafanaURLTool.Register(s)
+	}
 	mcpgrafana.RegisterAppResources(s)
 	resources.Register(s, dt.resourceKinds()...)
 
@@ -1284,8 +1298,19 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	if keepAlive != sseKeepAlive {
 		slog.Warn("--sse-keepalive only applies to the SSE transport; ignoring it", "transport", transport)
 	}
-	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend, keepAlive)
-	usage.SetNativeTools(nativeToolNames(dt))
+	var runtimeGrafanaURL *mcpgrafana.RuntimeGrafanaURL
+	if transport == "stdio" {
+		runtimeGrafanaURL = mcpgrafana.NewRuntimeGrafanaURL(mcpgrafana.GrafanaURLConfiguredFromEnv())
+	}
+	s := newServer(obs.ServerName, dt, o, usage, instructionsAppend, keepAlive, runtimeGrafanaURL)
+	nativeTools := nativeToolNames(dt)
+	if runtimeGrafanaURL != nil {
+		if nativeTools == nil {
+			nativeTools = make(map[string]struct{})
+		}
+		nativeTools["set_grafana_url"] = struct{}{}
+	}
+	usage.SetNativeTools(nativeTools)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1329,6 +1354,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if mcpgrafana.DynamicMultiOrgEnabled {
 			s.AddReceivingMiddleware(mcpgrafana.OrgIDOverrideMiddleware())
 		}
+		s.AddReceivingMiddleware(mcpgrafana.RuntimeGrafanaURLMiddleware(runtimeGrafanaURL))
 		s.AddReceivingMiddleware(recoveryMiddleware())
 
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())

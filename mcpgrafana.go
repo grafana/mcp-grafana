@@ -70,6 +70,13 @@ func getEnv(key string) string {
 	return v
 }
 
+// GrafanaURLConfiguredFromEnv reports whether GRAFANA_URL supplies a usable
+// startup target. It treats blank values and unresolved MCPB user-config
+// placeholders as unset, matching ExtractGrafanaInfoFromEnv.
+func GrafanaURLConfiguredFromEnv() bool {
+	return normalizeGrafanaURL(getEnv(grafanaURLEnvVar)) != ""
+}
+
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	u := normalizeGrafanaURL(getEnv(grafanaURLEnvVar))
 

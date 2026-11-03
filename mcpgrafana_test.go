@@ -2701,6 +2701,23 @@ func TestBlankEnvURLFallsBackToDefault(t *testing.T) {
 	}
 }
 
+func TestGrafanaURLConfiguredFromEnv(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{"", false},
+		{"   ", false},
+		{"${user_config.grafana_url}", false},
+		{"https://grafana.example.com", true},
+	} {
+		t.Run(strconv.Quote(tc.raw), func(t *testing.T) {
+			t.Setenv("GRAFANA_URL", tc.raw)
+			assert.Equal(t, tc.want, GrafanaURLConfiguredFromEnv())
+		})
+	}
+}
+
 // A schemeless GRAFANA_URL must still reach the header path as the one
 // environment URL. X-Grafana-URL cannot name another instance since #1052, so
 // the env token always applies; TestExtractGrafanaInfoFromHeadersIgnoresURLHeader

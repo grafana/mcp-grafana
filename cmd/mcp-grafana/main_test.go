@@ -1091,6 +1091,12 @@ func getServerNameFromInitialize(t *testing.T, s *mcp.Server) string {
 	return session.InitializeResult().ServerInfo.Name
 }
 
+func getServerInstructionsFromInitialize(t *testing.T, s *mcp.Server) string {
+	t.Helper()
+	session := connectTestClient(t, s)
+	return session.InitializeResult().Instructions
+}
+
 func TestResolveServerName(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -1197,6 +1203,23 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "mcp-grafana", name)
+}
+
+func TestNewServer_RuntimeGrafanaURLInstructions(t *testing.T) {
+	dt := disabledTools{enabledTools: "search"}
+
+	t.Run("absent without the stdio runtime tool", func(t *testing.T) {
+		s := newServer(defaultServerName, dt, newTestObservability(t), usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0)
+		assert.NotContains(t, getServerInstructionsFromInitialize(t, s), "set_grafana_url")
+	})
+
+	t.Run("guides store selection when the tool is registered", func(t *testing.T) {
+		s := newServer(defaultServerName, dt, newTestObservability(t), usagestats.New(usagestats.Config{Mode: usagestats.ModeDisabled}), "", 0, mcpgrafana.NewRuntimeGrafanaURL())
+		instructions := getServerInstructionsFromInitialize(t, s)
+		assert.Contains(t, instructions, "set_grafana_url")
+		assert.Contains(t, instructions, "tesco-6")
+		assert.Contains(t, instructions, "Before using a Grafana-dependent tool")
+	})
 }
 
 func TestNewServer_CustomServerName(t *testing.T) {

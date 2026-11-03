@@ -455,6 +455,10 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 > [!NOTE]
 > Over SSE, per-request headers do not reach tool calls: `X-Grafana-Service-Account-Token` / `X-Grafana-API-Key`, `X-Grafana-Org-Id`, and headers listed in `GRAFANA_FORWARD_HEADERS` have no effect, tool calls use the server's environment credentials, and `X-Grafana-URL` overrides do not work. Use streamable-http when each caller needs its own Grafana URL, credentials, or organization.
 
+**Runtime Grafana URL selection (stdio only):**
+
+The `set_grafana_url` tool lets a stdio MCP client select a Grafana URL and optional service-account token while the server is running. Call it first when a user names a store or Grafana target. A single-label store name such as `tesco-6`, with or without a scheme or trailing slash, resolves to `http://tesco-6/grafana`; fully qualified URLs retain their scheme and path. Until a target is selected (or `GRAFANA_URL` is configured), Grafana-dependent tools return an actionable prompt to call `set_grafana_url`; local documentation and configuration-generation tools remain available. The selection applies to subsequent tool calls in that stdio process. For HTTP deployments, use the request-scoped `X-Grafana-URL` and `X-Grafana-Service-Account-Token` headers described below instead.
+
 **HTTP Transport Security (SSE / streamable-http only):**
 
 `Host`/`Origin` validation is enforced on *every* route on the MCP listener — `/sse`, `/mcp`, and `/healthz` / `/metrics` when they share that listener — so a DNS-rebinding browser cannot reach any of them. Stdio transport is unaffected. `--healthz-address` and `--metrics-address` start a separate listener that is not wrapped.
