@@ -2,7 +2,10 @@ package resources
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -12,13 +15,19 @@ import (
 
 const incidentURIPrefix = "grafana://irm/incidents/"
 
-// maxActiveIncidents caps the active incidents listed. There are normally a
-// handful; this only guards against something pathological.
-const maxActiveIncidents = 100
+const (
+	// recentIncidents is how far back listed incidents may have started.
+	// Large orgs accumulate active incidents nobody resolved (hundreds, over
+	// years); the ones worth attaching are the ones being worked on now.
+	recentIncidents = 30 * 24 * time.Hour
+	// maxActiveIncidents is how many of the most recently created active
+	// incidents are considered: the incident API's page size.
+	maxActiveIncidents = 100
+)
 
-// ActiveIncidents exposes each active, non-drill incident as a
-// grafana://irm/incidents/{id} resource. Any incident can be read, including
-// resolved ones.
+// ActiveIncidents exposes active, non-drill incidents that started in the
+// last 30 days as grafana://irm/incidents/{id} resources. Any incident can be
+// read, including older and resolved ones.
 var ActiveIncidents = Kind{
 	template: &mcp.ResourceTemplate{
 		URITemplate: incidentURIPrefix + "{id}",
@@ -38,6 +47,10 @@ func readIncident(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadR
 		return nil, err
 	}
 	incident, err := tools.Incident(ctx, id)
+	var apiErr *mcpgrafana.IncidentAPIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		return nil, mcp.ResourceNotFoundError(uri)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -52,8 +65,16 @@ func listActiveIncidents(ctx context.Context) ([]*mcp.Resource, error) {
 	if err != nil {
 		return nil, err
 	}
-	resources := make([]*mcp.Resource, 0, len(result.Incidents))
+	since := time.Now().Add(-recentIncidents)
+	var resources []*mcp.Resource
 	for _, inc := range result.Incidents {
+		started := inc.IncidentStart
+		if started == "" {
+			started = inc.CreatedTime
+		}
+		if t, err := time.Parse(time.RFC3339, started); err != nil || t.Before(since) {
+			continue
+		}
 		desc := inc.Title + " · active incident"
 		if inc.Severity != "" {
 			desc += " (" + inc.Severity + ")"

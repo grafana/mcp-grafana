@@ -156,22 +156,13 @@ func amixrListSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]
 		listOptions.TeamID = args.TeamID
 	}
 
-	// Without a requested page, follow every page, as the proxy path does.
-	var schedules []*aapi.Schedule
-	for {
-		response, _, err := scheduleService.ListSchedules(listOptions)
-		if err != nil {
-			return nil, fmt.Errorf("listing OnCall schedules: %w", err)
-		}
-		schedules = append(schedules, response.Schedules...)
-		if args.Page > 0 || response.Next == nil {
-			break
-		}
-		listOptions.Page = max(listOptions.Page, 1) + 1
+	response, _, err := scheduleService.ListSchedules(listOptions)
+	if err != nil {
+		return nil, fmt.Errorf("listing OnCall schedules: %w", err)
 	}
 
-	summaries := make([]*ScheduleSummary, 0, len(schedules))
-	for _, schedule := range schedules {
+	summaries := make([]*ScheduleSummary, 0, len(response.Schedules))
+	for _, schedule := range response.Schedules {
 		summary := &ScheduleSummary{
 			ID:       schedule.ID,
 			Name:     schedule.Name,
@@ -198,23 +189,6 @@ var ListOnCallSchedules = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-irm-app.schedules:read"),
 )
-
-// OnCallSchedules returns every OnCall schedule visible to the caller.
-func OnCallSchedules(ctx context.Context) ([]*ScheduleSummary, error) {
-	return listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
-}
-
-// OnCallSchedule returns the OnCall schedule with the given ID.
-func OnCallSchedule(ctx context.Context, id string) (*ScheduleSummary, error) {
-	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{ScheduleID: id})
-	if err != nil {
-		return nil, err
-	}
-	if len(schedules) == 0 {
-		return nil, fmt.Errorf("OnCall schedule %s not found", id)
-	}
-	return schedules[0], nil
-}
 
 // --- Shifts ---
 
@@ -287,11 +261,6 @@ func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams
 		return proxyGetCurrentOnCallUsers(ctx, args.ScheduleID)
 	}
 	return amixrGetCurrentOnCallUsers(ctx, args.ScheduleID)
-}
-
-// CurrentOnCall returns the users currently on call for a schedule.
-func CurrentOnCall(ctx context.Context, scheduleID string) (*CurrentOnCallUsers, error) {
-	return getCurrentOnCallUsers(ctx, GetCurrentOnCallUsersParams{ScheduleID: scheduleID})
 }
 
 func amixrGetCurrentOnCallUsers(ctx context.Context, scheduleID string) (*CurrentOnCallUsers, error) {

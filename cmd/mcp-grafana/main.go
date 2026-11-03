@@ -497,9 +497,6 @@ func (dt *disabledTools) resourceKinds() []resources.Kind {
 	if isCategoryEnabled(enabled, dt.datasource, "datasource") {
 		kinds = append(kinds, resources.Datasources)
 	}
-	if isCategoryEnabled(enabled, dt.oncall, "oncall") {
-		kinds = append(kinds, resources.Schedules)
-	}
 	if isCategoryEnabled(enabled, dt.incident, "incident") {
 		kinds = append(kinds, resources.ActiveIncidents)
 	}

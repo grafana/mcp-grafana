@@ -173,7 +173,7 @@ BigQuery queries require qualified table references such as `` `my-project.my_da
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, adding activities, and reading or setting custom fields.
-- **Incident resources:** Active incidents are also exposed as MCP resources at `grafana://irm/incidents/{id}`, so you can attach one to a conversation directly (for example with `@` in Claude Code). Disabled along with the incident tools.
+- **Incident resources:** Active incidents that started in the last 30 days are also exposed as MCP resources at `grafana://irm/incidents/{id}`, so you can attach one to a conversation directly (for example with `@` in Claude Code). Disabled along with the incident tools.
 
 ### Alerting
 
@@ -187,7 +187,6 @@ BigQuery queries require qualified table references such as `` `my-project.my_da
 - **List and manage schedules:** View and manage on-call schedules in Grafana OnCall.
 - **Get shift details:** Retrieve detailed information about specific on-call shifts.
 - **Get current on-call users:** See which users are currently on call for a schedule.
-- **Schedule resources:** Each schedule is also exposed as an MCP resource at `grafana://irm/schedules/{id}`, including who is on call now, so you can attach one to a conversation directly (for example with `@` in Claude Code). Disabled along with the OnCall tools.
 - **List teams and users:** View all OnCall teams and users.
 - **List alert groups:** View and filter alert groups from Grafana OnCall by various criteria including state, integration, labels, and time range.
 - **Get alert group details:** Retrieve detailed information about a specific alert group by its ID.

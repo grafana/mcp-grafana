@@ -2235,7 +2235,6 @@ func TestApplyLokiGuardrailEnvOnEstimateFailure(t *testing.T) {
 func TestResourceKindsFollowToolCategories(t *testing.T) {
 	const (
 		datasources = "grafana://datasources/{uid}"
-		schedules   = "grafana://irm/schedules/{id}"
 		incidents   = "grafana://irm/incidents/{id}"
 	)
 	for _, tc := range []struct {
@@ -2243,10 +2242,9 @@ func TestResourceKindsFollowToolCategories(t *testing.T) {
 		config disabledTools
 		want   []string
 	}{
-		{"all", disabledTools{enabledTools: "datasource,oncall,incident"}, []string{datasources, schedules, incidents}},
-		{"datasource disabled", disabledTools{enabledTools: "datasource,oncall,incident", datasource: true}, []string{schedules, incidents}},
-		{"oncall disabled", disabledTools{enabledTools: "datasource,oncall,incident", oncall: true}, []string{datasources, incidents}},
-		{"incident disabled", disabledTools{enabledTools: "datasource,oncall,incident", incident: true}, []string{datasources, schedules}},
+		{"all", disabledTools{enabledTools: "datasource,incident"}, []string{datasources, incidents}},
+		{"datasource disabled", disabledTools{enabledTools: "datasource,incident", datasource: true}, []string{incidents}},
+		{"incident disabled", disabledTools{enabledTools: "datasource,incident", incident: true}, []string{datasources}},
 		{"none enabled", disabledTools{enabledTools: "search"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
