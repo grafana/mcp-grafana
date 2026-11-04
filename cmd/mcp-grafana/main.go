@@ -819,7 +819,8 @@ func (hsc httpSecurityConfig) policy(addresses ...string) mcpgrafana.HostOriginP
 	hosts := splitAndTrim(hsc.allowedHosts)
 	if len(hosts) == 0 {
 		for _, address := range addresses {
-			for _, host := range mcpgrafana.DefaultAllowedHosts(address) {
+			candidates := append([]string{strings.ToLower(address)}, mcpgrafana.DefaultAllowedHosts(address)...)
+			for _, host := range candidates {
 				if !slices.Contains(hosts, host) {
 					hosts = append(hosts, host)
 				}

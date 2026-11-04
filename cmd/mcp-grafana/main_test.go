@@ -897,6 +897,18 @@ func TestHTTPSecurityConfigPolicy(t *testing.T) {
 			wantOrigins: nil,
 		},
 		{
+			name:        "IPv4 wildcard bind also allows the published address",
+			address:     "0.0.0.0:8000",
+			wantHosts:   []string{"0.0.0.0:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			name:        "IPv6 wildcard bind also allows the published address",
+			address:     "[::]:8000",
+			wantHosts:   []string{"[::]:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
 			// Regression guard: a malformed value that splits to empty must
 			// NOT silently disable Host validation.
 			name:         "comma-only --allowed-hosts falls back to defaults",
