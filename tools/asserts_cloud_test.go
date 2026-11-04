@@ -9,7 +9,6 @@
 package tools
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -36,13 +35,9 @@ func TestAssertsCloudIntegration(t *testing.T) {
 		}
 
 		// Get assertions from the real Grafana instance
-		result, err := getAssertions(ctx, params)
-		const maxRetries = 2
-		for retry := 1; retry <= maxRetries && err != nil && strings.Contains(err.Error(), "status 5"); retry++ {
-			t.Logf("Asserts request returned a 5xx response; retrying (%d/%d)", retry, maxRetries)
-			time.Sleep(time.Second)
-			result, err = getAssertions(ctx, params)
-		}
+		result, err := retryCloudTestOperation(ctx, t, func() (string, error) {
+			return getAssertions(ctx, params)
+		})
 		require.NoError(t, err, "Failed to get assertions from Grafana")
 		assert.NotEmpty(t, result, "Expected non-empty assertions result")
 

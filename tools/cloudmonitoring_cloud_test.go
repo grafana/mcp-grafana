@@ -11,10 +11,9 @@ package tools
 import (
 	"context"
 	"os"
-	"strings"
 	"testing"
-	"time"
 
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,13 +45,9 @@ func TestCloudMonitoringQuery(t *testing.T) {
 			StepSeconds:   60,
 			QueryType:     "range",
 		}
-		result, err := queryPrometheus(ctx, params)
-		const maxRetries = 2
-		for retry := 1; retry <= maxRetries && err != nil && strings.Contains(err.Error(), "status 5"); retry++ {
-			t.Logf("Cloud Monitoring range query returned a 5xx response; retrying (%d/%d)", retry, maxRetries)
-			time.Sleep(time.Second)
-			result, err = queryPrometheus(ctx, params)
-		}
+		result, err := retryCloudTestOperation(ctx, t, func() (model.Value, error) {
+			return queryPrometheus(ctx, params)
+		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 	})
