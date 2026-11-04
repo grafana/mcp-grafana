@@ -40,23 +40,20 @@ func newTestObservability(t *testing.T) *observability.Observability {
 	return obs
 }
 
-func TestHTTPAddressIsPublishedAndServed(t *testing.T) {
-	addressFile := filepath.Join(t.TempDir(), "address")
-	require.NoError(t, os.WriteFile(addressFile, []byte("stale\n"), 0o644))
-	listener, err := listenHTTP(httpListenConfig{
-		address:     "127.0.0.1:0",
-		addressFile: addressFile,
-	})
+func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile(dynamicAddressFileName, []byte("stale\n"), 0o644))
+	listener, err := listenHTTP("127.0.0.1:0")
 	require.NoError(t, err)
 
-	document, err := os.ReadFile(addressFile)
+	document, err := os.ReadFile(dynamicAddressFileName)
 	require.NoError(t, err)
 	address := strings.TrimSpace(string(document))
 	assert.Equal(t, listener.Addr().String(), address)
 	_, port, err := net.SplitHostPort(address)
 	require.NoError(t, err)
 	assert.NotEqual(t, "0", port)
-	info, err := os.Stat(addressFile)
+	info, err := os.Stat(dynamicAddressFileName)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
