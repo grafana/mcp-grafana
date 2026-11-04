@@ -30,10 +30,7 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
-const (
-	defaultServerName      = "mcp-grafana"
-	dynamicAddressFileName = "mcp-grafana-address"
-)
+const defaultServerName = "mcp-grafana"
 
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
@@ -753,6 +750,11 @@ type httpListenConfig struct {
 	addressFile string
 }
 
+func (hc *httpListenConfig) addFlags() {
+	flag.StringVar(&hc.address, "address", "localhost:8000", "The host and port for the SSE or streamable HTTP server")
+	flag.StringVar(&hc.addressFile, "address-file", "", "Write the bound HTTP address to this file after listening")
+}
+
 func (tc *tlsConfig) addFlags() {
 	flag.StringVar(&tc.certFile, "server.tls-cert-file", "", "Path to TLS certificate file for server HTTPS (required for TLS)")
 	flag.StringVar(&tc.keyFile, "server.tls-key-file", "", "Path to TLS private key file for server HTTPS (required for TLS)")
@@ -974,15 +976,6 @@ func listenHTTP(config httpListenConfig) (net.Listener, error) {
 	return listener, nil
 }
 
-func newHTTPListenConfig(address string) httpListenConfig {
-	config := httpListenConfig{address: address}
-	_, port, err := net.SplitHostPort(address)
-	if err == nil && port == "0" {
-		config.addressFile = dynamicAddressFileName
-	}
-	return config
-}
-
 func writeBoundAddress(path, address string) error {
 	if path == "" {
 		return nil
@@ -992,7 +985,7 @@ func writeBoundAddress(path, address string) error {
 		return fmt.Errorf("create address file beside %q: %w", path, err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if _, err := temporary.WriteString(address + "\n"); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("write bound address to %q: %w", temporaryPath, err)
@@ -1389,13 +1382,14 @@ func run(transport string, listen httpListenConfig, basePath, endpointPath strin
 	}
 
 	var listener net.Listener
+	boundAddress := listen.address
 	if transport == "sse" || transport == "streamable-http" {
 		listener, err = listenHTTP(listen)
 		if err != nil {
 			return err
 		}
-		defer listener.Close()
-		listen.address = listener.Addr().String()
+		defer func() { _ = listener.Close() }()
+		boundAddress = listener.Addr().String()
 	}
 
 	disableLocalhostProtection := len(splitAndTrim(hsc.allowedHosts)) > 0
@@ -1455,15 +1449,14 @@ func run(transport string, listen httpListenConfig, basePath, endpointPath strin
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Addr:    listen.address,
-			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(listen.address))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(boundAddress))(mux),
 			// Derive HTTP request contexts from the cancellable ctx so that
 			// SIGTERM cancels long-lived SSE streams and Shutdown completes
 			// within its deadline instead of blocking on open connections.
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using SSE transport",
-			"version", mcpgrafana.Version(), "address", listen.address, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
+			"version", mcpgrafana.Version(), "address", boundAddress, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, httpSrv, listener, "SSE", tls)
 
 	case "streamable-http":
@@ -1492,12 +1485,11 @@ func run(transport string, listen httpListenConfig, basePath, endpointPath strin
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Addr:        listen.address,
-			Handler:     mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(listen.address))(mux),
+			Handler:     mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(boundAddress))(mux),
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
-			"version", mcpgrafana.Version(), "address", listen.address, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
+			"version", mcpgrafana.Version(), "address", boundAddress, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, httpSrv, listener, "StreamableHTTP", tls)
 
 	default:
@@ -1516,7 +1508,8 @@ func main() {
 	)
 	var serverName string
 	flag.StringVar(&serverName, "server-name", defaultServerName, "Server name used in the MCP handshake and OTel service.name. Overrides GRAFANA_MCP_SERVER_NAME env var.")
-	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
+	var listen httpListenConfig
+	listen.addFlags()
 	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server. /healthz and /metrics are always served at the root, not under this prefix")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server, appended to --base-path")
 	sseKeepAlive := flag.Duration("sse-keepalive", 0, "Interval between ping requests sent to each SSE client, so reverse proxies and load balancers do not close an idle event stream (and the session with it). Set it below the proxy's idle timeout, e.g. 30s behind ingress-nginx's default 60s proxy-read-timeout. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum 1s. 0 (the default) disables pings. Only applies to --transport sse.")
@@ -1706,7 +1699,6 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	listen := newHTTPListenConfig(*addr)
 	if err := run(transport, listen, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, usageStats, *healthzAddress, *instructionsAppend, *sseKeepAlive); err != nil {
 		slog.Error("Fatal error", "error", err)
 		os.Exit(1)

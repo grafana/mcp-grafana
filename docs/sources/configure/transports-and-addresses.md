@@ -49,10 +49,14 @@ Clients connect to the server URL (for example, `http://localhost:8000/sse` for 
 To let the operating system allocate a free port, use port `0` and publish the selected address to a file:
 
 ```bash
-mcp-grafana -t streamable-http --address 127.0.0.1:0
+mcp-grafana -t streamable-http \
+  --address 127.0.0.1:0 \
+  --address-file ./mcp-grafana-address
 ```
 
-The server binds the listener before atomically replacing `mcp-grafana-address` in its working directory. The file contains the selected address followed by a newline and uses mode `0600`. This avoids releasing a reserved port before the server starts listening. Run concurrent dynamic-port servers in separate working directories so each one has its own address file.
+The server binds the listener before writing the address file, so it never releases a reserved port before it starts serving. It writes through a temporary file and renames that file into place. The file contains the bound socket address followed by a newline and uses mode `0600`.
+
+Use a unique address-file path for each server process. If you reuse a path, remove the old file before launching the server so a caller cannot mistake a stale address for the new one. Use an explicit host such as `127.0.0.1` when clients will connect to the published address because wildcard bind addresses are not generally connectable.
 
 `--base-path` prefixes the application routes on the listener:
 

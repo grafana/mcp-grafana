@@ -40,7 +40,7 @@ func newTestObservability(t *testing.T) *observability.Observability {
 	return obs
 }
 
-func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
+func TestHTTPAddressIsPublishedAndServed(t *testing.T) {
 	addressFile := filepath.Join(t.TempDir(), "address")
 	require.NoError(t, os.WriteFile(addressFile, []byte("stale\n"), 0o644))
 	listener, err := listenHTTP(httpListenConfig{
@@ -63,7 +63,6 @@ func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
 	server := &http.Server{
-		Addr:    address,
 		Handler: mcpgrafana.DNSRebindingProtectionMiddleware((httpSecurityConfig{}).policy(address))(mux),
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -79,15 +78,6 @@ func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 	cancel()
 	require.NoError(t, <-done)
-}
-
-func TestDynamicAddressUsesStandardAddressFile(t *testing.T) {
-	assert.Equal(t, httpListenConfig{
-		address: "127.0.0.1:0", addressFile: dynamicAddressFileName,
-	}, newHTTPListenConfig("127.0.0.1:0"))
-	assert.Equal(t, httpListenConfig{
-		address: "127.0.0.1:8000",
-	}, newHTTPListenConfig("127.0.0.1:8000"))
 }
 
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
