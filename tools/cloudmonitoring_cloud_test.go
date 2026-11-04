@@ -48,8 +48,8 @@ func TestCloudMonitoringQuery(t *testing.T) {
 		}
 		result, err := queryPrometheus(ctx, params)
 		const maxRetries = 2
-		for retry := 1; retry <= maxRetries && err != nil && strings.Contains(err.Error(), "status 522"); retry++ {
-			t.Logf("Cloud Monitoring range query returned 522; retrying (%d/%d)", retry, maxRetries)
+		for retry := 1; retry <= maxRetries && err != nil && strings.Contains(err.Error(), "status 5"); retry++ {
+			t.Logf("Cloud Monitoring range query returned a 5xx response; retrying (%d/%d)", retry, maxRetries)
 			time.Sleep(time.Second)
 			result, err = queryPrometheus(ctx, params)
 		}
