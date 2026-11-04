@@ -815,10 +815,16 @@ func withCallerAuth(token string, h http.Handler) http.Handler {
 	return mcpgrafana.RequireBearerToken(token, slog.Default())(h)
 }
 
-func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy {
+func (hsc httpSecurityConfig) policy(addresses ...string) mcpgrafana.HostOriginPolicy {
 	hosts := splitAndTrim(hsc.allowedHosts)
 	if len(hosts) == 0 {
-		hosts = mcpgrafana.DefaultAllowedHosts(address)
+		for _, address := range addresses {
+			for _, host := range mcpgrafana.DefaultAllowedHosts(address) {
+				if !slices.Contains(hosts, host) {
+					hosts = append(hosts, host)
+				}
+			}
+		}
 	}
 	return mcpgrafana.HostOriginPolicy{
 		AllowedHosts:   hosts,
@@ -969,6 +975,18 @@ func listenHTTP(address string) (net.Listener, error) {
 		}
 	}
 	return listener, nil
+}
+
+func addressWithBoundPort(address, boundAddress string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return boundAddress
+	}
+	_, port, err := net.SplitHostPort(boundAddress)
+	if err != nil {
+		return boundAddress
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func writeBoundAddress(path, address string) error {
@@ -1444,7 +1462,9 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(boundAddress))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+				hsc.policy(boundAddress, addressWithBoundPort(addr, boundAddress)),
+			)(mux),
 			// Derive HTTP request contexts from the cancellable ctx so that
 			// SIGTERM cancels long-lived SSE streams and Shutdown completes
 			// within its deadline instead of blocking on open connections.
@@ -1480,7 +1500,9 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Handler:     mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(boundAddress))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+				hsc.policy(boundAddress, addressWithBoundPort(addr, boundAddress)),
+			)(mux),
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",

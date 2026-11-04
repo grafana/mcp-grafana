@@ -43,7 +43,8 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
 	t.Chdir(t.TempDir())
 	require.NoError(t, os.WriteFile(dynamicAddressFileName, []byte("stale\n"), 0o644))
-	listener, err := listenHTTP("127.0.0.1:0")
+	requestedAddress := "localhost:0"
+	listener, err := listenHTTP(requestedAddress)
 	require.NoError(t, err)
 
 	document, err := os.ReadFile(dynamicAddressFileName)
@@ -60,14 +61,19 @@ func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
 	server := &http.Server{
-		Handler: mcpgrafana.DNSRebindingProtectionMiddleware((httpSecurityConfig{}).policy(address))(mux),
+		Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+			(httpSecurityConfig{}).policy(address, addressWithBoundPort(requestedAddress, address)),
+		)(mux),
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() { done <- runHTTPServer(ctx, server, listener, "test", tlsConfig{}) }()
 
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+address+"/healthz", nil)
+	_, port, err = net.SplitHostPort(address)
+	require.NoError(t, err)
+	requestURL := "http://" + net.JoinHostPort("localhost", port) + "/healthz"
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, requestURL, nil)
 	require.NoError(t, err)
 	response, err := (&http.Client{Timeout: time.Second}).Do(request)
 	require.NoError(t, err)
