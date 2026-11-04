@@ -46,6 +46,14 @@ mcp-grafana -t streamable-http --address :9090
 
 Clients connect to the server URL (for example, `http://localhost:8000/sse` for SSE). For streamable-http, the default endpoint path is `/mcp` (override with `--endpoint-path` if your client expects a different path).
 
+To let the operating system allocate a free port, use port `0` and publish the selected address to a file:
+
+```bash
+mcp-grafana -t streamable-http --address 127.0.0.1:0
+```
+
+The server binds the listener before atomically replacing `mcp-grafana-address` in its working directory. The file contains the selected address followed by a newline and uses mode `0600`. This avoids releasing a reserved port before the server starts listening. Run concurrent dynamic-port servers in separate working directories so each one has its own address file.
+
 `--base-path` prefixes the application routes on the listener:
 
 ```bash

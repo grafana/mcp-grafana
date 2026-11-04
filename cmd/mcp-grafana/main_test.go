@@ -40,6 +40,56 @@ func newTestObservability(t *testing.T) *observability.Observability {
 	return obs
 }
 
+func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
+	addressFile := filepath.Join(t.TempDir(), "address")
+	require.NoError(t, os.WriteFile(addressFile, []byte("stale\n"), 0o644))
+	listener, err := listenHTTP(httpListenConfig{
+		address:     "127.0.0.1:0",
+		addressFile: addressFile,
+	})
+	require.NoError(t, err)
+
+	document, err := os.ReadFile(addressFile)
+	require.NoError(t, err)
+	address := strings.TrimSpace(string(document))
+	assert.Equal(t, listener.Addr().String(), address)
+	_, port, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0", port)
+	info, err := os.Stat(addressFile)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", handleHealthz)
+	server := &http.Server{
+		Addr:    address,
+		Handler: mcpgrafana.DNSRebindingProtectionMiddleware((httpSecurityConfig{}).policy(address))(mux),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- runHTTPServer(ctx, server, listener, "test", tlsConfig{}) }()
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+address+"/healthz", nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	cancel()
+	require.NoError(t, <-done)
+}
+
+func TestDynamicAddressUsesStandardAddressFile(t *testing.T) {
+	assert.Equal(t, httpListenConfig{
+		address: "127.0.0.1:0", addressFile: dynamicAddressFileName,
+	}, newHTTPListenConfig("127.0.0.1:0"))
+	assert.Equal(t, httpListenConfig{
+		address: "127.0.0.1:8000",
+	}, newHTTPListenConfig("127.0.0.1:8000"))
+}
+
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 	tests := []struct {
 		name            string

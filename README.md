@@ -452,6 +452,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it
 
+When `--address` uses port `0`, the operating system allocates a free port and the server atomically writes the bound address to `mcp-grafana-address` in its working directory. The file is created with mode `0600`.
+
 > [!NOTE]
 > Over SSE, per-request headers do not reach tool calls: `X-Grafana-Service-Account-Token` / `X-Grafana-API-Key`, `X-Grafana-Org-Id`, and headers listed in `GRAFANA_FORWARD_HEADERS` have no effect, tool calls use the server's environment credentials, and `X-Grafana-URL` overrides do not work. Use streamable-http when each caller needs its own Grafana URL, credentials, or organization.
 
