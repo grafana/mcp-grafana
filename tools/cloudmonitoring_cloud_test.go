@@ -11,7 +11,9 @@ package tools
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,14 +38,21 @@ func TestCloudMonitoringQuery(t *testing.T) {
 	ctx := createCloudMonitoringTestContext(t)
 
 	t.Run("range query", func(t *testing.T) {
-		result, err := queryPrometheus(ctx, QueryPrometheusParams{
+		params := QueryPrometheusParams{
 			DatasourceUID: cloudMonitoringTestDatasourceUID,
 			Expr:          `compute_googleapis_com:instance:cpu:utilization{monitored_resource="gce_instance"}`,
 			StartTime:     "now-1h",
 			EndTime:       "now",
 			StepSeconds:   60,
 			QueryType:     "range",
-		})
+		}
+		result, err := queryPrometheus(ctx, params)
+		const maxRetries = 2
+		for retry := 1; retry <= maxRetries && err != nil && strings.Contains(err.Error(), "status 522"); retry++ {
+			t.Logf("Cloud Monitoring range query returned 522; retrying (%d/%d)", retry, maxRetries)
+			time.Sleep(time.Second)
+			result, err = queryPrometheus(ctx, params)
+		}
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 	})
