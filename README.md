@@ -516,7 +516,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudlogging`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
@@ -556,6 +556,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
+- `--disable-dsquery`: Disable the `query_datasource` source of `render_grafana_app`
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
