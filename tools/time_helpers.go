@@ -45,6 +45,9 @@ func parseEndTime(timeStr string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339Nano, timeStr); err == nil {
 		return t, nil
 	}
+	if t, err := time.Parse(time.DateOnly, timeStr); err == nil {
+		return t.AddDate(0, 0, 1), nil
+	}
 
 	tr := gtime.TimeRange{
 		To:  timeStr,

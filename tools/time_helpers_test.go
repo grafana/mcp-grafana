@@ -141,6 +141,14 @@ func TestParseEndTime(t *testing.T) {
 				assert.Equal(t, expected, result)
 			},
 		},
+		{
+			name:  "date-only resolves to end of day",
+			input: "2024-10-27",
+			checkFunc: func(t *testing.T, result time.Time) {
+				expected := time.Date(2024, 10, 28, 0, 0, 0, 0, time.UTC)
+				assert.Equal(t, expected, result)
+			},
+		},
 	}
 
 	for _, tt := range tests {
