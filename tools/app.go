@@ -19,7 +19,7 @@ type renderAppParams struct {
 
 const (
 	maxAppNotes     = 5
-	maxAppNoteRunes = 200
+	maxAppNoteChars = 200
 )
 
 // appNoter is implemented by a source's structured content to tell the model
@@ -40,8 +40,8 @@ func appText(toolName string, content any) string {
 		if note == "" {
 			continue
 		}
-		if runes := []rune(note); len(runes) > maxAppNoteRunes {
-			note = string(runes[:maxAppNoteRunes-1]) + "…"
+		if runes := []rune(note); len(runes) > maxAppNoteChars {
+			note = string(runes[:maxAppNoteChars-1]) + "…"
 		}
 		notes = append(notes, note)
 	}
