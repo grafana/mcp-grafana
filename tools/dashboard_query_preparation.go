@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
@@ -38,7 +39,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 			return nil, err
 		}
 		references = substituteGrafanaMacros(references, from, to)
-		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
+		query.RequiredVariables = findPanelVariablesInQuery(references+" "+query.Datasource.UID, query.Datasource.Type, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
 			if warning := interp.allSelectionWarning(variable.Name); warning != "" {
 				query.Warnings = append(query.Warnings, warning)
@@ -54,6 +55,51 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		query.Datasource.UID = interp.interpolate(query.Datasource.UID)
 	}
 	return queries, nil
+}
+
+// findPanelVariablesInQuery excludes whole macro names owned by the datasource.
+// The old substring expansion hid names such as $__interval_s by changing them
+// to 36s_s. Whole-name expansion leaves plugin macros intact for Grafana.
+func findPanelVariablesInQuery(query, datasourceType string, definitions map[string]VariableInfo, overrides map[string]string) []VariableInfo {
+	var variables []VariableInfo
+	for _, variable := range findVariablesInQuery(query, definitions, overrides) {
+		_, defined := definitions[variable.Name]
+		_, overridden := overrides[variable.Name]
+		if !defined && !overridden && isPanelQueryMacro(variable.Name, datasourceType) {
+			continue
+		}
+		variables = append(variables, variable)
+	}
+	return variables
+}
+
+func isPanelQueryMacro(name, datasourceType string) bool {
+	if !strings.HasPrefix(name, "__") {
+		return false
+	}
+	switch name {
+	case "__interval", "__interval_ms", "__range", "__range_s", "__range_ms", "__rate_interval", "__rate_interval_ms", "__auto", "__from", "__to":
+		return true
+	}
+	switch normalizeDatasourceType(datasourceType) {
+	case "postgres", "mysql", "mssql":
+		// Built-in SQL datasource macros are expanded by Grafana's backend.
+		switch name {
+		case "__time", "__timeEpoch", "__timeFilter", "__timeFrom", "__timeTo", "__timeGroup", "__timeGroupAlias",
+			"__unixEpochFrom", "__unixEpochTo", "__unixEpochFilter", "__unixEpochNanoFilter", "__unixEpochNanoFrom", "__unixEpochNanoTo", "__unixEpochGroup", "__unixEpochGroupAlias":
+			return true
+		}
+	case "clickhouse":
+		// ClickHouse's documented plugin macro set, including its frontend macros.
+		switch name {
+		case "__timeFilter", "__timeFilter_ms", "__dateFilter", "__dateTimeFilter", "__dt",
+			"__fromTime", "__fromTime_ms", "__toTime", "__toTime_ms", "__timeFrom", "__timeTo", "__timeGroup",
+			"__interval_s", "__timeInterval", "__timeInterval_ms", "__fromGrafanaInterval", "__conditionalAll",
+			"__columns", "__rateColumns", "__perSecondColumns", "__increaseColumns", "__lttb":
+			return true
+		}
+	}
+	return false
 }
 
 // Inspection uses the executor's macro handling. InfluxDB forwards expressions
