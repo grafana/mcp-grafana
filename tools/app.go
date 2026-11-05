@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/invopop/jsonschema"
@@ -14,6 +15,39 @@ import (
 type renderAppParams struct {
 	ToolName  string         `json:"toolName" jsonschema:"required,description=The query tool whose result to display"`
 	Arguments map[string]any `json:"arguments" jsonschema:"required,description=Inputs for the selected query tool: the schema whose title is toolName"`
+}
+
+const (
+	maxAppNotes     = 5
+	maxAppNoteRunes = 200
+)
+
+// appNoter is implemented by a source's structured content to tell the model
+// facts it cannot read from the view, such as a failed query.
+type appNoter interface {
+	AppNotes() []string
+}
+
+func appText(toolName string, content any) string {
+	lines := []string{fmt.Sprintf("Displayed %s result in the Grafana App.", toolName)}
+	noter, ok := content.(appNoter)
+	if !ok {
+		return lines[0]
+	}
+	for _, note := range noter.AppNotes() {
+		note = strings.Join(strings.Fields(note), " ")
+		if note == "" {
+			continue
+		}
+		if runes := []rune(note); len(runes) > maxAppNoteRunes {
+			note = string(runes[:maxAppNoteRunes-1]) + "…"
+		}
+		lines = append(lines, note)
+		if len(lines) > maxAppNotes {
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // AddAppTool registers one explicit viewer for the supplied enabled query tools.
@@ -72,9 +106,7 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 					return nil, fmt.Errorf("result too large or unsupported for the interactive view; use %s directly", args.ToolName)
 				}
 				view := *result
-				view.Content = []mcp.Content{&mcp.TextContent{
-					Text: fmt.Sprintf("Displayed %s result in the Grafana App.", args.ToolName),
-				}}
+				view.Content = []mcp.Content{&mcp.TextContent{Text: appText(args.ToolName, result.StructuredContent)}}
 				return &view, nil
 			}
 			return nil, fmt.Errorf("tool %q is not an enabled app source", args.ToolName)

@@ -120,3 +120,36 @@ func TestAppPreservesSourceResult(t *testing.T) {
 	assert.Equal(t, original, *result)
 	assert.NotEqual(t, original.Content[0].(*mcp.TextContent).Text, view.Content[0].(*mcp.TextContent).Text)
 }
+
+type notedContent struct {
+	Notes []string `json:"-"`
+}
+
+func (c notedContent) AppNotes() []string { return c.Notes }
+
+func TestAppAppendsSourceNotes(t *testing.T) {
+	long := strings.Repeat("x", maxAppNoteRunes+10)
+	notes := []string{"Query B failed:\n  bad_data", "", long, " ", "3", "4", "5", "6"}
+	source := mcpgrafana.MustTool("noted_source", "Test source.",
+		func(context.Context, struct{}) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content:           []mcp.Content{&mcp.TextContent{Text: "{}"}},
+				StructuredContent: notedContent{Notes: notes},
+			}, nil
+		})
+	c := appSession(t, t.Context(), source)
+
+	view, err := c.CallTool(t.Context(), &mcp.CallToolParams{Name: "render_grafana_app", Arguments: map[string]any{
+		"toolName": "noted_source", "arguments": map[string]any{},
+	}})
+	require.NoError(t, err)
+	require.False(t, view.IsError)
+	require.Len(t, view.Content, 1)
+	want := []string{
+		"Displayed noted_source result in the Grafana App.",
+		"Query B failed: bad_data",
+		strings.Repeat("x", maxAppNoteRunes-1) + "…",
+		"3", "4", "5",
+	}
+	assert.Equal(t, strings.Join(want, "\n"), view.Content[0].(*mcp.TextContent).Text)
+}
