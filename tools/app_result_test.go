@@ -128,7 +128,7 @@ type notedContent struct {
 func (c notedContent) AppNotes() []string { return c.Notes }
 
 func TestAppAppendsSourceNotes(t *testing.T) {
-	long := strings.Repeat("x", maxAppNoteRunes+10)
+	long := strings.Repeat("x", maxAppNoteChars+10)
 	notes := []string{"Query B failed:\n  bad_data", "", long, " ", "3", "4", "5", "6", "7"}
 	source := mcpgrafana.MustTool("noted_source", "Test source.",
 		func(context.Context, struct{}) (*mcp.CallToolResult, error) {
@@ -148,7 +148,7 @@ func TestAppAppendsSourceNotes(t *testing.T) {
 	want := []string{
 		"Displayed noted_source result in the Grafana App.",
 		"Query B failed: bad_data",
-		strings.Repeat("x", maxAppNoteRunes-1) + "…",
+		strings.Repeat("x", maxAppNoteChars-1) + "…",
 		"3", "4", "5",
 		"… 2 more not shown",
 	}
