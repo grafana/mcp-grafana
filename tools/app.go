@@ -29,11 +29,12 @@ type appNoter interface {
 }
 
 func appText(toolName string, content any) string {
-	lines := []string{fmt.Sprintf("Displayed %s result in the Grafana App.", toolName)}
+	text := fmt.Sprintf("Displayed %s result in the Grafana App.", toolName)
 	noter, ok := content.(appNoter)
 	if !ok {
-		return lines[0]
+		return text
 	}
+	var notes []string
 	for _, note := range noter.AppNotes() {
 		note = strings.Join(strings.Fields(note), " ")
 		if note == "" {
@@ -42,12 +43,12 @@ func appText(toolName string, content any) string {
 		if runes := []rune(note); len(runes) > maxAppNoteRunes {
 			note = string(runes[:maxAppNoteRunes-1]) + "…"
 		}
-		lines = append(lines, note)
-		if len(lines) > maxAppNotes {
-			break
-		}
+		notes = append(notes, note)
 	}
-	return strings.Join(lines, "\n")
+	if hidden := len(notes) - maxAppNotes; hidden > 0 {
+		notes = append(notes[:maxAppNotes], fmt.Sprintf("… %d more not shown", hidden))
+	}
+	return strings.Join(append([]string{text}, notes...), "\n")
 }
 
 // AddAppTool registers one explicit viewer for the supplied enabled query tools.
