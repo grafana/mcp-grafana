@@ -129,7 +129,7 @@ func (c notedContent) AppNotes() []string { return c.Notes }
 
 func TestAppAppendsSourceNotes(t *testing.T) {
 	long := strings.Repeat("x", maxAppNoteRunes+10)
-	notes := []string{"Query B failed:\n  bad_data", "", long, " ", "3", "4", "5", "6"}
+	notes := []string{"Query B failed:\n  bad_data", "", long, " ", "3", "4", "5", "6", "7"}
 	source := mcpgrafana.MustTool("noted_source", "Test source.",
 		func(context.Context, struct{}) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
@@ -150,6 +150,7 @@ func TestAppAppendsSourceNotes(t *testing.T) {
 		"Query B failed: bad_data",
 		strings.Repeat("x", maxAppNoteRunes-1) + "…",
 		"3", "4", "5",
+		"… 2 more not shown",
 	}
 	assert.Equal(t, strings.Join(want, "\n"), view.Content[0].(*mcp.TextContent).Text)
 }
