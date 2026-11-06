@@ -188,3 +188,70 @@ func TestQueryDatasourceFailedQueryNotes(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryDatasourceTypeAndUnit(t *testing.T) {
+	// tool.7, tool.21 to tool.23: the type of the model, the unit on the panel and on each alternative.
+	result, _, err := runQueryDatasource(t,
+		`{"datasourceUid":"prom","type":"streamgraph","unit":"reqps","queries":[{"refId":"A"}]}`,
+		`{"results":{"A":{"status":200,"frames":[{"schema":{"fields":[{"name":"time","type":"time"},{"name":"v","type":"number"}]},"data":{"values":[[1700000000000,1700000060000],[1,2]]}}]}}}`)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	content := result.StructuredContent.(*QueryDatasourceResult)
+	assert.Equal(t, "streamgraph", content.Chart)
+	assert.Equal(t, "grafana-echartsstream-panel", content.Panel.Type)
+	assert.Equal(t, map[string]any{"streamChartType": "river"}, content.Panel.Options)
+	require.NotNil(t, content.Panel.FieldConfig)
+	assert.Equal(t, "reqps", content.Panel.FieldConfig.Defaults.Unit)
+	require.NotEmpty(t, content.Alternatives)
+	for _, alternative := range content.Alternatives {
+		assert.NotEqual(t, "streamgraph", alternative.Chart)
+		require.NotNil(t, alternative.Panel.FieldConfig)
+		assert.Equal(t, "reqps", alternative.Panel.FieldConfig.Defaults.Unit)
+	}
+	body, err := json.Marshal(content)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"fieldConfig":{"defaults":{"unit":"reqps"}}`)
+}
+
+func TestQueryDatasourceNoUnitHasNoFieldConfig(t *testing.T) {
+	result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A"}]}`, dsQueryResponse)
+	require.NoError(t, err)
+	body, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "fieldConfig")
+}
+
+func TestQueryDatasourceNoRowsDoesNotCheckType(t *testing.T) {
+	// tool.19: with no rows the type is not checked, and the chart is the chart of the type.
+	result, _, err := runQueryDatasource(t,
+		`{"datasourceUid":"prom","type":"sankey","queries":[{"refId":"A"}]}`,
+		`{"results":{"A":{"status":200,"frames":[]}}}`)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	assert.Equal(t, "sankey", result.StructuredContent.(*QueryDatasourceResult).Chart)
+}
+
+func TestQueryDatasourceRejectsUnknownType(t *testing.T) {
+	result, posted, err := runQueryDatasource(t,
+		`{"datasourceUid":"prom","type":"gauge","queries":[{"refId":"A"}]}`, dsQueryResponse)
+	if err == nil {
+		require.True(t, result.IsError)
+	}
+	assert.Nil(t, posted, "tool.4: no query")
+	body, err := json.Marshal(QueryDatasource.Tool.InputSchema)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"sankey"`)
+	assert.Contains(t, string(body), `Each chart needs: timeseries (a time field and number fields)`)
+}
+
+func TestQueryDatasourceTypeMismatchWhenNoChartFits(t *testing.T) {
+	// tool.20: if no chart fits, <charts> is the chart of the pick.
+	result, _, err := runQueryDatasource(t,
+		`{"datasourceUid":"prom","type":"sankey","queries":[{"refId":"A"}]}`,
+		`{"results":{"A":{"status":200,"frames":[{"schema":{"fields":[{"name":"ok","type":"boolean"}]},"data":{"values":[[true,false]]}}]}}}`)
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Equal(t,
+		"type-mismatch: sankey needs source, target and value fields. Charts that fit: barchart.",
+		result.Content[0].(*mcp.TextContent).Text)
+}

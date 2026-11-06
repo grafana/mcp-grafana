@@ -1,0 +1,14 @@
+{
+  "datasourceUid": "lgtm-prometheus",
+  "queries": [
+    {
+      "refId": "A",
+      "expr": "sum by (handler) (rate(missing_metric_total[5m]))",
+      "legendFormat": "{{handler}}",
+      "format": "time_series"
+    }
+  ],
+  "from": "now-24h",
+  "to": "now",
+  "unit": "reqps"
+}

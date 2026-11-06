@@ -1,0 +1,23 @@
+{
+  "chart": "barchart",
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "bar"
+    }
+  },
+  "alternatives": [],
+  "data": {
+    "range": {
+      "from": 1790349877294,
+      "to": 1790353477294
+    },
+    "capturedAt": 1790353477806,
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": []
+      }
+    }
+  }
+}
