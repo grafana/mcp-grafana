@@ -1461,6 +1461,13 @@ How it works:
   appended to every vector selector in each query. A user query can only ever
   **narrow** results within the enforced bounds — it can never widen them.
 - It covers `query_prometheus`, `query_prometheus_histogram`, and Prometheus panels in `run_panel_query`.
+- Native-Prometheus discovery through `list_prometheus_label_names`,
+  `list_prometheus_label_values`, and `list_prometheus_metric_names` also applies
+  the matchers to every series selector, including when no selector is supplied.
+- `list_prometheus_metric_metadata` is refused while enforcement is enabled:
+  Prometheus's metadata endpoint cannot filter by series labels and merges metadata
+  across targets. Cloud Monitoring discovery is also refused because its discovery
+  APIs cannot apply the full Prometheus matcher policy.
 - It **fails closed**: any query that cannot be parsed is rejected rather than
   sent unfiltered.
 

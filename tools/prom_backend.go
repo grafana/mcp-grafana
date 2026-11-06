@@ -346,6 +346,10 @@ func frameWarnings(resp *backend.QueryDataResponse) promv1.Warnings {
 }
 
 func (b *prometheusBackend) LabelNames(ctx context.Context, matchers []string, start, end time.Time) ([]string, error) {
+	matchers, err := enforcePrometheusSelectors(ctx, matchers)
+	if err != nil {
+		return nil, err
+	}
 	names, _, _, err := b.api.LabelNames(ctx, matchers, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus label names: %w", promErrorWithDetail(err))
@@ -358,6 +362,10 @@ func (b *prometheusBackend) LabelNames(ctx context.Context, matchers []string, s
 }
 
 func (b *prometheusBackend) LabelValues(ctx context.Context, labelName string, matchers []string, start, end time.Time) ([]string, error) {
+	matchers, err := enforcePrometheusSelectors(ctx, matchers)
+	if err != nil {
+		return nil, err
+	}
 	values, _, _, err := b.api.LabelValues(ctx, labelName, matchers, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus label values: %w", promErrorWithDetail(err))
@@ -377,6 +385,10 @@ func (b *prometheusBackend) MetricNames(ctx context.Context, re *regexp.Regexp, 
 		// The non-empty matcher keeps regexes like ".*" valid as a series selector.
 		matchers = []string{fmt.Sprintf(`{__name__!="",__name__=~%q}`, pattern)}
 	}
+	matchers, err := enforcePrometheusSelectors(ctx, matchers)
+	if err != nil {
+		return nil, err
+	}
 	values, _, _, err := b.api.LabelValues(ctx, "__name__", matchers, start, end, promv1.WithLimit(uint64(limit)))
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", promErrorWithDetail(err))
@@ -390,6 +402,10 @@ func (b *prometheusBackend) MetricNames(ctx context.Context, re *regexp.Regexp, 
 }
 
 func (b *prometheusBackend) MetricMetadata(ctx context.Context, metric string, limit int) (map[string][]promv1.Metadata, error) {
+	// /metadata has no series selector and merges metadata across all targets.
+	if err := guardUnscopedPrometheusDiscovery(ctx, "Prometheus metric metadata"); err != nil {
+		return nil, err
+	}
 	metadata, err := b.api.Metadata(ctx, metric, fmt.Sprintf("%d", limit))
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric metadata: %w", promErrorWithDetail(err))

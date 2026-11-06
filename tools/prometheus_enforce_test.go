@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,6 +30,155 @@ func promEnforceContext(matchers string) (context.Context, error) {
 		PrometheusEnforcedMatchers: parsed,
 	}
 	return mcpgrafana.WithGrafanaConfig(context.Background(), gc), nil
+}
+
+func TestPrometheusDiscovery_EnforcedMatchers(t *testing.T) {
+	for _, policy := range []string{`namespace="prod"`, `namespace!~"vault|payments"`} {
+		for _, tool := range []string{"label_names", "label_values", "metric_names", "metric_metadata"} {
+			t.Run(policy+"/"+tool, func(t *testing.T) {
+				var discoveryRequests int
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.URL.Path == "/api/datasources/uid/prom-uid" {
+						_ = json.NewEncoder(w).Encode(models.DataSource{UID: "prom-uid", Type: "prometheus"})
+						return
+					}
+					discoveryRequests++
+					if strings.HasSuffix(r.URL.Path, "/metadata") {
+						_, _ = w.Write([]byte(`{"status":"success","data":{"vault_secret_total":[{"type":"counter","help":"vault-only metadata"}]}}`))
+						return
+					}
+					if !assert.NoError(t, r.ParseForm()) {
+						http.Error(w, "invalid form", http.StatusBadRequest)
+						return
+					}
+					selectors := r.Form["match[]"]
+					assert.NotEmpty(t, selectors, "discovery must not be unscoped")
+					for _, selector := range selectors {
+						matchers, err := promqlParser.ParseMetricSelector(selector)
+						if !assert.NoError(t, err) {
+							continue
+						}
+						assert.Contains(t, selector, policy, "each OR branch must include the policy")
+						assert.False(t, labels.Selector(matchers).Matches(labels.FromStrings("__name__", "vault_secret_total", "namespace", "vault")))
+					}
+					_, _ = w.Write([]byte(`{"status":"success","data":[]}`))
+				}))
+				defer server.Close()
+				matchers, err := ParseEnforcedMatchers(policy)
+				require.NoError(t, err)
+				ctx := mcpgrafana.WithGrafanaConfig(mockDatasourcesCtx(server), mcpgrafana.GrafanaConfig{
+					URL: server.URL, PrometheusEnforcedMatchers: matchers,
+				})
+				excluded := []Selector{
+					{Filters: []LabelMatcher{{Name: "namespace", Type: "=", Value: "vault"}}},
+					{Filters: []LabelMatcher{{Name: "namespace", Type: "=", Value: "payments"}}},
+				}
+				switch tool {
+				case "label_names":
+					_, err = listPrometheusLabelNames(ctx, ListPrometheusLabelNamesParams{DatasourceUID: "prom-uid", Matches: excluded})
+				case "label_values":
+					_, err = listPrometheusLabelValues(ctx, ListPrometheusLabelValuesParams{DatasourceUID: "prom-uid", LabelName: "secret", Matches: excluded})
+				case "metric_names":
+					_, err = listPrometheusMetricNames(ctx, ListPrometheusMetricNamesParams{DatasourceUID: "prom-uid"})
+				case "metric_metadata":
+					_, err = listPrometheusMetricMetadata(ctx, ListPrometheusMetricMetadataParams{DatasourceUID: "prom-uid", Metric: "vault_secret_total"})
+					require.ErrorContains(t, err, "cannot be scoped")
+					assert.Zero(t, discoveryRequests, "metadata must fail closed before querying the endpoint")
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, 1, discoveryRequests)
+			})
+		}
+	}
+}
+
+func TestEnforcePrometheusSelectors(t *testing.T) {
+	t.Run("disabled preserves input", func(t *testing.T) {
+		for _, selectors := range [][]string{nil, {}, {`not a selector`}} {
+			got, err := enforcePrometheusSelectors(context.Background(), selectors)
+			require.NoError(t, err)
+			assert.Equal(t, selectors, got)
+		}
+	})
+	for _, policy := range []string{`namespace="prod",cluster=~"us-.*"`, `namespace!~"vault|payments"`, `namespace!="vault"`} {
+		for _, selectors := range [][]string{nil, {}, {`{}`}, {`{namespace="vault"}`, `{job=~".*"}`}} {
+			t.Run(policy+"/"+strings.Join(selectors, "|"), func(t *testing.T) {
+				ctx, err := promEnforceContext(policy)
+				require.NoError(t, err)
+				original := append([]string(nil), selectors...)
+				got, err := enforcePrometheusSelectors(ctx, selectors)
+				require.NoError(t, err)
+				require.NotEmpty(t, got)
+				assert.Equal(t, original, append([]string(nil), selectors...), "caller input must not be mutated")
+				for _, selector := range got {
+					_, err := promGuardParser.ParseExpr(selector)
+					require.NoError(t, err, "exclusion-only policies need a valid standalone selector")
+					matchers, err := promqlParser.ParseMetricSelector(selector)
+					require.NoError(t, err)
+					assert.False(t, labels.Selector(matchers).Matches(labels.FromStrings("__name__", "vault_secret_total", "namespace", "vault", "cluster", "us-east")))
+					for _, matcher := range prometheusEnforcedMatchers(ctx) {
+						assert.Contains(t, selector, matcher.String())
+					}
+				}
+			})
+		}
+	}
+	t.Run("malformed selector fails closed", func(t *testing.T) {
+		ctx, err := promEnforceContext(`namespace="prod"`)
+		require.NoError(t, err)
+		for _, selector := range []string{`{job=}`, `{namespace=~"["}`, `up or secret`, `up[5m]`} {
+			got, err := enforcePrometheusSelectors(ctx, []string{selector})
+			require.ErrorContains(t, err, "could not parse Prometheus selector")
+			assert.Nil(t, got)
+		}
+	})
+}
+
+func TestPrometheusDiscovery_CloudMonitoringFailsClosed(t *testing.T) {
+	ctx, err := promEnforceContext(`namespace="prod"`)
+	require.NoError(t, err)
+	// An uninitialized backend would panic on HTTP access: refusal must happen first.
+	b := &cloudMonitoringBackend{defaultProject: "test-project"}
+	t.Run("label names", func(t *testing.T) {
+		_, err := b.LabelNames(ctx, nil, time.Time{}, time.Time{})
+		require.ErrorContains(t, err, "cannot be scoped")
+	})
+	for _, label := range []string{"__name__", "namespace"} {
+		t.Run("label values/"+label, func(t *testing.T) {
+			_, err := b.LabelValues(ctx, label, nil, time.Time{}, time.Time{})
+			require.ErrorContains(t, err, "cannot be scoped")
+		})
+	}
+	t.Run("metric names", func(t *testing.T) {
+		_, err := b.MetricNames(ctx, nil, 10, time.Time{}, time.Time{})
+		require.ErrorContains(t, err, "cannot be scoped")
+	})
+	t.Run("metric metadata", func(t *testing.T) {
+		_, err := b.MetricMetadata(ctx, "", 10)
+		require.ErrorContains(t, err, "cannot be scoped")
+	})
+}
+
+func TestPrometheusDiscovery_MetricNamesPreservesFilters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, r.ParseForm())
+		assert.Equal(t, "4", r.Form.Get("limit"))
+		assert.Equal(t, "1700000000", r.Form.Get("start"))
+		assert.Equal(t, "1700003600", r.Form.Get("end"))
+		selector := r.Form.Get("match[]")
+		assert.Contains(t, selector, `namespace="prod"`)
+		assert.Contains(t, selector, `__name__=~`)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":["http_a","http_b","http_c","http_d"]}`))
+	}))
+	defer server.Close()
+	ctx, err := promEnforceContext(`namespace="prod"`)
+	require.NoError(t, err)
+	got, err := newTestPrometheusBackend(t, server).MetricNames(ctx, regexp.MustCompile("http_"), 4, time.Unix(1700000000, 0), time.Unix(1700003600, 0))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"http_a", "http_b", "http_c", "http_d"}, got)
 }
 
 func TestEnforcePromQL(t *testing.T) {

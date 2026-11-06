@@ -16,6 +16,38 @@ func prometheusEnforcedMatchers(ctx context.Context) []*labels.Matcher {
 	return mcpgrafana.GrafanaConfigFromContext(ctx).PrometheusEnforcedMatchers
 }
 
+// Discovery selectors are OR-ed, so every branch must include the policy.
+func enforcePrometheusSelectors(ctx context.Context, selectors []string) ([]string, error) {
+	enforced := prometheusEnforcedMatchers(ctx)
+	if len(enforced) == 0 {
+		return selectors, nil
+	}
+	if len(selectors) == 0 {
+		selectors = []string{"{}"}
+	}
+	result := make([]string, 0, len(selectors))
+	for _, selector := range selectors {
+		matchers, err := promqlParser.ParseMetricSelector(selector)
+		if err != nil {
+			return nil, fmt.Errorf("enforced matcher injection: could not parse Prometheus selector %q: %w", selector, err)
+		}
+		matchers = append(matchers, enforced...)
+		if !hasNonEmptyMatcher(matchers) {
+			// Prometheus requires a non-empty matcher even for exclusion-only policies.
+			matchers = append(matchers, labels.MustNewMatcher(labels.MatchNotEqual, "__name__", ""))
+		}
+		result = append(result, "{"+matchersString(matchers)+"}")
+	}
+	return result, nil
+}
+
+func guardUnscopedPrometheusDiscovery(ctx context.Context, operation string) error {
+	if len(prometheusEnforcedMatchers(ctx)) > 0 {
+		return fmt.Errorf("%s cannot be scoped by the configured Prometheus enforced matchers; refusing unfiltered discovery", operation)
+	}
+	return nil
+}
+
 // enforcePromQL AND-s the configured enforcement matchers into every vector
 // selector of a PromQL query (instant or range) and returns the rewritten query.
 // When enforcement is disabled it returns the query unchanged.

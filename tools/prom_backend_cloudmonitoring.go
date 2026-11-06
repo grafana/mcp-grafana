@@ -132,6 +132,9 @@ func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryTy
 // The Grafana Cloud Monitoring plugin strips label descriptors from metric
 // descriptors, so we must query actual time series to discover labels.
 func (b *cloudMonitoringBackend) LabelNames(ctx context.Context, matchers []string, start, end time.Time) ([]string, error) {
+	if err := guardUnscopedPrometheusDiscovery(ctx, "Cloud Monitoring label names"); err != nil {
+		return nil, err
+	}
 	project, err := b.project()
 	if err != nil {
 		return nil, err
@@ -177,6 +180,9 @@ func (b *cloudMonitoringBackend) LabelNames(ctx context.Context, matchers []stri
 // LabelValues returns values for a label. For __name__, it returns metric type names
 // from metric descriptors. For other labels, it uses a TIME_SERIES_LIST HEADERS query.
 func (b *cloudMonitoringBackend) LabelValues(ctx context.Context, labelName string, matchers []string, start, end time.Time) ([]string, error) {
+	if err := guardUnscopedPrometheusDiscovery(ctx, "Cloud Monitoring label values"); err != nil {
+		return nil, err
+	}
 	if labelName == "__name__" {
 		return b.metricNames(ctx, matchers)
 	}
@@ -185,6 +191,9 @@ func (b *cloudMonitoringBackend) LabelValues(ctx context.Context, labelName stri
 }
 
 func (b *cloudMonitoringBackend) MetricNames(ctx context.Context, re *regexp.Regexp, limit int, _, _ time.Time) ([]string, error) {
+	if err := guardUnscopedPrometheusDiscovery(ctx, "Cloud Monitoring metric names"); err != nil {
+		return nil, err
+	}
 	// The Cloud Monitoring plugin doesn't support limits or regex matching, so do all of that in the client.
 	names, err := b.metricNames(ctx, nil)
 	if err != nil {
@@ -204,6 +213,9 @@ func (b *cloudMonitoringBackend) MetricNames(ctx context.Context, re *regexp.Reg
 
 // MetricMetadata returns metadata for metrics by fetching metric descriptors.
 func (b *cloudMonitoringBackend) MetricMetadata(ctx context.Context, metric string, limit int) (map[string][]promv1.Metadata, error) {
+	if err := guardUnscopedPrometheusDiscovery(ctx, "Cloud Monitoring metric metadata"); err != nil {
+		return nil, err
+	}
 	descriptors, err := b.fetchMetricDescriptors(ctx, false)
 	if err != nil {
 		return nil, fmt.Errorf("fetching metric descriptors: %w", err)
