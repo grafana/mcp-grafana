@@ -437,6 +437,14 @@ func TestUpdateNotebook_RequiresSpec(t *testing.T) {
 	require.ErrorContains(t, err, "spec is required")
 }
 
+// update_notebook reads the notebook before writing it, so a token holding only
+// the write actions gets a 403 on the GET and the update never happens.
+func TestUpdateNotebook_DeclaresReadPermissions(t *testing.T) {
+	perms, ok := mcpgrafana.ToolRequiredPermissions(UpdateNotebook.Tool)
+	require.True(t, ok, "update_notebook declares no RBAC permissions")
+	assert.Subset(t, perms, []string{"notebooks:read", "dashboard.grafana.app/notebooks:get"})
+}
+
 func TestDeleteNotebook(t *testing.T) {
 	ts := notebooksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)

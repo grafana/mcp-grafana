@@ -553,6 +553,9 @@ var UpdateNotebook = mcpgrafana.MustTool(
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// The update reads the current notebook to send its metadata back, so it
+	// needs the read actions as well as the write one.
+	mcpgrafana.RequiresPermissions("notebooks:read", "dashboard.grafana.app/notebooks:get"),
 	mcpgrafana.RequiresPermissions("notebooks:write", "dashboard.grafana.app/notebooks:update"),
 )
 
