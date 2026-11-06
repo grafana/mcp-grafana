@@ -215,6 +215,7 @@ type grafanaConfig struct {
 
 	dynamicMultiOrg bool
 
+	prometheusEnforcedMatchers   string
 	lokiEnforcedMatchers         string
 	lokiLabelEnumerationFallback string
 }
@@ -286,6 +287,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.prometheusGuardrailRequireSelectiveLabels, "prometheus-guardrail-require-selective-labels", false, "Require a non-empty positive label constraint beyond the metric name in each PromQL vector selector. Blanket regexes and negative matchers do not provide scope. Independent of range and points limits; only applies when the guardrail is not 'off'. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS when the flag is not set.")
 	flag.DurationVar(&gc.prometheusGuardrailMaxRange, "prometheus-guardrail-max-range", 192*time.Hour, "Maximum effective time range for a single PromQL query: its time range plus the longest range vector or subquery window in the expression. Accepts Go duration strings, e.g. 192h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.prometheusGuardrailMaxPoints, "prometheus-guardrail-max-points", 11000, "Maximum points per series a PromQL range query may request, computed from its time range and step. 0 disables the points check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS environment variable when the flag is not set.")
+	flag.StringVar(&gc.prometheusEnforcedMatchers, "prometheus-enforced-matchers", "", "PromQL label matchers AND-ed into every native-Prometheus query to restrict readable series (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
 
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
 	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
@@ -819,6 +821,36 @@ func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy
 	return mcpgrafana.HostOriginPolicy{
 		AllowedHosts:   hosts,
 		AllowedOrigins: splitAndTrim(hsc.allowedOrigins),
+	}
+}
+
+// warnPrometheusEnforcementBypasses logs, at startup, every enabled tool through
+// which an LLM could reach Prometheus metric data WITHOUT going through the
+// enforced Prometheus backend — so --prometheus-enforced-matchers would not apply.
+func warnPrometheusEnforcementBypasses(dt disabledTools) {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	type bypass struct {
+		category string
+		disabled bool
+		flag     string
+		reason   string
+	}
+	for _, b := range []bypass{
+		{"api", dt.api, "--disable-api", "grafana_api_request can query the Prometheus datasource proxy directly, fully bypassing enforcement"},
+		{"rendering", dt.rendering, "--disable-rendering", "get_panel_image renders Prometheus panels server-side via the Grafana renderer, producing images that contain unrestricted metrics"},
+	} {
+		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
+			slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
+				"disable_with", b.flag, "reason", b.reason)
+		}
+	}
+	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
+		slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
+			"disable_with", "--disable-assistant",
+			"reason", "ask_assistant delegates to Grafana Assistant, which reads Prometheus server-side across all series; enforced matchers are not applied to what it reports back")
+	}
+	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
+		slog.Info("Prometheus label-matcher enforcement: dashboard snapshots can return panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted metrics")
 	}
 }
 
@@ -1603,6 +1635,16 @@ func main() {
 			CAFile:     gc.tlsCAFile,
 			SkipVerify: gc.tlsSkipVerify,
 		}
+	}
+
+	promEnforcedMatchers, err := tools.ParseEnforcedMatchers(gc.prometheusEnforcedMatchers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid --prometheus-enforced-matchers: %v\n", err)
+		os.Exit(2)
+	}
+	if len(promEnforcedMatchers) > 0 {
+		grafanaConfig.PrometheusEnforcedMatchers = promEnforcedMatchers
+		warnPrometheusEnforcementBypasses(dt)
 	}
 
 	enforcedMatchers, err := tools.ParseEnforcedMatchers(gc.lokiEnforcedMatchers)

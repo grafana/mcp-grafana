@@ -527,6 +527,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1` - default: `11000`, Prometheus' own per-series limit. The guidance names the smallest `stepSeconds` that fits. `0` disables the points check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
 
   Limits of the Prometheus guardrail: the points check budgets the requested resolution, not the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step. `offset` and `@` modifiers are ignored. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured, with the values Grafana uses (`$__rate_interval` is four times the step). Expressions the guardrail still cannot parse (for example ones with dashboard variables such as `$window`, or syntax only another dialect accepts) are checked against the query's own time range and step only, and run otherwise. `run_panel_query` has no step parameter, so it widens its 1-minute step for long ranges to stay within 11000 points, as Grafana does, or within a lower `--prometheus-guardrail-max-points` in `enforce` mode.
+- `--prometheus-enforced-matchers`: PromQL label matchers AND-ed into every native-Prometheus query to restrict which series can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Prometheus query enforcement](#prometheus-query-enforcement).
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
 - `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
 - `--disable-search`: Disable search tools
@@ -1437,6 +1438,38 @@ docker run --rm -p 8000:8000 \
   grafana/mcp-grafana \
   -t streamable-http --metrics
 ```
+
+## Prometheus query enforcement
+
+`--prometheus-enforced-matchers` lets an operator restrict which Prometheus series the
+server can ever read, by AND-ing a fixed set of PromQL label matchers into every
+vector selector in each native-Prometheus query the server issues. This is useful when a
+datasource contains series that must not be exposed (e.g. metrics with sensitive tenant
+or customer labels) but you cannot restrict access at the Prometheus layer.
+
+```bash
+# Only ever read prod/staging environments (allowlist)
+./mcp-grafana --prometheus-enforced-matchers 'environment=~"prod|staging"' --disable-api
+
+# Never read the vault or payments namespaces (exclusion)
+./mcp-grafana --prometheus-enforced-matchers 'namespace!~"vault|payments"' --disable-api
+```
+
+How it works:
+
+- The matchers are parsed once at startup (invalid input aborts the server) and
+  appended to every vector selector in each query. A user query can only ever
+  **narrow** results within the enforced bounds — it can never widen them.
+- It covers `query_prometheus`, `query_prometheus_histogram`, and Prometheus panels in `run_panel_query`.
+- Native-Prometheus discovery through `list_prometheus_label_names`,
+  `list_prometheus_label_values`, and `list_prometheus_metric_names` also applies
+  the matchers to every series selector, including when no selector is supplied.
+- `list_prometheus_metric_metadata` is refused while enforcement is enabled:
+  Prometheus's metadata endpoint cannot filter by series labels and merges metadata
+  across targets. Cloud Monitoring discovery is also refused because its discovery
+  APIs cannot apply the full Prometheus matcher policy.
+- It **fails closed**: any query that cannot be parsed is rejected rather than
+  sent unfiltered.
 
 ## Loki query enforcement
 

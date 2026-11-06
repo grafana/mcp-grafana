@@ -818,6 +818,46 @@ func TestValidatePrometheusGuardrail(t *testing.T) {
 	}
 }
 
+func TestWarnPrometheusEnforcementBypasses(t *testing.T) {
+	t.Run("all bypass tools enabled logs warnings", func(t *testing.T) {
+		var buf bytes.Buffer
+		orig := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(orig)
+
+		dt := disabledTools{
+			enabledTools: "prometheus,api,rendering,assistant,snapshot",
+		}
+		warnPrometheusEnforcementBypasses(dt)
+		out := buf.String()
+		assert.Contains(t, out, "--disable-api")
+		assert.Contains(t, out, "--disable-rendering")
+		assert.Contains(t, out, "--disable-assistant")
+		assert.Contains(t, out, "--disable-snapshot")
+	})
+
+	t.Run("disabled bypass tools logs no warnings", func(t *testing.T) {
+		var buf bytes.Buffer
+		orig := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(orig)
+
+		dt := disabledTools{
+			enabledTools: "prometheus",
+			api:          true,
+			rendering:    true,
+			assistant:    true,
+			snapshot:     true,
+		}
+		warnPrometheusEnforcementBypasses(dt)
+		out := buf.String()
+		assert.NotContains(t, out, "--disable-api")
+		assert.NotContains(t, out, "--disable-rendering")
+		assert.NotContains(t, out, "--disable-assistant")
+		assert.NotContains(t, out, "--disable-snapshot")
+	})
+}
+
 func TestSplitAndTrim(t *testing.T) {
 	cases := []struct {
 		name string

@@ -265,6 +265,12 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 			// /api/ds/query path, which bypasses enforcement. Fails closed,
 			// mirroring the VictoriaLogs guard in lokiBackendForDatasource.
 			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Loki label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Loki via query_loki_logs, or supply an accessible datasource", datasourceUID)
+		case len(prometheusEnforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "prometheus":
+			// The datasource is unreadable, so the caller-supplied type is
+			// unverified. With Prometheus label-matcher enforcement active, refuse
+			// rather than route a possibly-Prometheus datasource onto the
+			// /api/ds/query path, which bypasses enforcement.
+			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Prometheus label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Prometheus via query_prometheus, or supply an accessible datasource", datasourceUID)
 		default:
 			// Unreadable datasource, but the caller supplied a fallback type and
 			// enforcement (if any) is satisfied; keep the caller-supplied type.

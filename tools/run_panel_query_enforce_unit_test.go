@@ -151,4 +151,48 @@ func TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement(t *testing.
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "enforcement is enabled")
 	})
+
+	t.Run("unreadable datasource under prometheus enforcement fails closed", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/datasources/uid/mystery-prom-uid":
+				w.WriteHeader(http.StatusForbidden)
+			case "/api/frontend/settings":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"datasources":{}}`))
+			case "/api/ds/query":
+				t.Errorf("ds/query must not be reached when failing closed")
+			default:
+				t.Errorf("unexpected request path %q", r.URL.Path)
+			}
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		cfg := openapiclient.DefaultTransportConfig()
+		cfg.Host = u.Host
+		cfg.Schemes = []string{"http"}
+		cfg.APIKey = "test"
+		c := openapiclient.NewHTTPClientWithConfig(nil, cfg)
+
+		ctx := mcpgrafana.WithGrafanaClient(context.Background(), &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: c})
+		matchers, err := ParseEnforcedMatchers(`cluster="prod"`)
+		require.NoError(t, err)
+		gc := mcpgrafana.GrafanaConfig{
+			URL:                        srv.URL,
+			PrometheusEnforcedMatchers: matchers,
+		}
+		promCtx := mcpgrafana.WithGrafanaConfig(ctx, gc)
+
+		_, err = runSinglePanelQuery(promCtx, singlePanelQueryParams{
+			DB:      panelWithType("mystery-prom-uid", "prometheus"),
+			PanelID: 1,
+			Start:   "now-1h",
+			End:     "now",
+			DsUID:   "mystery-prom-uid",
+			DsType:  "grafana-bigquery-datasource",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Prometheus label-matcher enforcement is enabled")
+	})
 }
