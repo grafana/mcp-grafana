@@ -155,3 +155,30 @@ func TestQueryDatasourceSchemaAcceptsIntegerTimes(t *testing.T) {
 	assert.Contains(t, string(body), `"integer"`)
 	assert.Contains(t, string(body), `"datasourceUid"`)
 }
+
+func TestQueryDatasourceFailedQueryNotes(t *testing.T) {
+	// tool.29: one note for each entry with an error, also when every entry has one.
+	for name, tc := range map[string]struct {
+		response string
+		want     []string
+	}{
+		"partial": {dsQueryResponse, []string{"Query B failed: bad_data: parse error"}},
+		"all": {
+			`{"results":{"B":{"status":400,"error":"two"},"A":{"status":500,"error":"one"}}}`,
+			[]string{"Query A failed: one", "Query B failed: two"},
+		},
+		"none": {`{"results":{"A":{"status":200,"frames":[]}}}`, []string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, _, err := runQueryDatasource(t,
+				`{"datasourceUid":"prom","queries":[{"refId":"A"},{"refId":"B"}]}`, tc.response)
+			require.NoError(t, err)
+			content := result.StructuredContent.(*QueryDatasourceResult)
+			assert.Equal(t, tc.want, content.AppNotes())
+			// The notes are for render_grafana_app: they are not in the structured content.
+			body, err := json.Marshal(content)
+			require.NoError(t, err)
+			assert.NotContains(t, string(body), "notes")
+		})
+	}
+}
