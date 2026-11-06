@@ -118,7 +118,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	// A later slice picks the chart from the data. Until then every result is a time series.
 	result := &QueryDatasourceResult{
 		Chart:        "timeseries",
-		Panel:        dsPanel{Type: "grafana-echartscartesian-panel", Options: map[string]any{}},
+		Panel:        dsPanel{Type: "grafana-echartscartesian-panel", Options: map[string]any{"seriesType": "line"}},
 		Alternatives: []dsAlternative{},
 		Data: dsData{
 			Range:      dsRange{From: from.UnixMilli(), To: to.UnixMilli()},
