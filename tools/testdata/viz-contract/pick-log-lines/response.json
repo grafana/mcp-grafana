@@ -1,0 +1,49 @@
+{
+  "status": 200,
+  "body": {
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": [
+          {
+            "schema": {
+              "fields": [
+                {
+                  "name": "timestamp",
+                  "type": "time"
+                },
+                {
+                  "name": "body",
+                  "type": "string"
+                }
+              ],
+              "meta": {
+                "type": "log-lines",
+                "typeVersion": [
+                  0,
+                  0
+                ]
+              }
+            },
+            "data": {
+              "values": [
+                [
+                  1727740800000,
+                  1727740860000,
+                  1727740920000,
+                  1727740980000
+                ],
+                [
+                  "a",
+                  "b",
+                  "c",
+                  "d"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

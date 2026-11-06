@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "body": {
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": []
+      }
+    }
+  }
+}

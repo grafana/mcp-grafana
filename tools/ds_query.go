@@ -32,6 +32,22 @@ func doDSQuery(ctx context.Context, client *http.Client, baseURL string, payload
 
 // doDSQueryWithLimit is like doDSQuery but allows overriding the response size limit.
 func doDSQueryWithLimit(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}, responseLimit int64) (*backend.QueryDataResponse, error) {
+	body, err := doDSQueryRaw(ctx, client, baseURL, payload, responseLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	var queryResp backend.QueryDataResponse
+	if err := json.Unmarshal(body, &queryResp); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	return &queryResp, nil
+}
+
+// doDSQueryRaw posts a payload to /api/ds/query and returns the body of the response as it came, for a caller that
+// must not change it. The request, the status check and the size limit are those of doDSQuery.
+func doDSQueryRaw(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}, responseLimit int64) ([]byte, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling query payload: %w", err)
@@ -58,13 +74,7 @@ func doDSQueryWithLimit(ctx context.Context, client *http.Client, baseURL string
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
-
-	var queryResp backend.QueryDataResponse
-	if err := json.Unmarshal(body, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
-	}
-
-	return &queryResp, nil
+	return body, nil
 }
 
 func trimTrailingSlash(s string) string {
