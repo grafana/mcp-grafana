@@ -1,0 +1,9 @@
+{
+  "isError": true,
+  "content": [
+    {
+      "type": "text",
+      "text": "type-mismatch: sankey needs source, target and value fields. Charts that fit: timeseries, barchart, histogram, piechart, funnel, heatmap, state-timeline, status-history, streamgraph, bubble."
+    }
+  ]
+}

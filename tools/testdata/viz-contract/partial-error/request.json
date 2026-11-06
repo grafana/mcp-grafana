@@ -1,0 +1,28 @@
+{
+  "from": "now-24h",
+  "to": "now",
+  "queries": [
+    {
+      "refId": "A",
+      "expr": "sum by (handler) (rate(grafana_http_request_duration_seconds_count[5m]))",
+      "legendFormat": "{{handler}}",
+      "format": "time_series",
+      "datasource": {
+        "uid": "lgtm-prometheus"
+      },
+      "maxDataPoints": 1000,
+      "intervalMs": 86400
+    },
+    {
+      "refId": "B",
+      "expr": "sum by (handler) (rate(grafana_http_request_duration_seconds_count[5m]",
+      "legendFormat": "{{handler}}",
+      "format": "time_series",
+      "datasource": {
+        "uid": "lgtm-prometheus"
+      },
+      "maxDataPoints": 1000,
+      "intervalMs": 86400
+    }
+  ]
+}

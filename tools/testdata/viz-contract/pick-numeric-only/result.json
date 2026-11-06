@@ -1,0 +1,89 @@
+{
+  "chart": "barchart",
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "bar"
+    }
+  },
+  "alternatives": [
+    {
+      "chart": "histogram",
+      "panel": {
+        "type": "grafana-echartscartesian-panel",
+        "options": {
+          "histogram": true
+        }
+      }
+    },
+    {
+      "chart": "piechart",
+      "panel": {
+        "type": "grafana-echartsparttowhole-panel",
+        "options": {
+          "seriesType": "pie"
+        }
+      }
+    },
+    {
+      "chart": "funnel",
+      "panel": {
+        "type": "grafana-echartsparttowhole-panel",
+        "options": {
+          "seriesType": "funnel"
+        }
+      }
+    },
+    {
+      "chart": "parallel",
+      "panel": {
+        "type": "grafana-echartsmultivariate-panel",
+        "options": {
+          "seriesType": "parallel"
+        }
+      }
+    }
+  ],
+  "data": {
+    "range": {
+      "from": 1790349877294,
+      "to": 1790353477294
+    },
+    "capturedAt": 1790353477806,
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": [
+          {
+            "schema": {
+              "fields": [
+                {
+                  "name": "a",
+                  "type": "number"
+                },
+                {
+                  "name": "b",
+                  "type": "number"
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1,
+                  2,
+                  3
+                ],
+                [
+                  4,
+                  5,
+                  6
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

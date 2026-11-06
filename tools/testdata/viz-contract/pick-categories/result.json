@@ -1,0 +1,116 @@
+{
+  "chart": "barchart",
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "bar"
+    }
+  },
+  "alternatives": [
+    {
+      "chart": "histogram",
+      "panel": {
+        "type": "grafana-echartscartesian-panel",
+        "options": {
+          "histogram": true
+        }
+      }
+    },
+    {
+      "chart": "piechart",
+      "panel": {
+        "type": "grafana-echartsparttowhole-panel",
+        "options": {
+          "seriesType": "pie"
+        }
+      }
+    },
+    {
+      "chart": "funnel",
+      "panel": {
+        "type": "grafana-echartsparttowhole-panel",
+        "options": {
+          "seriesType": "funnel"
+        }
+      }
+    },
+    {
+      "chart": "treemap",
+      "panel": {
+        "type": "grafana-echartshierarchy-panel",
+        "options": {
+          "seriesType": "treemap"
+        }
+      }
+    },
+    {
+      "chart": "sunburst",
+      "panel": {
+        "type": "grafana-echartshierarchy-panel",
+        "options": {
+          "seriesType": "sunburst"
+        }
+      }
+    }
+  ],
+  "data": {
+    "range": {
+      "from": 1790349877294,
+      "to": 1790353477294
+    },
+    "capturedAt": 1790353477806,
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": [
+          {
+            "schema": {
+              "fields": [
+                {
+                  "name": "host",
+                  "type": "string"
+                },
+                {
+                  "name": "cpu",
+                  "type": "number"
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  "host-0",
+                  "host-1",
+                  "host-2",
+                  "host-3",
+                  "host-4",
+                  "host-5",
+                  "host-6",
+                  "host-7",
+                  "host-8",
+                  "host-9",
+                  "host-10",
+                  "host-11"
+                ],
+                [
+                  0,
+                  5,
+                  10,
+                  15,
+                  20,
+                  25,
+                  30,
+                  35,
+                  40,
+                  45,
+                  50,
+                  55
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

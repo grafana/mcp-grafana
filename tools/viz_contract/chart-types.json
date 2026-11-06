@@ -1,0 +1,170 @@
+{
+  "charts": [
+    {
+      "name": "timeseries",
+      "panel": "grafana-echartscartesian-panel",
+      "options": { "seriesType": "line" },
+      "fits": [{ "hasFieldType.time": true, "hasFieldType.number": true }],
+      "description": "Lines of values over time",
+      "dataShape": "a time field and number fields"
+    },
+    {
+      "name": "barchart",
+      "panel": "grafana-echartscartesian-panel",
+      "options": { "seriesType": "bar" },
+      "fits": [{ "hasFieldType.number": true }],
+      "description": "Bars of values by category or time",
+      "dataShape": "number fields, with a string or time field for the categories"
+    },
+    {
+      "name": "histogram",
+      "panel": "grafana-echartscartesian-panel",
+      "options": { "histogram": true },
+      "fits": [{ "hasFieldType.number": true }],
+      "description": "Bucket counts of the values",
+      "dataShape": "number fields"
+    },
+    {
+      "name": "candlestick",
+      "panel": "grafana-echartscartesian-panel",
+      "options": { "seriesType": "candlestick" },
+      "fits": [{ "hasFieldName.open": true, "hasFieldName.high": true, "hasFieldName.low": true, "hasFieldName.close": true }],
+      "description": "Open, high, low and close values for each time or category",
+      "dataShape": "number fields named open, high, low and close"
+    },
+    {
+      "name": "boxplot",
+      "panel": "grafana-echartscartesian-panel",
+      "options": { "seriesType": "boxplot" },
+      "fits": [{ "hasFieldName.min": true, "hasFieldName.q1": true, "hasFieldName.median": true, "hasFieldName.q3": true, "hasFieldName.max": true }],
+      "description": "Five-number summary for each category",
+      "dataShape": "number fields named min, q1, median, q3 and max"
+    },
+    {
+      "name": "piechart",
+      "panel": "grafana-echartsparttowhole-panel",
+      "options": { "seriesType": "pie" },
+      "fits": [{ "hasFieldType.number": true }],
+      "description": "Parts of a whole as slices",
+      "dataShape": "a number field, with a string field for the names of the parts"
+    },
+    {
+      "name": "funnel",
+      "panel": "grafana-echartsparttowhole-panel",
+      "options": { "seriesType": "funnel" },
+      "fits": [{ "hasFieldType.number": true }],
+      "description": "Values of the stages of a process, from largest to smallest",
+      "dataShape": "a number field, with a string field for the names of the stages"
+    },
+    {
+      "name": "heatmap",
+      "panel": "grafana-echartsheatmap-panel",
+      "options": {},
+      "fits": [{ "hasDataFrameType.heatmap-cells": true }, { "hasFieldType.time": true, "hasFieldType.number": true }],
+      "description": "Colored cells of values over time and buckets",
+      "dataShape": "heatmap cells, or a time field and number fields for the buckets"
+    },
+    {
+      "name": "geomap",
+      "panel": "grafana-echartsgeo-panel",
+      "options": {},
+      "fits": [
+        { "hasFieldType.geo": true },
+        { "hasFieldName.geohash": true },
+        { "hasFieldName.latitude": true, "hasFieldName.longitude": true },
+        { "hasFieldName.lat": true, "hasFieldName.lon": true },
+        { "hasFieldName.lat": true, "hasFieldName.lng": true }
+      ],
+      "description": "Points on a map",
+      "dataShape": "a geo field, a geohash field, or latitude and longitude fields"
+    },
+    {
+      "name": "state-timeline",
+      "panel": "grafana-echartsstatetimeline-panel",
+      "options": {},
+      "fits": [{ "hasFieldType.time": true, "fieldCount": { "min": 2 } }],
+      "description": "Changes of state over time, as bands",
+      "dataShape": "a time field and string, boolean or number fields"
+    },
+    {
+      "name": "status-history",
+      "panel": "grafana-echartsstatushistory-panel",
+      "options": {},
+      "fits": [{ "hasFieldType.time": true, "fieldCount": { "min": 2 } }],
+      "description": "Status at each time, as cells",
+      "dataShape": "a time field and string, boolean or number fields"
+    },
+    {
+      "name": "nodeGraph",
+      "panel": "grafana-relations-panel",
+      "options": { "seriesType": "graph" },
+      "fits": [{ "hasPreferredVisualisationType.nodeGraph": true }, { "hasFieldName.source": true, "hasFieldName.target": true }],
+      "description": "Nodes and the links between them",
+      "dataShape": "node graph frames, or source and target fields"
+    },
+    {
+      "name": "sankey",
+      "panel": "grafana-relations-panel",
+      "options": { "seriesType": "sankey" },
+      "fits": [{ "hasFieldName.source": true, "hasFieldName.target": true, "hasFieldType.number": true }],
+      "description": "Flows between nodes, with a width for each value",
+      "dataShape": "source, target and value fields"
+    },
+    {
+      "name": "chord",
+      "panel": "grafana-relations-panel",
+      "options": { "seriesType": "chord" },
+      "fits": [{ "hasFieldName.source": true, "hasFieldName.target": true, "hasFieldType.number": true }],
+      "description": "Flows between nodes on a circle",
+      "dataShape": "source, target and value fields"
+    },
+    {
+      "name": "treemap",
+      "panel": "grafana-echartshierarchy-panel",
+      "options": { "seriesType": "treemap" },
+      "fits": [{ "hasFieldType.string": true, "hasFieldType.number": true }],
+      "description": "Nested rectangles of a hierarchy, with an area for each value",
+      "dataShape": "string fields for the levels and a number field"
+    },
+    {
+      "name": "sunburst",
+      "panel": "grafana-echartshierarchy-panel",
+      "options": { "seriesType": "sunburst" },
+      "fits": [{ "hasFieldType.string": true, "hasFieldType.number": true }],
+      "description": "Rings of a hierarchy, with an angle for each value",
+      "dataShape": "string fields for the levels and a number field"
+    },
+    {
+      "name": "radar",
+      "panel": "grafana-echartsmultivariate-panel",
+      "options": { "seriesType": "radar" },
+      "fits": [{ "hasFieldType.time": false, "fieldCountByType.number": { "min": 3 } }],
+      "description": "Several values of each item on axes around a center",
+      "dataShape": "three or more number fields"
+    },
+    {
+      "name": "parallel",
+      "panel": "grafana-echartsmultivariate-panel",
+      "options": { "seriesType": "parallel" },
+      "fits": [{ "hasFieldType.time": false, "fieldCountByType.number": { "min": 2 } }],
+      "description": "Several values of each item as lines across parallel axes",
+      "dataShape": "two or more number fields"
+    },
+    {
+      "name": "streamgraph",
+      "panel": "grafana-echartsstream-panel",
+      "options": { "streamChartType": "river" },
+      "fits": [{ "hasFieldType.time": true, "hasFieldType.number": true }],
+      "description": "Stacked flows of values over time",
+      "dataShape": "a time field and number fields"
+    },
+    {
+      "name": "bubble",
+      "panel": "grafana-echartsstream-panel",
+      "options": { "streamChartType": "bubble" },
+      "fits": [{ "hasFieldType.time": true, "hasFieldType.number": true }],
+      "description": "Bubbles of values over time, with a size for each value",
+      "dataShape": "a time field and number fields"
+    }
+  ]
+}
