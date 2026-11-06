@@ -142,11 +142,17 @@ func TestQueryDatasourceNullDatasourceGetsTheDefault(t *testing.T) {
 	assert.Equal(t, map[string]any{"uid": "prom"}, query["datasource"])
 }
 
-func TestQueryDatasourceOmitsOversizedContent(t *testing.T) {
-	big := `{"results":{"A":{"status":200,"frames":[{"schema":{"fields":[{"name":"` + strings.Repeat("x", maxDSResultBytes) + `"}]}}]}}}`
+func TestQueryDatasourceTooLarge(t *testing.T) {
+	big := `{"results":{"A":{"status":200,"frames":[{"schema":{"fields":[{"name":"v","type":"string","typeInfo":{"frame":"string"}}]},"data":{"values":[["` + strings.Repeat("x", maxDSResultBytes) + `"]]}}]}}}`
 	result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A"}]}`, big)
 	require.NoError(t, err)
+	// tool.24, tool.25: the too-large tool error, one text item, and no structured content.
+	require.True(t, result.IsError)
 	assert.Nil(t, result.StructuredContent)
+	require.Len(t, result.Content, 1)
+	assert.Equal(t,
+		"too-large: The result is larger than 1048576 bytes. Use a shorter range, a larger intervalMs or fewer series.",
+		result.Content[0].(*mcp.TextContent).Text)
 }
 
 func TestQueryDatasourceSchemaAcceptsIntegerTimes(t *testing.T) {
