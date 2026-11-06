@@ -623,6 +623,20 @@ func notebookRenderURL(cfg mcpgrafana.GrafanaConfig, args RenderNotebookPDFParam
 		params.Set("theme", args.Theme)
 	}
 
+	// Select the org to render from. The image renderer drives a headless browser
+	// whose request org comes from the targetOrgId query param; the
+	// X-Grafana-Org-Id header the transport adds is ignored on the render path.
+	// Scoping only by the header is therefore not enough: the notebook GET below
+	// would resolve in the target org while the exported page came from the
+	// identity's own org - and UIDs are unique only within an org, so that is a
+	// silent 200 carrying another org's document. targetOrgId rather than orgId
+	// for the same reason get_panel_image uses it: orgId is read by the frontend,
+	// which persists an org switch via /api/user/using, changing the caller's
+	// active org for every later request.
+	if cfg.OrgID > 0 {
+		params.Set("targetOrgId", strconv.FormatInt(cfg.OrgID, 10))
+	}
+
 	return fmt.Sprintf("%s/render/notebooks/%s/render?%s",
 		strings.TrimRight(cfg.URL, "/"), url.PathEscape(args.UID), params.Encode())
 }
@@ -669,9 +683,10 @@ func renderNotebookPDF(ctx context.Context, args RenderNotebookPDFParams) (*mcp.
 
 	// The org to render from comes from config.OrgID, which the per-call orgId
 	// argument sets when dynamic multi-org is enabled and which otherwise
-	// carries the connection's org. The transport sends it as X-Grafana-Org-Id,
-	// which is the only way to scope this route: an orgId query parameter makes
-	// Grafana try to switch the session's org and redirect to /login.
+	// carries the connection's org. It reaches the renderer as the targetOrgId
+	// query param (see notebookRenderURL) - the render path ignores the
+	// X-Grafana-Org-Id header the transport sends, which is what scopes the API
+	// request below.
 	transport, err := mcpgrafana.BuildTransport(&cfg, cfg.HTTPTransport())
 	if err != nil {
 		return nil, fmt.Errorf("build transport: %w", err)

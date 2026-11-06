@@ -620,7 +620,12 @@ func TestRenderNotebookPDF(t *testing.T) {
 		assert.Equal(t, "Europe/Amsterdam", query.Get("timezone"))
 		assert.Equal(t, "Europe/Amsterdam", query.Get("tz"))
 		assert.Equal(t, "light", query.Get("theme"))
-		assert.Empty(t, query.Get("orgId"), "the org goes in the X-Grafana-Org-Id header, not the query")
+		// No per-call org on this config, so nothing is scoped: the renderer must
+		// not be told an org it was never given. orgId is never the answer either -
+		// it makes Grafana persist an org switch via /api/user/using (see
+		// TestRenderNotebookPDF_TargetOrgID).
+		assert.Empty(t, query.Get("targetOrgId"))
+		assert.Empty(t, query.Get("orgId"), "orgId switches the caller's org; the render backend reads targetOrgId")
 
 		w.Header().Set("Content-Type", "application/pdf")
 		_, err := w.Write(pdf)
@@ -672,6 +677,38 @@ func TestNotebookRenderURL(t *testing.T) {
 	url := notebookRenderURL(mcpgrafana.GrafanaConfig{URL: "https://gf.example.com/"}, RenderNotebookPDFParams{UID: "nb-1"})
 	assert.Equal(t, "https://gf.example.com/render/notebooks/nb-1/render?encoding=pdf", url,
 		"from/to/tz/theme stay unset when the caller does not pass them, so Grafana's defaults apply")
+}
+
+// TestRenderNotebookPDF_TargetOrgID pins the org routing end to end, because the
+// two halves of it look interchangeable and are not. The notebook itself is
+// fetched with X-Grafana-Org-Id (that is how the transport scopes every API
+// call), but the /render export is driven by the image renderer, which ignores
+// that header and reads the org from targetOrgId on the query string. Scoping
+// only the header therefore lets this tool GET the right notebook and still
+// return a 200 PDF of a different org's page (or of Grafana's not-found view),
+// since UIDs are unique only within an org. get_panel_image sets targetOrgId for
+// the same reason, and deliberately not orgId - the frontend persists orgId as
+// an org switch via /api/user/using.
+func TestRenderNotebookPDF_TargetOrgID(t *testing.T) {
+	pdf := []byte("%PDF-1.4 fake notebook pdf")
+	ts, _ := renderNotebookTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "2", r.URL.Query().Get("targetOrgId"),
+			"the renderer reads the org from targetOrgId; the header the API call uses is ignored on this path")
+		assert.Empty(t, r.URL.Query().Get("orgId"),
+			"orgId would persist an org switch on the caller's identity")
+		w.Header().Set("Content-Type", "application/pdf")
+		_, err := w.Write(pdf)
+		require.NoError(t, err)
+	})
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL, OrgID: 2})
+	result, err := renderNotebookPDF(ctx, RenderNotebookPDFParams{UID: "nb-1"})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 2)
+	resource, ok := result.Content[1].(*mcp.EmbeddedResource)
+	require.True(t, ok)
+	require.NotNil(t, resource.Resource)
+	assert.Equal(t, pdf, resource.Resource.Blob)
 }
 
 // The export renders the whole page, including whatever Grafana put in it, so a
