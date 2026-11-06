@@ -6,6 +6,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -132,6 +134,23 @@ func TestNotebookTools(t *testing.T) {
 
 		assert.Equal(t, nb.Metadata.Labels, updatedResource.Metadata.Labels)
 		assert.Equal(t, nb.Metadata.Annotations, updatedResource.Metadata.Annotations)
+	})
+
+	// The PDF export runs through Grafana's image renderer, which is optional and
+	// absent from the docker-compose images, so it skips when rendering is not
+	// configured rather than failing the suite.
+	t.Run("render exports a PDF", func(t *testing.T) {
+		result, err := renderNotebookPDF(ctx, RenderNotebookPDFParams{UID: uid, Theme: "light"})
+		if err != nil && strings.Contains(err.Error(), "image renderer not available") {
+			t.Skipf("no image renderer configured on this Grafana: %v", err)
+		}
+		require.NoError(t, err)
+
+		require.Len(t, result.Content, 2)
+		resource, ok := result.Content[1].(*mcp.EmbeddedResource)
+		require.True(t, ok)
+		assert.Equal(t, "application/pdf", resource.Resource.MIMEType)
+		assert.True(t, bytes.HasPrefix(resource.Resource.Blob, []byte("%PDF-")), "expected a real PDF, got %q", string(resource.Resource.Blob[:min(16, len(resource.Resource.Blob))]))
 	})
 
 	t.Run("delete removes the notebook", func(t *testing.T) {

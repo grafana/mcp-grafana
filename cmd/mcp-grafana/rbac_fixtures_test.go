@@ -134,6 +134,7 @@ var rbacFixtures = map[string]rbacFixture{
 	"delete_notebook":     {skip: skipNotebooks},
 	"get_notebook_by_uid": {skip: skipNotebooks},
 	"list_notebooks":      {skip: skipNotebooks},
+	"render_notebook_pdf": {skip: skipNotebooks},
 	"search_notebooks":    {skip: skipNotebooks},
 	"update_notebook":     {skip: skipNotebooks},
 

@@ -158,7 +158,7 @@ async def test_notebook_tools_are_opt_in_and_respect_disable_write(grafana_env):
                 await session.initialize()
                 return [tool.name for tool in (await session.list_tools()).tools]
 
-    read_tools = ["list_notebooks", "search_notebooks", "get_notebook_by_uid"]
+    read_tools = ["list_notebooks", "search_notebooks", "get_notebook_by_uid", "render_notebook_pdf"]
     write_tools = ["create_notebook", "update_notebook", "delete_notebook"]
 
     default_names = await tool_names([])

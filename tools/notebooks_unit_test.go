@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -583,4 +586,154 @@ func TestNotebooks_BasePath(t *testing.T) {
 	_, err := listNotebooks(ctx, ListNotebooksParams{})
 	require.NoError(t, err)
 	assert.Equal(t, "/grafana/apis/dashboard.grafana.app/v2beta1/namespaces/default/notebooks", capturedPath)
+}
+
+// renderNotebookTestServer serves the notebooks API for nb-1 and hands the
+// /render/notebooks/<uid>/render export to render, which is where the image
+// renderer would answer.
+func renderNotebookTestServer(t *testing.T, render http.HandlerFunc) (*httptest.Server, *[]string) {
+	t.Helper()
+	var paths []string
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if strings.HasPrefix(r.URL.Path, "/render/") {
+			render(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(notebooksTestResource("nb-1", "Dex build info", []string{"sre"}, 2)))
+	}))
+	t.Cleanup(ts.Close)
+	return ts, &paths
+}
+
+func TestRenderNotebookPDF(t *testing.T) {
+	pdf := []byte("%PDF-1.4 fake notebook pdf")
+	ts, paths := renderNotebookTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/render/notebooks/nb-1/render", r.URL.Path)
+
+		query := r.URL.Query()
+		assert.Equal(t, "pdf", query.Get("encoding"))
+		assert.Equal(t, "now-6h", query.Get("from"))
+		assert.Equal(t, "now", query.Get("to"))
+		assert.Equal(t, "Europe/Amsterdam", query.Get("timezone"))
+		assert.Equal(t, "Europe/Amsterdam", query.Get("tz"))
+		assert.Equal(t, "light", query.Get("theme"))
+		assert.Empty(t, query.Get("orgId"), "the org goes in the X-Grafana-Org-Id header, not the query")
+
+		w.Header().Set("Content-Type", "application/pdf")
+		_, err := w.Write(pdf)
+		require.NoError(t, err)
+	})
+
+	result, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{
+		UID:      "nb-1",
+		From:     "now-6h",
+		To:       "now",
+		TimeZone: "Europe/Amsterdam",
+		Theme:    "light",
+	})
+	require.NoError(t, err)
+
+	// The notebook is resolved through the API before the page is exported, so a
+	// bad UID cannot come back as a PDF of Grafana's error page.
+	notebookAt := slices.Index(*paths, testNotebooksCollectionPath+"/nb-1")
+	require.NotEqual(t, -1, notebookAt, "the notebook should be fetched: %v", *paths)
+	assert.Greater(t, slices.Index(*paths, "/render/notebooks/nb-1/render"), notebookAt)
+
+	require.Len(t, result.Content, 2)
+	summary, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok, "the summary comes first so clients that drop resource blobs still say what happened")
+	assert.Contains(t, summary.Text, `"Dex build info"`)
+	assert.Contains(t, summary.Text, "nb-1")
+	assert.Contains(t, summary.Text, "Europe/Amsterdam")
+	assert.Contains(t, summary.Text, ts.URL+"/notebooks/nb-1")
+
+	resource, ok := result.Content[1].(*mcp.EmbeddedResource)
+	require.True(t, ok)
+	require.NotNil(t, resource.Resource)
+	assert.Equal(t, "grafana://notebooks/nb-1.pdf", resource.Resource.URI)
+	assert.Equal(t, "application/pdf", resource.Resource.MIMEType)
+	assert.Equal(t, pdf, resource.Resource.Blob)
+}
+
+func TestRenderNotebookPDF_RequiresUID(t *testing.T) {
+	_, err := renderNotebookPDF(context.Background(), RenderNotebookPDFParams{})
+	require.ErrorContains(t, err, "uid is required")
+}
+
+func TestRenderNotebookPDF_RejectsUnknownTheme(t *testing.T) {
+	_, err := renderNotebookPDF(context.Background(), RenderNotebookPDFParams{UID: "nb-1", Theme: "solarized"})
+	require.ErrorContains(t, err, "theme must be light or dark")
+}
+
+func TestNotebookRenderURL(t *testing.T) {
+	url := notebookRenderURL(mcpgrafana.GrafanaConfig{URL: "https://gf.example.com/"}, RenderNotebookPDFParams{UID: "nb-1"})
+	assert.Equal(t, "https://gf.example.com/render/notebooks/nb-1/render?encoding=pdf", url,
+		"from/to/tz/theme stay unset when the caller does not pass them, so Grafana's defaults apply")
+}
+
+// The export renders the whole page, including whatever Grafana put in it, so a
+// missing notebook has to be caught before rendering: the route answers 200 with
+// a PDF of the error page.
+func TestRenderNotebookPDF_NotFoundBeforeRendering(t *testing.T) {
+	var rendered bool
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/render/") {
+			rendered = true
+			w.Header().Set("Content-Type", "application/pdf")
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, err := w.Write([]byte(`{"kind":"Status","reason":"NotFound"}`))
+		require.NoError(t, err)
+	}))
+	defer ts.Close()
+
+	_, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{UID: "missing"})
+	require.ErrorContains(t, err, "HTTP 404")
+	assert.False(t, rendered, "nothing should be rendered when the notebook does not exist")
+}
+
+// Grafana answers an unauthorized export by redirecting to /login, so the body
+// is an HTML page with a 200 status by the time the client sees it.
+func TestRenderNotebookPDF_RejectsNonPDF(t *testing.T) {
+	ts, _ := renderNotebookTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, err := w.Write([]byte("<html>Login</html>"))
+		require.NoError(t, err)
+	})
+
+	_, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{UID: "nb-1"})
+	require.ErrorContains(t, err, "expected a PDF")
+	require.ErrorContains(t, err, "text/html")
+}
+
+func TestRenderNotebookPDF_RendererMissing(t *testing.T) {
+	ts, _ := renderNotebookTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, err := w.Write([]byte(`{"message":"Render request failed"}`))
+		require.NoError(t, err)
+	})
+
+	_, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{UID: "nb-1"})
+	require.ErrorContains(t, err, "image renderer not available")
+}
+
+// The export runs in a headless browser, so it needs its own budget instead of
+// the Grafana client timeout used by the API calls.
+func TestRenderNotebookPDF_HonoursTimeout(t *testing.T) {
+	ts, _ := renderNotebookTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-r.Context().Done():
+		}
+	})
+
+	timeout := 1
+	start := time.Now()
+	_, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{UID: "nb-1", Timeout: &timeout})
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 2*time.Second, "the render should give up on the requested timeout")
 }

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -586,10 +588,183 @@ var DeleteNotebook = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions("notebooks:delete", "dashboard.grafana.app/notebooks:delete"),
 )
 
+type RenderNotebookPDFParams struct {
+	UID string `json:"uid" jsonschema:"required,description=The UID of the notebook to render."`
+	// From, To and TimeZone feed the time picker embedded in the exported
+	// document, so panels and time-dependent cells show the requested range.
+	From     string `json:"from,omitempty" jsonschema:"description=Start of the rendered time range\\, e.g. now-6h or an absolute timestamp. Defaults to what Grafana's notebook page opens with (now-6h)."`
+	To       string `json:"to,omitempty" jsonschema:"description=End of the rendered time range\\, e.g. now. Defaults to now."`
+	TimeZone string `json:"timeZone,omitempty" jsonschema:"description=IANA time zone the exported document renders times in\\, e.g. Europe/Amsterdam. Defaults to the renderer's zone (UTC)."`
+	Theme    string `json:"theme,omitempty" jsonschema:"description=Theme for the rendered document: light or dark. Defaults to dark."`
+	Timeout  *int   `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60\\, capped at 120."`
+}
+
+// notebookRenderURL builds the Scenes export URL for a notebook. Grafana serves
+// the notebook page itself under /render/notebooks/<uid> (through the image
+// renderer, like /render/d/<uid> for dashboards), and the /render subpath
+// exports that page in the format named by ?encoding - pdf or png.
+func notebookRenderURL(cfg mcpgrafana.GrafanaConfig, args RenderNotebookPDFParams) string {
+	params := url.Values{}
+	params.Set("encoding", "pdf")
+	if args.From != "" {
+		params.Set("from", args.From)
+	}
+	if args.To != "" {
+		params.Set("to", args.To)
+	}
+	if args.TimeZone != "" {
+		// The notebook UI sends both: timezone is the time picker's parameter
+		// and tz is the renderer's. Setting only one of them leaves part of the
+		// page in the renderer's zone.
+		params.Set("timezone", args.TimeZone)
+		params.Set("tz", args.TimeZone)
+	}
+	if args.Theme != "" {
+		params.Set("theme", args.Theme)
+	}
+
+	return fmt.Sprintf("%s/render/notebooks/%s/render?%s",
+		strings.TrimRight(cfg.URL, "/"), url.PathEscape(args.UID), params.Encode())
+}
+
+// notebookRenderTimeout mirrors get_panel_image: the configured client timeout
+// is far too short for a headless browser render, so rendering has its own
+// budget and a caller-supplied override.
+func notebookRenderTimeout(args RenderNotebookPDFParams) time.Duration {
+	if args.Timeout == nil || *args.Timeout <= 0 {
+		return defaultRenderTimeout
+	}
+	return time.Duration(min(*args.Timeout, maxRenderTimeoutSecs)) * time.Second
+}
+
+func renderNotebookPDF(ctx context.Context, args RenderNotebookPDFParams) (*mcp.CallToolResult, error) {
+	if args.UID == "" {
+		return nil, fmt.Errorf("uid is required")
+	}
+	if args.Theme != "" && args.Theme != "light" && args.Theme != "dark" {
+		return nil, fmt.Errorf("theme must be light or dark, got %q", args.Theme)
+	}
+
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	if cfg.URL == "" {
+		return nil, fmt.Errorf("grafana URL is not configured")
+	}
+
+	// The export renders whatever the renderer can load, and a notebook Grafana
+	// cannot find is not a 404 on that route: it renders an error page into the
+	// PDF and still answers 200. Resolve the notebook through the API first so a
+	// bad UID fails loudly, and to have its title for the result summary.
+	current, err := notebooksRequest(ctx, http.MethodGet, args.UID, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var notebook notebookResource
+	if err := json.Unmarshal(current, &notebook); err != nil {
+		return nil, fmt.Errorf("decode notebook %s: %w", args.UID, err)
+	}
+	var spec notebookSpecFields
+	if err := json.Unmarshal(notebook.Spec, &spec); err != nil {
+		return nil, fmt.Errorf("decode notebook %s spec: %w", args.UID, err)
+	}
+
+	// The org to render from comes from config.OrgID, which the per-call orgId
+	// argument sets when dynamic multi-org is enabled and which otherwise
+	// carries the connection's org. The transport sends it as X-Grafana-Org-Id,
+	// which is the only way to scope this route: an orgId query parameter makes
+	// Grafana try to switch the session's org and redirect to /login.
+	transport, err := mcpgrafana.BuildTransport(&cfg, cfg.HTTPTransport())
+	if err != nil {
+		return nil, fmt.Errorf("build transport: %w", err)
+	}
+
+	renderURL := notebookRenderURL(cfg, args)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, renderURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/pdf")
+
+	client := &http.Client{Transport: transport, Timeout: notebookRenderTimeout(args)}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("render notebook %s: %w", args.UID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("image renderer not available: HTTP 404 - %s (ensure the Grafana Image Renderer service is installed and configured)", strings.TrimSpace(string(detail)))
+		}
+		return nil, fmt.Errorf("render notebook %s: HTTP %d - %s", args.UID, resp.StatusCode, strings.TrimSpace(string(detail)))
+	}
+
+	// Grafana answers with the login page (200 text/html, after following the
+	// redirect to /login) when the caller is not authorized to view the page, so
+	// the content type, not the status code, says whether this is a PDF.
+	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/pdf") {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("render notebook %s: expected a PDF, got %q - %s (the caller needs to be able to view the notebook in Grafana)",
+			args.UID, contentType, strings.TrimSpace(string(detail)))
+	}
+
+	pdf, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read notebook %s PDF: %w", args.UID, err)
+	}
+
+	timeRange := fmt.Sprintf("%s to %s", orDefault(args.From, "now-6h"), orDefault(args.To, "now"))
+	if args.TimeZone != "" {
+		timeRange += " (" + args.TimeZone + ")"
+	}
+	summary := fmt.Sprintf("Rendered notebook %q (%s) as a PDF: %d bytes, time range %s.",
+		spec.Title, args.UID, len(pdf), timeRange)
+	if url := summarizeNotebook(cfg, notebook).URL; url != "" {
+		summary += " Notebook page: " + url
+	}
+
+	// The PDF travels as an embedded resource so a client can write the bytes
+	// out as-is; the text summary keeps the call useful for clients that do not
+	// surface resource blobs.
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: summary},
+			&mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+				URI:      fmt.Sprintf("grafana://notebooks/%s.pdf", url.PathEscape(args.UID)),
+				MIMEType: "application/pdf",
+				Blob:     pdf,
+			}},
+		},
+	}, nil
+}
+
+func orDefault(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+var RenderNotebookPDF = mcpgrafana.MustTool(
+	"render_notebook_pdf",
+	"Export a Grafana notebook as a PDF, the way the notebook's UI export does: the page is rendered by Grafana's image renderer and returned as an embedded application/pdf resource. "+
+		"The document carries the notebook title, its cells rendered in order, the time picker value and page numbers. "+
+		"The time range and time zone arguments set what the exported document shows. Requires the dashboard.notebooks feature toggle and a configured Grafana Image Renderer.",
+	renderNotebookPDF,
+	mcpgrafana.WithTitleAnnotation("Export notebook as PDF"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Rendering reads the notebook resource before exporting the page.
+	mcpgrafana.RequiresPermissions("notebooks:read", "dashboard.grafana.app/notebooks:get"),
+)
+
 func AddNotebookTools(s *mcp.Server, enableWriteTools bool) {
 	ListNotebooks.Register(s)
 	SearchNotebooks.Register(s)
 	GetNotebookByUID.Register(s)
+	RenderNotebookPDF.Register(s)
 	if enableWriteTools {
 		CreateNotebook.Register(s)
 		UpdateNotebook.Register(s)
