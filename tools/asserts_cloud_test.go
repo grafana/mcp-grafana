@@ -35,7 +35,9 @@ func TestAssertsCloudIntegration(t *testing.T) {
 		}
 
 		// Get assertions from the real Grafana instance
-		result, err := getAssertions(ctx, params)
+		result, err := retryCloudTestOperation(ctx, t, func() (string, error) {
+			return getAssertions(ctx, params)
+		})
 		require.NoError(t, err, "Failed to get assertions from Grafana")
 		assert.NotEmpty(t, result, "Expected non-empty assertions result")
 
