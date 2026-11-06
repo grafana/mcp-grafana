@@ -1,7 +1,8 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TraceApplication } from '../app/TraceApplication';
+import { GrafanaApplication } from '../app/GrafanaApplication';
+import { createAppHostState } from '../app/appHostState';
 import { parseTraceResult } from '../app/parseTraceResult';
 
 afterEach(cleanup);
@@ -31,22 +32,30 @@ function host() {
   } as unknown as App;
   return app;
 }
+function view(app: App) {
+  const connect = app.connect.bind(app);
+  app.connect = async () => {
+    app.ontoolinput?.({ arguments: { toolName: 'get_tempo_trace', arguments: { trace_id: 'abc', datasourceUid: 'tempo' } } });
+    return connect();
+  };
+  return <GrafanaApplication host={createAppHostState(app)} />;
+}
 describe('trace host bridge', () => {
-  it('explains that raw trace data remains available without structured content', async () => {
+  it('explains that raw data remains available without structured content', async () => {
     const app = host();
     vi.mocked(app.connect).mockImplementation(async () => {
       await app.ontoolresult?.({ content: [{ type: 'text', text: '{"unknown":"schema"}' }] });
     });
-    render(<TraceApplication app={app} />);
-    expect((await screen.findByRole('alert')).textContent).toContain('Interactive view unavailable; trace data remains available in the tool output.');
+    render(view(app));
+    expect((await screen.findByRole('alert')).textContent).toContain('Interactive view unavailable; data remains available in the tool output.');
   });
-  it('names get_tempo_trace in its retry instruction', async () => {
+  it('names render_grafana_app in its retry instruction', async () => {
     const app = host();
     vi.mocked(app.connect).mockImplementation(async () => {
       await app.ontoolresult?.({ content: [], isError: true });
     });
-    render(<TraceApplication app={app} />);
-    expect((await screen.findByRole('alert')).textContent).toContain('run get_tempo_trace again');
+    render(view(app));
+    expect((await screen.findByRole('alert')).textContent).toContain('run render_grafana_app again');
   });
   it('registers result handlers before connecting and reacts to host themes', async () => {
     const app = host();
@@ -54,7 +63,7 @@ describe('trace host bridge', () => {
       expect(app.ontoolresult).toBeTypeOf('function');
       await app.ontoolresult?.({ content: [], structuredContent: result });
     });
-    const { unmount } = render(<TraceApplication app={app} />);
+    const { unmount } = render(view(app));
     await waitFor(() => expect(screen.getByRole('article').getAttribute('data-color-mode')).toBe('dark'));
     act(() => app.onhostcontextchanged?.({ theme: 'light' }));
     expect(screen.getByRole('article').getAttribute('data-color-mode')).toBe('light');
@@ -69,7 +78,7 @@ describe('trace host bridge', () => {
     vi.mocked(app.connect).mockImplementation(async () => {
       await app.ontoolresult?.({ content: [], structuredContent: result });
     });
-    render(<TraceApplication app={app} />);
+    render(view(app));
     await screen.findByRole('heading', { level: 1, name: 'GET /' });
 
     await act(async () => {
@@ -85,12 +94,12 @@ describe('trace host bridge', () => {
     vi.mocked(connected.connect).mockImplementation(async () => {
       await connected.ontoolresult?.({ content: [], structuredContent: result });
     });
-    const { rerender } = render(<TraceApplication app={connected} />);
+    const { rerender } = render(view(connected));
     await screen.findByRole('heading', { level: 1, name: 'GET /' });
 
     const disconnected = host();
     vi.mocked(disconnected.connect).mockRejectedValue(new Error('connection refused'));
-    rerender(<TraceApplication app={disconnected} />);
+    rerender(view(disconnected));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Could not connect');
     expect(screen.queryByRole('listbox', { name: 'Trace spans' })).toBeNull();
@@ -99,7 +108,7 @@ describe('trace host bridge', () => {
   it('shows a useful host failure instead of an endless loading state', async () => {
     const app = host();
     vi.mocked(app.connect).mockRejectedValue(new Error('connection refused'));
-    render(<TraceApplication app={app} />);
+    render(view(app));
     expect((await screen.findByRole('alert')).textContent).toContain('Could not connect');
   });
   it('renders a trace without a Grafana link and hides navigation and sharing', async () => {
@@ -107,7 +116,7 @@ describe('trace host bridge', () => {
     vi.mocked(app.connect).mockImplementation(async () => {
       await app.ontoolresult?.({ content: [], structuredContent: { ...result, grafanaUrl: '' } });
     });
-    render(<TraceApplication app={app} />);
+    render(view(app));
     expect(await screen.findByRole('heading', { level: 1, name: 'GET /' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Open in Grafana' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();

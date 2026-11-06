@@ -257,6 +257,18 @@ const (
 	LokiGuardrailFailureBlock = "block"
 )
 
+// Prometheus guardrail modes for GrafanaConfig.PrometheusGuardrailMode.
+const (
+	// PrometheusGuardrailOff disables the Prometheus query guardrail (default).
+	PrometheusGuardrailOff = "off"
+	// PrometheusGuardrailShadow evaluates the guardrail and logs queries
+	// that would be blocked, but always lets them run.
+	PrometheusGuardrailShadow = "shadow"
+	// PrometheusGuardrailEnforce rejects blocked queries with a tool error
+	// containing rewrite guidance.
+	PrometheusGuardrailEnforce = "enforce"
+)
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -360,6 +372,32 @@ type GrafanaConfig struct {
 	// applies to native Loki: on VictoriaLogs, brace-less LogsQL is the normal
 	// shape and is always run.
 	LokiGuardrailOnEstimateFailure string
+
+	// PrometheusGuardrailMode controls the query guardrail for PromQL queries
+	// (query_prometheus, query_prometheus_histogram, and the Prometheus
+	// queries of run_panel_query). One of PrometheusGuardrailOff (default),
+	// PrometheusGuardrailShadow, or PrometheusGuardrailEnforce. The
+	// guardrail bounds the time range a query reads and the resolution it
+	// asks for, before the query reaches the datasource.
+	PrometheusGuardrailMode string
+
+	// PrometheusGuardrailRequireSelectiveLabels requires each vector selector
+	// to have a non-empty positive label constraint beyond the metric name.
+	// Blanket regexes and negative matchers do not provide scope; selectors
+	// proven empty by a negative universal regex are exempt. Default false.
+	// Independent of MaxRange and MaxPoints; only active when mode is not off.
+	PrometheusGuardrailRequireSelectiveLabels bool
+
+	// PrometheusGuardrailMaxRange is the maximum effective time range for a
+	// single PromQL query: the query's own range plus the longest range
+	// vector or subquery window in the expression. Zero disables the range
+	// check.
+	PrometheusGuardrailMaxRange time.Duration
+
+	// PrometheusGuardrailMaxPoints is the maximum number of points per
+	// series a range query may request, computed from its time range and
+	// step. Zero disables the points check.
+	PrometheusGuardrailMaxPoints int64
 
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server
@@ -861,30 +899,85 @@ func WithoutUserAgent() TransportOption {
 	return func(o *transportOptions) { o.withoutUserAgent = true }
 }
 
-// BuildTransport constructs an http.RoundTripper with the standard middleware
-// chain derived from cfg. The default chain (innermost to outermost) is:
-//
-//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
-//
-// Auth is innermost among the header-setting layers so that credentials take
-// precedence over any forwarded/extra headers with the same keys.
-//
-// When cfg.Debug is true a debug-logging layer is added just above the base
-// transport. It sees the fully-decorated request (all headers set by outer
-// layers) and redacts sensitive values (Authorization, X-Access-Token, etc.)
-// before writing request/response details to the logger.
-//
-// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
-func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
-	var options transportOptions
-	for _, o := range opts {
-		o(&options)
+// transportCacheKey identifies the settings a cached transport was built from.
+type transportCacheKey struct {
+	socks5ProxyURL string
+	hasTLSConfig   bool
+	tlsConfig      TLSConfig
+}
+
+// fileStamp tells whether a file changed since it was read.
+type fileStamp struct {
+	size    int64
+	modTime int64
+}
+
+// cachedTransport is a transport with the state of the TLS files it was built from.
+type cachedTransport struct {
+	transport http.RoundTripper
+	files     [3]fileStamp
+}
+
+var (
+	transportCacheMu sync.Mutex
+	transportCache   = map[transportCacheKey]cachedTransport{}
+)
+
+// fileStamps returns the state of the certificate, key and CA files.
+func (tc *TLSConfig) fileStamps() [3]fileStamp {
+	var stamps [3]fileStamp
+	if tc == nil {
+		return stamps
+	}
+	for i, path := range []string{tc.CertFile, tc.KeyFile, tc.CAFile} {
+		if path == "" {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil {
+			stamps[i] = fileStamp{size: info.Size(), modTime: info.ModTime().UnixNano()}
+		}
+	}
+	return stamps
+}
+
+// baseTransport returns base with the SOCKS5 proxy and TLS settings from cfg
+// applied. An *http.Transport owns its connection pool and tools build a
+// transport on every call, so the one derived from http.DefaultTransport is
+// shared until the TLS files change on disk. A transport passed in by the
+// caller is not cached, because its lifetime belongs to the caller.
+func baseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+	if (cfg.SOCKS5ProxyURL == "" && cfg.TLSConfig == nil) || base != http.DefaultTransport {
+		return newBaseTransport(cfg, base)
 	}
 
-	if base == nil {
-		base = cfg.HTTPTransport()
+	key := transportCacheKey{socks5ProxyURL: cfg.SOCKS5ProxyURL}
+	if cfg.TLSConfig != nil {
+		key.hasTLSConfig = true
+		key.tlsConfig = *cfg.TLSConfig
 	}
+	files := cfg.TLSConfig.fileStamps()
 
+	transportCacheMu.Lock()
+	defer transportCacheMu.Unlock()
+
+	cached, ok := transportCache[key]
+	if ok && cached.files == files {
+		return cached.transport, nil
+	}
+	transport, err := newBaseTransport(cfg, base)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if t, isTransport := cached.transport.(*http.Transport); isTransport {
+			t.CloseIdleConnections()
+		}
+	}
+	transportCache[key] = cachedTransport{transport: transport, files: files}
+	return transport, nil
+}
+
+func newBaseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
 	// SOCKS5 proxy (applied to the innermost *http.Transport so the TLS layer
 	// below clones it with the proxy already in place).
 	if cfg.SOCKS5ProxyURL != "" {
@@ -913,6 +1006,37 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
 		}
+	}
+	return transport, nil
+}
+
+// BuildTransport constructs an http.RoundTripper with the standard middleware
+// chain derived from cfg. The default chain (innermost to outermost) is:
+//
+//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//
+// Auth is innermost among the header-setting layers so that credentials take
+// precedence over any forwarded/extra headers with the same keys.
+//
+// When cfg.Debug is true a debug-logging layer is added just above the base
+// transport. It sees the fully-decorated request (all headers set by outer
+// layers) and redacts sensitive values (Authorization, X-Access-Token, etc.)
+// before writing request/response details to the logger.
+//
+// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
+func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
+	var options transportOptions
+	for _, o := range opts {
+		o(&options)
+	}
+
+	if base == nil {
+		base = cfg.HTTPTransport()
+	}
+
+	transport, err := baseTransport(cfg, base)
+	if err != nil {
+		return nil, err
 	}
 	if !cfg.AllowCrossOriginRedirects {
 		transport = &redirectGuardTransport{next: transport}

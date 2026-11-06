@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -199,4 +200,19 @@ func TestListDatasourceAlertRulesCancellation(t *testing.T) {
 	result, err := listDatasourceAlertRules(ctx, "prom-ds", nil, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, result)
+}
+
+func TestConvertPrometheusRulesToSummary(t *testing.T) {
+	var result v1.RulesResult
+	require.NoError(t, json.Unmarshal([]byte(`{"groups":[{"name":"g","file":"team-a","interval":60,"rules":[
+		{"type":"recording","name":"job:up:sum","query":"sum by (job) (up)","health":"err","lastError":"many-to-many matching not allowed","lastEvaluation":"2026-01-02T03:04:05Z"},
+		{"type":"alerting","name":"Down","query":"up == 0","duration":300,"state":"firing","health":"ok","lastError":"","labels":{"severity":"page"}}
+	]}]}`), &result))
+
+	got, err := json.Marshal(convertPrometheusRulesToSummary(&result))
+	require.NoError(t, err)
+	require.JSONEq(t, `[
+		{"title":"job:up:sum","type":"recording","namespace":"team-a","rule_group":"g","query":"sum by (job) (up)","health":"err","last_error":"many-to-many matching not allowed","last_evaluation":"2026-01-02T03:04:05Z"},
+		{"title":"Down","type":"alerting","namespace":"team-a","rule_group":"g","query":"up == 0","for":"5m0s","state":"firing","health":"ok","labels":{"severity":"page"}}
+	]`, string(got))
 }

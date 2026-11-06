@@ -1,4 +1,4 @@
-package tools
+package datasource
 
 import (
 	"context"
@@ -31,13 +31,14 @@ import (
 // GET /api/frontend/settings is served to any authenticated role and includes
 // every datasource's numeric id, uid, name, type and (non-secret) jsonData.
 // The helpers in this file resolve datasources from it when the metadata API
-// fails, and record the numeric id so the datasource client constructors (see
-// newPrometheusBackend) can route the datasource proxy through the numeric-id
-// path directly. That route choice matters: the uid-based proxy routes only
-// exist from Grafana 9.0 — requests to them fall into the numeric :id route
-// and fail with a status that varies per version (verified live: 400 "id is
-// invalid" on 8.5, 500 "Unable to load datasource meta data" on 7.5) — so the
-// numeric path must be the primary, not a retry target.
+// fails, and record the numeric id so the datasource client constructors in
+// tools (see newPrometheusBackend) can route the datasource proxy through the
+// numeric-id path directly (see ProxyBases). That route choice matters: the
+// uid-based proxy routes only exist from Grafana 9.0 — requests to them fall
+// into the numeric :id route and fail with a status that varies per version
+// (verified live: 400 "id is invalid" on 8.5, 500 "Unable to load datasource
+// meta data" on 7.5) — so the numeric path must be the primary, not a retry
+// target.
 
 // fallbackRoute is the cached result of a frontend-settings resolution: the
 // numeric datasource id plus the datasource's real uid, so route construction
@@ -47,14 +48,15 @@ type fallbackRoute struct {
 	uid string
 }
 
-// fallbackProxyIDs maps fallbackProxyIDKey results to the fallbackRoute
-// resolved via /api/frontend/settings. Entries are only added when the
+// fallbackProxyIDs maps ScopedKey results to the fallbackRoute resolved via
+// /api/frontend/settings. Entries are only added when the
 // datasource metadata API was inaccessible, which is also the signal that the
 // uid-based proxy routes are likely unavailable.
 var fallbackProxyIDs sync.Map
 
-// fallbackProxyIDKey scopes cached ids to the Grafana URL, org, credential
-// material, and identifier kind ("uid" or "name"):
+// ScopedKey scopes cache keys to the Grafana URL, org, credential material,
+// and a kind (here "uid" or "name"; other packages use their own kinds to
+// scope caches of their own):
 //
 //   - In multi-tenant HTTP mode different requests can target different orgs
 //     on the same URL — Grafana tokens are themselves org-scoped — and must
@@ -63,7 +65,7 @@ var fallbackProxyIDs sync.Map
 //     ExtraHeaders, which may carry per-tenant auth).
 //   - Kind-prefixing keeps uid and name entries in separate key spaces, so a
 //     datasource whose name equals another datasource's uid cannot shadow it.
-func fallbackProxyIDKey(ctx context.Context, kind, id string) string {
+func ScopedKey(ctx context.Context, kind, id string) string {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
 	// Name matching is case-insensitive (mirroring the metadata API), so
@@ -102,7 +104,7 @@ func fallbackProxyIDKey(ctx context.Context, kind, id string) string {
 	return strings.TrimRight(cfg.URL, "/") + "\x00" + strconv.FormatInt(cfg.OrgID, 10) + "\x00" + hex.EncodeToString(cred[:8]) + "\x00" + kind + "\x00" + id
 }
 
-// fallbackProxyBases returns the datasource proxy base paths for an
+// ProxyBases returns the datasource proxy base paths for an
 // identifier previously resolved through the frontend-settings fallback:
 // the numeric-id route as the primary, and a uid-based proxy route as the
 // transport-level fallback. The fallback is built from the datasource's
@@ -111,9 +113,9 @@ func fallbackProxyIDKey(ctx context.Context, kind, id string) string {
 // ok=false means the datasource was resolved normally, and callers keep the
 // modern uid-based routes. The uid entry is consulted before the name entry,
 // mirroring the resolution precedence of fallbackDatasourceByUID.
-func fallbackProxyBases(ctx context.Context, identifier string) (primaryBase, fallbackBase string, ok bool) {
+func ProxyBases(ctx context.Context, identifier string) (primaryBase, fallbackBase string, ok bool) {
 	for _, kind := range []string{"uid", "name"} {
-		if v, found := fallbackProxyIDs.Load(fallbackProxyIDKey(ctx, kind, identifier)); found {
+		if v, found := fallbackProxyIDs.Load(ScopedKey(ctx, kind, identifier)); found {
 			route := v.(fallbackRoute)
 			uid := route.uid
 			if uid == "" {
@@ -206,7 +208,7 @@ func fetchFrontendSettingsDatasources(ctx context.Context) (map[string]frontendS
 
 // rememberFallbackDatasource records the numeric id under both the
 // datasource's uid and name (in separate key spaces) so subsequent
-// datasourceProxyPaths lookups hit regardless of which identifier the caller
+// ProxyBases lookups hit regardless of which identifier the caller
 // used.
 func rememberFallbackDatasource(ctx context.Context, ds frontendSettingsDatasource) {
 	if ds.ID <= 0 {
@@ -214,10 +216,10 @@ func rememberFallbackDatasource(ctx context.Context, ds frontendSettingsDatasour
 	}
 	route := fallbackRoute{id: ds.ID, uid: ds.UID}
 	if ds.UID != "" {
-		fallbackProxyIDs.Store(fallbackProxyIDKey(ctx, "uid", ds.UID), route)
+		fallbackProxyIDs.Store(ScopedKey(ctx, "uid", ds.UID), route)
 	}
 	if ds.Name != "" {
-		fallbackProxyIDs.Store(fallbackProxyIDKey(ctx, "name", ds.Name), route)
+		fallbackProxyIDs.Store(ScopedKey(ctx, "name", ds.Name), route)
 	}
 }
 
@@ -304,4 +306,34 @@ func fallbackDatasourceList(ctx context.Context) (models.DataSourceList, error) 
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	return list, nil
+}
+
+// WithoutBackend returns the set of UIDs whose plugin declares
+// meta.backend: false in GET /api/frontend/settings — i.e. a frontend-only
+// datasource type (the built-in Alertmanager datasource is the common case)
+// that the health endpoint can never successfully check, because that
+// endpoint always dispatches to a plugin backend. A UID absent from the
+// returned set (including every UID when frontend/settings itself is
+// unavailable to this token) must be treated as normally checkable: this is a
+// best-effort classification, not a requirement.
+func WithoutBackend(ctx context.Context) map[string]bool {
+	settings, _, err := fetchFrontendSettingsDatasources(ctx)
+	if err != nil {
+		return nil
+	}
+	without := make(map[string]bool)
+	for _, ds := range settings {
+		if ds.Meta != nil && ds.Meta.Backend != nil && !*ds.Meta.Backend {
+			without[ds.UID] = true
+		}
+	}
+	return without
+}
+
+// FallbackAvailable reports whether /api/frontend/settings is readable with
+// the caller's credentials, i.e. whether the fallback can resolve datasources
+// when the metadata API cannot.
+func FallbackAvailable(ctx context.Context) bool {
+	_, _, err := fetchFrontendSettingsDatasources(ctx)
+	return err == nil
 }

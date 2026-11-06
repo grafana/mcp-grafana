@@ -27,19 +27,26 @@ func testTemplateVariableValues(variables map[string]string) templateVariableVal
 }
 
 func substituteTemplateVariables(query string, variables map[string]string) string {
-	return substituteTemplateVariableValues(query, testTemplateVariableValues(variables))
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolate(query)
 }
 
 func substituteTemplateVariablesInMap(target map[string]interface{}, variables map[string]string) map[string]interface{} {
-	return substituteTemplateVariablesInMapWithValues(target, testTemplateVariableValues(variables))
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolateTarget(target)
 }
 
 func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
-	return substituteTemplateVariablesInSliceWithValues(slice, testTemplateVariableValues(variables))
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolateValue(slice).([]interface{})
 }
 
 func extractTemplateVariables(db map[string]interface{}) map[string]string {
-	return firstTemplateVariableValues(extractTemplateVariableValues(db))
+	in := newDashboardInterpolator(db, nil)
+	first := make(map[string]string)
+	for name := range in.values {
+		if value, ok := in.firstValue(name); ok {
+			first[name] = value
+		}
+	}
+	return first
 }
 
 func TestFindPanelByIDForRunPanelQuery(t *testing.T) {
@@ -297,7 +304,9 @@ func TestExtractPanelInfo(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name: "panel with no datasource",
+			// Grafana runs such a panel on the default datasource (schema 36
+			// migrates a null reference to the default datasource's ref).
+			name: "panel with no datasource uses the default",
 			panel: map[string]interface{}{
 				"id":    7,
 				"title": "No Datasource",
@@ -306,6 +315,47 @@ func TestExtractPanelInfo(t *testing.T) {
 						"expr": "up",
 					},
 				},
+			},
+			wantQuery: "up",
+			wantDSUID: "default",
+		},
+		{
+			name: "null panel datasource uses the default",
+			panel: map[string]interface{}{
+				"id":         7,
+				"datasource": nil,
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "default",
+		},
+		{
+			// Dashboards saved before schema 33 reference datasources by name.
+			name: "legacy datasource name",
+			panel: map[string]interface{}{
+				"id":         8,
+				"datasource": "Prometheus",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "Prometheus",
+		},
+		{
+			name: "legacy target datasource name wins over the panel's",
+			panel: map[string]interface{}{
+				"id":         9,
+				"datasource": "-- Mixed --",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up", "datasource": "$ds"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "$ds",
+		},
+		{
+			name: "mixed panel with an unreferenced target",
+			panel: map[string]interface{}{
+				"id":         10,
+				"datasource": "-- Mixed --",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
 			},
 			wantErr:     true,
 			errContains: "could not determine datasource",
@@ -694,7 +744,7 @@ func TestSubstituteTemplateVariableValuesSQLString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, substituteTemplateVariableValues(tt.query, tt.variables))
+			assert.Equal(t, tt.want, newVariableInterpolator(tt.variables, nil).interpolate(tt.query))
 		})
 	}
 }
@@ -825,6 +875,24 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			query:    "increase(requests[$__range])",
 			duration: 90 * time.Minute,
 			expected: "increase(requests[1h30m])",
+		},
+		{
+			name:     "range_keeps_seconds",
+			query:    "increase(requests[$__range])",
+			duration: 90 * time.Second,
+			expected: "increase(requests[1m30s])",
+		},
+		{
+			name:     "range_keeps_minutes_and_seconds",
+			query:    "increase(requests[$__range])",
+			duration: 2*time.Hour + 30*time.Minute + 45*time.Second,
+			expected: "increase(requests[2h30m45s])",
+		},
+		{
+			name:     "interval_matches_interval_ms",
+			query:    "rate(requests[$__interval]) * $__interval_ms",
+			duration: 3 * time.Hour,
+			expected: "rate(requests[1m48s]) * 108000", // 10800/100 = 108s
 		},
 		{
 			name:     "rate_interval",
@@ -959,6 +1027,10 @@ func TestFormatPrometheusDuration(t *testing.T) {
 		{"hours_only", 3 * time.Hour, "3h"},
 		{"hours_and_minutes", 90 * time.Minute, "1h30m"},
 		{"complex", 2*time.Hour + 15*time.Minute, "2h15m"},
+		{"minutes_and_seconds", 90 * time.Second, "1m30s"},
+		{"hours_minutes_and_seconds", time.Hour + 30*time.Second, "1h30s"},
+		{"over_a_day", 25*time.Hour + 36*time.Second, "25h36s"},
+		{"zero", 0, "0s"},
 	}
 
 	for _, tt := range tests {
@@ -1581,4 +1653,42 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 
 	assert.Equal(t, "my-cluster", result[0])
 	assert.Equal(t, "static-value", result[1])
+}
+
+// Grafana replaces $__auto with the step of a Loki range query, so the step sent to Loki must
+// match the value substituted for $__auto. Otherwise Loki falls back to range/250 and
+// count_over_time windows overlap, counting each line more than once.
+func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, q["expr"])
+	assert.Equal(t, "36s", q["step"], "step must equal $__auto")
+}
+
+// Over 3h the interval is 108s, which $__auto renders as "1m48s"; the step must match it.
+func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[1m48s]))`, q["expr"])
+	assert.Equal(t, "108s", q["step"], "step must equal $__auto")
+}
+
+// Over 24h the interval is 864s, which $__auto renders as "14m24s"; the step must match it.
+func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[14m24s]))`, q["expr"])
+	assert.Equal(t, "864s", q["step"], "step must equal $__auto")
 }

@@ -1,7 +1,7 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createMetricsHostState } from '../app/metricsHostState';
+import { createAppHostState } from '../app/appHostState';
 import { matrixSingleSeries, vectorSingleUnbounded } from './metricsFixtures';
 
 type Handlers = {
@@ -23,11 +23,32 @@ function fakeHost() {
 const ok = (payload: unknown) => ({ structuredContent: payload, content: [] });
 const args = { expr: 'up', datasourceUid: 'prom', queryType: 'instant', endTime: 'now' };
 
-describe('createMetricsHostState', () => {
+describe('createAppHostState', () => {
+  it('refreshes only the current App through the data-only query tool', async () => {
+    const current = fakeHost();
+    const other = fakeHost();
+    const currentView = createAppHostState(current.app);
+    const otherView = createAppHostState(other.app);
+    for (const { app } of [current, other]) {
+      app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: args } });
+      app.ontoolresult?.(ok(vectorSingleUnbounded));
+    }
+    const previousOther = otherView.getSnapshot();
+
+    const refreshing = currentView.refresh();
+    expect(current.app.callServerTool).toHaveBeenCalledWith({ name: 'query_prometheus', arguments: args });
+    current.resolveCall(ok(matrixSingleSeries));
+    await refreshing;
+
+    expect(currentView.getSnapshot().result?.resultType).toBe('matrix');
+    expect(otherView.getSnapshot()).toBe(previousOther);
+    expect(other.app.callServerTool).not.toHaveBeenCalled();
+  });
+
   it('drops a refresh that returns after the host delivered a newer result', async () => {
     const { app, resolveCall } = fakeHost();
-    const host = createMetricsHostState(app);
-    app.ontoolinput?.({ arguments: args });
+    const host = createAppHostState(app);
+    app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: args } });
     app.ontoolresult?.(ok(vectorSingleUnbounded));
 
     const refreshing = host.refresh();
@@ -42,8 +63,8 @@ describe('createMetricsHostState', () => {
 
   it('clears the last action notice when a new result arrives', async () => {
     const { app, resolveCall } = fakeHost();
-    const host = createMetricsHostState(app);
-    app.ontoolinput?.({ arguments: args });
+    const host = createAppHostState(app);
+    app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: args } });
     app.ontoolresult?.(ok(vectorSingleUnbounded));
 
     const refreshing = host.refresh();
@@ -63,13 +84,51 @@ describe('createMetricsHostState', () => {
 
   it('drops the previous chart when the host starts a new call', () => {
     const { app } = fakeHost();
-    const host = createMetricsHostState(app);
-    app.ontoolinput?.({ arguments: args });
+    const host = createAppHostState(app);
+    app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: args } });
     app.ontoolresult?.(ok(vectorSingleUnbounded));
     expect(host.getSnapshot().result).toBeDefined();
 
-    app.ontoolinput?.({ arguments: { ...args, expr: 'node_load1' } });
+    app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: { ...args, expr: 'node_load1' } } });
     expect(host.getSnapshot().result).toBeUndefined();
     expect(host.getSnapshot().status).toBe('Waiting for query results…');
+  });
+
+  it('preserves the selected organization and datasource project when refreshing', async () => {
+    const { app, resolveCall } = fakeHost();
+    const host = createAppHostState(app);
+    app.ontoolinput?.({ arguments: {
+      toolName: 'query_prometheus', orgId: 42,
+      arguments: { ...args, projectName: 'monitoring-prod' },
+    } });
+    app.ontoolresult?.(ok(vectorSingleUnbounded));
+
+    const refreshing = host.refresh();
+    expect(app.callServerTool).toHaveBeenCalledWith({
+      name: 'query_prometheus',
+      arguments: { ...args, projectName: 'monitoring-prod', orgId: 42 },
+    });
+    resolveCall(ok(matrixSingleSeries));
+    await refreshing;
+    expect(host.getSnapshot().result?.resultType).toBe('matrix');
+  });
+
+  it('clears the previous view when switching between trace and metrics sources', () => {
+    const { app } = fakeHost();
+    const host = createAppHostState(app);
+    app.ontoolinput?.({ arguments: {
+      toolName: 'get_tempo_trace', arguments: { trace_id: 'abc', datasourceUid: 'tempo' },
+    } });
+    app.ontoolresult?.(ok({ traceId: 'abc', datasourceUid: 'tempo', grafanaUrl: '', spans: [{
+      id: '1', name: 'GET /', serviceName: 'frontend', startTimeMs: 0, durationMs: 20,
+      status: 'ok', attributes: {}, events: [],
+    }] }));
+    expect(host.getSnapshot().trace?.traceId).toBe('abc');
+
+    app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: args } });
+    expect(host.getSnapshot().trace).toBeUndefined();
+    expect(host.getSnapshot().result).toBeUndefined();
+    app.ontoolresult?.(ok(vectorSingleUnbounded));
+    expect(host.getSnapshot().result?.resultType).toBe('vector');
   });
 });

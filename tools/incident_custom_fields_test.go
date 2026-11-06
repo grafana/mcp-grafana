@@ -505,3 +505,21 @@ func TestResolveIncidentCustomField(t *testing.T) {
 		assert.Contains(t, err.Error(), "no custom fields are configured")
 	})
 }
+
+func TestActiveIncidentsQuery(t *testing.T) {
+	ctx, fake := newFakeIncidentClient(t, map[string]any{
+		"IncidentsService.QueryIncidentPreviews": incident.QueryIncidentPreviewsResponse{
+			IncidentPreviews: []incident.IncidentPreview{{IncidentID: "7", Title: "checkout is down", SeverityLabel: "critical"}},
+		},
+	})
+
+	result, err := ActiveIncidents(ctx, 100)
+	require.NoError(t, err)
+	require.Len(t, result.Incidents, 1)
+	assert.Equal(t, "critical", result.Incidents[0].Severity)
+
+	var request incident.QueryIncidentPreviewsRequest
+	fake.bodyFor(t, "IncidentsService.QueryIncidentPreviews", &request)
+	assert.Equal(t, "isdrill:false status:active", request.Query.QueryString)
+	assert.Equal(t, 100, request.Query.Limit)
+}

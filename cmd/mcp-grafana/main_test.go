@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"log/slog"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/observability"
+	"github.com/grafana/mcp-grafana/v2/resources"
 	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -688,6 +690,134 @@ func TestValidateLokiGuardrail(t *testing.T) {
 	}
 }
 
+// TestApplyPrometheusGuardrailEnv locks in the same flag-over-env precedence
+// as the Loki guardrail.
+func TestApplyPrometheusGuardrailEnv(t *testing.T) {
+	// Flag defaults as registered in addFlags.
+	defaults := grafanaConfig{
+		prometheusGuardrailMode:      "off",
+		prometheusGuardrailMaxRange:  192 * time.Hour,
+		prometheusGuardrailMaxPoints: 11000,
+	}
+
+	tests := []struct {
+		name          string
+		env           map[string]string
+		setFlags      map[string]bool
+		wantMode      string
+		wantMaxRange  time.Duration
+		wantMaxPoints int64
+		wantErrSubstr string
+	}{
+		{
+			name: "env-only applies to all three settings",
+			env: map[string]string{
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MODE":       "enforce",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE":  "24h",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "500",
+			},
+			wantMode:      "enforce",
+			wantMaxRange:  24 * time.Hour,
+			wantMaxPoints: 500,
+		},
+		{
+			name: "flag-set wins over env",
+			env: map[string]string{
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MODE":       "enforce",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE":  "24h",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "500",
+			},
+			setFlags: map[string]bool{
+				"prometheus-guardrail-mode":       true,
+				"prometheus-guardrail-max-range":  true,
+				"prometheus-guardrail-max-points": true,
+			},
+			wantMode:      defaults.prometheusGuardrailMode,
+			wantMaxRange:  defaults.prometheusGuardrailMaxRange,
+			wantMaxPoints: defaults.prometheusGuardrailMaxPoints,
+		},
+		{
+			name: "flag-set is per setting",
+			env: map[string]string{
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MODE":       "shadow",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "500",
+			},
+			setFlags:      map[string]bool{"prometheus-guardrail-max-points": true},
+			wantMode:      "shadow",
+			wantMaxRange:  defaults.prometheusGuardrailMaxRange,
+			wantMaxPoints: defaults.prometheusGuardrailMaxPoints,
+		},
+		{
+			name:          "empty env ignored",
+			env:           map[string]string{"GRAFANA_PROMETHEUS_GUARDRAIL_MODE": ""},
+			wantMode:      defaults.prometheusGuardrailMode,
+			wantMaxRange:  defaults.prometheusGuardrailMaxRange,
+			wantMaxPoints: defaults.prometheusGuardrailMaxPoints,
+		},
+		{
+			// Go durations have no day unit, so the docs say 192h, not 8d.
+			name:          "day unit in MAX_RANGE errors",
+			env:           map[string]string{"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE": "8d"},
+			wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE",
+		},
+		{
+			name:          "invalid MAX_POINTS errors",
+			env:           map[string]string{"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "11k"},
+			wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS",
+		},
+	}
+
+	envVars := []string{
+		"GRAFANA_PROMETHEUS_GUARDRAIL_MODE",
+		"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE",
+		"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS",
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range envVars {
+				t.Setenv(k, tc.env[k])
+			}
+			gc := defaults
+			err := gc.applyPrometheusGuardrailEnv(tc.setFlags)
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMode, gc.prometheusGuardrailMode)
+			assert.Equal(t, tc.wantMaxRange, gc.prometheusGuardrailMaxRange)
+			assert.Equal(t, tc.wantMaxPoints, gc.prometheusGuardrailMaxPoints)
+		})
+	}
+}
+
+func TestValidatePrometheusGuardrail(t *testing.T) {
+	tests := []struct {
+		name          string
+		gc            grafanaConfig
+		wantErrSubstr string
+	}{
+		{name: "off is valid", gc: grafanaConfig{prometheusGuardrailMode: "off"}},
+		{name: "shadow with limits is valid", gc: grafanaConfig{prometheusGuardrailMode: "shadow", prometheusGuardrailMaxRange: 192 * time.Hour, prometheusGuardrailMaxPoints: 11000}},
+		{name: "zero limits disable checks", gc: grafanaConfig{prometheusGuardrailMode: "enforce"}},
+		{name: "unknown mode rejected", gc: grafanaConfig{prometheusGuardrailMode: "Enforce"}, wantErrSubstr: "invalid Prometheus guardrail mode"},
+		{name: "negative max range rejected", gc: grafanaConfig{prometheusGuardrailMode: "enforce", prometheusGuardrailMaxRange: -time.Hour}, wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE"},
+		{name: "negative max points rejected", gc: grafanaConfig{prometheusGuardrailMode: "enforce", prometheusGuardrailMaxPoints: -1}, wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.gc.validatePrometheusGuardrail()
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestSplitAndTrim(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1229,6 +1359,7 @@ func TestSOCKS5ProxyFromEnv(t *testing.T) {
 // data. --disable-query removes them; --disable-write must not.
 var safeQueryToolNames = []string{
 	"query_prometheus",
+	"render_grafana_app",
 	"query_prometheus_histogram",
 	"query_loki_logs",
 	"query_loki_patterns",
@@ -2100,4 +2231,76 @@ func TestApplyLokiGuardrailEnvOnEstimateFailure(t *testing.T) {
 	gc = grafanaConfig{lokiGuardrailOnFailure: "allow"}
 	require.NoError(t, gc.applyLokiGuardrailEnv(map[string]bool{"loki-guardrail-on-estimate-failure": true}))
 	assert.Equal(t, "allow", gc.lokiGuardrailOnFailure, "an explicit flag wins over the environment")
+}
+
+func TestResourceKindsFollowToolCategories(t *testing.T) {
+	const (
+		datasources = "grafana://datasources/{uid}"
+		incidents   = "grafana://irm/incidents/{id}"
+	)
+	for _, tc := range []struct {
+		name   string
+		config disabledTools
+		want   []string
+	}{
+		{"all", disabledTools{enabledTools: "datasource,incident"}, []string{datasources, incidents}},
+		{"datasource disabled", disabledTools{enabledTools: "datasource,incident", datasource: true}, []string{incidents}},
+		{"incident disabled", disabledTools{enabledTools: "datasource,incident", incident: true}, []string{datasources}},
+		{"none enabled", disabledTools{enabledTools: "search"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			mcpgrafana.RegisterAppResources(s) // advertises the resources capability either way
+			resources.Register(s, tc.config.resourceKinds()...)
+			result, err := connectTestClient(t, s).ListResourceTemplates(t.Context(), nil)
+			require.NoError(t, err)
+			var got []string
+			for _, rt := range result.ResourceTemplates {
+				got = append(got, rt.URITemplate)
+			}
+			assert.ElementsMatch(t, tc.want, got)
+		})
+	}
+}
+
+func TestPrometheusSelectiveLabelsEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name, value                       string
+		flagSet, initial, want, wantError bool
+	}{
+		{"default off", "", false, false, false, false},
+		{"env enables", "true", false, false, true, false},
+		{"env disables", "false", false, true, false, false},
+		{"explicit false wins", "true", true, false, false, false},
+		{"explicit true wins", "false", true, true, true, false},
+		{"invalid env", "enabled", false, false, false, true},
+		{"explicit flag ignores invalid env", "enabled", true, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range []string{"MODE", "MAX_RANGE", "MAX_POINTS"} {
+				t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_"+name, "")
+			}
+			t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS", tc.value)
+			gc := grafanaConfig{prometheusGuardrailRequireSelectiveLabels: tc.initial}
+			err := gc.applyPrometheusGuardrailEnv(map[string]bool{"prometheus-guardrail-require-selective-labels": tc.flagSet})
+			if tc.wantError {
+				require.ErrorContains(t, err, "GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, gc.prometheusGuardrailRequireSelectiveLabels)
+			}
+		})
+	}
+}
+
+func TestPrometheusSelectiveLabelsFlag(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	for _, args := range [][]string{nil, {"--prometheus-guardrail-require-selective-labels"}, {"--prometheus-guardrail-require-selective-labels=false"}} {
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		gc := grafanaConfig{}
+		gc.addFlags()
+		require.NoError(t, flag.CommandLine.Parse(args))
+		assert.Equal(t, len(args) > 0 && args[0] == "--prometheus-guardrail-require-selective-labels", gc.prometheusGuardrailRequireSelectiveLabels)
+	}
 }

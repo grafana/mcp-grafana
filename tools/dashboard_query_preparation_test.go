@@ -47,11 +47,20 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			datasource        string
 			sourceCurrent     string
 			raw, defaultRange bool
+			multi             bool
 			datasourceType    string
 			targetFields      map[string]interface{}
 			requiredNames     []string
 		}{
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
+			{name: "multi-value unformatted", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east','west')"},
+			{name: "multi-value single selection", query: "SELECT * FROM t WHERE region IN (${choice})", current: []interface{}{"east"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east')"},
+			{name: "multi-value quoted value", query: "SELECT * FROM t WHERE region IN ([[choice]])", current: []interface{}{"O'Reilly", "west"}, multi: true, want: "SELECT * FROM t WHERE region IN ('O''Reilly','west')"},
+			{name: "multi-value override", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, overrides: map[string]string{"choice": "north"}, want: "SELECT * FROM t WHERE region IN ('north')"},
+			{name: "multi-value MySQL", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, datasourceType: "mysql", want: "SELECT * FROM t WHERE region IN ('east','west')"},
+			{name: "multi-value MSSQL", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, datasourceType: "mssql", want: "SELECT * FROM t WHERE region IN ('east','west')"},
+			{name: "multi-value explicit format kept", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, multi: true, want: "SELECT '{east,west}'"},
+			{name: "multi-value empty selection", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{}, multi: true, want: "SELECT * FROM t WHERE region IN ()"},
 			{name: "multi-value glob", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, want: "SELECT '{east,west}'"},
 			{name: "bracketed sqlstring", query: "SELECT [[choice:sqlstring]]", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "quoted value", query: "SELECT ${choice:sqlstring}", current: "O'Reilly", want: "SELECT 'O''Reilly'"},
@@ -104,6 +113,9 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
 				variable := map[string]interface{}{"name": "choice", "type": "query", "datasource": nil,
 					"current": map[string]interface{}{"value": tc.current}}
+				if tc.multi {
+					variable["multi"] = true
+				}
 				current := safeObject(variable, "current")
 				if tc.currentText != "" {
 					current["text"] = tc.currentText

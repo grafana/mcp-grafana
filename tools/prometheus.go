@@ -153,6 +153,10 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		}
 	}
 
+	if err := guardPrometheusQuery(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds); err != nil {
+		return nil, nil, err
+	}
+
 	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting backend: %w", err)
@@ -257,9 +261,8 @@ func exploreTimeRangeForQuery(args QueryPrometheusParams) *TimeRange {
 // interactive view, rather than handing a host something it cannot render.
 const maxMetricsViewBytes = 1 << 20
 
-// queryPrometheusForApp runs the query and returns the normal text result,
-// enriched with an interactive view when one is possible.
-func queryPrometheusForApp(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
+// queryPrometheusTool returns text and structured data shared by query and chart calls.
+func queryPrometheusTool(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
 	result, err := queryPrometheusWithHints(ctx, args)
 	if err != nil {
 		return nil, err
@@ -289,9 +292,8 @@ func newMetricsAppResult(result *QueryPrometheusResult) (*mcp.CallToolResult, er
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
-	queryPrometheusForApp,
-	mcpgrafana.WithUIResource(mcpgrafana.MetricsViewerResourceURI),
+	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Returns data without opening a chart. Supports instant and range queries. Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
+	queryPrometheusTool,
 	mcpgrafana.WithTitleAnnotation("Query Prometheus metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),

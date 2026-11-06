@@ -13,6 +13,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -154,7 +155,7 @@ func formatBigQueryTemplateVariable(values []string, format string) string {
 }
 
 func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQueryResult, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
+	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("looking up datasource: %w", err)
 	}
@@ -197,7 +198,7 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 	for name, value := range args.Variables {
 		variables[name] = []string{value}
 	}
-	processedQuery = substituteQueryTemplateVariableValues(processedQuery, variables, ds.Type)
+	processedQuery = newVariableInterpolator(variables, nil).interpolateQuery(processedQuery, ds.Type)
 	processedQuery = dialect.EnforceLimit(processedQuery, args.Limit)
 
 	qr, err := newQueryRunner(ctx)
@@ -233,7 +234,7 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 }
 
 func listSQLDatabasesHandler(ctx context.Context, args sql.ListSQLDatabasesParams) (*sql.ListSQLDatabasesResult, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
+	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("looking up datasource: %w", err)
 	}
@@ -253,7 +254,7 @@ func listSQLDatabasesHandler(ctx context.Context, args sql.ListSQLDatabasesParam
 }
 
 func listSQLTablesHandler(ctx context.Context, args sql.ListSQLTablesParams) (*sql.ListSQLTablesResult, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
+	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("looking up datasource: %w", err)
 	}
@@ -274,7 +275,7 @@ func listSQLTablesHandler(ctx context.Context, args sql.ListSQLTablesParams) (*s
 }
 
 func describeSQLTableHandler(ctx context.Context, args sql.DescribeSQLTableParams) (*sql.DescribeSQLTableResult, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
+	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("looking up datasource: %w", err)
 	}
