@@ -184,7 +184,16 @@ func (v *variableInterpolator) formatReference(s string, m []int, f datasourceFo
 	}
 	values := v.values[name]
 	if hasFormat {
+		// Unlike the other formats, lucene depends on whether the variable
+		// holds a list: Grafana passes a multi-value selection as an array,
+		// even with one value or none.
+		if formatName, _, _ := strings.Cut(format, ":"); formatName == "lucene" {
+			return formatLucene(values, v.multi[name])
+		}
 		return f.explicit(values, format)
+	}
+	if f.unformatted != nil {
+		return f.unformatted(values, v.multi[name])
 	}
 	if f.multi != nil && v.multi[name] && len(values) > 0 {
 		return f.multi(values)
@@ -203,13 +212,17 @@ type datasourceFormat struct {
 	// variable, as Grafana's interpolateQueryExpr (Prometheus, Loki) and
 	// interpolateVariable (SQL) do. nil keeps the first value.
 	multi func(values []string) string
+	// unformatted, when set, formats every unformatted reference instead of
+	// multi; list is whether the variable is multi-value or include-All.
+	unformatted func(values []string, list bool) string
 }
 
 var genericFormat = datasourceFormat{explicit: formatTemplateVariable}
 
 // formatForDatasource returns the formatting for a datasource type, matched
 // case-insensitively. BigQuery has its own sqlstring quoting; Prometheus, Loki
-// and the SQL datasources format multi-value variables.
+// and the SQL datasources format multi-value variables; Elasticsearch formats
+// every variable in the lucene format, as its interpolateLuceneQuery does.
 func formatForDatasource(datasourceType string) datasourceFormat {
 	lower := strings.ToLower(datasourceType)
 	f := genericFormat
@@ -223,8 +236,51 @@ func formatForDatasource(datasourceType string) datasourceFormat {
 		f.multi = func(values []string) string { return regexAlternation(values, false) }
 	case "postgres", "grafana-postgresql-datasource", "mysql", "mssql":
 		f.multi = formatSQLLiteralList
+	case elasticsearchDatasourceType:
+		f.unformatted = formatLucene
 	}
 	return f
+}
+
+// jsWhitespace is JavaScript's \s (WhiteSpace and LineTerminator) as a
+// character class body. Go's \s only covers ASCII whitespace.
+const jsWhitespace = `\t\n\v\f\r\p{Zs}\x{2028}\x{2029}\x{FEFF}`
+
+// luceneSpecialCharacters are the characters Grafana's luceneEscape escapes.
+var luceneSpecialCharacters = regexp.MustCompile(`[!*+\-=<>` + jsWhitespace + `&|()\[\]{}^~?:\\/"]`)
+
+// jsNumber matches the strings JavaScript's unary + converts to a number rather
+// than NaN (StringNumericLiteral): blank, a decimal or Infinity with an optional
+// sign, or an unsigned 0x, 0o or 0b integer. strconv.ParseFloat differs: it
+// accepts inf, nan and hex floats, and rejects 0b101 and out-of-range values.
+var jsNumber = regexp.MustCompile(`^[` + jsWhitespace + `]*` +
+	`(?:[+-]?(?:Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)?` +
+	`[` + jsWhitespace + `]*$`)
+
+// luceneEscape escapes value as Grafana's luceneEscape does, leaving values
+// that JavaScript reads as numbers as they are.
+func luceneEscape(value string) string {
+	if jsNumber.MatchString(value) {
+		return value
+	}
+	return luceneSpecialCharacters.ReplaceAllString(value, `\${0}`)
+}
+
+// formatLucene formats values as Grafana's lucene format does. A list is
+// written as ("a" OR "b"), each value escaped, and an empty list as __empty__,
+// which matches nothing; otherwise the first value is escaped.
+func formatLucene(values []string, list bool) string {
+	if !list {
+		return luceneEscape(firstTemplateVariableValue(values))
+	}
+	if len(values) == 0 {
+		return "__empty__"
+	}
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = `"` + luceneEscape(value) + `"`
+	}
+	return "(" + strings.Join(quoted, " OR ") + ")"
 }
 
 var regexMetacharacters = regexp.MustCompile(`[$^*{}\[\]+?.()|]`)
@@ -264,7 +320,7 @@ func firstTemplateVariableValue(values []string) string {
 }
 
 // formatTemplateVariable applies an explicit format. sqlstring follows
-// Grafana's formatter; unknown formats fall back to Grafana's glob.
+// Grafana's formatter (lucene is handled in formatReference); unknown formats fall back to Grafana's glob.
 func formatTemplateVariable(values []string, format string) string {
 	formatName := format
 	if separator := strings.IndexByte(format, ':'); separator >= 0 {
