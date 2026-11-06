@@ -4,6 +4,7 @@ package tools
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -19,6 +20,9 @@ import (
 // These tests do not use the network. They check that the copy of the contract registry is the copy that
 // viz_contract/CONTRACT pins, and that it is consistent with itself. Nothing checks the pin against the contract
 // repository yet (see viz_contract/README.md).
+
+//go:embed viz_contract/CONTRACT
+var contractPin string
 
 func parsePin(t *testing.T) map[string]string {
 	t.Helper()
