@@ -139,6 +139,48 @@ func TestListNotebooks_NamespaceFromSettings(t *testing.T) {
 	assert.Equal(t, "/apis/dashboard.grafana.app/v2beta1/namespaces/stacks-12345/notebooks", capturedPath)
 }
 
+// TestNotebookLinksUsePublicURL covers the host half of the link problem: an
+// MCP server usually reaches Grafana on an internal address (an in-cluster
+// Service, a private DNS name), but the URLs these tools return are meant to be
+// clicked by a person. Grafana publishes the browser-facing address as appUrl in
+// /api/frontend/settings, and every other tool that emits user-facing links
+// prefers it over the configured URL - notebooks did not, so every link pointed
+// somewhere a browser cannot resolve.
+func TestNotebookLinksUsePublicURL(t *testing.T) {
+	const publicURL = "https://grafana.example.com/grafana"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/frontend/settings":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"namespace": "default", "appUrl": publicURL})
+		case strings.HasSuffix(r.URL.Path, "/search"):
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{
+				"resource": map[string]any{"name": "nb-1"},
+				"fields":   map[string]any{"title": "CPU saturation", "tags": []string{"sre"}},
+			}}})
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{notebooksTestResource("nb-1", "CPU saturation", []string{"sre"}, 1)}})
+		}
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, ts.URL, "grafana-token", nil))
+
+	listed, err := listNotebooks(ctx, ListNotebooksParams{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, publicURL+"/notebooks/nb-1", listed[0].URL,
+		"list links must use appUrl, not the internal URL the MCP server talks to")
+
+	found, err := searchNotebooks(ctx, SearchNotebooksParams{Query: "saturation"})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Equal(t, publicURL+"/notebooks/nb-1", found[0].URL)
+}
+
 func TestGetNotebookByUID(t *testing.T) {
 	ts := notebooksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -174,6 +216,13 @@ func TestSearchNotebooks(t *testing.T) {
 		assert.Equal(t, float64(5), query["limit"])
 		where := query["where"].(map[string]any)
 		assert.Equal(t, "saturation", where["text"].(map[string]any)["value"])
+		// Grafana's search returns only a default projection (title, folder)
+		// unless the extra fields are requested, so a search that reads tags
+		// without naming them here silently returns none. Verified live: the same
+		// query with and without this key returns the notebook with and without
+		// its tags.
+		assert.Equal(t, []any{"title", "tags"}, query["fields"],
+			"tags must be requested explicitly or every match reports none")
 
 		w.Header().Set("Content-Type", "application/json")
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{

@@ -176,11 +176,11 @@ type notebookSpecFields struct {
 	} `json:"layout"`
 }
 
-func summarizeNotebook(cfg mcpgrafana.GrafanaConfig, nb notebookResource) notebookSummary {
+func summarizeNotebook(baseURL string, nb notebookResource) notebookSummary {
 	summary := notebookSummary{
 		UID:       nb.Metadata.Name,
 		CreatedAt: nb.Metadata.CreationTimestamp,
-		URL:       strings.TrimRight(cfg.URL, "/") + "/notebooks/" + url.PathEscape(nb.Metadata.Name),
+		URL:       notebookPageURL(baseURL, nb.Metadata.Name),
 	}
 
 	var spec notebookSpecFields
@@ -192,6 +192,32 @@ func summarizeNotebook(cfg mcpgrafana.GrafanaConfig, nb notebookResource) notebo
 	}
 
 	return summary
+}
+
+// notebookPageURL is the browser address of a notebook's page, or "" when there
+// is no base URL to build it from.
+func notebookPageURL(baseURL, uid string) string {
+	if baseURL == "" {
+		return ""
+	}
+	return strings.TrimRight(baseURL, "/") + "/notebooks/" + url.PathEscape(uid)
+}
+
+// notebookPageBaseURL is the host a human following a notebook link should land
+// on. These URLs go back to the caller as text, so they must be reachable from a
+// browser: GRAFANA_URL is often an in-cluster or otherwise internal address,
+// while /api/frontend/settings' appUrl is what Grafana itself considers public.
+// Falls back to the configured URL when the instance publishes no appUrl (the
+// same order every other tool that emits user-facing links uses, via
+// grafanaBaseURLFromContext).
+func notebookPageBaseURL(ctx context.Context) string {
+	baseURL, err := grafanaBaseURLFromContext(ctx)
+	if err != nil {
+		// A malformed appUrl must not fail the tool; the configured URL is
+		// still better than no link at all.
+		return strings.TrimRight(mcpgrafana.GrafanaConfigFromContext(ctx).URL, "/")
+	}
+	return baseURL
 }
 
 type ListNotebooksParams struct {
@@ -214,10 +240,10 @@ func listNotebooks(ctx context.Context, args ListNotebooksParams) ([]notebookSum
 		return nil, fmt.Errorf("decode notebook list: %w", err)
 	}
 
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	baseURL := notebookPageBaseURL(ctx)
 	summaries := make([]notebookSummary, 0, len(list.Items))
 	for _, nb := range list.Items {
-		summaries = append(summaries, summarizeNotebook(cfg, nb))
+		summaries = append(summaries, summarizeNotebook(baseURL, nb))
 	}
 	return summaries, nil
 }
@@ -259,9 +285,14 @@ func searchNotebooks(ctx context.Context, args SearchNotebooksParams) ([]noteboo
 	}
 
 	// The notebooks collection serves the search API at /notebooks/search.
+	// fields is a projection, not a hint: Grafana answers with only a default
+	// set (title, folder) unless the extra fields are named here, so without it
+	// a match comes back with an empty tags list even when the notebook has
+	// tags - verified against a live Grafana (2026-11-06).
 	searchQuery := map[string]any{
 		"apiVersion": "search.grafana.app/v0alpha1",
 		"kind":       "SearchQuery",
+		"fields":     []string{"title", "tags"},
 		"where":      map[string]any{"text": map[string]any{"value": args.Query}},
 	}
 	if args.Limit > 0 {
@@ -278,14 +309,14 @@ func searchNotebooks(ctx context.Context, args SearchNotebooksParams) ([]noteboo
 		return nil, fmt.Errorf("decode notebook search results: %w", err)
 	}
 
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	baseURL := notebookPageBaseURL(ctx)
 	summaries := make([]notebookSummary, 0, len(results.Items))
 	for _, item := range results.Items {
 		summaries = append(summaries, notebookSummary{
 			UID:   item.Resource.Name,
 			Title: item.Fields.Title,
 			Tags:  item.Fields.Tags,
-			URL:   strings.TrimRight(cfg.URL, "/") + "/notebooks/" + url.PathEscape(item.Resource.Name),
+			URL:   notebookPageURL(baseURL, item.Resource.Name),
 		})
 	}
 	return summaries, nil
@@ -734,8 +765,8 @@ func renderNotebookPDF(ctx context.Context, args RenderNotebookPDFParams) (*mcp.
 	}
 	summary := fmt.Sprintf("Rendered notebook %q (%s) as a PDF: %d bytes, time range %s.",
 		spec.Title, args.UID, len(pdf), timeRange)
-	if url := summarizeNotebook(cfg, notebook).URL; url != "" {
-		summary += " Notebook page: " + url
+	if pageURL := notebookPageURL(notebookPageBaseURL(ctx), args.UID); pageURL != "" {
+		summary += " Notebook page: " + pageURL
 	}
 
 	// The PDF travels as an embedded resource so a client can write the bytes
