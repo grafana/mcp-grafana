@@ -1,6 +1,4 @@
-// Package datasource looks up Grafana datasources for the caller in ctx,
-// falling back to /api/frontend/settings when the datasource metadata API is
-// inaccessible to the token (see fallback.go).
+// Package datasource looks up Grafana datasources for the caller in ctx.
 package datasource
 
 import (
@@ -37,11 +35,10 @@ func List(ctx context.Context) (models.DataSourceList, error) {
 	if err == nil {
 		return resp.Payload, nil
 	}
-	if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
-		// The datasources API is not accessible to this token (e.g. it
-		// requires Org Admin before Grafana 9.0); fall back to frontend settings
-		// (see fallback.go).
-		return fb, nil
+	if hasStatus(err, http.StatusForbidden) {
+		if list, fallbackErr := datasourceListFromFrontendSettings(ctx); fallbackErr == nil {
+			return list, nil
+		}
 	}
 	return nil, fmt.Errorf("list datasources: %w", err)
 }
@@ -68,22 +65,17 @@ func ByUID(ctx context.Context, uid string) (*models.DataSource, error) {
 		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(uid),
 	)
 	if err != nil {
-		var status interface{ IsCode(int) bool }
-		if errors.As(err, &status) && status.IsCode(http.StatusNotFound) {
+		if hasStatus(err, http.StatusNotFound) {
 			return nil, notFoundError{"UID", uid}
 		}
-		// The datasource metadata API is not accessible to this token (e.g.
-		// it requires Org Admin before Grafana 9.0); fall back to frontend
-		// settings (see fallback.go).
-		ds, fbErr := fallbackDatasourceByUID(ctx, uid)
-		if fbErr == nil {
-			return ds, nil
-		}
-		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
-			// The settings were readable and the datasource is genuinely
-			// absent: report not-found rather than the misleading permission
-			// error, so agents can tell a typo from a credentials problem.
-			return nil, notFoundError{"UID", uid}
+		if hasStatus(err, http.StatusForbidden) {
+			ds, fallbackErr := datasourceByUIDFromFrontendSettings(ctx, uid)
+			if fallbackErr == nil {
+				return ds, nil
+			}
+			if errors.Is(fallbackErr, errFrontendSettingsDatasourceNotFound) {
+				return nil, notFoundError{"UID", uid}
+			}
 		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", uid, err)
 	}
@@ -98,17 +90,24 @@ func ByName(ctx context.Context, name string) (*models.DataSource, error) {
 		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(name),
 	)
 	if err != nil {
-		// The datasource metadata API is not accessible to this token (e.g.
-		// it requires Org Admin before Grafana 9.0); fall back to frontend
-		// settings (see fallback.go).
-		ds, fbErr := fallbackDatasourceByName(ctx, name)
-		if fbErr == nil {
-			return ds, nil
-		}
-		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
+		if hasStatus(err, http.StatusNotFound) {
 			return nil, notFoundError{"name", name}
+		}
+		if hasStatus(err, http.StatusForbidden) {
+			ds, fallbackErr := datasourceByNameFromFrontendSettings(ctx, name)
+			if fallbackErr == nil {
+				return ds, nil
+			}
+			if errors.Is(fallbackErr, errFrontendSettingsDatasourceNotFound) {
+				return nil, notFoundError{"name", name}
+			}
 		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", name, err)
 	}
 	return datasource.Payload, nil
+}
+
+func hasStatus(err error, code int) bool {
+	var status interface{ IsCode(int) bool }
+	return errors.As(err, &status) && status.IsCode(code)
 }
