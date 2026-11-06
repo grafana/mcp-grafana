@@ -13,6 +13,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -280,6 +281,20 @@ func TestQueryLokiLogsTagsQuerySource(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "mcp-grafana", (*payload)["queries"].([]interface{})[0].(map[string]interface{})["supportingQueryType"])
+}
+
+// Grafana before 11.0 rejects unknown supportingQueryType values with a 500.
+func TestQueryLokiLogsOmitsQuerySourceBeforeGrafana11(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	ctx := enforceTestCtx(server, false)
+	mcpgrafana.GrafanaClientFromContext(ctx).Version = "10.4.7"
+	_, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+		DatasourceUID: "loki", LogQL: `{app="a"}`,
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, (*payload)["queries"].([]interface{})[0], "supportingQueryType")
 }
 
 func TestLokiFramesToResult_StatusError(t *testing.T) {
