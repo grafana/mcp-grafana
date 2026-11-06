@@ -8,15 +8,19 @@ import (
 	"strings"
 )
 
-// The chart registry of the viz contract (grafana/viz-contract, commit bb6adf3): registry/chart-types.json and
-// registry/pick.json. The Source reads them and no other part does (tool.18). The summary of the frames and the
-// matcher follow the condition rule language of schemas/registry.schema.json.
+// The chart registry of the viz contract (grafana/viz-contract): registry/chart-types.json and registry/pick.json.
+// The Source reads them and no other part does (tool.18). The files are copies. viz_contract/CONTRACT pins the commit
+// and the version, and scripts/sync-viz-contract.sh changes them. The summary of the frames and the matcher follow
+// the condition rule language of schemas/registry.schema.json.
 
 //go:embed viz_contract/chart-types.json
 var chartTypesJSON []byte
 
 //go:embed viz_contract/pick.json
 var pickJSON []byte
+
+//go:embed viz_contract/CONTRACT
+var contractPin string
 
 type vizChart struct {
 	Name        string           `json:"name"`
@@ -234,12 +238,20 @@ func vizFits(summary map[string]any, chart vizChart) bool {
 	return slices.ContainsFunc(chart.Fits, func(c map[string]any) bool { return vizMatches(summary, c) })
 }
 
-// vizPick gives the first chart whose rule matches the summary (tool.18). The last rule has an empty condition.
-func vizPick(summary map[string]any) *vizChart {
-	for _, rule := range vizPickRules {
-		if vizMatches(summary, rule.When) {
-			return vizChartByName(vizCharts, rule.Chart)
+// vizMatchingRule gives the first rule that matches the summary (tool.18). The last rule has an empty condition.
+func vizMatchingRule(summary map[string]any) *vizPickRule {
+	for i := range vizPickRules {
+		if vizMatches(summary, vizPickRules[i].When) {
+			return &vizPickRules[i]
 		}
+	}
+	return nil
+}
+
+// vizPick gives the chart of the first rule that matches the summary.
+func vizPick(summary map[string]any) *vizChart {
+	if rule := vizMatchingRule(summary); rule != nil {
+		return vizChartByName(vizCharts, rule.Chart)
 	}
 	return nil
 }

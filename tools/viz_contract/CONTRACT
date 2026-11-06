@@ -1,0 +1,5 @@
+repository: grafana/viz-contract
+commit: bb6adf3bc85b87410183f4a31d3f540e4060804c
+version: 1.1.0
+sha256 chart-types.json: 091ce57139835dfb7f3407408d5480627ee67f298ae4df6b28f5d77794e5c87e
+sha256 pick.json: 5b42851bd54d7eadf8c8258710e70e28ee6d7563297813a5571b68ad438bbbf5
