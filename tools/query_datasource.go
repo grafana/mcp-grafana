@@ -152,12 +152,22 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 		},
 		notes: failedQueryNotes(resp.Responses),
 	}
-	out := mcpgrafana.NewToolResultText(fmt.Sprintf("Queried data source %s.", args.DatasourceUID))
-	// Past the budget there is no structured content, and render_grafana_app reports it.
-	if body, err := json.Marshal(result); err == nil && len(body) <= maxDSResultBytes {
-		out.StructuredContent = result
+	// Past the budget the Source gives the too-large tool error, and no structured content (tool.24).
+	body, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling the tool result: %w", err)
 	}
+	if len(body) > maxDSResultBytes {
+		return dsToolError("too-large", fmt.Sprintf("The result is larger than %d bytes. Use a shorter range, a larger intervalMs or fewer series.", maxDSResultBytes)), nil
+	}
+	out := mcpgrafana.NewToolResultText(fmt.Sprintf("Queried data source %s.", args.DatasourceUID))
+	out.StructuredContent = result
 	return out, nil
+}
+
+// dsToolError is a tool error of states.json: one text item, the code, a colon, a space and the message (tool.25).
+func dsToolError(code, message string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: code + ": " + message}}}
 }
 
 // resolveDSRange gives the absolute range of from and to (tool.5, tool.6, tool.14).
