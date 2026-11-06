@@ -46,7 +46,8 @@ func parseEndTime(timeStr string) (time.Time, error) {
 		return t, nil
 	}
 	if t, err := time.Parse(time.DateOnly, timeStr); err == nil {
-		return t.AddDate(0, 0, 1), nil
+		// Match gtime's rounding for "now/d", which ends at 23:59:59.999.
+		return t.AddDate(0, 0, 1).Add(-time.Millisecond), nil
 	}
 
 	tr := gtime.TimeRange{
