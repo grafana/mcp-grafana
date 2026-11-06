@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/invopop/jsonschema"
@@ -57,6 +59,29 @@ type QueryDatasourceResult struct {
 	Panel        dsPanel         `json:"panel"`
 	Alternatives []dsAlternative `json:"alternatives"`
 	Data         dsData          `json:"data"`
+
+	// notes are for render_grafana_app, not for the App (tool.28, tool.29).
+	notes []string
+}
+
+// AppNotes gives one note for each failed query (tool.29).
+func (r *QueryDatasourceResult) AppNotes() []string { return r.notes }
+
+// failedQueryNotes makes the note of each entry with an error, in the order of the refIds. The text is the
+// query-failed message of notices.json (tool.29).
+func failedQueryNotes(responses backend.Responses) []string {
+	refIDs := make([]string, 0, len(responses))
+	for refID, r := range responses {
+		if r.Error != nil {
+			refIDs = append(refIDs, refID)
+		}
+	}
+	slices.Sort(refIDs)
+	notes := make([]string, 0, len(refIDs))
+	for _, refID := range refIDs {
+		notes = append(notes, fmt.Sprintf("Query %s failed: %s", refID, responses[refID].Error))
+	}
+	return notes
 }
 
 type dsPanel struct {
@@ -125,6 +150,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 			CapturedAt: capturedAt,
 			Results:    envelope.Results,
 		},
+		notes: failedQueryNotes(resp.Responses),
 	}
 	out := mcpgrafana.NewToolResultText(fmt.Sprintf("Queried data source %s.", args.DatasourceUID))
 	// Past the budget there is no structured content, and render_grafana_app reports it.
