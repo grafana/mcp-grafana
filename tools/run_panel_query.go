@@ -232,13 +232,11 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// Resolve the datasource type authoritatively from its UID whenever the
 	// caller overrode the datasource, or when we don't yet have a type. The
 	// datasource's real type — not a caller-supplied one — decides which
-	// executor runs, because the executors are not equivalent: a Loki
-	// datasource routed on a SQL/CloudWatch type would run through
-	// executeSQLPanelQuery / executeCloudWatchPanelQuery, which query
-	// /api/ds/query directly and so bypass the Loki label-matcher enforcement
-	// that is applied only in the native Loki backend (loki_backend.go /
-	// loki_enforce.go). A type declared in the panel JSON (no override) is
-	// trusted as-is: it comes from the dashboard, not the caller.
+	// executor runs, because the executors build different queries. Loki
+	// label-matcher enforcement does not depend on this routing: doDSQuery
+	// resolves every target from its UID and enforces or refuses it there. A
+	// type declared in the panel JSON (no override) is trusted as-is: it comes
+	// from the dashboard, not the caller.
 	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
 		ds, lookupErr := datasource.ByUID(ctx, datasourceUID)
 		if lookupErr != nil && params.DsUID == "" {
@@ -258,16 +256,11 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 			// on.
 			availableDS := getAvailableDatasourceUIDs(ctx, "")
 			return nil, fmt.Errorf("could not resolve datasource '%s' (%v) and no datasourceType was provided. Hint: provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, lookupErr, availableDS)
-		case len(enforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "loki":
-			// The datasource is unreadable, so the caller-supplied type is
-			// unverified. With Loki label-matcher enforcement active, refuse
-			// rather than route a possibly-Loki datasource onto the
-			// /api/ds/query path, which bypasses enforcement. Fails closed,
-			// mirroring the VictoriaLogs guard in lokiBackendForDatasource.
-			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Loki label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Loki via query_loki_logs, or supply an accessible datasource", datasourceUID)
 		default:
-			// Unreadable datasource, but the caller supplied a fallback type and
-			// enforcement (if any) is satisfied; keep the caller-supplied type.
+			// Unreadable datasource, but the caller supplied a fallback type;
+			// keep it. Under Loki label-matcher enforcement the executor's
+			// query still fails closed in doDSQuery, which cannot verify the
+			// type either.
 		}
 	}
 

@@ -157,12 +157,8 @@ func (b *lokiNativeBackend) ListLabelValues(ctx context.Context, labelName, matc
 }
 
 func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*lokiQueryResult, error) {
-	enforcedQuery, err := enforceLogQL(ctx, p.Query)
-	if err != nil {
-		return nil, err
-	}
-	p.Query = enforcedQuery
-
+	// The enforced matchers are injected by doDSQuery, which applies them to
+	// every /api/ds/query request that reaches a Loki datasource.
 	result, err := b.queryLogsViaDSQuery(ctx, p)
 	if err != nil {
 		return nil, err
