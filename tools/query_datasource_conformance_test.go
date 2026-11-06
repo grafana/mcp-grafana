@@ -20,7 +20,7 @@ import (
 )
 
 // The Source test of the viz contract (fixtures.8). The sets are copies of grafana/viz-contract/fixtures at the
-// commit bb6adf3 (see viz_contract.go).
+// the commit in tools/viz_contract/CONTRACT.
 
 func readFixtureJSON(t *testing.T, dir, name string, into any) bool {
 	t.Helper()
