@@ -52,6 +52,7 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			targetFields      map[string]interface{}
 			requiredNames     []string
 		}{
+			{name: "macro-prefixed variable selection", query: "SELECT '$__interval_env', $__interval", overrides: map[string]string{"__interval_env": "production"}, want: "SELECT 'production', 36s"},
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "multi-value unformatted", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east','west')"},
 			{name: "multi-value single selection", query: "SELECT * FROM t WHERE region IN (${choice})", current: []interface{}{"east"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east')"},
@@ -357,5 +358,45 @@ func TestRunPanelQueryAllDatasourceOverride(t *testing.T) {
 			require.EqualError(t, err, `Variable "source" is set to All. Supply an explicit value in variables.`)
 			assert.Equal(t, 1, queryCalls, "datasource overrides must not skip All checks in other target fields")
 		})
+	}
+}
+
+func TestPanelRequiredVariablesExcludeOwnedMacros(t *testing.T) {
+	query := "$__interval_s $__timeInterval(ts) $__from $__fromTime $__conditionalAll(x, $job) $__interval_env $__unknown"
+	for _, datasourceType := range []string{"clickhouse", "grafana-clickhouse-datasource"} {
+		variables := findPanelVariablesInQuery(query, datasourceType, nil, nil)
+		var names []string
+		for _, variable := range variables {
+			names = append(names, variable.Name)
+		}
+		assert.ElementsMatch(t, []string{"job", "__interval_env", "__unknown"}, names)
+	}
+	variables := findPanelVariablesInQuery("$__timeInterval", "postgres", nil, nil)
+	require.Len(t, variables, 1)
+	assert.Equal(t, "__timeInterval", variables[0].Name)
+	variables = findPanelVariablesInQuery("$__interval_s", "clickhouse", map[string]VariableInfo{"__interval_s": {Name: "__interval_s"}}, nil)
+	require.Len(t, variables, 1)
+	variables = findPanelVariablesInQuery("$__interval_s", "clickhouse", nil, map[string]string{"__interval_s": "selected"})
+	require.Len(t, variables, 1)
+}
+
+func TestPanelRequiredVariablesExcludeSQLMacros(t *testing.T) {
+	for _, datasourceType := range []string{"postgres", "grafana-postgresql-datasource", "mysql", "mssql"} {
+		queries, err := preparePanelQueries(map[string]interface{}{}, DashboardPanelQueriesParams{
+			Variables: map[string]string{}, Start: "2026-10-30T00:00:00Z", End: "2026-10-30T01:00:00Z",
+		}, []panelQuery{{
+			Query:      "SELECT $__time(ts), $__unixEpochFrom(), $__unixEpochTo() WHERE $__timeFilter(ts) AND x=$job AND y=$__timeFilter_env",
+			Datasource: datasourceInfo{Type: datasourceType},
+		}}, nil)
+		require.NoError(t, err)
+		require.Len(t, queries, 1)
+		assert.Contains(t, queries[0].ProcessedQuery, "$__unixEpochFrom()")
+		assert.Contains(t, queries[0].ProcessedQuery, "$__unixEpochTo()")
+		variables := queries[0].RequiredVariables
+		var names []string
+		for _, variable := range variables {
+			names = append(names, variable.Name)
+		}
+		assert.ElementsMatch(t, []string{"job", "__timeFilter_env"}, names)
 	}
 }
