@@ -19,9 +19,6 @@ var chartTypesJSON []byte
 //go:embed viz_contract/pick.json
 var pickJSON []byte
 
-//go:embed viz_contract/CONTRACT
-var contractPin string
-
 type vizChart struct {
 	Name        string           `json:"name"`
 	Panel       string           `json:"panel"`
