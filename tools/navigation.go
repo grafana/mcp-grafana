@@ -143,10 +143,10 @@ func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, 
 		}
 		timeParams := url.Values{}
 		if args.TimeRange.From != "" {
-			timeParams.Set("from", toGrafanaTimeParam(args.TimeRange.From))
+			timeParams.Set("from", toGrafanaTimeParam(args.TimeRange.From, false))
 		}
 		if args.TimeRange.To != "" {
-			timeParams.Set("to", toGrafanaTimeParam(args.TimeRange.To))
+			timeParams.Set("to", toGrafanaTimeParam(args.TimeRange.To, true))
 		}
 		if len(timeParams) > 0 {
 			deeplink = fmt.Sprintf("%s%s%s", deeplink, separator, timeParams.Encode())
@@ -519,10 +519,10 @@ func exploreTimeRange(tr *TimeRange) map[string]string {
 	}
 	rangeObj := map[string]string{}
 	if tr.From != "" {
-		rangeObj["from"] = toGrafanaTimeParam(tr.From)
+		rangeObj["from"] = toGrafanaTimeParam(tr.From, false)
 	}
 	if tr.To != "" {
-		rangeObj["to"] = toGrafanaTimeParam(tr.To)
+		rangeObj["to"] = toGrafanaTimeParam(tr.To, true)
 	}
 	if len(rangeObj) == 0 {
 		return nil
@@ -537,7 +537,12 @@ func exploreTimeRange(tr *TimeRange) map[string]string {
 // strings like "2026-04-28T12:45:00Z" (20 chars) are silently ignored.
 // This function converts RFC 3339 timestamps to epoch milliseconds, which
 // is universally supported. Relative strings and epoch values pass through.
-func toGrafanaTimeParam(value string) string {
+//
+// Date-only ("2026-04-28") and naive ("2026-04-28T12:45:00") values are
+// converted too: Grafana would otherwise fall back to parseInt and read them
+// as epoch 2026ms. Naive values are taken as UTC, like the server's other
+// time parameters, and a date-only end resolves to the end of that day.
+func toGrafanaTimeParam(value string, end bool) string {
 	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
 		return value
 	}
@@ -548,6 +553,15 @@ func toGrafanaTimeParam(value string) string {
 		return strconv.FormatInt(t.UnixMilli(), 10)
 	}
 	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return strconv.FormatInt(t.UnixMilli(), 10)
+	}
+	if t, err := time.Parse(time.DateOnly, value); err == nil {
+		if end {
+			t = t.AddDate(0, 0, 1).Add(-time.Millisecond)
+		}
+		return strconv.FormatInt(t.UnixMilli(), 10)
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05.999999999", value); err == nil {
 		return strconv.FormatInt(t.UnixMilli(), 10)
 	}
 	return value
