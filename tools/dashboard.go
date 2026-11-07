@@ -1469,10 +1469,13 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 	}
 }
 
-func AddDashboardTools(s *mcp.Server, enableWriteTools bool) {
+// AddDashboardTools registers the dashboard tools. Each write tool is registered
+// only when writeEnabled reports its name as enabled, so it can be opted back in
+// individually under --disable-write.
+func AddDashboardTools(s *mcp.Server, writeEnabled func(name string) bool) {
 	GetDashboardByUID.Register(s)
 	ListDashboardVersions.Register(s)
-	if enableWriteTools {
+	if writeEnabled(UpdateDashboard.Tool.Name) {
 		UpdateDashboard.Register(s)
 	}
 	GetDashboardPanelQueries.Register(s)

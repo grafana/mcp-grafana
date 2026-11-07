@@ -135,7 +135,7 @@ func runServerWithTLS() {
 
 	tools.AddSearchTools(s)
 	tools.AddDatasourceTools(s, false)
-	tools.AddDashboardTools(s, false)
+	tools.AddDashboardTools(s, func(string) bool { return false })
 
 	cf := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 	ctx := cf(context.Background())

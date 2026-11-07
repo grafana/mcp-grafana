@@ -60,9 +60,23 @@ Use `--disable-write` to disable all write operations. The server can still read
 
 Read-only mode also removes `query_sql` and `query_influxdb`: they pass the query to the datasource unfiltered, so they can write whenever the datasource credentials permit it. Add `--enable-query` to keep them when those credentials are known to be read-only.
 
-In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through a `POST` request. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
+When `--disable-write` is set, some write tools can be individually opted back in via `--enable-write-tools=<name>`. For example, `--enable-write-tools=update_dashboard` allows dashboard edits without enabling any other write tool. Combine names with commas: `--enable-write-tools=update_dashboard,generate_deeplink`. This flag has no effect without `--disable-write`.
 
-The alerting write tools can be opted back in individually the same way. For example, `--enable-write-tools=alerting_rules_write` allows alert rule changes while silences, contact points, and every other write tool stay disabled.
+### Tools supported by `--enable-write-tools`
+
+Not every write tool supports individual opt-in. The following tools check `--enable-write-tools` for their name; all others require `--disable-write` to be removed entirely.
+
+| Tool name | Category | What it does when enabled |
+|-----------|----------|--------------------------|
+| `update_dashboard` | dashboard | Create or update dashboards |
+| `generate_deeplink` | navigation | URL shortening (`shorten=true`) |
+| `alerting_rules_write` | alerting | Create, update, delete alert rules |
+| `alerting_routing_write` | alerting | Create contact points |
+| `alerting_silences_write` | alerting | Create, update, delete silences |
+| `query_sql` | sql | Execute raw SQL queries |
+| `query_influxdb` | influxdb | Execute raw InfluxDB queries |
+
+Names not in this table are silently ignored. A tool's category must also be enabled (via `--enabled-tools`) for the override to take effect.
 
 ## Run without query execution
 

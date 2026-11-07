@@ -1573,6 +1573,36 @@ func TestProcessTools_EnableWriteToolsRestoresSingleAlertingWriteTool(t *testing
 	}
 }
 
+func TestProcessTools_EnableWriteToolsRestoresUpdateDashboard(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "update_dashboard"})
+	require.Contains(t, listed, "update_dashboard")
+	assert.False(t, listed["update_dashboard"].Annotations.ReadOnlyHint)
+	// Other write tools must stay disabled.
+	assert.NotContains(t, listed, "create_folder", "the override must not re-enable other write tools")
+	assert.NotContains(t, listed, "alerting_rules_write", "the override must not re-enable other write tools")
+}
+
+func TestProcessTools_DisableWriteRemovesUpdateDashboard(t *testing.T) {
+	listed := listAllCategoryTools(t, disabledTools{write: true})
+	assert.NotContains(t, listed, "update_dashboard", "--disable-write should remove update_dashboard")
+	// Read tools must survive.
+	assert.Contains(t, listed, "get_dashboard_by_uid")
+	assert.Contains(t, listed, "get_dashboard_summary")
+}
+
+func TestProcessTools_WarnUnknownWriteToolOverrides(t *testing.T) {
+	var buf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	// "bogus_tool" is not a real tool name; "update_dashboard" is valid.
+	_ = listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "update_dashboard,bogus_tool"})
+	out := buf.String()
+	assert.Contains(t, out, "bogus_tool", "should warn about unrecognized tool name")
+	assert.NotContains(t, out, "update_dashboard", "should not warn about a valid tool name")
+}
+
 func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 	listed := listAllCategoryTools(t, disabledTools{write: true})
 	require.Contains(t, listed, "generate_deeplink")
@@ -1586,6 +1616,15 @@ func TestBuildInstructions_NavigationShorteningFollowsWriteOverride(t *testing.T
 
 	overridden := (&disabledTools{enabledTools: "navigation", write: true, writeToolOverrides: "generate_deeplink"}).buildInstructions()
 	assert.Contains(t, overridden, categoryDescription["navigation"])
+}
+
+func TestBuildInstructions_DashboardDescriptionFollowsWriteOverride(t *testing.T) {
+	readOnly := (&disabledTools{enabledTools: "dashboard", write: true}).buildInstructions()
+	assert.Contains(t, readOnly, dashboardDescriptionNoWrite)
+	assert.NotContains(t, readOnly, "update, and create")
+
+	overridden := (&disabledTools{enabledTools: "dashboard", write: true, writeToolOverrides: "update_dashboard"}).buildInstructions()
+	assert.Contains(t, overridden, categoryDescription["dashboard"])
 }
 
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {

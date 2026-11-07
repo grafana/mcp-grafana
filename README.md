@@ -536,7 +536,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
-- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
+- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=update_dashboard` allows dashboard edits without enabling other write tools. Refer to the [enable and disable tools documentation](docs/sources/configure/enable-and-disable-tools.md#tools-supported-by---enable-write-tools) for the full list of supported tool names.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -573,7 +573,7 @@ The `--disable-write` flag provides a way to run the MCP server in read-only mod
 When `--disable-write` is enabled, the following write operations are disabled:
 
 **Dashboard Tools:**
-- `update_dashboard`
+- `update_dashboard` (can be kept individually with `--enable-write-tools=update_dashboard`)
 
 **Folder Tools:**
 - `create_folder`

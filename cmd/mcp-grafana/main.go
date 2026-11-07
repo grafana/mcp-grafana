@@ -122,6 +122,8 @@ var categoryDescriptionNoQuery = map[string]string{
 
 const navigationDescriptionNoShortening = "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries."
 
+const dashboardDescriptionNoWrite = "Dashboards: Search and retrieve dashboards. Extract panel queries and datasource information."
+
 var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo"}
 
 var mutatingQueryCategories = []string{"sql", "influxdb"}
@@ -145,6 +147,11 @@ func (dt *disabledTools) writeToolOverridden(names ...string) bool {
 }
 
 func (dt *disabledTools) writeToolEnabled(names ...string) bool {
+	if dt.queriedWriteTools != nil {
+		for _, name := range names {
+			dt.queriedWriteTools[name] = true
+		}
+	}
 	return !dt.write || dt.writeToolOverridden(names...)
 }
 
@@ -173,6 +180,10 @@ type disabledTools struct {
 	enabledTools string
 
 	writeToolOverrides string
+
+	// queriedWriteTools tracks every tool name passed to writeToolEnabled
+	// during registration so we can warn about unrecognized overrides.
+	queriedWriteTools map[string]bool
 
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
@@ -455,7 +466,9 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) {
 			tools.AddAlertingTools(s, func(name string) bool { return dt.writeToolEnabled(name) })
 		}, dt.alerting, "alerting"},
-		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard"},
+		{func(s *mcp.Server) {
+			tools.AddDashboardTools(s, func(name string) bool { return dt.writeToolEnabled(name) })
+		}, dt.dashboard, "dashboard"},
 		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
 		{func(s *mcp.Server) { tools.AddOnCallTools(s, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
@@ -611,9 +624,29 @@ func (dt *disabledTools) processTools(s *mcp.Server) {
 	if dt.query && dt.enableQuery {
 		slog.Warn("--enable-query has no effect because --disable-query is set; no query tools will be registered")
 	}
+	dt.queriedWriteTools = make(map[string]bool)
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, e := range dt.toolEntries() {
 		maybeAddTools(s, e.adder, enabledTools, e.disabled, e.category)
+	}
+	dt.warnUnknownWriteToolOverrides()
+}
+
+// warnUnknownWriteToolOverrides logs a warning for each --enable-write-tools
+// name that was not checked by any Add*Tools function during registration.
+// This catches typos and names that are not (yet) individually opt-in-able.
+func (dt *disabledTools) warnUnknownWriteToolOverrides() {
+	if dt.writeToolOverrides == "" {
+		return
+	}
+	for _, name := range strings.Split(dt.writeToolOverrides, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if !dt.queriedWriteTools[name] {
+			slog.Warn("--enable-write-tools: unrecognized tool name (not individually opt-in-able, or its category is disabled)", "tool", name)
+		}
 	}
 }
 
@@ -635,6 +668,10 @@ func (dt *disabledTools) buildInstructions() string {
 				capabilities = append(capabilities, desc)
 				continue
 			}
+		}
+		if e.category == "dashboard" && !dt.writeToolEnabled(tools.UpdateDashboard.Tool.Name) {
+			capabilities = append(capabilities, dashboardDescriptionNoWrite)
+			continue
 		}
 		if e.category == "navigation" && !dt.deeplinkShorteningEnabled() {
 			capabilities = append(capabilities, navigationDescriptionNoShortening)

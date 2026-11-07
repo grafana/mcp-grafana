@@ -119,7 +119,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
 - `--enable-query`: Keep the raw-SQL query tools registered under `--disable-write` (refer to the following section).
-- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, `generate_deeplink`, or the alerting write tools `alerting_rules_write`, `alerting_routing_write`, and `alerting_silences_write`. Has no effect on a tool whose whole category is disabled.
+- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`. Has no effect on a tool whose whole category is disabled. Refer to [Enable and disable tools](../enable-and-disable-tools/#tools-supported-by---enable-write-tools) for the full list of supported tool names.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
 - `--disable-quickwit`: Disable Quickwit tools.
@@ -251,7 +251,7 @@ When enabled, the following writes are disabled:
 
 **Dashboard tools**
 
-- `update_dashboard`
+- `update_dashboard` (can be kept individually with `--enable-write-tools=update_dashboard`)
 
 **Folder tools**
 
