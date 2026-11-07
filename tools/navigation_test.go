@@ -757,18 +757,23 @@ func TestToGrafanaTimeParam(t *testing.T) {
 		name     string
 		input    string
 		expected string
+		end      bool
 	}{
-		{"relative now-1h", "now-1h", "now-1h"},
-		{"relative now", "now", "now"},
-		{"epoch milliseconds", "1777380300000", "1777380300000"},
-		{"ISO 8601 UTC", "2026-04-28T12:45:00Z", "1777380300000"},
-		{"ISO 8601 with offset", "2026-04-28T13:45:00+01:00", "1777380300000"},
-		{"ISO 8601 with ms", "2026-04-28T12:45:00.000Z", "1777380300000"},
-		{"unrecognized format passthrough", "yesterday", "yesterday"},
+		{"relative now-1h", "now-1h", "now-1h", false},
+		{"relative now", "now", "now", false},
+		{"epoch milliseconds", "1777380300000", "1777380300000", false},
+		{"ISO 8601 UTC", "2026-04-28T12:45:00Z", "1777380300000", false},
+		{"ISO 8601 with offset", "2026-04-28T13:45:00+01:00", "1777380300000", false},
+		{"ISO 8601 with ms", "2026-04-28T12:45:00.000Z", "1777380300000", false},
+		{"date-only start", "2026-04-28", "1777334400000", false},
+		{"date-only end resolves to end of day", "2026-04-28", "1777420799999", true},
+		{"naive datetime as UTC", "2026-04-28T12:45:00", "1777380300000", false},
+		{"naive datetime with fraction as UTC", "2026-04-28T12:45:00.500", "1777380300500", false},
+		{"unrecognized format passthrough", "yesterday", "yesterday", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, toGrafanaTimeParam(tt.input))
+			assert.Equal(t, tt.expected, toGrafanaTimeParam(tt.input, tt.end))
 		})
 	}
 }
