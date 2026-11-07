@@ -69,14 +69,14 @@ Not every write tool supports individual opt-in. The following tools check `--en
 | Tool name | Category | What it does when enabled |
 |-----------|----------|--------------------------|
 | `update_dashboard` | dashboard | Create or update dashboards |
-| `generate_deeplink` | navigation | URL shortening (`shorten=true`) |
+| `generate_deeplink` | navigation | URL shortening (`shorten=true`); without this override, `generate_deeplink` stays registered but ignores `shorten=true` and returns the full URL |
 | `alerting_rules_write` | alerting | Create, update, delete alert rules |
 | `alerting_routing_write` | alerting | Create contact points |
 | `alerting_silences_write` | alerting | Create, update, delete silences |
 | `query_sql` | sql | Execute raw SQL queries |
 | `query_influxdb` | influxdb | Execute raw InfluxDB queries |
 
-Names not in this table are silently ignored. A tool's category must also be enabled (via `--enabled-tools`) for the override to take effect.
+Unrecognized names produce a startup warning. A tool's category must also be enabled (via `--enabled-tools`) for the override to take effect.
 
 ## Run without query execution
 
