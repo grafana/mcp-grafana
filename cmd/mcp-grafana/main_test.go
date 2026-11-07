@@ -1597,7 +1597,16 @@ func TestProcessTools_WarnUnknownWriteToolOverrides(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(oldLogger) })
 
 	// "bogus_tool" is not a real tool name; "update_dashboard" is valid.
-	_ = listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "update_dashboard,bogus_tool"})
+	dt := disabledTools{write: true, writeToolOverrides: "update_dashboard,bogus_tool"}
+	categories := make([]string, 0, len(dt.toolEntries()))
+	for _, e := range dt.toolEntries() {
+		categories = append(categories, e.category)
+	}
+	dt.enabledTools = strings.Join(categories, ",")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	dt.processTools(srv)
+	dt.warnUnknownWriteToolOverrides()
+
 	out := buf.String()
 	assert.Contains(t, out, "bogus_tool", "should warn about unrecognized tool name")
 	assert.NotContains(t, out, "update_dashboard", "should not warn about a valid tool name")

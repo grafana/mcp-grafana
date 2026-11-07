@@ -629,7 +629,6 @@ func (dt *disabledTools) processTools(s *mcp.Server) {
 	for _, e := range dt.toolEntries() {
 		maybeAddTools(s, e.adder, enabledTools, e.disabled, e.category)
 	}
-	dt.warnUnknownWriteToolOverrides()
 }
 
 // warnUnknownWriteToolOverrides logs a warning for each --enable-write-tools
@@ -730,6 +729,7 @@ func newServer(serverName string, dt disabledTools, obs *observability.Observabi
 	})
 
 	dt.processTools(s)
+	dt.warnUnknownWriteToolOverrides()
 	mcpgrafana.RegisterAppResources(s)
 	resources.Register(s, dt.resourceKinds()...)
 
