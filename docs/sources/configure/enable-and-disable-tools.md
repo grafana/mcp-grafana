@@ -76,7 +76,7 @@ Not every write tool supports individual opt-in. The following tools check `--en
 | `query_sql` | sql | Execute raw SQL queries |
 | `query_influxdb` | influxdb | Execute raw InfluxDB queries |
 
-Unrecognized names produce a startup warning. A tool's category must also be enabled (via `--enabled-tools`) for the override to take effect.
+Unrecognized names produce a startup warning. A tool's category must also be enabled (via `--enabled-tools`) and not disabled (via `--disable-<category>`) for the override to take effect.
 
 ## Run without query execution
 
