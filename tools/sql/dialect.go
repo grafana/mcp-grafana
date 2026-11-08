@@ -207,17 +207,14 @@ func EnforceSQLLimit(query string, requestedLimit, defaultLimit, maxLimit int) s
 		limit = maxLimit
 	}
 
-	limitRe := regexp.MustCompile(`(?i)\bLIMIT\s+\d+`)
-	if limitRe.MatchString(query) {
-		query = limitRe.ReplaceAllStringFunc(query, func(match string) string {
-			numRe := regexp.MustCompile(`\d+`)
-			numStr := numRe.FindString(match)
-			existingLimit, _ := strconv.Atoi(numStr)
-			if existingLimit > maxLimit {
-				return fmt.Sprintf("LIMIT %d", maxLimit)
-			}
-			return match
-		})
+	// Only the outermost LIMIT bounds the rows returned. A LIMIT inside a
+	// comment, a string or a subquery neither caps the result nor may be
+	// rewritten, since that would change what the subquery computes.
+	if clause, start, end, ok := topLevelLimit(query); ok {
+		existingLimit, _ := strconv.Atoi(query[start:end])
+		if existingLimit > maxLimit {
+			return fmt.Sprintf("%sLIMIT %d%s", query[:clause], maxLimit, query[end:])
+		}
 		return query
 	}
 
@@ -227,6 +224,70 @@ func EnforceSQLLimit(query string, requestedLimit, defaultLimit, maxLimit int) s
 		return fmt.Sprintf("%s\nLIMIT %d", query, limit)
 	}
 	return fmt.Sprintf("%s LIMIT %d", query, limit)
+}
+
+var limitCountRe = regexp.MustCompile(`(?i)^LIMIT\s+(\d+)`)
+
+// topLevelLimit finds the last LIMIT clause outside comments, quoted text and
+// parentheses. It returns the offset of the keyword and the span of its row count.
+func topLevelLimit(query string) (int, int, int, bool) {
+	clause, start, end, found := 0, 0, 0, false
+	depth := 0
+	for i := 0; i < len(query); {
+		switch c := query[i]; {
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			for j < len(query) {
+				if query[j] == c {
+					if j+1 < len(query) && query[j+1] == c {
+						j += 2
+						continue
+					}
+					break
+				}
+				if query[j] == '\\' && c == '\'' {
+					j++
+				}
+				j++
+			}
+			if j >= len(query) {
+				// An unterminated quote is not a string; read past it.
+				i++
+				continue
+			}
+			i = j + 1
+		case c == '-' && strings.HasPrefix(query[i:], "--"), c == '#':
+			for i < len(query) && query[i] != '\n' {
+				i++
+			}
+		case c == '/' && strings.HasPrefix(query[i:], "/*"):
+			if j := strings.Index(query[i+2:], "*/"); j >= 0 {
+				i += j + 4
+			} else {
+				i = len(query)
+			}
+		case c == '(':
+			depth++
+			i++
+		case c == ')':
+			depth--
+			i++
+		default:
+			if depth == 0 && (i == 0 || !isSQLWordByte(query[i-1])) {
+				if m := limitCountRe.FindStringSubmatchIndex(query[i:]); m != nil {
+					clause, start, end, found = i, i+m[2], i+m[3], true
+					i += m[1]
+					continue
+				}
+			}
+			i++
+		}
+	}
+	return clause, start, end, found
+}
+
+func isSQLWordByte(b byte) bool {
+	return b == '_' || b == '$' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
 // ToStringFromRow extracts a string from a row value that may be string or
