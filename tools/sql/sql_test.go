@@ -61,6 +61,9 @@ func TestEnforceSQLLimit(t *testing.T) {
 		{"outer limit capped, inner kept", "SELECT * FROM (SELECT id FROM t LIMIT 5000) s LIMIT 5000", 100, "SELECT * FROM (SELECT id FROM t LIMIT 5000) s LIMIT 1000"},
 		{"limit with offset", "SELECT * FROM t LIMIT 5000 OFFSET 10", 100, "SELECT * FROM t LIMIT 1000 OFFSET 10"},
 		{"escaped quote in string", "SELECT * FROM t WHERE a = 'it''s' LIMIT 50", 100, "SELECT * FROM t WHERE a = 'it''s' LIMIT 50"},
+		{"limit in slash comment", "SELECT * FROM t // LIMIT 10", 100, "SELECT * FROM t // LIMIT 10\nLIMIT 100"},
+		{"limit capped before slash comment", "SELECT * FROM t LIMIT 5000 // LIMIT 1", 100, "SELECT * FROM t LIMIT 1000 // LIMIT 1"},
+		{"every top-level limit capped", "SELECT * FROM t LIMIT 5000 UNION ALL SELECT * FROM u LIMIT 1", 100, "SELECT * FROM t LIMIT 1000 UNION ALL SELECT * FROM u LIMIT 1"},
 	}
 
 	for _, tt := range tests {

@@ -207,13 +207,17 @@ func EnforceSQLLimit(query string, requestedLimit, defaultLimit, maxLimit int) s
 		limit = maxLimit
 	}
 
-	// Only the outermost LIMIT bounds the rows returned. A LIMIT inside a
+	// Only LIMITs outside parentheses bound the rows returned. A LIMIT inside a
 	// comment, a string or a subquery neither caps the result nor may be
-	// rewritten, since that would change what the subquery computes.
-	if clause, start, end, ok := topLevelLimit(query); ok {
-		existingLimit, _ := strconv.Atoi(query[start:end])
-		if existingLimit > maxLimit {
-			return fmt.Sprintf("%sLIMIT %d%s", query[:clause], maxLimit, query[end:])
+	// rewritten, since that would change what the subquery computes. Every
+	// top-level LIMIT is capped, because ClickHouse applies the LIMIT of each
+	// unparenthesized UNION ALL arm on its own.
+	if limits := topLevelLimits(query); len(limits) > 0 {
+		for i := len(limits) - 1; i >= 0; i-- {
+			l := limits[i]
+			if existingLimit, _ := strconv.Atoi(query[l.start:l.end]); existingLimit > maxLimit {
+				query = fmt.Sprintf("%sLIMIT %d%s", query[:l.clause], maxLimit, query[l.end:])
+			}
 		}
 		return query
 	}
@@ -228,10 +232,14 @@ func EnforceSQLLimit(query string, requestedLimit, defaultLimit, maxLimit int) s
 
 var limitCountRe = regexp.MustCompile(`(?i)^LIMIT\s+(\d+)`)
 
-// topLevelLimit finds the last LIMIT clause outside comments, quoted text and
-// parentheses. It returns the offset of the keyword and the span of its row count.
-func topLevelLimit(query string) (int, int, int, bool) {
-	clause, start, end, found := 0, 0, 0, false
+// sqlLimit is a LIMIT clause in a query: the offset of the keyword and the
+// span of its row count.
+type sqlLimit struct{ clause, start, end int }
+
+// topLevelLimits finds the LIMIT clauses outside comments, quoted text and
+// parentheses, in order.
+func topLevelLimits(query string) []sqlLimit {
+	var limits []sqlLimit
 	depth := 0
 	for i := 0; i < len(query); {
 		switch c := query[i]; {
@@ -256,7 +264,7 @@ func topLevelLimit(query string) (int, int, int, bool) {
 				continue
 			}
 			i = j + 1
-		case c == '-' && strings.HasPrefix(query[i:], "--"), c == '#':
+		case c == '-' && strings.HasPrefix(query[i:], "--"), c == '/' && strings.HasPrefix(query[i:], "//"), c == '#':
 			for i < len(query) && query[i] != '\n' {
 				i++
 			}
@@ -275,7 +283,7 @@ func topLevelLimit(query string) (int, int, int, bool) {
 		default:
 			if depth == 0 && (i == 0 || !isSQLWordByte(query[i-1])) {
 				if m := limitCountRe.FindStringSubmatchIndex(query[i:]); m != nil {
-					clause, start, end, found = i, i+m[2], i+m[3], true
+					limits = append(limits, sqlLimit{clause: i, start: i + m[2], end: i + m[3]})
 					i += m[1]
 					continue
 				}
@@ -283,7 +291,7 @@ func topLevelLimit(query string) (int, int, int, bool) {
 			i++
 		}
 	}
-	return clause, start, end, found
+	return limits
 }
 
 func isSQLWordByte(b byte) bool {
