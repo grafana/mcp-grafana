@@ -14,6 +14,7 @@ import (
 
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
+	"github.com/go-openapi/strfmt"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/dashboards"
@@ -296,19 +297,12 @@ func dashboardResultFromK8s(obj map[string]interface{}) (*dashboardResult, error
 		}
 	}
 
-	meta := &models.DashboardMeta{}
-	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
-		if name, ok := metadata["name"].(string); ok && name != "" {
-			// Classic (v1) dashboards expect the uid inside the body; the v2
-			// spec carries identity in metadata, so only set it for v1 shapes.
-			if _, hasElements := spec["elements"]; !hasElements {
-				spec["uid"] = name
-			}
-		}
-		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
-			if folderUID, ok := annotations["grafana.app/folder"].(string); ok {
-				meta.FolderUID = folderUID
-			}
+	metadata, _ := obj["metadata"].(map[string]interface{})
+	if name := safeString(metadata, "name"); name != "" {
+		// Classic (v1) dashboards expect the uid inside the body; the v2
+		// spec carries identity in metadata, so only set it for v1 shapes.
+		if _, hasElements := spec["elements"]; !hasElements {
+			spec["uid"] = name
 		}
 	}
 
@@ -316,9 +310,48 @@ func dashboardResultFromK8s(obj map[string]interface{}) (*dashboardResult, error
 		Spec:       spec,
 		APIVersion: version,
 		IsV2:       strings.HasPrefix(version, "v2"),
-		Meta:       meta,
+		Meta:       dashboardMetaFromK8s(metadata),
 		Object:     obj,
 	}, nil
+}
+
+// dashboardMetaFromK8s fills the legacy meta fields from a dashboard.grafana.app
+// object's metadata, the way Grafana's frontend does in
+// public/app/features/dashboard/api/v1.ts, so a dashboard read through the k8s
+// API reports the same folder, version, timestamps and provisioning as one read
+// through /api/dashboards/uid. A field the object doesn't carry stays zero.
+func dashboardMetaFromK8s(metadata map[string]interface{}) *models.DashboardMeta {
+	annotations := safeObject(metadata, "annotations")
+	meta := &models.DashboardMeta{
+		FolderUID: safeString(annotations, "grafana.app/folder"),
+	}
+	if generation, ok := metadata["generation"].(float64); ok {
+		meta.Version = int64(generation)
+	}
+	if created, ok := parseK8sTimestamp(safeString(metadata, "creationTimestamp")); ok {
+		meta.Created = created
+		// updatedTimestamp is only set once the dashboard has been saved again;
+		// until then the legacy API reports the creation time.
+		meta.Updated = created
+	}
+	if updated, ok := parseK8sTimestamp(safeString(annotations, "grafana.app/updatedTimestamp")); ok {
+		meta.Updated = updated
+	}
+	if manager := safeString(annotations, "grafana.app/managedBy"); manager != "" {
+		meta.Provisioned = manager != "repo" && safeString(annotations, "grafana.app/managerAllowsEdits") != "true"
+	}
+	return meta
+}
+
+// parseK8sTimestamp parses an RFC 3339 timestamp from k8s metadata. It reports
+// false for an empty value, which strfmt.ParseDateTime would turn into the Unix
+// epoch rather than an error.
+func parseK8sTimestamp(value string) (strfmt.DateTime, bool) {
+	if value == "" {
+		return strfmt.DateTime{}, false
+	}
+	t, err := strfmt.ParseDateTime(value)
+	return t, err == nil
 }
 
 // fetchDashboardLegacy fetches a dashboard via the legacy REST API. The result

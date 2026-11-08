@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -740,4 +741,80 @@ func TestCreateOrUpdateDashboardV2_V2CheckErrorRefuses(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot confirm")
 	assert.NotContains(t, err.Error(), "stored as classic v1")
 	assert.Empty(t, writes)
+}
+
+func TestDashboardMetaFromK8s(t *testing.T) {
+	created := "2026-11-08T14:24:22Z"
+	tests := []struct {
+		name            string
+		metadata        map[string]interface{}
+		wantVersion     int64
+		wantCreated     string
+		wantUpdated     string
+		wantProvisioned bool
+	}{
+		{
+			name: "file provisioned, never saved since",
+			metadata: map[string]interface{}{
+				"generation":        float64(1),
+				"creationTimestamp": created,
+				"annotations": map[string]interface{}{
+					"grafana.app/folder":     "tests",
+					"grafana.app/managedBy":  "classic-file-provisioning",
+					"grafana.app/sourcePath": "/var/lib/grafana/dashboards/demo.json",
+				},
+			},
+			wantVersion:     1,
+			wantCreated:     created,
+			wantUpdated:     created,
+			wantProvisioned: true,
+		},
+		{
+			name: "saved twice through the API",
+			metadata: map[string]interface{}{
+				"generation":        float64(2),
+				"creationTimestamp": created,
+				"annotations": map[string]interface{}{
+					"grafana.app/folder":           "tests",
+					"grafana.app/updatedTimestamp": "2026-11-08T14:35:23Z",
+				},
+			},
+			wantVersion: 2,
+			wantCreated: created,
+			wantUpdated: "2026-11-08T14:35:23Z",
+		},
+		{
+			name: "provisioned with allowUiUpdates",
+			metadata: map[string]interface{}{
+				"annotations": map[string]interface{}{
+					"grafana.app/managedBy":          "classic-file-provisioning",
+					"grafana.app/managerAllowsEdits": "true",
+				},
+			},
+		},
+		{
+			name: "managed by Git sync",
+			metadata: map[string]interface{}{
+				"annotations": map[string]interface{}{"grafana.app/managedBy": "repo"},
+			},
+		},
+		{
+			name:     "no metadata",
+			metadata: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta := dashboardMetaFromK8s(tt.metadata)
+			assert.Equal(t, tt.wantVersion, meta.Version)
+			assert.Equal(t, tt.wantProvisioned, meta.Provisioned)
+			if tt.wantCreated == "" {
+				assert.True(t, time.Time(meta.Created).IsZero())
+				assert.True(t, time.Time(meta.Updated).IsZero())
+				return
+			}
+			assert.Equal(t, tt.wantCreated, time.Time(meta.Created).UTC().Format(time.RFC3339))
+			assert.Equal(t, tt.wantUpdated, time.Time(meta.Updated).UTC().Format(time.RFC3339))
+		})
+	}
 }
