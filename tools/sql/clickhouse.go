@@ -67,7 +67,164 @@ func (d *clickHouseDialect) SubstituteMacros(query string, from, to time.Time) s
 }
 
 func (d *clickHouseDialect) EnforceLimit(query string, limit int) string {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))
+	if before, ok := clickHouseSettingsStart(trimmed); ok {
+		limited := EnforceSQLLimit(trimmed[:before], limit, DefaultSQLLimit, MaxSQLLimit)
+		suffix := trimmed[before:]
+		if len(suffix) > 0 && !strings.ContainsRune(" \t\r\n", rune(suffix[0])) {
+			suffix = " " + suffix
+		}
+		return limited + suffix
+	}
 	return EnforceSQLLimit(query, limit, DefaultSQLLimit, MaxSQLLimit)
+}
+
+var clickHouseHeredoc = regexp.MustCompile(`^\$[a-zA-Z0-9_]*\$`)
+
+// clickHouseSettingsStart finds the end of the expression before a SETTINGS clause
+// belonging to a top-level SELECT or FROM-first query. Keep intervening comments
+// in the suffix, so an inserted LIMIT cannot become part of a trailing line comment.
+// This only locates SETTINGS; the shared helper retains its handling of LIMIT expressions.
+func clickHouseSettingsStart(query string) (int, bool) {
+	depth, lastCode := 0, 0
+	querySeen, fromFirstAllowed := false, false
+	for i := 0; i < len(query); {
+		if next := skipClickHouseTrivia(query, i); next > i {
+			i = next
+			continue
+		}
+		switch {
+		case query[i] == '$' && clickHouseHeredoc.MatchString(query[i:]):
+			delimiter := clickHouseHeredoc.FindString(query[i:])
+			i += len(delimiter)
+			end := strings.Index(query[i:], delimiter)
+			if end < 0 {
+				return 0, false
+			}
+			i += end + len(delimiter)
+			lastCode = i
+		case query[i] == '\'' || query[i] == '"' || query[i] == '`':
+			i = skipClickHouseQuoted(query, i)
+			lastCode = i
+		case query[i] == '(':
+			depth++
+			i++
+			lastCode = i
+		case query[i] == ')':
+			depth--
+			i++
+			lastCode = i
+		case isClickHouseWordByte(query[i]):
+			start := i
+			for i < len(query) && isClickHouseWordByte(query[i]) {
+				i++
+			}
+			if lastCode == 0 {
+				switch strings.ToUpper(query[start:i]) {
+				case "FROM", "WITH", "INSERT", "CREATE", "EXPLAIN":
+					fromFirstAllowed = true
+				}
+			}
+			if depth == 0 && strings.EqualFold(query[start:i], "SELECT") {
+				querySeen = true
+			}
+			if depth == 0 && fromFirstAllowed && strings.EqualFold(query[start:i], "FROM") {
+				next := skipClickHouseTrivia(query, i)
+				end := next
+				for end < len(query) && isClickHouseWordByte(query[end]) {
+					end++
+				}
+				filename := skipClickHouseTrivia(query, end)
+				// FROM INFILE belongs to INSERT, not its source query.
+				if !strings.EqualFold(query[next:end], "INFILE") || filename == len(query) || query[filename] != '\'' {
+					querySeen = true
+				}
+			}
+			// INSERT and CREATE TABLE can have settings before their source query.
+			if depth == 0 && querySeen && strings.EqualFold(query[start:i], "SETTINGS") &&
+				hasClickHouseSettingAssignment(query, i) {
+				return lastCode, true
+			}
+			lastCode = i
+		default:
+			i++
+			lastCode = i
+		}
+	}
+	return 0, false
+}
+
+func hasClickHouseSettingAssignment(query string, i int) bool {
+	i = skipClickHouseTrivia(query, i)
+	start := i
+	if i < len(query) && (query[i] == '"' || query[i] == '`') {
+		i = skipClickHouseQuoted(query, i)
+	} else {
+		for i < len(query) && isClickHouseWordByte(query[i]) {
+			i++
+		}
+	}
+	if i == start {
+		return false
+	}
+	i = skipClickHouseTrivia(query, i)
+	return i < len(query) && query[i] == '='
+}
+
+func skipClickHouseQuoted(query string, i int) int {
+	quote := query[i]
+	i++
+	for i < len(query) {
+		if query[i] == '\\' && i+1 < len(query) {
+			i += 2
+		} else if query[i] == quote {
+			i++
+			if i < len(query) && query[i] == quote {
+				i++
+				continue
+			}
+			return i
+		} else {
+			i++
+		}
+	}
+	return i
+}
+
+func skipClickHouseTrivia(query string, i int) int {
+	for i < len(query) {
+		switch {
+		case strings.ContainsRune(" \t\r\n", rune(query[i])):
+			i++
+		case strings.HasPrefix(query[i:], "--") || strings.HasPrefix(query[i:], "//") || query[i] == '#':
+			for i < len(query) && query[i] != '\n' {
+				i++
+			}
+		case strings.HasPrefix(query[i:], "/*"):
+			i += 2
+			comments := 1
+			for i < len(query) && comments > 0 {
+				switch {
+				case strings.HasPrefix(query[i:], "/*"):
+					comments++
+					i += 2
+				case strings.HasPrefix(query[i:], "*/"):
+					comments--
+					i += 2
+				default:
+					i++
+				}
+			}
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func isClickHouseWordByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+		c >= '0' && c <= '9' || c == '_' || c >= 0x80
 }
 
 func (d *clickHouseDialect) ListDatabases(ctx context.Context, qr QueryRunner, dsType string, params ListSQLDatabasesParams) (*ListSQLDatabasesResult, error) {

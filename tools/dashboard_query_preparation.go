@@ -28,11 +28,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
-	values := extractTemplateVariableValues(db)
-	for name, value := range args.Variables {
-		values[name] = []string{value}
-	}
-	allWarnings := allTemplateSelectionWarnings(db, args.Variables, values)
+	interp := newDashboardInterpolator(db, args.Variables)
 	for i := range queries {
 		query := &queries[i]
 		// Frontend macros are not dashboard variables, even when the executor
@@ -44,18 +40,18 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		references = substituteGrafanaMacros(references, from, to)
 		query.RequiredVariables = findVariablesInQuery(references+" "+query.Datasource.UID, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
-			if warning := allWarnings[variable.Name]; warning != "" {
+			if warning := interp.allSelectionWarning(variable.Name); warning != "" {
 				query.Warnings = append(query.Warnings, warning)
 			}
 		}
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery, err = substituteInspectionMacros(substituteTemplateVariableValues(query.Query, values), query.Datasource.Type, from, to)
+		query.ProcessedQuery, err = substituteInspectionMacros(interp.interpolateQuery(query.Query, query.Datasource.Type), query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
-		query.Datasource.UID = substituteTemplateVariableValues(query.Datasource.UID, values)
+		query.Datasource.UID = interp.interpolate(query.Datasource.UID)
 	}
 	return queries, nil
 }
@@ -74,46 +70,5 @@ func substituteInspectionMacros(query, datasourceType string, from, to time.Time
 		return dialect.SubstituteMacros(query, from, to), nil
 	default:
 		return substituteGrafanaMacros(query, from, to), nil
-	}
-}
-
-func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[string]string, values templateVariableValues) map[string]string {
-	warnings := make(map[string]string)
-	const message = "Variable %q is set to All. Supply an explicit value in variables."
-	for _, item := range safeArray(safeObject(db, "templating"), "list") {
-		variable, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		name := safeString(variable, "name")
-		current := safeObject(variable, "current")
-		selection, hasValue := current["value"]
-		if override, ok := overrides[name]; ok {
-			selection = override
-			hasValue = true
-		}
-		_, resolved := values[name]
-		if isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All") {
-			warnings[name] = fmt.Sprintf(message, name)
-		}
-	}
-	for name, value := range overrides {
-		if isAllTemplateSelection(value) {
-			warnings[name] = fmt.Sprintf(message, name)
-		}
-	}
-	return warnings
-}
-
-func isAllTemplateSelection(value interface{}) bool {
-	switch selected := value.(type) {
-	case string:
-		return selected == "$__all"
-	case []interface{}:
-		return len(selected) > 0 && selected[0] == "$__all"
-	case []string:
-		return len(selected) > 0 && selected[0] == "$__all"
-	default:
-		return false
 	}
 }

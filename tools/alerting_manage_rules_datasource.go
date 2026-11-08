@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
@@ -13,7 +14,7 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 	// Bound the entire scan, rather than giving every page a fresh timeout.
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
+	ds, err := datasource.ByUID(ctx, dsUID)
 	if err != nil {
 		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
 	}
@@ -75,7 +76,7 @@ func isRulerDatasource(dsType string) bool {
 
 // convertPrometheusRulesToSummary flattens a ruler rules response into
 // alertRuleSummary entries. Both alerting and recording rules are emitted —
-// recording rules populate Query/Labels/Health/LastEvaluation but leave the
+// recording rules populate Query/Labels/Health/LastEvaluation/LastError but leave the
 // alerting-only fields (state, for, annotations) empty.
 func convertPrometheusRulesToSummary(result *v1.RulesResult) []alertRuleSummary {
 	if result == nil {
@@ -90,6 +91,7 @@ func convertPrometheusRulesToSummary(result *v1.RulesResult) []alertRuleSummary 
 				rules = append(rules, alertRuleSummary{
 					Title:          r.Name,
 					Type:           "alerting",
+					Namespace:      group.File,
 					RuleGroup:      group.Name,
 					Query:          r.Query,
 					Labels:         labelMap(r.Labels),
@@ -97,17 +99,20 @@ func convertPrometheusRulesToSummary(result *v1.RulesResult) []alertRuleSummary 
 					State:          normalizeState(string(r.State)),
 					Health:         string(r.Health),
 					LastEvaluation: formatRuleEvalTime(r.LastEvaluation),
+					LastError:      r.LastError,
 					For:            formatDuration(r.Duration),
 				})
 			case v1.RecordingRule:
 				rules = append(rules, alertRuleSummary{
 					Title:          r.Name,
 					Type:           "recording",
+					Namespace:      group.File,
 					RuleGroup:      group.Name,
 					Query:          r.Query,
 					Labels:         labelMap(r.Labels),
 					Health:         string(r.Health),
 					LastEvaluation: formatRuleEvalTime(r.LastEvaluation),
+					LastError:      r.LastError,
 				})
 			}
 		}

@@ -266,6 +266,17 @@ func AddIncidentTools(s *mcp.Server, enableWriteTools bool) {
 	ListIncidentCustomFields.Register(s)
 }
 
+// ActiveIncidents returns up to limit active, non-drill incidents, most
+// recent first.
+func ActiveIncidents(ctx context.Context, limit int) (*ListIncidentsResult, error) {
+	return listIncidents(ctx, ListIncidentsParams{Status: "active", Limit: limit})
+}
+
+// Incident returns the incident with the given ID.
+func Incident(ctx context.Context, id string) (*IncidentResult, error) {
+	return getIncident(ctx, GetIncidentParams{ID: id})
+}
+
 type GetIncidentParams struct {
 	ID string `json:"id" jsonschema:"required,description=The ID of the incident to retrieve"`
 }
@@ -383,7 +394,7 @@ var UpdateIncident = mcpgrafana.MustTool(
 	mcpgrafana.WithTitleAnnotation("Update incident"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
-	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(incidentAccess...),
 )

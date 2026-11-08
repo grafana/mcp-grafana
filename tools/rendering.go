@@ -523,6 +523,7 @@ var GetPanelImage = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions("datasources:explore", "provisioning.repositories:read"),
 )
 
-func AddRenderingTools(s *mcp.Server) {
+func AddRenderingTools(s *mcp.Server, appTools ...mcpgrafana.Tool) {
 	GetPanelImage.Register(s)
+	AddAppTool(s, appTools...)
 }

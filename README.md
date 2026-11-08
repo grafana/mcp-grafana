@@ -68,6 +68,7 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
   - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch, OpenSearch, Snowflake, Athena._
+- **Datasource resources:** Each datasource you can access is also exposed as an MCP resource at `grafana://datasources/{uid}`, so you can attach one to a conversation directly (for example with `@` in Claude Code) instead of the model looking it up. Disabled along with the datasource tools.
 
 ### Query Examples
 
@@ -97,12 +98,16 @@ The dashboard tools now include several strategies to manage context window usag
 
 > **Note:** SQL tools are **disabled by default**. To enable them, add `sql` to your `--enabled-tools` flag. Back-compat aliases `clickhouse`, `snowflake`, and `athena` also work.
 
-Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, and MSSQL** through a single set of tools. Queries go through Grafana's datasource plugins, so authentication is handled by datasource configuration — credentials are never seen by the MCP server.
+Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, and BigQuery** through a single set of tools. Queries go through Grafana's datasource plugins, so authentication is handled by datasource configuration — credentials are never seen by the MCP server.
 
 - **List databases/schemas/catalogs:** Discover organizational units for a SQL datasource. For Athena, omit catalog to list catalogs, or pass a catalog to list databases.
 - **List tables:** List tables in a database or schema with metadata (row counts, sizes where available).
 - **Describe table schema:** Get column names, types, nullability, defaults, and comments.
 - **Query SQL:** Execute SQL queries with datasource-specific macro substitution (`$__timeFilter(col)`, `$__from/$__to`, `$__interval`, `${varname}`), automatic limit enforcement, and template variable support.
+
+For **BigQuery**, configure the `grafana-bigquery-datasource` plugin in Grafana. Discovery uses `database` for the project and `schema` for the dataset. If `database` is omitted, the project defaults to datasource `defaultProject`, then the plugin's `/defaultProjects` endpoint (including GCE project discovery). Metadata is fetched through APIs only, without query jobs or table scans. Column descriptions and nested types are included; the plugin omits table descriptions/types, column nullability, and defaults.
+
+BigQuery queries require qualified table references such as `` `my-project.my_dataset.fct_events` `` and use the datasource's billing project. Optional `location` defaults to datasource `processingLocation`. Use `${name:sqlstring}` for escaped string variables. Row limits do not limit bytes scanned or query costs.
 
 ### CloudWatch Querying
 
@@ -168,6 +173,7 @@ Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, an
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, adding activities, and reading or setting custom fields.
+- **Incident resources:** Active incidents that started in the last 30 days are also exposed as MCP resources at `grafana://irm/incidents/{id}`, so you can attach one to a conversation directly (for example with `@` in Claude Code). Disabled along with the incident tools.
 
 ### Alerting
 
@@ -315,7 +321,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_resource_permissions`          | Admin*                    | List permissions for a resource                                                                                                                               | `dashboards.permissions:read`, `datasources.permissions:read`, `folders.permissions:read`, `serviceaccounts.permissions:read`, `teams.permissions:read`, `users.permissions:read`                                                                                                   | `dashboards:uid:abcd1234`                                     |
 | `get_resource_description`          | Admin*                    | Describe a Grafana resource type                                                                                                                              | `dashboards.permissions:read`, `datasources.permissions:read`, `folders.permissions:read`, `serviceaccounts.permissions:read`, `teams.permissions:read`, `users.permissions:read`                                                                                                   | `dashboards:*`                                                |
 | `user_info`                         | User                      | Current identity, capabilities, and accessible organizations                                                                                                  | None                                                                                                                                                                                                                                                                                | —                                                             |
-| `search_dashboards`                 | Search                    | Search for dashboards by query, folder UID, tag, or starred                                                                                                   | `dashboards:read`, `folders:read`                                                                                                                                                                                                                                                   | `dashboards:*` or `dashboards:uid:abc123`                     |
+| `search_dashboards`                 | Search                    | Search for dashboards by query, folder UID, folder path, tag, or starred                                                                                      | `dashboards:read`, `folders:read`                                                                                                                                                                                                                                                   | `dashboards:*` or `dashboards:uid:abc123`                     |
 | `search_folders`                    | Search                    | Search for folders by title                                                                                                                                   | `folders:read`                                                                                                                                                                                                                                                                      | `folders:*` or `folders:uid:xyz789`                           |
 | `get_dashboard_by_uid`              | Dashboard                 | Get a dashboard by uid, optionally a saved version                                                                                                            | `dashboard.grafana.app/dashboards:get`, `dashboards:read`, `dashboards:write`                                                                                                                                                                                                       | `dashboards:uid:abc123`                                       |
 | `list_dashboard_versions`           | Dashboard                 | List saved versions of a dashboard (version, author, time, message)                                                                                           | `dashboards:read`, `dashboards:write`                                                                                                                                                                                                                                               | `dashboards:uid:abc123`                                       |
@@ -331,7 +337,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `create_datasource`                 | Datasources               | Create a datasource                                                                                                                                           | `datasources:create`, `datasources:read`                                                                                                                                                                                                                                            | `datasources:*`                                               |
 | `update_datasource`                 | Datasources               | Update a datasource                                                                                                                                           | `datasources:read`, `datasources:write`                                                                                                                                                                                                                                             | `datasources:*` or `datasources:uid:abc123`                   |
 | `get_query_examples`                | Examples*                 | Get example queries for a datasource type                                                                                                                     | None                                                                                                                                                                                                                                                                                | `datasources:*`                                               |
-| `query_prometheus`                  | Prometheus                | Execute a query against a Prometheus datasource                                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
+| `query_prometheus`                  | Prometheus                | Query metrics using PromQL without opening a chart                                                                                                            | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
+| `render_grafana_app`                | Rendering                 | Run an enabled query tool and display its result in the interactive Grafana App                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:*` or `datasources:uid:<uid>`                    |
 | `list_prometheus_metric_metadata`   | Prometheus                | List metric metadata                                                                                                                                          | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
 | `list_prometheus_metric_names`      | Prometheus                | List available metric names                                                                                                                                   | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
 | `list_prometheus_label_names`       | Prometheus                | List label names matching a selector                                                                                                                          | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:prometheus-uid`                              |
@@ -430,7 +437,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
-The `get_tempo_trace` tool displays an interactive trace viewer in compatible MCP hosts whenever Tempo query tools are enabled. Its existing text output remains available. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
+The `render_grafana_app` tool displays metrics and traces in compatible MCP hosts when the rendering and corresponding query categories are enabled. Source query tools return text and structured data for analysis. See [MCP Apps](docs/mcp-apps.md) for setup and library embedding.
 
 ## CLI Flags Reference
 
@@ -514,6 +521,12 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations - default: `24h`. Accepts Go duration strings. `0` disables the range check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+- `--prometheus-guardrail-mode`: Prometheus query guardrail for `query_prometheus`, `query_prometheus_histogram`, and the Prometheus queries of `run_panel_query` - default: `off`. The guardrail caps the effective time range of a query and the number of points per series it requests, before the query reaches the datasource. An independent opt-in selector policy can require a non-empty positive label constraint beyond the metric name in every vector selector; see [selector policy](docs/sources/configure/command-line-flags.md#prometheus-selector-policy) for examples and limits. `shadow` logs queries that would be blocked but lets them run; `enforce` rejects them with rewrite guidance the LLM can act on (`run_panel_query` reports it in the result's `errors` entry for that panel). Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MODE`.
+- `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
+- `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query - default: `192h`. The effective range is the query's own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, where nested subquery ranges add up, so `max_over_time(rate(x[5m])[30d:1m])` reads 30d5m. Accepts Go duration strings, so write `192h`, not `8d`. `0` disables the range check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
+- `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1` - default: `11000`, Prometheus' own per-series limit. The guidance names the smallest `stepSeconds` that fits. `0` disables the points check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
+
+  Limits of the Prometheus guardrail: the points check budgets the requested resolution, not the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step. `offset` and `@` modifiers are ignored. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured, with the values Grafana uses (`$__rate_interval` is four times the step). Expressions the guardrail still cannot parse (for example ones with dashboard variables such as `$window`, or syntax only another dialect accepts) are checked against the query's own time range and step only, and run otherwise. `run_panel_query` has no step parameter, so it widens its 1-minute step for long ranges to stay within 11000 points, as Grafana does, or within a lower `--prometheus-guardrail-max-points` in `enforce` mode.
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
 - `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
 - `--disable-interactive-learning-hints`: Stop tool results from pointing users at Grafana Interactive Learning (the My Learning page, `/a/grafana-pathfinder-app`) when something is not set up or a tool hits a dead end. Hints only appear when that plugin is installed and enabled.
@@ -524,7 +537,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
-- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`.
+- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -541,7 +554,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-cloudwatch`: Disable CloudWatch tools
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools
 - `--disable-examples`: Disable query examples tools
-- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
+- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
 - `--disable-provisioning`: Disable provisioning tools
@@ -575,6 +588,8 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `alerting_rules_write` (create, update, delete operations)
 - `alerting_silences_write` (create, update, delete operations)
 - `alerting_routing_write` (create_contact_point operation)
+
+Each alerting write tool can be kept individually with `--enable-write-tools=<name>`.
 
 **OnCall Tools:**
 - `update_alert_group`
@@ -626,6 +641,9 @@ When `--disable-query` is enabled, the following tools are not registered:
 **Prometheus Tools:**
 - `query_prometheus`
 - `query_prometheus_histogram`
+
+**Rendering Tools:**
+- `render_grafana_app`
 
 **Loki Tools:**
 - `query_loki_logs`
@@ -1318,6 +1336,17 @@ When the [Loki cost guardrail](#cli-flags-reference) (`--loki-guardrail-mode`) i
 | `mcp_loki_guardrail_fail_open_total` | Counter | Queries the guardrail could not evaluate and admitted (labels: `backend`, `cause`) |
 
 `reason` is one of `selector`, `range`, `bytes`; `cause` is one of `unparseable`, `estimate_failed`; `backend` is one of `loki`, `victorialogs`, `unknown`. A query that trips several checks is counted once, labelled with the check that ran first (`selector`, then `range`, then `bytes`), so the four counters partition the guarded population. See [Observability](docs/sources/developer/observability-metrics-and-tracing.md#loki-cost-guardrail-metrics) for how to read them during a `shadow` → `enforce` rollout.
+
+When the Prometheus guardrail (`--prometheus-guardrail-mode`) is enabled, four counters record its decisions in the same way:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_prometheus_guardrail_admitted_total` | Counter | Queries that passed every enabled check |
+| `mcp_prometheus_guardrail_would_block_total` | Counter | Queries that failed a check in `shadow` mode and ran anyway (labels: `reason`) |
+| `mcp_prometheus_guardrail_blocked_total` | Counter | Queries rejected in `enforce` mode (labels: `reason`) |
+| `mcp_prometheus_guardrail_fail_open_total` | Counter | Queries whose expression the guardrail could not parse and admitted (labels: `reason`) |
+
+`reason` is `range` or `points` on `would_block` and `blocked`, counted once under the first check that failed (`range`, then `points`), and `unparseable` on `fail_open`. There is no `backend` label: every Prometheus-compatible backend gets the same checks.
 
 Library embedders should set `GrafanaConfig.MeterProvider` (the metrics counterpart of `GrafanaConfig.Logger`): the guardrail runs inside a tool handler, so it has no constructor option, and a process that installs a noop global `MeterProvider` would otherwise drop every recording.
 

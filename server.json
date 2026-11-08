@@ -1,13 +1,23 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.grafana/mcp-grafana",
+  "title": "Grafana",
   "description": "An MCP server giving access to Grafana dashboards, data and more.",
   "repository": {
     "url": "https://github.com/grafana/mcp-grafana",
     "source": "github"
   },
+  "websiteUrl": "https://grafana.com/docs/grafana/latest/developer-resources/mcp/",
   "version": "$VERSION",
-  "icon": "assets/icon.png",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/grafana/mcp-grafana/main/assets/icon.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "180x180"
+      ]
+    }
+  ],
   "remotes": [
     {
       "type": "streamable-http",

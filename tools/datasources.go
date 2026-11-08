@@ -15,6 +15,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/grafana/mcp-grafana/v2/observability"
 	datasourceschemas "github.com/grafana/mcp-grafana/v2/tools/datasource_schemas"
 )
@@ -70,7 +71,7 @@ type ListDatasourcesResult struct {
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
-	list, err := fetchDatasourceList(ctx)
+	list, err := datasource.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -123,38 +124,6 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 		result.Hint = interactiveLearningHint(ctx, problem)
 	}
 	return result, nil
-}
-
-// fetchDatasourceList returns every datasource visible to the caller.
-func fetchDatasourceList(ctx context.Context) (models.DataSourceList, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Datasources.GetDataSourcesWithParams(
-		datasources.NewGetDataSourcesParamsWithContext(ctx),
-	)
-	if err == nil {
-		return resp.Payload, nil
-	}
-	if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
-		// The datasources API is not accessible to this token (e.g. it
-		// requires Org Admin before Grafana 9.0); fall back to frontend settings
-		// (see datasources_fallback.go).
-		return fb, nil
-	}
-	return nil, fmt.Errorf("list datasources: %w", err)
-}
-
-// getDefaultDatasource returns the organization's default datasource.
-func getDefaultDatasource(ctx context.Context) (*models.DataSourceListItemDTO, error) {
-	list, err := fetchDatasourceList(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, ds := range list {
-		if ds.IsDefault {
-			return ds, nil
-		}
-	}
-	return nil, errors.New("no default datasource is configured")
 }
 
 type CreateDatasourceParams struct {
@@ -505,10 +474,6 @@ var UpdateDatasource = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions("datasources:read", "datasources:write"),
 )
 
-type GetDatasourceByUIDParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
-}
-
 // datasourceNotFoundError marks a lookup that reached Grafana and found no such
 // datasource, as opposed to a permissions or transport failure. The message is
 // unchanged from before; the type lets callers tell the cases apart.
@@ -526,71 +491,29 @@ func newDatasourceNotFoundError(ctx context.Context, msg string) datasourceNotFo
 	return datasourceNotFoundError(msg)
 }
 
-func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	datasource, err := c.Datasources.GetDataSourceByUIDWithParams(
-		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID),
-	)
-	if err != nil {
-		// Check if it's a 404 Not Found Error
-		if strings.Contains(err.Error(), "404") {
-			return nil, newDatasourceNotFoundError(ctx, fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
-		}
-		// The datasource metadata API is not accessible to this token (e.g.
-		// it requires Org Admin before Grafana 9.0); fall back to frontend
-		// settings (see datasources_fallback.go).
-		ds, fbErr := fallbackDatasourceByUID(ctx, args.UID)
-		if fbErr == nil {
-			return ds, nil
-		}
-		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
-			// The settings were readable and the datasource is genuinely
-			// absent: report not-found rather than the misleading permission
-			// error, so agents can tell a typo from a credentials problem.
-			return nil, newDatasourceNotFoundError(ctx, fmt.Sprintf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID))
-		}
-		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
-	}
-	return datasource.Payload, nil
-}
-
-type GetDatasourceByNameParams struct {
-	Name string `json:"name" jsonschema:"required,description=The name of the datasource"`
-}
-
-func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	datasource, err := c.Datasources.GetDataSourceByNameWithParams(
-		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(args.Name),
-	)
-	if err != nil {
-		// The datasource metadata API is not accessible to this token (e.g.
-		// it requires Org Admin before Grafana 9.0); fall back to frontend
-		// settings (see datasources_fallback.go).
-		ds, fbErr := fallbackDatasourceByName(ctx, args.Name)
-		if fbErr == nil {
-			return ds, nil
-		}
-		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
-			return nil, newDatasourceNotFoundError(ctx, fmt.Sprintf("datasource with name '%s' not found. Please check if the datasource exists and is accessible", args.Name))
-		}
-		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
-	}
-	return datasource.Payload, nil
-}
-
 // GetDatasourceParams accepts either a UID or Name to look up a datasource.
 type GetDatasourceParams struct {
 	UID  string `json:"uid,omitempty" jsonschema:"description=The UID of the datasource. If provided\\, takes priority over name."`
 	Name string `json:"name,omitempty" jsonschema:"description=The name of the datasource. Used if UID is not provided."`
 }
 
+// withNotFoundHint turns a datasource.ErrNotFound into a datasourceNotFoundError
+// carrying the Interactive Learning pointer; other errors pass through.
+func withNotFoundHint(ctx context.Context, err error) error {
+	if errors.Is(err, datasource.ErrNotFound) {
+		return newDatasourceNotFoundError(ctx, err.Error())
+	}
+	return err
+}
+
 func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataSource, error) {
 	if args.UID != "" {
-		return getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.UID})
+		ds, err := datasource.ByUID(ctx, args.UID)
+		return ds, withNotFoundHint(ctx, err)
 	}
 	if args.Name != "" {
-		return getDatasourceByName(ctx, GetDatasourceByNameParams{Name: args.Name})
+		ds, err := datasource.ByName(ctx, args.Name)
+		return ds, withNotFoundHint(ctx, err)
 	}
 	return nil, fmt.Errorf("either uid or name must be provided")
 }
@@ -826,28 +749,6 @@ type BulkDatasourceHealthResult struct {
 	HasMore bool `json:"hasMore"` // Whether more datasources exist beyond this page
 }
 
-// datasourcesWithoutBackend returns the set of UIDs, among targets, whose
-// plugin declares meta.backend: false in GET /api/frontend/settings — i.e.
-// a frontend-only datasource type (the built-in Alertmanager datasource is
-// the common case) that the health endpoint can never successfully check,
-// because that endpoint always dispatches to a plugin backend. A UID absent
-// from the returned set (including every UID when frontend/settings itself
-// is unavailable to this token) must be treated as normally checkable: this
-// is a best-effort classification, not a requirement.
-func datasourcesWithoutBackend(ctx context.Context) map[string]bool {
-	settings, _, err := fetchFrontendSettingsDatasources(ctx)
-	if err != nil {
-		return nil
-	}
-	without := make(map[string]bool)
-	for _, ds := range settings {
-		if ds.Meta != nil && ds.Meta.Backend != nil && !*ds.Meta.Backend {
-			without[ds.UID] = true
-		}
-	}
-	return without
-}
-
 func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
@@ -858,9 +759,9 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		// Health checks require the datasource metadata API and the
 		// per-datasource health endpoint (a uid-based route that only exists
 		// from Grafana 9.0). On deployments where the metadata API is
-		// inaccessible to this token (see datasources_fallback.go), say so
+		// inaccessible to this token (see internal/datasource), say so
 		// explicitly instead of surfacing a confusing permission error.
-		if _, _, fbErr := fetchFrontendSettingsDatasources(ctx); fbErr == nil {
+		if datasource.FallbackAvailable(ctx) {
 			return nil, fmt.Errorf("checking datasource health is not supported on this Grafana deployment: the datasource metadata API is not accessible to this token, and health checks require it. Datasource discovery still works via the list_datasources tool")
 		}
 		return nil, fmt.Errorf("list datasources: %w", err)
@@ -897,7 +798,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		targets = all[offset:end]
 	}
 
-	withoutBackend := datasourcesWithoutBackend(ctx)
+	withoutBackend := datasource.WithoutBackend(ctx)
 
 	results := make([]DatasourceHealthCheckResult, len(targets))
 	// noBackend tracks which results were skipped for lacking a backend

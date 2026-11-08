@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
@@ -26,7 +27,7 @@ const (
 // interactiveLearningCacheSize bounds how many availability answers are kept.
 const interactiveLearningCacheSize = 1024
 
-// interactiveLearningCache maps fallbackProxyIDKey results to whether the
+// interactiveLearningCache maps datasource.ScopedKey results to whether the
 // Interactive Learning plugin is installed and enabled for that URL, org and
 // credential. Entries expire after interactiveLearningCacheTTL and the least
 // recently used ones are evicted beyond interactiveLearningCacheSize.
@@ -40,7 +41,7 @@ var interactiveLearningCache = expirable.NewLRU[string, bool](interactiveLearnin
 // statuses and unparseable bodies are not, so a transient failure does not
 // suppress hints for the whole TTL.
 func interactiveLearningAvailable(ctx context.Context, cfg mcpgrafana.GrafanaConfig) bool {
-	key := fallbackProxyIDKey(ctx, "plugin", interactiveLearningPluginID)
+	key := datasource.ScopedKey(ctx, "plugin", interactiveLearningPluginID)
 	if available, ok := interactiveLearningCache.Get(key); ok {
 		return available
 	}

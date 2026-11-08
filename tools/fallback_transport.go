@@ -17,7 +17,7 @@ import (
 //   - AWS Managed Grafana requires /api/datasources/proxy/uid/{uid}
 //
 // In legacy mode (datasource resolved through the frontend-settings fallback,
-// see datasources_fallback.go) the retry rules differ: the primary is the
+// see internal/datasource) the retry rules differ: the primary is the
 // numeric-id proxy path, and the only reason its uid-based fallback exists is
 // deployments that disable the deprecated numeric routes (404, default since
 // Grafana 13). Legacy mode therefore retries on 404 only — on pre-9.0 the
@@ -74,7 +74,7 @@ func newDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fall
 
 // newLegacyDatasourceFallbackTransport is the variant used when the
 // datasource was resolved through the frontend-settings fallback (see
-// datasources_fallback.go): primary is the numeric-id proxy path, retries
+// internal/datasource): primary is the numeric-id proxy path, retries
 // happen on 404 only, and the shared endpoint cache is skipped (see the
 // legacy field). The numeric primary is expected to succeed on the
 // deployments that use this mode; the retry only fires in the rare

@@ -106,7 +106,7 @@ func TestFramesToDocumentsTimeField(t *testing.T) {
 		),
 	}
 
-	docs, err := framesToDocuments(frames, "timestamp")
+	docs, err := framesToDocuments(frames, "timestamp", false)
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
 	assert.Equal(t, "2024-06-15T12:00:00Z", docs[0].Timestamp)

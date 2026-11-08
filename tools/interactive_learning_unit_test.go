@@ -161,11 +161,11 @@ func (s *notFoundServer) requested(path string) bool {
 func TestDatasourceNotFound_InteractiveLearningHint(t *testing.T) {
 	lookups := map[string]func(ctx context.Context) error{
 		"by uid": func(ctx context.Context) error {
-			_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: "promethues"})
+			_, err := getDatasource(ctx, GetDatasourceParams{UID: "promethues"})
 			return err
 		},
 		"by name": func(ctx context.Context) error {
-			_, err := getDatasourceByName(ctx, GetDatasourceByNameParams{Name: "Promethues"})
+			_, err := getDatasource(ctx, GetDatasourceParams{Name: "Promethues"})
 			return err
 		},
 	}

@@ -47,14 +47,32 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			datasource        string
 			sourceCurrent     string
 			raw, defaultRange bool
+			multi             bool
 			datasourceType    string
 			targetFields      map[string]interface{}
 			requiredNames     []string
 		}{
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
+			{name: "multi-value unformatted", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east','west')"},
+			{name: "multi-value single selection", query: "SELECT * FROM t WHERE region IN (${choice})", current: []interface{}{"east"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east')"},
+			{name: "multi-value quoted value", query: "SELECT * FROM t WHERE region IN ([[choice]])", current: []interface{}{"O'Reilly", "west"}, multi: true, want: "SELECT * FROM t WHERE region IN ('O''Reilly','west')"},
+			{name: "multi-value override", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, overrides: map[string]string{"choice": "north"}, want: "SELECT * FROM t WHERE region IN ('north')"},
+			{name: "multi-value MySQL", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, datasourceType: "mysql", want: "SELECT * FROM t WHERE region IN ('east','west')"},
+			{name: "multi-value MSSQL", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, datasourceType: "mssql", want: "SELECT * FROM t WHERE region IN ('east','west')"},
+			{name: "multi-value explicit format kept", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, multi: true, want: "SELECT '{east,west}'"},
+			{name: "multi-value empty selection", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{}, multi: true, want: "SELECT * FROM t WHERE region IN ()"},
 			{name: "multi-value glob", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, want: "SELECT '{east,west}'"},
 			{name: "bracketed sqlstring", query: "SELECT [[choice:sqlstring]]", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "quoted value", query: "SELECT ${choice:sqlstring}", current: "O'Reilly", want: "SELECT 'O''Reilly'"},
+			{name: "BigQuery quoted value", query: "SELECT ${choice:sqlstring}", current: "O'Brien", datasourceType: "grafana-bigquery-datasource", targetFields: map[string]interface{}{"location": "$choice", "preservedField": "${choice:sqlstring}"}, want: `SELECT "O'Brien"`},
+			{name: "BigQuery quotes and backslash", query: "SELECT ${choice:sqlstring}", current: `say "hi"\path`, datasourceType: "grafana-bigquery-datasource", want: `SELECT "say \"hi\"\\path"`},
+			{name: "BigQuery newline", query: "SELECT ${choice:sqlstring}", current: "line1\nline2\t", datasourceType: "grafana-bigquery-datasource", want: `SELECT "line1\nline2\t"`},
+			{name: "BigQuery multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"O'Brien", `a\b`}, datasourceType: "grafana-bigquery-datasource", want: `SELECT "O'Brien","a\\b"`},
+			{name: "BigQuery bracketed sqlstring", query: "SELECT [[choice:sqlstring]]", current: "O'Brien", datasourceType: "grafana-bigquery-datasource", want: `SELECT "O'Brien"`},
+			{name: "BigQuery override", query: "SELECT ${choice:sqlstring}", current: "saved", overrides: map[string]string{"choice": "O'Brien"}, datasourceType: "grafana-bigquery-datasource", want: `SELECT "O'Brien"`},
+			{name: "BigQuery empty string", query: "SELECT ${choice:sqlstring}", current: "", datasourceType: "grafana-bigquery-datasource", want: `SELECT ""`},
+			{name: "BigQuery glob unchanged", query: "SELECT '${choice:glob}'", current: []interface{}{"east", "west"}, datasourceType: "grafana-bigquery-datasource", want: "SELECT '{east,west}'"},
+			{name: "BigQuery raw inspection", query: "SELECT ${choice:sqlstring}", current: "O'Brien", datasourceType: "grafana-bigquery-datasource", raw: true},
 			{name: "quoted list is saved data", query: "SELECT ${choice:sqlstring}", current: "'east','west'", want: "SELECT '''east'',''west'''"},
 			{name: "override", query: "SELECT ${choice:sqlstring}", current: "saved", overrides: map[string]string{"choice": "override"}, want: "SELECT 'override'"},
 			{name: "empty", query: "SELECT '${choice}'", current: "", want: "SELECT ''"},
@@ -95,6 +113,9 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			t.Run(fmt.Sprintf("v2=%t/%s", v2, tc.name), func(t *testing.T) {
 				variable := map[string]interface{}{"name": "choice", "type": "query", "datasource": nil,
 					"current": map[string]interface{}{"value": tc.current}}
+				if tc.multi {
+					variable["multi"] = true
+				}
 				current := safeObject(variable, "current")
 				if tc.currentText != "" {
 					current["text"] = tc.currentText
@@ -193,6 +214,10 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 						submitted = safeString(submittedTarget, expressionField)
 						if tc.name == "SQL location override" {
 							assert.Equal(t, "us-east1", submittedTarget["location"])
+						}
+						if tc.name == "BigQuery quoted value" {
+							assert.Equal(t, "O'Brien", submittedTarget["location"], "non-SQL target fields must not be quoted as SQL literals")
+							assert.Equal(t, "'O''Brien'", submittedTarget["preservedField"], "non-SQL target fields keep generic interpolation")
 						}
 						frames := data.Frames{data.NewFrame("", data.NewField("value", nil, []int64{1}))}
 						_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: frames}}})
