@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -652,7 +653,7 @@ type ManageRulesWriteParams struct {
 	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m'. Required for Grafana-managed create/update. Optional for datasource-managed rules (default 0s)."`
 	KeepFiringFor               string            `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    bool              `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
-	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string)."`
+	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string). snake_case keys are also accepted."`
 	Record                      map[string]any    `json:"record,omitempty" jsonschema:"description=Recording rule config. Fields: from (string\\, required - ref ID e.g. 'A')\\, metric (string\\, required - metric name)\\, targetDatasourceUid (string\\, optional)."`
 	MissingSeriesEvalsToResolve int64             `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
@@ -707,6 +708,70 @@ func unmarshalVia[T any](m map[string]any) (*T, error) {
 	return &t, nil
 }
 
+// notificationSettingsSnakeKeys maps the snake_case keys that
+// alerting_rules_read returns (Grafana's provisioning format) to the camelCase
+// fields of NotificationSettings, so a rule read and written back keeps its
+// grouping, timings and mute intervals.
+var notificationSettingsSnakeKeys = map[string]string{
+	"group_by":              "groupBy",
+	"group_wait":            "groupWait",
+	"group_interval":        "groupInterval",
+	"repeat_interval":       "repeatInterval",
+	"mute_time_intervals":   "muteTimeIntervals",
+	"active_time_intervals": "activeTimeIntervals",
+}
+
+// notificationSettingsFromMap decodes notification_settings in either key
+// style and rejects unknown keys, which plain json.Unmarshal would drop
+// without a word. Two spellings of one key are compared case-insensitively,
+// as encoding/json matches them, and a null counts as unset because
+// alerting_rules_read returns null for empty lists.
+func notificationSettingsFromMap(m map[string]any) (*NotificationSettings, error) {
+	if m == nil {
+		return nil, nil
+	}
+	type setting struct {
+		sent  string
+		key   string
+		value any
+	}
+	byField := make(map[string]setting, len(m))
+	for sent, value := range m {
+		key := sent
+		if camel, ok := notificationSettingsSnakeKeys[sent]; ok {
+			key = camel
+		}
+		field := strings.ToLower(key)
+		if prev, ok := byField[field]; ok {
+			if prev.value != nil && value != nil {
+				return nil, fmt.Errorf("set %s or %s, not both", min(prev.sent, sent), max(prev.sent, sent))
+			}
+			if value == nil {
+				continue
+			}
+		}
+		byField[field] = setting{sent: sent, key: key, value: value}
+	}
+	normalized := make(map[string]any, len(byField))
+	for _, s := range byField {
+		normalized[s.key] = s.value
+	}
+	b, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("marshal map: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var ns NotificationSettings
+	if err := dec.Decode(&ns); err != nil {
+		if strings.HasPrefix(err.Error(), "json: unknown field") {
+			return nil, fmt.Errorf("%w (valid keys: receiver, group_by, group_wait, group_interval, repeat_interval, mute_time_intervals, active_time_intervals, or their camelCase forms)", err)
+		}
+		return nil, err
+	}
+	return &ns, nil
+}
+
 // unmarshalDataToAlertQueries converts []map[string]any to []*AlertQuery.
 func unmarshalDataToAlertQueries(data []map[string]any) ([]*AlertQuery, error) {
 	if data == nil {
@@ -728,7 +793,7 @@ func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) 
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid data: %w", err)
 	}
-	ns, err := unmarshalVia[NotificationSettings](p.NotificationSettings)
+	ns, err := notificationSettingsFromMap(p.NotificationSettings)
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid notification_settings: %w", err)
 	}
@@ -766,7 +831,7 @@ func (p ManageRulesWriteParams) toUpdateParams() (UpdateAlertRuleParams, error) 
 	if err != nil {
 		return UpdateAlertRuleParams{}, fmt.Errorf("invalid data: %w", err)
 	}
-	ns, err := unmarshalVia[NotificationSettings](p.NotificationSettings)
+	ns, err := notificationSettingsFromMap(p.NotificationSettings)
 	if err != nil {
 		return UpdateAlertRuleParams{}, fmt.Errorf("invalid notification_settings: %w", err)
 	}

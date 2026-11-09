@@ -775,6 +775,84 @@ func TestManageRulesWriteParams_ToUpdateParams(t *testing.T) {
 	})
 }
 
+func TestManageRulesWriteParams_NotificationSettingsKeys(t *testing.T) {
+	receiver := "oncall"
+	full := &models.AlertRuleNotificationSettings{
+		Receiver:            &receiver,
+		GroupBy:             []string{"alertname", "team"},
+		GroupWait:           "45s",
+		GroupInterval:       "7m",
+		RepeatInterval:      "3h",
+		MuteTimeIntervals:   []string{"weekends"},
+		ActiveTimeIntervals: []string{"workhours"},
+	}
+	asMap := func(t *testing.T, v any) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(v)
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		return m
+	}
+
+	t.Run("settings as alerting_rules_read returns them survive create and update", func(t *testing.T) {
+		readBack := asMap(t, full)
+		require.Contains(t, readBack, "mute_time_intervals")
+
+		up, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: readBack}.toUpdateParams()
+		require.NoError(t, err)
+		require.Equal(t, full, convertNotificationSettings(up.NotificationSettings))
+
+		cp, err := ManageRulesWriteParams{Operation: "create", NotificationSettings: readBack}.toCreateParams()
+		require.NoError(t, err)
+		require.Equal(t, full, convertNotificationSettings(cp.NotificationSettings))
+	})
+
+	t.Run("camelCase keys still work", func(t *testing.T) {
+		camel := asMap(t, &NotificationSettings{
+			Receiver:            &receiver,
+			GroupBy:             full.GroupBy,
+			GroupWait:           full.GroupWait,
+			GroupInterval:       full.GroupInterval,
+			RepeatInterval:      full.RepeatInterval,
+			MuteTimeIntervals:   full.MuteTimeIntervals,
+			ActiveTimeIntervals: full.ActiveTimeIntervals,
+		})
+		up, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: camel}.toUpdateParams()
+		require.NoError(t, err)
+		require.Equal(t, full, convertNotificationSettings(up.NotificationSettings))
+	})
+
+	t.Run("an unknown key is an error, not dropped", func(t *testing.T) {
+		_, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: map[string]any{
+			"receiver": "oncall", "mute_timings": []any{"weekends"},
+		}}.toUpdateParams()
+		require.ErrorContains(t, err, `"mute_timings"`)
+		require.ErrorContains(t, err, "mute_time_intervals")
+	})
+
+	t.Run("a null from the read output does not clash with a camelCase key", func(t *testing.T) {
+		// A rule with only a receiver reads back with null lists.
+		readBack := asMap(t, &models.AlertRuleNotificationSettings{Receiver: &receiver})
+		require.Contains(t, readBack, "mute_time_intervals")
+		readBack["muteTimeIntervals"] = []any{"weekends"}
+
+		up, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: readBack}.toUpdateParams()
+		require.NoError(t, err)
+		require.Equal(t, []string{"weekends"}, up.NotificationSettings.MuteTimeIntervals)
+	})
+
+	t.Run("both spellings of one key is an error", func(t *testing.T) {
+		for _, other := range []string{"groupBy", "GroupBy"} {
+			_, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: map[string]any{
+				"receiver": "oncall", "group_by": []any{"a"}, other: []any{"b"},
+			}}.toUpdateParams()
+			require.ErrorContains(t, err, "not both", other)
+			require.ErrorContains(t, err, other)
+		}
+	})
+}
+
 func TestMergeRuleDetail(t *testing.T) {
 	t.Run("merges provisioned config with runtime state", func(t *testing.T) {
 		title := "High CPU Alert"
