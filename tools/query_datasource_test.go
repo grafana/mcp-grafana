@@ -28,9 +28,10 @@ func runQueryDatasource(t *testing.T, arguments, response string) (*mcp.CallTool
 	t.Helper()
 	var posted map[string]any
 	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/ds/query", r.URL.Path)
+		// The handler runs outside the test goroutine, so it must not use require.
+		assert.Equal(t, "/api/ds/query", r.URL.Path)
 		body, _ := io.ReadAll(r.Body)
-		require.NoError(t, json.Unmarshal(body, &posted))
+		assert.NoError(t, json.Unmarshal(body, &posted))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(response))
 	}))
@@ -132,6 +133,13 @@ func TestQueryDatasourceRejectsBadArguments(t *testing.T) {
 			assert.False(t, queried, "tool.4, tool.10: no query")
 		})
 	}
+}
+
+func TestQueryDatasourceNullDatasourceGetsTheDefault(t *testing.T) {
+	_, posted, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A","datasource":null}]}`, `{"results":{"A":{"status":200}}}`)
+	require.NoError(t, err)
+	query := posted["queries"].([]any)[0].(map[string]any)
+	assert.Equal(t, map[string]any{"uid": "prom"}, query["datasource"])
 }
 
 func TestQueryDatasourceOmitsOversizedContent(t *testing.T) {

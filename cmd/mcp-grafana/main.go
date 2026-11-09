@@ -242,7 +242,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.tempo, "disable-proxied", false, "Deprecated: use --disable-tempo instead")
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
-	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
+	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write, and keep query_datasource, a source of render_grafana_app, available. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. For the raw-SQL tools it is equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
 	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
@@ -567,8 +567,8 @@ func (dt *disabledTools) categoryRegistersTools(e toolEntry, enabledTools []stri
 	if e.category == "assistant" && dt.write {
 		return false
 	}
-	// query_datasource is a source of render_grafana_app, so it is as visible as that source.
-	if e.category == "dsquery" && !dt.dsquerySourceEnabled() {
+	// query_datasource is a source of render_grafana_app, so it is as visible as that source and that tool.
+	if e.category == "dsquery" && (!dt.dsquerySourceEnabled() || !isCategoryEnabled(enabledTools, dt.rendering, "rendering")) {
 		return false
 	}
 	// A category whose every tool executes a query registers nothing once

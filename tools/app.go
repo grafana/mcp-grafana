@@ -25,7 +25,12 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 	var names []any
 	var schemas []*jsonschema.Schema
 	var permissions []string
+	// A source whose queries can mutate data makes the viewer mutating too.
+	readOnly := true
 	for _, source := range sources {
+		if a := source.Tool.Annotations; a == nil || !a.ReadOnlyHint {
+			readOnly = false
+		}
 		names = append(names, source.Tool.Name)
 		schema := new(jsonschema.Schema)
 		if err := json.Unmarshal(source.Tool.InputSchema.(json.RawMessage), schema); err != nil {
@@ -87,8 +92,8 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 		mcpgrafana.WithUIResource(mcpgrafana.GrafanaAppResourceURI),
 		mcpgrafana.WithTitleAnnotation("Show Grafana App"),
 		mcpgrafana.WithIdempotentHintAnnotation(true),
-		mcpgrafana.WithReadOnlyHintAnnotation(true),
-		mcpgrafana.WithDestructiveHintAnnotation(false),
+		mcpgrafana.WithReadOnlyHintAnnotation(readOnly),
+		mcpgrafana.WithDestructiveHintAnnotation(!readOnly),
 		mcpgrafana.WithOpenWorldHintAnnotation(false),
 		mcpgrafana.RequiresPermissions(permissions...),
 	)

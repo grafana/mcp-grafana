@@ -70,6 +70,33 @@ func TestExplicitAppRegistration(t *testing.T) {
 	}
 }
 
+func TestAppToolHintsFollowItsSources(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		config   disabledTools
+		readOnly bool
+	}{
+		{"read-only sources", disabledTools{enabledTools: "prometheus,rendering"}, true},
+		{"a mutating source", disabledTools{enabledTools: "prometheus,rendering,dsquery"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			tc.config.processTools(s)
+			result, err := connectTestClient(t, s).ListTools(t.Context(), nil)
+			require.NoError(t, err)
+			var viewer *mcp.Tool
+			for _, tool := range result.Tools {
+				if tool.Name == "render_grafana_app" {
+					viewer = tool
+				}
+			}
+			require.NotNil(t, viewer)
+			require.Equal(t, tc.readOnly, viewer.Annotations.ReadOnlyHint)
+			require.Equal(t, !tc.readOnly, *viewer.Annotations.DestructiveHint)
+		})
+	}
+}
+
 func TestDSQueryCategoryFollowsItsSource(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -80,6 +107,8 @@ func TestDSQueryCategoryFollowsItsSource(t *testing.T) {
 		{"read only", disabledTools{enabledTools: "rendering,dsquery", write: true}, false},
 		{"read only, enable-query", disabledTools{enabledTools: "rendering,dsquery", write: true, enableQuery: true}, true},
 		{"query disabled", disabledTools{enabledTools: "rendering,dsquery", query: true}, false},
+		{"no rendering", disabledTools{enabledTools: "dsquery"}, false},
+		{"rendering disabled", disabledTools{enabledTools: "rendering,dsquery", rendering: true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			enabled, _ := tc.config.categoryReport()

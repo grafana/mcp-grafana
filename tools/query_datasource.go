@@ -179,7 +179,7 @@ func prepareDSQueries(uid string, queries []map[string]any, from, to time.Time) 
 		for k, v := range in {
 			query[k] = v
 		}
-		if ds, ok := in["datasource"]; ok {
+		if ds := in["datasource"]; ds != nil {
 			if m, _ := ds.(map[string]any); m == nil || m["uid"] != uid {
 				return nil, fmt.Errorf("query %s uses another data source: its datasource uid must be %s", refID, uid)
 			}
