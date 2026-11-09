@@ -3,8 +3,10 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -237,4 +239,37 @@ func TestRunLogsQuery(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "MalformedQueryException")
 	})
+}
+
+// Grafana's query cache keys on the request body, and the GetQueryResults
+// polls are identical, so a cached "Running" reply would never turn Complete.
+// The Logs Insights frontend avoids this by sending X-Cache-Skip.
+func TestRunLogsQuery_SkipsQueryCache(t *testing.T) {
+	server, queries := fakeLogsServer(t, "Running", "Complete")
+	cache := map[string][]byte{}
+	cached := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Header.Get("X-Cache-Skip") != "true" {
+			if b, ok := cache[string(body)]; ok {
+				_, _ = w.Write(b)
+				return
+			}
+		}
+		resp, err := http.Post(server.URL, "application/json", bytes.NewReader(body))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		cache[string(body)] = b
+		_, _ = w.Write(b)
+	}))
+	t.Cleanup(cached.Close)
+
+	client := &cloudWatchClient{httpClient: cached.Client(), baseURL: cached.URL}
+	args := QueryCloudWatchLogsParams{DatasourceUID: "cw", Region: "us-east-1", LogGroups: []string{"app"}, QueryString: "fields @message", Limit: 100}
+	now := time.Now()
+
+	frames, err := client.runLogsQuery(context.Background(), args, now.Add(-time.Hour), now, 5*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, "Complete", logsQueryStatus(frames))
+	assert.Len(t, *queries, 3)
 }
