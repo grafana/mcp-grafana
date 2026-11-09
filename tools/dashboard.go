@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"regexp"
 	"slices"
 	"sort"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
+	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -301,8 +303,14 @@ func dashboardResultFromK8s(obj map[string]interface{}) (*dashboardResult, error
 	if name := safeString(metadata, "name"); name != "" {
 		// Classic (v1) dashboards expect the uid inside the body; the v2
 		// spec carries identity in metadata, so only set it for v1 shapes.
+		// The version goes in too, as Grafana's frontend does, because the
+		// save endpoint only accepts an existing dashboard without overwrite
+		// when the body carries its current version.
 		if _, hasElements := spec["elements"]; !hasElements {
 			spec["uid"] = name
+			if generation, ok := metadata["generation"].(float64); ok {
+				spec["version"] = generation
+			}
 		}
 	}
 
@@ -658,6 +666,13 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 		dashboards.NewPostDashboardParamsWithContext(ctx).WithBody(cmd),
 	)
 	if err != nil {
+		// The client has no type for 409, so Grafana's message is lost. On a
+		// save without overwrite it means the stored version differs from the
+		// one sent, usually because the dashboard changed since it was read.
+		var apiErr *runtime.APIError
+		if errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict) {
+			return nil, fmt.Errorf("unable to save dashboard: it already exists and the body's version is missing or not the current one, so it may have changed since it was read. Fetch it again with get_dashboard_by_uid and reapply the change to that copy. overwrite=true would discard whatever changed in between: %w", err)
+		}
 		return nil, fmt.Errorf("unable to save dashboard: %w", err)
 	}
 	// Grafana's save response has no title; report the one that was saved.

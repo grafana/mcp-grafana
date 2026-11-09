@@ -883,3 +883,69 @@ func TestDashboardMetaFromK8s(t *testing.T) {
 		})
 	}
 }
+
+func TestDashboardResultFromK8s_V1BodyCarriesVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		metadata    map[string]interface{}
+		spec        map[string]interface{}
+		wantVersion interface{}
+	}{
+		{
+			name:        "v1 body gets the generation as its version",
+			metadata:    map[string]interface{}{"name": "u1", "generation": float64(4)},
+			spec:        map[string]interface{}{"title": "Classic", "panels": []interface{}{}},
+			wantVersion: float64(4),
+		},
+		{
+			name:     "v1 body without a generation gets no version",
+			metadata: map[string]interface{}{"name": "u1"},
+			spec:     map[string]interface{}{"title": "Classic", "panels": []interface{}{}},
+		},
+		{
+			name:     "v2 spec is left alone",
+			metadata: map[string]interface{}{"name": "u1", "generation": float64(4)},
+			spec:     map[string]interface{}{"title": "Native", "elements": map[string]interface{}{}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := dashboardResultFromK8s(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v1beta1",
+				"metadata":   tt.metadata,
+				"spec":       tt.spec,
+			})
+			require.NoError(t, err)
+			version, ok := res.Spec["version"]
+			if tt.wantVersion == nil {
+				assert.False(t, ok, "no version expected, got %v", version)
+				return
+			}
+			assert.Equal(t, tt.wantVersion, version)
+		})
+	}
+}
+
+func TestUpdateDashboardWithFullJSON_ConflictSaysWhy(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/dashboards/db" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"message":"Dashboard already exists. Use overwrite flag to update."}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, ts.URL, "test-api-key", nil))
+
+	_, err := updateDashboardWithFullJSON(ctx, UpdateDashboardParams{
+		Dashboard: map[string]interface{}{"uid": "u1", "title": "Stale", "version": float64(3)},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "changed since it was read")
+	assert.Contains(t, err.Error(), "get_dashboard_by_uid")
+	assert.Contains(t, err.Error(), "status 409")
+}
