@@ -26,7 +26,7 @@ func uniqueSilenceMarker() string {
 func createTestSilence(ctx context.Context, t *testing.T, params ManageSilencesParams) string {
 	t.Helper()
 
-	result, err := manageSilencesReadWrite(ctx, params)
+	result, err := manageSilencesWrite(ctx, params)
 	require.NoError(t, err)
 	created, ok := result.(*createSilenceResponse)
 	require.True(t, ok, "unexpected create result type %T", result)
@@ -39,7 +39,7 @@ func createTestSilence(ctx context.Context, t *testing.T, params ManageSilencesP
 func expireSilence(ctx context.Context, t *testing.T, id string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = manageSilencesReadWrite(ctx, ManageSilencesParams{
+		_, _ = manageSilencesWrite(ctx, ManageSilencesParams{
 			Operation: "delete",
 			SilenceID: &id,
 		})
@@ -67,7 +67,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 	})
 
 	t.Run("get returns the created silence", func(t *testing.T) {
-		result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		result, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 			Operation: "get",
 			SilenceID: &silenceID,
 		})
@@ -86,7 +86,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 	})
 
 	t.Run("list filtered by matcher finds exactly this silence", func(t *testing.T) {
-		result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		result, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 			Operation: "list",
 			Matchers:  matchers,
 		})
@@ -99,7 +99,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 	})
 
 	t.Run("list without filters includes this silence", func(t *testing.T) {
-		result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{Operation: "list"})
+		result, err := manageSilencesRead(ctx, ManageSilencesReadParams{Operation: "list"})
 		require.NoError(t, err)
 
 		silences, ok := result.(models.GettableSilences)
@@ -116,7 +116,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 		newEndsAt := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
 		newComment := comment + " (updated)"
 
-		result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		result, err := manageSilencesWrite(ctx, ManageSilencesParams{
 			Operation: "update",
 			SilenceID: &silenceID,
 			Matchers:  matchers,
@@ -130,7 +130,7 @@ func TestManageSilencesLifecycle(t *testing.T) {
 		require.True(t, ok, "unexpected update result type %T", result)
 		require.Equal(t, silenceID, updated.SilenceID)
 
-		got, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		got, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 			Operation: "get",
 			SilenceID: &silenceID,
 		})
@@ -146,14 +146,14 @@ func TestManageSilencesLifecycle(t *testing.T) {
 	})
 
 	t.Run("delete expires the silence rather than removing it", func(t *testing.T) {
-		result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		result, err := manageSilencesWrite(ctx, ManageSilencesParams{
 			Operation: "delete",
 			SilenceID: &silenceID,
 		})
 		require.NoError(t, err)
 		require.Equal(t, map[string]string{"status": "deleted", "silence_id": silenceID}, result)
 
-		got, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		got, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 			Operation: "get",
 			SilenceID: &silenceID,
 		})
@@ -190,7 +190,7 @@ func TestManageSilencesUpdateReplacesOnChangedStartsAt(t *testing.T) {
 		"expected Grafana to clamp a past starts_at to the creation time")
 
 	newEndsAt := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
-	result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+	result, err := manageSilencesWrite(ctx, ManageSilencesParams{
 		Operation: "update",
 		SilenceID: &originalID,
 		Matchers:  matchers,
@@ -207,7 +207,7 @@ func TestManageSilencesUpdateReplacesOnChangedStartsAt(t *testing.T) {
 
 	// The superseded silence is expired, not deleted, so the window is never
 	// covered by two active silences at once.
-	got, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+	got, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 		Operation: "get",
 		SilenceID: &originalID,
 	})
@@ -240,7 +240,7 @@ func TestManageSilencesRuleUIDFilter(t *testing.T) {
 	// it with the unique marker keeps the assertion exact despite leftovers
 	// from earlier runs that are scoped to the same rule.
 	ruleUID := rule1UID
-	result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+	result, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 		Operation: "list",
 		RuleUID:   &ruleUID,
 		Matchers:  []SilenceMatcherParam{{Name: "mcp_test_marker", Value: marker}},
@@ -254,7 +254,7 @@ func TestManageSilencesRuleUIDFilter(t *testing.T) {
 
 	// A rule UID that no silence is scoped to must not match ours.
 	otherUID := "no-such-rule-uid"
-	result, err = manageSilencesReadWrite(ctx, ManageSilencesParams{
+	result, err = manageSilencesRead(ctx, ManageSilencesReadParams{
 		Operation: "list",
 		RuleUID:   &otherUID,
 		Matchers:  []SilenceMatcherParam{{Name: "mcp_test_marker", Value: marker}},
@@ -288,7 +288,7 @@ func TestManageSilencesErrors(t *testing.T) {
 
 	t.Run("get with an unknown silence id", func(t *testing.T) {
 		unknown := "00000000-0000-0000-0000-000000000000"
-		_, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		_, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 			Operation: "get",
 			SilenceID: &unknown,
 		})
@@ -299,7 +299,7 @@ func TestManageSilencesErrors(t *testing.T) {
 		startsAt := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
 		endsAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 		comment := "should never be created"
-		_, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+		_, err := manageSilencesWrite(ctx, ManageSilencesParams{
 			Operation: "create",
 			Matchers:  []SilenceMatcherParam{{Name: "mcp_test_marker", Value: uniqueSilenceMarker()}},
 			StartsAt:  &startsAt,
@@ -316,7 +316,7 @@ func TestManageSilencesErrors(t *testing.T) {
 func getSilenceStartsAt(ctx context.Context, t *testing.T, id string) string {
 	t.Helper()
 
-	result, err := manageSilencesReadWrite(ctx, ManageSilencesParams{
+	result, err := manageSilencesRead(ctx, ManageSilencesReadParams{
 		Operation: "get",
 		SilenceID: &id,
 	})

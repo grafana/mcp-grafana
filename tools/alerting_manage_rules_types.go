@@ -632,20 +632,19 @@ func (p ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
 	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 }
 
-// ManageRulesReadWriteParams is the param struct for alerting_rules_write.
-type ManageRulesReadWriteParams struct {
-	listFilterParams
+// ManageRulesWriteParams is the param struct for alerting_rules_write.
+type ManageRulesWriteParams struct {
 	ManagedBy          string `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Omission defaults to Grafana-managed. Select datasource when requested or clearly established by conversation or environment context. Other mutations remain Grafana-only."`
 	Namespace          string `json:"namespace,omitempty" jsonschema:"description=Namespace for datasource-managed creation. Required with managed_by=datasource."`
 	Expression         string `json:"expression,omitempty" jsonschema:"description=PromQL or LogQL expression for datasource-managed creation."`
 	EvaluationInterval string `json:"evaluation_interval,omitempty" jsonschema:"description=Interval for a new datasource rule group (default 1m). Must match an existing group's interval if supplied."`
 
-	Operation                   string            `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,enum=create,enum=update,enum=delete,description=The operation to perform: 'list'\\, 'get'\\, 'versions'\\, 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, first use 'get' to retrieve its full configuration\\, then 'update' with all required fields plus your changes."`
-	RuleUID                     string            `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get'\\, 'versions'\\, 'update'\\, 'delete'; optional for 'create')"`
-	DatasourceUID               *string           `json:"datasource_uid,omitempty" jsonschema:"description=Datasource UID for list or explicit managed_by=datasource creation. For creation omit to select the sole compatible datasource. Ambiguity returns candidates for selection."`
+	Operation                   string            `json:"operation" jsonschema:"required,enum=create,enum=update,enum=delete,description=The operation to perform: 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, use 'update' with the rule's full current configuration plus your changes."`
+	RuleUID                     string            `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'update' and 'delete'; optional for 'create')"`
+	DatasourceUID               *string           `json:"datasource_uid,omitempty" jsonschema:"description=Datasource UID for managed_by=datasource creation. Omit to select the sole compatible datasource. Ambiguity returns candidates for selection."`
 	Title                       string            `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create'\\, 'update')"`
 	RuleGroup                   string            `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
-	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For Grafana-managed 'create'/'update': required destination folder."`
+	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. Required destination folder for Grafana-managed 'create'/'update'."`
 	Condition                   string            `json:"condition,omitempty" jsonschema:"description=Grafana-managed only. The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
 	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Grafana-managed only. Array of alert query objects (required for 'create'/'update'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
 	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=Grafana-managed only. State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
@@ -662,24 +661,11 @@ type ManageRulesReadWriteParams struct {
 	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
 }
 
-func (p ManageRulesReadWriteParams) validate() error {
+func (p ManageRulesWriteParams) validate() error {
 	if err := p.validateCreationTarget(); err != nil {
 		return err
 	}
 	switch p.Operation {
-	case "list":
-		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
-		return err
-	case "get":
-		if p.RuleUID == "" {
-			return fmt.Errorf("rule_uid is required for 'get' operation")
-		}
-		return nil
-	case "versions":
-		if p.RuleUID == "" {
-			return fmt.Errorf("rule_uid is required for 'versions' operation")
-		}
-		return nil
 	case "create":
 		if p.ManagedBy == "datasource" {
 			return p.validateDatasourceRule()
@@ -701,7 +687,7 @@ func (p ManageRulesReadWriteParams) validate() error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown operation %q, must be one of: list, get, versions, create, update, delete", p.Operation)
+		return fmt.Errorf("unknown operation %q, must be one of: create, update, delete", p.Operation)
 	}
 }
 
@@ -737,7 +723,7 @@ func unmarshalDataToAlertQueries(data []map[string]any) ([]*AlertQuery, error) {
 	return queries, nil
 }
 
-func (p ManageRulesReadWriteParams) toCreateParams() (CreateAlertRuleParams, error) {
+func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) {
 	data, err := unmarshalDataToAlertQueries(p.Data)
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid data: %w", err)
@@ -775,7 +761,7 @@ func (p ManageRulesReadWriteParams) toCreateParams() (CreateAlertRuleParams, err
 	return params, nil
 }
 
-func (p ManageRulesReadWriteParams) toUpdateParams() (UpdateAlertRuleParams, error) {
+func (p ManageRulesWriteParams) toUpdateParams() (UpdateAlertRuleParams, error) {
 	data, err := unmarshalDataToAlertQueries(p.Data)
 	if err != nil {
 		return UpdateAlertRuleParams{}, fmt.Errorf("invalid data: %w", err)
@@ -808,8 +794,4 @@ func (p ManageRulesReadWriteParams) toUpdateParams() (UpdateAlertRuleParams, err
 		Record:                      rec,
 		MissingSeriesEvalsToResolve: p.MissingSeriesEvalsToResolve,
 	}, nil
-}
-
-func (p ManageRulesReadWriteParams) toGetRulesOpts() (*GetRulesOpts, error) {
-	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 }

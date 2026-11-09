@@ -255,7 +255,8 @@ var CreateSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(false),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// external=true publishes the snapshot to an external snapshot server.
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 	mcpgrafana.RequiresPermissions("snapshots:create", "dashboards:read"),
 )
 

@@ -36,7 +36,7 @@ func TestExternalAlertingIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("rules", func(t *testing.T) {
-		args := ManageRulesReadWriteParams{
+		args := ManageRulesWriteParams{
 			Operation: "create", ManagedBy: "datasource", DatasourceUID: &rulerUID,
 			Title: "FirstAlert", Namespace: "mcp-test-" + uuid.NewString(), RuleGroup: "test/group",
 			Expression: "vector(0) > 1", For: "5m", EvaluationInterval: "30s",
@@ -49,11 +49,11 @@ func TestExternalAlertingIntegration(t *testing.T) {
 			require.NoError(t, err)
 			require.Contains(t, []int{200, 202, 204}, status)
 		})
-		_, err := manageRulesReadWrite(ctx, args)
+		_, err := manageRulesWrite(ctx, args)
 		require.NoError(t, err)
 		args.Title = "SecondAlert"
 		args.EvaluationInterval = ""
-		_, err = manageRulesReadWrite(ctx, args)
+		_, err = manageRulesWrite(ctx, args)
 		require.NoError(t, err)
 		query.Set("group", args.RuleGroup)
 		body, status, err := client.externalAlertingRequest(ctx, http.MethodGet, path+"/QUERY_GROUP", query, nil)
@@ -70,7 +70,7 @@ func TestExternalAlertingIntegration(t *testing.T) {
 		require.Len(t, group.Rules, 2)
 		require.Equal(t, "FirstAlert", group.Rules[0].Alert)
 		require.Equal(t, "SecondAlert", group.Rules[1].Alert)
-		_, err = manageRulesReadWrite(ctx, args)
+		_, err = manageRulesWrite(ctx, args)
 		require.ErrorContains(t, err, "already exists")
 	})
 

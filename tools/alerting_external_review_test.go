@@ -21,14 +21,14 @@ func TestNonCreateRuleUIDCompatibility(t *testing.T) {
 	uid := "prom"
 	for _, operation := range []string{"list", "get", "versions", "update", "delete"} {
 		for _, managedBy := range []string{"", "grafana"} {
-			args := ManageRulesReadWriteParams{Operation: operation, ManagedBy: managedBy, DatasourceUID: &uid}
+			args := ManageRulesWriteParams{Operation: operation, ManagedBy: managedBy, DatasourceUID: &uid}
 			require.NoError(t, args.validateCreationTarget(), "%s/%s", operation, managedBy)
 			assert.Equal(t, "prom", *args.DatasourceUID, "list must retain its selector")
 		}
-		args := ManageRulesReadWriteParams{Operation: operation, ManagedBy: "datasource", DatasourceUID: &uid}
+		args := ManageRulesWriteParams{Operation: operation, ManagedBy: "datasource", DatasourceUID: &uid}
 		require.ErrorContains(t, args.validateCreationTarget(), "supports only create")
 	}
-	require.ErrorContains(t, (ManageRulesReadWriteParams{Operation: "create", DatasourceUID: &uid}).validateCreationTarget(), "requires explicit")
+	require.ErrorContains(t, (ManageRulesWriteParams{Operation: "create", DatasourceUID: &uid}).validateCreationTarget(), "requires explicit")
 }
 
 func TestExplicitRulerWithoutPrometheusType(t *testing.T) {
@@ -72,7 +72,7 @@ func TestExplicitRulerWithoutPrometheusType(t *testing.T) {
 			args := externalRuleArgs()
 			uid := "mimir"
 			args.DatasourceUID = &uid
-			_, err := manageRulesReadWrite(mockDatasourcesCtx(server), args)
+			_, err := manageRulesWrite(mockDatasourcesCtx(server), args)
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				assert.NotContains(t, err.Error(), "secret")
@@ -116,7 +116,7 @@ func TestExistingRulerDefaultInterval(t *testing.T) {
 			defer server.Close()
 			args := externalRuleArgs()
 			args.EvaluationInterval = tc.requested
-			_, err := manageRulesReadWrite(mockDatasourcesCtx(server), args)
+			_, err := manageRulesWrite(mockDatasourcesCtx(server), args)
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				assert.Zero(t, posts.Load())
