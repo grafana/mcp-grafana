@@ -1230,6 +1230,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	if err := validateGrafanaURLOverridePolicy(transport, gc); err != nil {
 		return err
 	}
+	// Cobo: OAuth JWT caller auth replaces the static --server-auth-token.
+	if err := checkCoboAuthPolicy(callerToken); err != nil {
+		return err
+	}
 
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
@@ -1319,7 +1323,11 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	}()
 
 	if transport == "sse" || transport == "streamable-http" {
-		checkCallerAuthPolicy(transport, addr, callerToken, slog.Default())
+		if coboAuthEnabled() { // Cobo
+			slog.Info("Cobo OAuth JWT caller authentication enabled", "transport", transport)
+		} else {
+			checkCallerAuthPolicy(transport, addr, callerToken, slog.Default())
+		}
 		mcpgrafana.WarnIfOrgIDUnset(slog.Default())
 		if gc.AllowGrafanaURLOverride && len(gc.AllowedGrafanaURLs) == 0 {
 			slog.Error("SECURITY: unrestricted Grafana URL overrides are enabled. Every MCP caller can make requests to arbitrary HTTP(S) targets reachable by this server, including internal services. Use an authenticating proxy that authorizes targets and supplies matching tokens, and restrict outbound network access. An allowlist alone is not a substitute for these controls.")
@@ -1387,7 +1395,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 
 		httpSrv := &http.Server{
 			Addr:    addr,
-			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(withCoboAuth(mux, ssePath, true)), // Cobo: OAuth PRM + JWT auth
 			// Derive HTTP request contexts from the cancellable ctx so that
 			// SIGTERM cancels long-lived SSE streams and Shutdown completes
 			// within its deadline instead of blocking on open connections.
@@ -1424,7 +1432,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 
 		httpSrv := &http.Server{
 			Addr:        addr,
-			Handler:     mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+			Handler:     mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(withCoboAuth(mux, mcpEndpoint, false)), // Cobo: OAuth PRM + JWT auth
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
@@ -1437,6 +1445,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 }
 
 func main() {
+	// Cobo: load deployment .env (cwd and next to the binary) without overriding real env.
+	if err := loadDotEnvFiles(defaultDotEnvPaths()...); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load .env: %v\n", err)
+		os.Exit(2)
+	}
+
 	var transport string
 	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio, sse or streamable-http)")
 	flag.StringVar(
@@ -1474,6 +1488,7 @@ func main() {
 	var slowRequestLogLevelStr string
 	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
 	flag.Parse()
+	applyCoboHTTPSecurityEnv(&hsc) // Cobo: --allowed-hosts/--allowed-origins from .env
 
 	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)
 	switch action {

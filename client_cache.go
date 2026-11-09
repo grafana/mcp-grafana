@@ -34,6 +34,7 @@ type clientCacheKey struct {
 	password         string
 	orgID            int64
 	forwardedHeaders string // sorted, serialized forwarded headers for cache differentiation
+	coboEmail        string // authenticated Cobo caller; clients mint per-user Grafana JWTs
 }
 
 // cacheKeyFromRequest builds a clientCacheKey from request-derived credentials and forwarded headers.
@@ -50,6 +51,9 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 	if req != nil {
 		if overrideURL, ok := req.Context().Value(grafanaOverrideKey{}).(string); ok {
 			key.overrideURL = overrideURL
+		}
+		if identity, ok := CoboIdentityFromContext(req.Context()); ok {
+			key.coboEmail = identity.Email
 		}
 		headers := forwardedHeadersFromRequest(req)
 		if len(headers) > 0 {
@@ -75,7 +79,7 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 func (k clientCacheKey) String() string {
 	hasKey := k.apiKey != ""
 	hasBasic := k.username != ""
-	return fmt.Sprintf("url=%s override=%t apiKey=%t basicAuth=%t orgID=%d forwardedHeaders=%t", k.url, k.overrideURL != "", hasKey, hasBasic, k.orgID, k.forwardedHeaders != "")
+	return fmt.Sprintf("url=%s override=%t apiKey=%t basicAuth=%t orgID=%d coboEmail=%t forwardedHeaders=%t", k.url, k.overrideURL != "", hasKey, hasBasic, k.orgID, k.coboEmail != "", k.forwardedHeaders != "")
 }
 
 // singleflightKey includes credentials that String intentionally redacts.

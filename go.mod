@@ -8,6 +8,7 @@ require (
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/go-openapi/runtime v0.33.4
 	github.com/go-openapi/strfmt v0.27.4
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/amixr-api-go-client v0.0.33
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e
@@ -132,7 +133,6 @@ require (
 	github.com/goccy/go-json v0.12.0 // indirect
 	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/gnostic v0.7.1 // indirect

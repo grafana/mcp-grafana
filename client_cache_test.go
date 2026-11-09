@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sync"
 	"testing"
@@ -153,6 +154,20 @@ func TestCacheKeyFromRequest(t *testing.T) {
 
 	assert.Equal(t, "admin", key3.username)
 	assert.Equal(t, "pass", key3.password)
+}
+
+func TestCacheKeyFromRequestIncludesCoboIdentity(t *testing.T) {
+	req1 := httptest.NewRequest("GET", "http://example.com", nil)
+	req1 = req1.WithContext(WithCoboIdentity(context.Background(), CoboIdentity{Email: "alice@example.com"}))
+	req2 := httptest.NewRequest("GET", "http://example.com", nil)
+	req2 = req2.WithContext(WithCoboIdentity(context.Background(), CoboIdentity{Email: "bob@example.com"}))
+
+	key1 := cacheKeyFromRequest("http://localhost:3000", "", nil, 1, req1)
+	key2 := cacheKeyFromRequest("http://localhost:3000", "", nil, 1, req2)
+
+	assert.NotEqual(t, key1, key2)
+	assert.Equal(t, "alice@example.com", key1.coboEmail)
+	assert.Equal(t, "bob@example.com", key2.coboEmail)
 }
 
 func TestClientCache_Close(t *testing.T) {

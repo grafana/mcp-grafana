@@ -39,6 +39,11 @@ enabled_tools = "search,datasource,incident,prometheus,loki,elasticsearch,influx
 description = "Build the binary"
 run = "go build -o dist/mcp-grafana ./cmd/mcp-grafana"
 
+[tasks.build-linux]
+description = "Build the linux/amd64 binary committed for fabistrano deployment (Cobo)"
+env = { GOOS = "linux", GOARCH = "amd64" }
+run = "go build -o mcp-grafana ./cmd/mcp-grafana"
+
 [tasks.build-image]
 description = "Build the Docker image"
 run = "docker build -t mcp-grafana:latest ."
