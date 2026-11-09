@@ -85,8 +85,8 @@ func TestElasticsearchBackendRoutesByPluginVersion(t *testing.T) {
 			assert.Equal(t, []string{"settings", tc.lucene, tc.dsl}, *routes)
 
 			// The version is cached per Grafana instance, including failed
-			// lookups, which expire sooner. An empty version (Grafana 8) is a
-			// successful lookup.
+			// lookups, which expire sooner. An empty version is a successful
+			// lookup that selects proxy mode.
 			v, ok := esPluginVersions.Load(datasource.ScopedKey(ctx, "es-plugin-version", ""))
 			require.True(t, ok)
 			ttl := time.Until(v.(esPluginVersion).expires)

@@ -171,9 +171,12 @@ var rbacFixtures = map[string]rbacFixture{
 		},
 	},
 
-	"list_datasources":         {args: map[string]any{}, filtered: true},
-	"get_datasource":           {args: map[string]any{"uid": rbacPrometheusUID}},
-	"check_datasources_health": {args: map[string]any{"uids": []string{rbacPrometheusUID}}},
+	"list_datasources": {args: map[string]any{}, filtered: true},
+	"get_datasource":   {args: map[string]any{"uid": rbacPrometheusUID}},
+	"check_datasources_health": {
+		args:     map[string]any{"uids": []string{rbacPrometheusUID}},
+		filtered: true,
+	},
 	"create_datasource": {
 		setup: func(t *testing.T, api rbacAPI) map[string]any {
 			name := rbacUnique("mcp-rbac-test")

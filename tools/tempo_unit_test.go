@@ -565,6 +565,30 @@ func TestTempoGetTrace(t *testing.T) {
 }
 
 func TestTempoTraceFromFrames(t *testing.T) {
+	t.Run("Grafana 9 string-backed JSON fields", func(t *testing.T) {
+		logs := `[{"timestamp":1,"fields":[{"key":"message","value":"found resources"},` +
+			`{"key":"count","value":"1"}]}]`
+		frame := data.NewFrame("Trace",
+			data.NewField("spanID", nil, []string{"0102030405060708"}),
+			data.NewField("operationName", nil, []string{"GET"}),
+			data.NewField("serviceName", nil, []string{"hggateway"}),
+			data.NewField("serviceTags", nil, []string{`[{"key":"k8s.namespace.name","value":"hosted-grafana"}]`}),
+			data.NewField("tags", nil, []string{`[{"key":"http.request.method","value":"GET"}]`}),
+			data.NewField("logs", nil, []string{logs}),
+			data.NewField("references", nil, []string{"[]"}),
+		)
+
+		trace, _, err := tempoTraceFromFrames(testTraceID, data.Frames{frame})
+		require.NoError(t, err)
+		require.Len(t, trace.Services, 1)
+		assert.Equal(t, "hosted-grafana", trace.Services[0].Resource["k8s.namespace.name"])
+		require.Len(t, trace.Services[0].Spans, 1)
+		span := trace.Services[0].Spans[0]
+		assert.Equal(t, "GET", span.Attributes["http.request.method"])
+		require.Len(t, span.Events, 1)
+		assert.Equal(t, "found resources", span.Events[0].Name)
+		assert.Equal(t, map[string]any{"count": "1"}, span.Events[0].Attributes)
+	})
 	t.Run("partial traces are returned without the viewer", func(t *testing.T) {
 		frame := testTraceFrame(testTraceData("stack"))
 		frame.Meta.Custom = map[string]any{"partial": true, "message": "trace exceeded max bytes"}

@@ -171,8 +171,8 @@ func elasticsearchPluginVersion(ctx context.Context, client *http.Client, grafan
 }
 
 // fetchElasticsearchPluginVersion reads the plugin version from Grafana.
-// ok is false when the settings can't be read; a version that doesn't parse,
-// such as the empty one Grafana 8 reports, is a successful zero result.
+// ok is false when the settings can't be read; an empty or unparseable version
+// is a successful zero result that selects proxy mode.
 func fetchElasticsearchPluginVersion(ctx context.Context, client *http.Client, grafanaURL string) (major, minor int, ok bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaURL+"/api/plugins/"+elasticsearchDatasourceType+"/settings", nil)
 	if err != nil {

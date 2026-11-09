@@ -7,7 +7,7 @@ package tools
 
 var (
 	// datasourceQuery covers tools that query a datasource through Grafana.
-	datasourceQuery = []string{"datasources:read", "datasources:query"}
+	datasourceQuery = []string{"datasources:query"}
 
 	// fetchDashboard reads through dashboard.grafana.app when Grafana serves
 	// it, and the legacy API otherwise.
