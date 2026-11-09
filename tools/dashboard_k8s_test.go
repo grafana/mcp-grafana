@@ -203,6 +203,71 @@ func TestUpdateDashboardV2_SetsFolderAndMessageAnnotations(t *testing.T) {
 	assert.Equal(t, "tweak title", ann["grafana.app/message"])
 }
 
+// TestUpdateDashboardV2_FillsListDefaults verifies the patch path fills the v2
+// list fields before writing back: a panel added by a patch without
+// transformations gets [], and a top-level list already stored as null is
+// repaired, so a patched dashboard never stores the nulls of
+// grafana/grafana#136859.
+func TestUpdateDashboardV2_FillsListDefaults(t *testing.T) {
+	var putBody map[string]interface{}
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"metadata": map[string]interface{}{"name": "u1", "generation": 2},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	// The stored spec as fetched: links already null, and a panel appended by a
+	// patch whose data block has no transformations.
+	spec := map[string]interface{}{
+		"title": "t",
+		"links": nil,
+		"tags":  []interface{}{"keep"},
+		"elements": map[string]interface{}{
+			"p1": map[string]interface{}{"kind": "Panel", "spec": map[string]interface{}{
+				"id":    float64(1),
+				"title": "Up",
+				"data":  map[string]interface{}{"kind": "QueryGroup", "spec": map[string]interface{}{"queries": []interface{}{}}},
+			}},
+		},
+	}
+	res := &dashboardResult{
+		Spec:       spec,
+		APIVersion: "v2beta1",
+		IsV2:       true,
+		Object: map[string]interface{}{
+			"apiVersion": "dashboard.grafana.app/v2beta1",
+			"kind":       "Dashboard",
+			"metadata":   map[string]interface{}{"name": "u1", "resourceVersion": "5"},
+			"spec":       spec,
+		},
+	}
+
+	_, err := updateDashboardV2(ctx, "u1", res, UpdateDashboardParams{})
+	require.NoError(t, err)
+
+	saved, ok := putBody["spec"].(map[string]interface{})
+	require.True(t, ok, "spec should be written")
+	assert.Equal(t, []interface{}{}, saved["links"], "a null top-level list is written as []")
+	assert.Equal(t, []interface{}{}, saved["annotations"])
+	assert.Equal(t, []interface{}{}, saved["variables"])
+	assert.Equal(t, []interface{}{"keep"}, saved["tags"], "a present list is kept")
+	panel := saved["elements"].(map[string]interface{})["p1"].(map[string]interface{})["spec"].(map[string]interface{})
+	assert.Equal(t, []interface{}{}, panel["links"])
+	data := panel["data"].(map[string]interface{})["spec"].(map[string]interface{})
+	assert.Equal(t, []interface{}{}, data["transformations"], "an added panel's missing transformations are written as []")
+}
+
 func TestPostDashboardOKBodyFromK8s_SetsTitle(t *testing.T) {
 	body := postDashboardOKBodyFromK8s(map[string]interface{}{
 		"metadata": map[string]interface{}{"name": "u1", "generation": float64(3)},

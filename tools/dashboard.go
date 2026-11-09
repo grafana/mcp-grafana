@@ -511,8 +511,11 @@ func updateDashboardV2(ctx context.Context, uid string, res *dashboardResult, ar
 		return nil, fmt.Errorf("missing Kubernetes object for v2 dashboard update")
 	}
 
-	// res.Spec aliases res.Object["spec"], so the applied patches are already
-	// reflected; set it explicitly to be safe against future refactors.
+	// Fill the list fields on the patch path too: a patch that adds a panel
+	// without transformations or links would otherwise store nulls, and a
+	// dashboard already stored with nulls is repaired by the next patch.
+	// fillV2ListDefaults returns a copy, so the object's spec is set from it.
+	res.Spec = fillV2ListDefaults(res.Spec)
 	res.Object["spec"] = res.Spec
 
 	// Honor folderUid (move) and message (version-history note) via annotations.
