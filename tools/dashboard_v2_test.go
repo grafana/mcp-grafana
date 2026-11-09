@@ -281,9 +281,13 @@ func TestFillV2ListDefaults(t *testing.T) {
 	}
 	out := fillV2ListDefaults(in)
 
-	for _, k := range []string{"links", "annotations", "tags", "variables"} {
+	for _, k := range []string{"links", "tags", "variables"} {
 		assert.Equal(t, []interface{}{}, out[k], k)
 	}
+	// annotations is left alone: filling it exposes an omitted cursorSync to
+	// Grafana's validation (see fillV2ListDefaults).
+	assert.NotContains(t, out, "annotations")
+	assert.NotContains(t, out, "cursorSync")
 	p1 := out["elements"].(map[string]interface{})["p1"].(map[string]interface{})["spec"].(map[string]interface{})
 	assert.Equal(t, []interface{}{}, p1["links"])
 	assert.Equal(t, []interface{}{}, p1["data"].(map[string]interface{})["spec"].(map[string]interface{})["transformations"])
@@ -307,4 +311,7 @@ func TestFillV2ListDefaults(t *testing.T) {
 
 	// A spec without elements is only filled at the top level.
 	assert.NotContains(t, fillV2ListDefaults(map[string]interface{}{"title": "x"}), "elements")
+
+	// A nil spec is returned as is rather than panicking on the clone.
+	assert.Nil(t, fillV2ListDefaults(nil))
 }

@@ -259,7 +259,7 @@ func TestUpdateDashboardV2_FillsListDefaults(t *testing.T) {
 	saved, ok := putBody["spec"].(map[string]interface{})
 	require.True(t, ok, "spec should be written")
 	assert.Equal(t, []interface{}{}, saved["links"], "a null top-level list is written as []")
-	assert.Equal(t, []interface{}{}, saved["annotations"])
+	assert.NotContains(t, saved, "annotations", "annotations is left alone (see fillV2ListDefaults)")
 	assert.Equal(t, []interface{}{}, saved["variables"])
 	assert.Equal(t, []interface{}{"keep"}, saved["tags"], "a present list is kept")
 	panel := saved["elements"].(map[string]interface{})["p1"].(map[string]interface{})["spec"].(map[string]interface{})
