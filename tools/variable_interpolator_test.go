@@ -99,6 +99,34 @@ func TestFormatForDatasource(t *testing.T) {
 	assert.Equal(t, "prometheus", normalizeDatasourceType("stackdriver"))
 }
 
+// Grafana escapes an unformatted single-value dashboard variable too: SQL
+// doubles single quotes, Prometheus escapes backslashes and single quotes, and
+// Loki keeps the value raw. Backslashes are spelled BS.
+func TestVariableInterpolatorSingleValueEscape(t *testing.T) {
+	bs := func(s string) string { return strings.ReplaceAll(s, "BS", `\`) }
+	tests := []struct{ name, datasourceType, query, value, want string }{
+		{"PostgreSQL", "grafana-postgresql-datasource", "WHERE name = '$name'", "O'Reilly", "WHERE name = 'O''Reilly'"},
+		{"MySQL", "mysql", "WHERE name = '${name}'", "it's", "WHERE name = 'it''s'"},
+		{"MSSQL", "mssql", "WHERE name = '[[name]]'", "a'b'c", "WHERE name = 'a''b''c'"},
+		{"Prometheus quote and backslash", "prometheus", `up{path="$name"}`, "C:BSdir's", `up{path="C:BSBSdirBSBS's"}`},
+		{"Prometheus regex metacharacters", "prometheus", `up{job="$name"}`, "api.v1", `up{job="api.v1"}`},
+		{"Loki", "loki", `{name="$name"}`, "it'sBS", `{name="it'sBS"}`},
+		{"generic", "influxdb", `WHERE name = '$name'`, "O'Reilly", `WHERE name = 'O'Reilly'`},
+		{"explicit format", "mysql", "WHERE name = '${name:raw}'", "O'Reilly", "WHERE name = 'O'Reilly'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := templateVariableValues{"name": {bs(tt.value)}}
+			dashboard := newVariableInterpolator(values, map[string]bool{})
+			assert.Equal(t, bs(tt.want), dashboard.interpolateQuery(tt.query, tt.datasourceType))
+		})
+	}
+
+	// query_sql has no dashboard variables, so its values are not escaped.
+	querySQL := newVariableInterpolator(templateVariableValues{"name": {"O'Reilly"}}, nil)
+	assert.Equal(t, "WHERE name = 'O'Reilly'", querySQL.interpolateQuery("WHERE name = '$name'", "mysql"))
+}
+
 // Fields other than the query expression keep generic formatting, so a
 // multi-value variable gives its first value there.
 func TestVariableInterpolatorTarget(t *testing.T) {

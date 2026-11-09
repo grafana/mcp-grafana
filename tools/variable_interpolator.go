@@ -189,6 +189,11 @@ func (v *variableInterpolator) formatReference(s string, m []int, f datasourceFo
 	if f.multi != nil && v.multi[name] && len(values) > 0 {
 		return f.multi(values)
 	}
+	// Only dashboard variables are escaped; query_sql's variables (multi is
+	// nil) are inserted as given.
+	if f.single != nil && v.multi != nil && !v.multi[name] && len(values) > 0 {
+		return f.single(values[0])
+	}
 	return firstTemplateVariableValue(values)
 }
 
@@ -203,13 +208,17 @@ type datasourceFormat struct {
 	// variable, as Grafana's interpolateQueryExpr (Prometheus, Loki) and
 	// interpolateVariable (SQL) do. nil keeps the first value.
 	multi func(values []string) string
+	// single escapes an unformatted reference to any other dashboard
+	// variable, as the same functions do. nil keeps the value raw.
+	single func(value string) string
 }
 
 var genericFormat = datasourceFormat{explicit: formatTemplateVariable}
 
 // formatForDatasource returns the formatting for a datasource type, matched
 // case-insensitively. BigQuery has its own sqlstring quoting; Prometheus, Loki
-// and the SQL datasources format multi-value variables.
+// and the SQL datasources format multi-value variables, and Prometheus and the
+// SQL datasources escape single-value ones.
 func formatForDatasource(datasourceType string) datasourceFormat {
 	lower := strings.ToLower(datasourceType)
 	f := genericFormat
@@ -219,12 +228,21 @@ func formatForDatasource(datasourceType string) datasourceFormat {
 	switch lower {
 	case "prometheus":
 		f.multi = func(values []string) string { return regexAlternation(values, true) }
+		f.single = prometheusRegularEscape
 	case "loki":
 		f.multi = func(values []string) string { return regexAlternation(values, false) }
 	case "postgres", "grafana-postgresql-datasource", "mysql", "mssql":
 		f.multi = formatSQLLiteralList
+		f.single = func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	}
 	return f
+}
+
+// prometheusRegularEscape is Grafana's classic escaping of a single-value
+// variable in PromQL: backslashes are doubled and single quotes escaped.
+func prometheusRegularEscape(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return strings.ReplaceAll(value, "'", `\\'`)
 }
 
 var regexMetacharacters = regexp.MustCompile(`[$^*{}\[\]+?.()|]`)
