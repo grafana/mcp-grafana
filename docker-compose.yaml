@@ -30,7 +30,7 @@ services:
   # therefore falls back to the legacy REST API against this instance, letting
   # integration tests exercise that path.
   grafana-legacy:
-    image: grafana/grafana:11.6.16@sha256:d67af92050b8d93b393dc741864752a69c9da1ffa39c1bb9af49ad5d9e47d2c3
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_LEVEL: debug
@@ -49,7 +49,7 @@ services:
   # the frontend-settings datasource fallback and the numeric-id proxy routing
   # (tools/legacy_grafana_integration_test.go).
   grafana-legacy-8:
-    image: grafana/grafana:8.5.27@sha256:b43abed8a2b8c5a4055c3729d77ae11c9646c4b9feefb5c136b7c67dcdad21c0
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_LEVEL: debug
