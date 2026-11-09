@@ -544,8 +544,11 @@ func updateDashboardV2(ctx context.Context, uid string, res *dashboardResult, ar
 		return nil, fmt.Errorf("missing Kubernetes object for v2 dashboard update")
 	}
 
-	// res.Spec aliases res.Object["spec"], so the applied patches are already
-	// reflected; set it explicitly to be safe against future refactors.
+	// Fill the list fields on the patch path too: a patch that adds a panel
+	// without transformations or links would otherwise store nulls, and a
+	// dashboard already stored with nulls is repaired by the next patch.
+	// fillV2ListDefaults returns a copy, so the object's spec is set from it.
+	res.Spec = fillV2ListDefaults(res.Spec)
 	res.Object["spec"] = res.Spec
 
 	// Honor folderUid (move) and message (version-history note) via annotations.
@@ -745,6 +748,66 @@ func isV2DashboardJSON(dashboard map[string]interface{}) bool {
 	return hasElements || hasLayout
 }
 
+// fillV2ListDefaults returns a copy of a v2 dashboard spec in which the list
+// fields Grafana stores as null when they are absent hold an empty list
+// instead. The dashboard loader does not survive two of those nulls
+// (grafana/grafana#136859): a panel's `transformations` ("Cannot read properties
+// of null (reading 'map')") and the dashboard's `links` ("not iterable"), so a
+// body that leaves them out produces a dashboard nobody can open. The other
+// lists are filled for the same reason the generated constructors initialise
+// them. Maps on the path to a filled field are cloned, so the caller's input is
+// left untouched; a list that is present, even empty, is kept as given.
+//
+// annotations is deliberately left alone. Grafana validates the spec after
+// decoding it into its Go types, where an omitted cursorSync becomes "" and
+// fails the enum; a null annotations list hides that error, so filling it
+// turns every sparse body, and every patch of a dashboard stored that way,
+// into a 422 unless cursorSync is set as well.
+func fillV2ListDefaults(spec map[string]interface{}) map[string]interface{} {
+	if spec == nil {
+		return nil
+	}
+	fill := func(m map[string]interface{}, keys ...string) {
+		for _, k := range keys {
+			if v, ok := m[k]; !ok || v == nil {
+				m[k] = []interface{}{}
+			}
+		}
+	}
+	out := maps.Clone(spec)
+	fill(out, "links", "tags", "variables")
+	elements, ok := out["elements"].(map[string]interface{})
+	if !ok {
+		return out
+	}
+	filled := make(map[string]interface{}, len(elements))
+	for name, el := range elements {
+		elMap, ok := el.(map[string]interface{})
+		if !ok || elMap["kind"] != "Panel" {
+			filled[name] = el
+			continue
+		}
+		elMap = maps.Clone(elMap)
+		if pspec, ok := elMap["spec"].(map[string]interface{}); ok {
+			pspec = maps.Clone(pspec)
+			fill(pspec, "links")
+			if data, ok := pspec["data"].(map[string]interface{}); ok {
+				data = maps.Clone(data)
+				if dspec, ok := data["spec"].(map[string]interface{}); ok {
+					dspec = maps.Clone(dspec)
+					fill(dspec, "transformations")
+					data["spec"] = dspec
+				}
+				pspec["data"] = data
+			}
+			elMap["spec"] = pspec
+		}
+		filled[name] = elMap
+	}
+	out["elements"] = filled
+	return out
+}
+
 // createOrUpdateDashboardV2 creates or replaces a dashboard from a full v2 spec
 // via the dashboard.grafana.app Kubernetes API. When the spec carries a uid that
 // already exists, it performs an in-place update (preserving resourceVersion);
@@ -766,6 +829,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		}
 	}
 	delete(spec, "uid")
+	spec = fillV2ListDefaults(spec)
 
 	ns, err := mcpgrafana.GrafanaNamespace(ctx)
 	if err != nil {
@@ -953,7 +1017,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Minimal v2 body: {\"title\":\"T\",\"timeSettings\":{\"from\":\"now-6h\",\"to\":\"now\"},\"variables\":[],\"elements\":{\"p1\":{\"kind\":\"Panel\",\"spec\":{\"id\":1,\"title\":\"Up\",\"vizConfig\":{\"kind\":\"VizConfig\",\"group\":\"timeseries\",\"spec\":{}},\"data\":{\"kind\":\"QueryGroup\",\"spec\":{\"queries\":[{\"kind\":\"PanelQuery\",\"spec\":{\"refId\":\"A\",\"query\":{\"kind\":\"DataQuery\",\"group\":\"prometheus\",\"datasource\":{\"name\":\"<ds uid>\"},\"spec\":{\"expr\":\"up\"}}}}]}}}}},\"layout\":{\"kind\":\"GridLayout\",\"spec\":{\"items\":[{\"kind\":\"GridLayoutItem\",\"spec\":{\"x\":0,\"y\":0,\"width\":24,\"height\":8,\"element\":{\"kind\":\"ElementReference\",\"name\":\"p1\"}}}]}}}. For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
+	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: {\"title\":\"T\",\"timeSettings\":{\"from\":\"now-6h\",\"to\":\"now\"},\"variables\":[],\"links\":[],\"elements\":{\"p1\":{\"kind\":\"Panel\",\"spec\":{\"id\":1,\"title\":\"Up\",\"vizConfig\":{\"kind\":\"VizConfig\",\"group\":\"timeseries\",\"spec\":{}},\"data\":{\"kind\":\"QueryGroup\",\"spec\":{\"queries\":[{\"kind\":\"PanelQuery\",\"spec\":{\"refId\":\"A\",\"query\":{\"kind\":\"DataQuery\",\"group\":\"prometheus\",\"datasource\":{\"name\":\"<ds uid>\"},\"spec\":{\"expr\":\"up\"}}}}],\"transformations\":[]}}}}},\"layout\":{\"kind\":\"GridLayout\",\"spec\":{\"items\":[{\"kind\":\"GridLayoutItem\",\"spec\":{\"x\":0,\"y\":0,\"width\":24,\"height\":8,\"element\":{\"kind\":\"ElementReference\",\"name\":\"p1\"}}}]}}}. For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
 	updateDashboard,
 	mcpgrafana.WithTitleAnnotation("Create or update dashboard"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
