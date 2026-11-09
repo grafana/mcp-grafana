@@ -482,10 +482,10 @@ func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) (string, e
 	if args.TimeRange != nil {
 		// Normalize RFC 3339 to epoch ms for Grafana's Scenes URL parser.
 		if args.TimeRange.From != "" {
-			extra.Set("from", toGrafanaTimeParam(args.TimeRange.From))
+			extra.Set("from", toGrafanaTimeParam(args.TimeRange.From, false))
 		}
 		if args.TimeRange.To != "" {
-			extra.Set("to", toGrafanaTimeParam(args.TimeRange.To))
+			extra.Set("to", toGrafanaTimeParam(args.TimeRange.To, true))
 		}
 	}
 	for key, values := range args.Variables {
