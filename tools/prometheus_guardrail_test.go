@@ -183,8 +183,10 @@ func TestAssessPromQueryUnparseable(t *testing.T) {
 	})
 
 	t.Run("duration expression fails open rather than reading as no window", func(t *testing.T) {
-		d := assessPromQuery(`rate(x[30d + 30d])`, "instant", time.Time{}, promGuardEnd, 0, policy)
-		assert.Equal(t, promGuardUnknown, d.Verdict)
+		for _, expr := range []string{`rate(x[30d + 30d])`, `max_over_time(x[30d + 30d:1m])`} {
+			d := assessPromQuery(expr, "instant", time.Time{}, promGuardEnd, 0, policy)
+			assert.Equal(t, promGuardUnknown, d.Verdict, expr)
+		}
 	})
 
 	t.Run("outer window over the range cap still blocks", func(t *testing.T) {
