@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
@@ -213,8 +214,12 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 		"expr":       p.Query,
 		"queryType":  queryType,
 		"direction":  p.Direction,
+	}
+	// Grafana's Loki datasource rejects supportingQueryType values it does
+	// not know before 11.0; an unknown version counts as new.
+	if major, _, ok := parseMajorMinor(mcpgrafana.GrafanaVersion(ctx)); !ok || major >= 11 {
 		// Becomes X-Query-Tags: Source=mcp-grafana on the request to Loki.
-		"supportingQueryType": lokiQuerySource,
+		query["supportingQueryType"] = lokiQuerySource
 	}
 	if p.StepSeconds > 0 {
 		query["step"] = fmt.Sprintf("%ds", p.StepSeconds)
