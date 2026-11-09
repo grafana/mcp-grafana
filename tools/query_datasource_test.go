@@ -113,6 +113,7 @@ func TestQueryDatasourceRejectsBadArguments(t *testing.T) {
 		"bad maxPoints":   {`{"datasourceUid":"prom","queries":[{"refId":"A","maxDataPoints":0}]}`, "maxDataPoints"},
 		"reversed range":  {`{"datasourceUid":"prom","from":"now","to":"now-1h","queries":[{"refId":"A"}]}`, "before"},
 		"bad time":        {`{"datasourceUid":"prom","from":"yesterday-ish","queries":[{"refId":"A"}]}`, "from"},
+		"long title":      {`{"datasourceUid":"prom","title":"` + strings.Repeat("é", maxDSTitleChars+1) + `","queries":[{"refId":"A"}]}`, "title"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			queried := false
@@ -211,6 +212,41 @@ func TestQueryDatasourceTypeAndUnit(t *testing.T) {
 	body, err := json.Marshal(content)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), `"fieldConfig":{"defaults":{"unit":"reqps"}}`)
+}
+
+func TestQueryDatasourceTitle(t *testing.T) {
+	// tool.31: the title on the panel and on each alternative, with no change. A character is a code point.
+	title := "<b>" + strings.Repeat("é", maxDSTitleChars-7) + "</b>"
+	result, _, err := runQueryDatasource(t,
+		`{"datasourceUid":"prom","title":"`+title+`","queries":[{"refId":"A"}]}`, dsQueryResponse)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	content := result.StructuredContent.(*QueryDatasourceResult)
+	assert.Equal(t, title, content.Panel.Title)
+	require.NotEmpty(t, content.Alternatives)
+	for _, alternative := range content.Alternatives {
+		assert.Equal(t, title, alternative.Panel.Title)
+	}
+}
+
+func TestQueryDatasourceNoTitleHasNoTitle(t *testing.T) {
+	result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A"}]}`, dsQueryResponse)
+	require.NoError(t, err)
+	body, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), `"title"`)
+}
+
+func TestQueryDatasourceSchemaLimitsTitle(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			MinLength int `json:"minLength"`
+			MaxLength int `json:"maxLength"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(QueryDatasource.Tool.InputSchema.(json.RawMessage), &schema))
+	assert.Equal(t, 1, schema.Properties["title"].MinLength)
+	assert.Equal(t, maxDSTitleChars, schema.Properties["title"].MaxLength)
 }
 
 func TestQueryDatasourceNoUnitHasNoFieldConfig(t *testing.T) {
