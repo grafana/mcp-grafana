@@ -1692,3 +1692,12 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
 	assert.Equal(t, `sum(count_over_time({app="a"}[14m24s]))`, q["expr"])
 	assert.Equal(t, "864s", q["step"], "step must equal $__auto")
 }
+
+func TestSubstituteGrafanaMacrosPreservesLongerNames(t *testing.T) {
+	start := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	for _, name := range []string{"__interval_env", "__range_bucket", "__auto_mode", "__rate_interval_custom", "__interval_ms2", "__interval_ENV"} {
+		query := "$" + name + " ${" + name + "} $__interval"
+		assert.Equal(t, "$"+name+" ${"+name+"} 36s", substituteGrafanaMacros(query, start, end))
+	}
+}

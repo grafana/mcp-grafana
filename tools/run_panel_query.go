@@ -932,50 +932,30 @@ func autoInterval(start, end time.Time) time.Duration {
 	return d
 }
 
-// substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
-// used across datasource types (Prometheus, Loki, etc.)
+var grafanaTemporalMacroRE = regexp.MustCompile(`\$(?:\{__\w+\}|__\w+\b)`)
+
+// substituteGrafanaMacros expands only whole frontend temporal macro names.
 func substituteGrafanaMacros(query string, start, end time.Time) string {
 	duration := end.Sub(start)
-
-	// Substitute $__range_ms and $__range_s BEFORE $__range to avoid partial replacement
-	rangeSec := int64(duration.Seconds())
-	rangeMs := duration.Milliseconds()
-	query = strings.ReplaceAll(query, "${__range_ms}", fmt.Sprintf("%d", rangeMs))
-	query = strings.ReplaceAll(query, "$__range_ms", fmt.Sprintf("%d", rangeMs))
-	query = strings.ReplaceAll(query, "${__range_s}", fmt.Sprintf("%d", rangeSec))
-	query = strings.ReplaceAll(query, "$__range_s", fmt.Sprintf("%d", rangeSec))
-
-	// $__range - total time range as duration string
-	rangeStr := formatPrometheusDuration(duration)
-	query = strings.ReplaceAll(query, "${__range}", rangeStr)
-	query = strings.ReplaceAll(query, "$__range", rangeStr)
-
-	// Substitute $__rate_interval_ms BEFORE $__rate_interval to avoid partial replacement
-	query = strings.ReplaceAll(query, "${__rate_interval_ms}", "60000")
-	query = strings.ReplaceAll(query, "$__rate_interval_ms", "60000")
-
-	// $__rate_interval - default to "1m"
-	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
-	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
-
 	interval := macroInterval(start, end)
-
-	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
-	intervalMs := int64(interval / time.Millisecond)
-	query = strings.ReplaceAll(query, "${__interval_ms}", fmt.Sprintf("%d", intervalMs))
-	query = strings.ReplaceAll(query, "$__interval_ms", fmt.Sprintf("%d", intervalMs))
-
-	// $__interval - duration string
 	intervalStr := formatPrometheusDuration(interval)
-	query = strings.ReplaceAll(query, "${__interval}", intervalStr)
-	query = strings.ReplaceAll(query, "$__interval", intervalStr)
-
-	// $__auto - Grafana fills this in with the step for range queries, which
-	// is all run_panel_query issues.
-	query = strings.ReplaceAll(query, "${__auto}", intervalStr)
-	query = strings.ReplaceAll(query, "$__auto", intervalStr)
-
-	return query
+	values := map[string]string{
+		"__range_ms":         fmt.Sprintf("%d", duration.Milliseconds()),
+		"__range_s":          fmt.Sprintf("%d", int64(duration.Seconds())),
+		"__range":            formatPrometheusDuration(duration),
+		"__rate_interval_ms": "60000",
+		"__rate_interval":    "1m",
+		"__interval_ms":      fmt.Sprintf("%d", int64(interval/time.Millisecond)),
+		"__interval":         intervalStr,
+		"__auto":             intervalStr,
+	}
+	return grafanaTemporalMacroRE.ReplaceAllStringFunc(query, func(match string) string {
+		// Match whole names so a variable such as $__interval_env survives.
+		if value, ok := values[strings.Trim(match, "${}")]; ok {
+			return value
+		}
+		return match
+	})
 }
 
 // formatPrometheusDuration formats a duration for Prometheus and Loki (e.g. "14m", "1h30m",
