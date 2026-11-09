@@ -138,6 +138,42 @@ func extraHeadersFromEnv(logger *slog.Logger) map[string]string {
 	return headers
 }
 
+// grafanaJWTConfigFromEnv enables per-user Grafana auth.jwt (X-Cobo-JWT) when GRAFANA_AUTH_MODE=jwt.
+func grafanaJWTConfigFromEnv(logger *slog.Logger) GrafanaJWTConfig {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv(grafanaAuthModeEnvVar)), "jwt") {
+		return GrafanaJWTConfig{}
+	}
+	cfg := GrafanaJWTConfig{Enabled: true}
+	rawKey := strings.TrimSpace(os.Getenv(grafanaJWTRSAPrivateKeyEnvVar))
+	rawKey = strings.ReplaceAll(rawKey, `\n`, "\n")
+	if rawKey != "" {
+		key, err := parseRSAPrivateKeyPEM(rawKey)
+		if err != nil {
+			logger.Warn("Invalid GRAFANA_JWT_RSA_PRIVATE_KEY value", "error", err)
+		} else {
+			cfg.PrivateKey = key
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(grafanaJWTKeyIDEnvVar)); v != "" {
+		cfg.KeyID = v
+	}
+	if v := strings.TrimSpace(os.Getenv(grafanaJWTIssuerEnvVar)); v != "" {
+		cfg.Issuer = v
+	}
+	if v := strings.TrimSpace(os.Getenv(grafanaJWTAudienceEnvVar)); v != "" {
+		cfg.Audience = v
+	}
+	if v := strings.TrimSpace(os.Getenv(grafanaJWTTTLSecondsEnvVar)); v != "" {
+		seconds, err := strconv.Atoi(v)
+		if err != nil || seconds <= 0 {
+			logger.Warn("Invalid GRAFANA_JWT_TTL_SECONDS value, using default", "value", v, "error", err)
+		} else {
+			cfg.TTL = time.Duration(seconds) * time.Second
+		}
+	}
+	return cfg.withDefaults()
+}
+
 func forwardHeaderNamesFromEnv() []string {
 	raw := os.Getenv(grafanaForwardHeadersEnvVar)
 	if raw == "" {
@@ -163,6 +199,10 @@ func forwardedHeadersFromRequest(req *http.Request) map[string]string {
 	}
 	var forwarded map[string]string
 	for _, name := range names {
+		// Never forward the caller's Cobo bearer token or a minted Grafana JWT.
+		if strings.EqualFold(name, "Authorization") || strings.EqualFold(name, grafanaJWTHeaderName) {
+			continue
+		}
 		if v := req.Header.Get(name); v != "" {
 			if forwarded == nil {
 				forwarded = make(map[string]string, len(names))
@@ -315,6 +355,9 @@ type GrafanaConfig struct {
 	// It comes from the `X-Grafana-Id` header sent from Grafana to plugin backends.
 	// It is used for on-behalf-of auth in Grafana Cloud.
 	IDToken string
+
+	// GrafanaJWT enables per-user Grafana auth.jwt via X-Cobo-JWT.
+	GrafanaJWT GrafanaJWTConfig
 
 	// TLSConfig holds TLS configuration for all Grafana clients.
 	TLSConfig *TLSConfig
@@ -816,6 +859,7 @@ var sensitiveHeaders = map[string]bool{
 	"X-Grafana-Id":                    true,
 	"X-Grafana-Service-Account-Token": true,
 	"X-Grafana-Api-Key":               true,
+	"X-Cobo-Jwt":                      true,
 	"Cookie":                          true,
 }
 
@@ -1045,7 +1089,9 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 	}
 
 	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
-	if !options.withoutAuth {
+	if cfg.GrafanaJWT.Enabled {
+		transport = NewGrafanaJWTRoundTripper(transport, cfg.GrafanaJWT)
+	} else if !options.withoutAuth {
 		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	}
 
@@ -1151,6 +1197,7 @@ var ExtractGrafanaInfoFromEnv StdioContextFunc = func(ctx context.Context) conte
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeaders
+	config.GrafanaJWT = grafanaJWTConfigFromEnv(logger)
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -1195,6 +1242,7 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
+	config.GrafanaJWT = grafanaJWTConfigFromEnv(logger)
 
 	return WithGrafanaConfig(ctx, config)
 }
@@ -1656,7 +1704,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		cfg.Schemes = []string{"http"}
 	}
 
-	if apiKey != "" {
+	if apiKey != "" && !GrafanaConfigFromContext(ctx).GrafanaJWT.Enabled {
 		cfg.APIKey = apiKey
 	}
 
@@ -1746,6 +1794,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					oboConfig := GrafanaConfig{
 						AccessToken:               config.AccessToken,
 						IDToken:                   config.IDToken,
+						GrafanaJWT:                config.GrafanaJWT,
 						OrgID:                     config.OrgID,
 						TLSConfig:                 config.TLSConfig,
 						ExtraHeaders:              config.ExtraHeaders,
@@ -2084,6 +2133,7 @@ func ComposedStdioContextFunc(config GrafanaConfig) StdioContextFunc {
 func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) httpContextFunc {
 	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
+		PropagateCoboIdentityFromRequest,
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},

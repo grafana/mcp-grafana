@@ -1,0 +1,9 @@
+{
+    "mcp-grafana-next-prod": {
+      "template": "program",
+      "settings": {
+        "command": "mcp-grafana"
+      },
+      "tag": "mcp-grafana"
+    }
+}
