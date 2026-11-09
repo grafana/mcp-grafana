@@ -44,6 +44,14 @@
             "automerge": true
         },
         {
+            "description": "grafana-legacy (11) and grafana-legacy-8 (8.5) in docker-compose.yaml pin old majors on purpose to exercise the legacy API fallbacks. Only the main grafana service tracks new majors.",
+            "matchDatasources": ["docker"],
+            "matchPackageNames": ["grafana/grafana"],
+            "matchCurrentVersion": "<12.0.0",
+            "matchUpdateTypes": ["major"],
+            "enabled": false
+        },
+        {
             "description": "Bump the go directive in the root go.mod, which Renovate skips by default. lokiguard keeps its own consumer minimum.",
             "matchManagers": ["gomod"],
             "matchFileNames": ["go.mod"],
