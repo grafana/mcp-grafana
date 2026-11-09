@@ -619,7 +619,7 @@ func TestManageRules_ListRules(t *testing.T) {
 	}
 }
 
-func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
+func TestManageRulesWrite_ValidationErrors(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		name    string
@@ -627,23 +627,23 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "negative rule_limit",
+			name: "list is rejected",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"})
+				return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "list"})
 			},
-			wantErr: "invalid rule_limit",
+			wantErr: "unknown operation",
 		},
 		{
-			name: "folder_uid and search_folder mutually exclusive",
+			name: "get is rejected",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"})
+				return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "get", RuleUID: "abc"})
 			},
-			wantErr: "mutually exclusive",
+			wantErr: "unknown operation",
 		},
 		{
 			name: "create missing title",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+				return manageRulesWrite(ctx, ManageRulesWriteParams{
 					Operation: "create", RuleGroup: "test-group", FolderUID: "test-folder",
 					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
@@ -654,7 +654,7 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		{
 			name: "update missing rule_uid",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+				return manageRulesWrite(ctx, ManageRulesWriteParams{
 					Operation: "update", Title: "Test Rule", RuleGroup: "test-group", FolderUID: "test-folder",
 					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
@@ -664,13 +664,13 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		},
 		{
 			name:    "delete without rule_uid",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete"}) },
+			call:    func() (any, error) { return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete"}) },
 			wantErr: "rule_uid is required",
 		},
 		{
 			name: "unknown operation",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "invalid"})
+				return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "invalid"})
 			},
 			wantErr: "unknown operation",
 		},
@@ -685,10 +685,10 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 	}
 }
 
-func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
+func TestManageRulesWriteParams_ToCreateParams(t *testing.T) {
 	t.Run("converts all fields", func(t *testing.T) {
 		disableProvenance := true
-		params := ManageRulesReadWriteParams{
+		params := ManageRulesWriteParams{
 			Operation:         "create",
 			RuleUID:           "custom-uid",
 			Title:             "Test Rule",
@@ -725,7 +725,7 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 	})
 
 	t.Run("empty rule_uid results in nil UID", func(t *testing.T) {
-		params := ManageRulesReadWriteParams{
+		params := ManageRulesWriteParams{
 			Operation: "create",
 			Title:     "Test Rule",
 		}
@@ -736,10 +736,10 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 	})
 }
 
-func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
+func TestManageRulesWriteParams_ToUpdateParams(t *testing.T) {
 	t.Run("converts all fields", func(t *testing.T) {
 		disableProvenance := false
-		params := ManageRulesReadWriteParams{
+		params := ManageRulesWriteParams{
 			Operation:         "update",
 			RuleUID:           "rule-uid-123",
 			Title:             "Updated Rule",

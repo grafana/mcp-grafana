@@ -115,7 +115,7 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 }
 
 type CreateDatasourceParams struct {
-	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
+	Name            string         `json:"name,omitempty" jsonschema:"description=Datasource display name. Required to create; omit it on the first call to get the fields to fill in."`
 	Type            string         `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
 	URL             string         `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
 	Access          string         `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
@@ -440,13 +440,14 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource in two steps. Called with only the type, it returns the plugin's field schema and creates nothing. Called with the type, the display name in the top-level name argument, schemaReviewed=true, and field values in the fields map, it creates the datasource. The plugin for the type must already be installed. Secrets (passwords, tokens) are not accepted. Returns UID, health check, and a config page link.",
+	"Create a datasource in two steps. Called with only the type, it returns the fields to fill in and creates nothing. Called again with the type, a display name in name, and the field values, it creates the datasource; for a type with a field schema, put the values in the fields map and set schemaReviewed=true. The plugin for the type must already be installed. Secrets (passwords, tokens) can't be set. Returns the UID, the result of a health check against the new datasource, and a config page link.",
 	createDatasource,
 	mcpgrafana.WithTitleAnnotation("Create datasource"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// The health check connects to the datasource's own URL.
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 	mcpgrafana.RequiresPermissions("datasources:read", "datasources:create"),
 )
 
@@ -458,7 +459,8 @@ var UpdateDatasource = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),
-	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// The health check connects to the datasource's own URL.
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 	mcpgrafana.RequiresPermissions("datasources:read", "datasources:write"),
 )
 

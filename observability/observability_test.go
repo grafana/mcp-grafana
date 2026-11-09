@@ -573,7 +573,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 
 	t.Run("allowlisted operation tool emits operation", func(t *testing.T) {
 		ctx := context.Background()
-		req := newTestCallToolRequest("alerting_rules_write", map[string]any{"operation": "list"})
+		req := newTestCallToolRequest("alerting_rules_write", map[string]any{"operation": "create"})
 
 		attrs := obs.testBuildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
@@ -581,7 +581,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 		for _, a := range attrs {
 			got[string(a.Key)] = a.Value.AsString()
 		}
-		assert.Equal(t, "list", got[attrKeyToolOperation])
+		assert.Equal(t, "create", got[attrKeyToolOperation])
 	})
 
 	t.Run("non-allowlisted tool drops caller-injected arg dims", func(t *testing.T) {
@@ -661,8 +661,8 @@ func TestToolMetricDimensions(t *testing.T) {
 
 	t.Run("allowlisted operation tool returns operation only", func(t *testing.T) {
 		got := ToolMetricDimensions("alerting_rules_write",
-			map[string]any{"operation": "list", "type": "should-be-ignored"}, nil)
-		assert.Equal(t, ToolMetricDims{Operation: "list"}, got)
+			map[string]any{"operation": "create", "type": "should-be-ignored"}, nil)
+		assert.Equal(t, ToolMetricDims{Operation: "create"}, got)
 	})
 
 	t.Run("allowlisted resource_type tool returns resource_type only", func(t *testing.T) {
@@ -717,7 +717,7 @@ func TestToolMetricDimensions(t *testing.T) {
 	})
 
 	t.Run("nil result yields empty phase", func(t *testing.T) {
-		got := ToolMetricDimensions("alerting_rules_write", map[string]any{"operation": "get"}, nil)
+		got := ToolMetricDimensions("alerting_rules_write", map[string]any{"operation": "create"}, nil)
 		assert.Equal(t, "", got.Phase)
 	})
 
