@@ -435,37 +435,56 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		return nil, fmt.Errorf("update alert rule: %w", err)
 	}
 
-	keepFiringFor := time.Duration(0)
+	// GF-03: the provisioning PUT replaces the whole rule, so any optional field
+	// the caller omits would be reset. Fetch the existing rule first and keep the
+	// optional fields that were not supplied, so a partial update (e.g. pausing a
+	// rule or changing one label) does not silently clear labels, annotations,
+	// notification settings, keepFiringFor or the paused state.
+	existing, err := c.Provisioning.GetAlertRuleWithParams(
+		provisioning.NewGetAlertRuleParamsWithContext(ctx).WithUID(args.UID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update alert rule: fetch existing %s: %w", args.UID, err)
+	}
+	rule := existing.Payload
+
+	// Required fields always overlay.
+	rule.UID = args.UID
+	rule.Title = &args.Title
+	rule.RuleGroup = &args.RuleGroup
+	rule.FolderUID = &args.FolderUID
+	rule.Condition = &args.Condition
+	rule.Data = convertedData
+	rule.NoDataState = &args.NoDataState
+	rule.ExecErrState = &args.ExecErrState
+	rule.For = func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }()
+	rule.OrgID = &args.OrgID
+
+	// Optional fields overlay only when supplied; otherwise the stored value stays.
+	if args.Labels != nil {
+		rule.Labels = args.Labels
+	}
+	if args.Annotations != nil {
+		rule.Annotations = args.Annotations
+	}
+	if args.IsPaused != nil {
+		rule.IsPaused = *args.IsPaused
+	}
 	if args.KeepFiringFor != "" {
-		keepFiringFor, err = time.ParseDuration(args.KeepFiringFor)
+		keepFiringFor, err := time.ParseDuration(args.KeepFiringFor)
 		if err != nil {
 			return nil, fmt.Errorf("update alert rule: invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
 		}
+		rule.KeepFiringFor = strfmt.Duration(keepFiringFor)
 	}
-
-	notificationSettings := convertNotificationSettings(args.NotificationSettings)
-
-	record := convertRecord(args.Record)
-
-	// MissingSeriesEvalsToResolve, Provenance are set to defaults
-	rule := &models.ProvisionedAlertRule{
-		UID:                         args.UID,
-		Title:                       &args.Title,
-		RuleGroup:                   &args.RuleGroup,
-		FolderUID:                   &args.FolderUID,
-		Condition:                   &args.Condition,
-		Data:                        convertedData,
-		NoDataState:                 &args.NoDataState,
-		ExecErrState:                &args.ExecErrState,
-		For:                         func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
-		Annotations:                 args.Annotations,
-		Labels:                      args.Labels,
-		OrgID:                       &args.OrgID,
-		IsPaused:                    args.IsPaused,
-		MissingSeriesEvalsToResolve: args.MissingSeriesEvalsToResolve,
-		KeepFiringFor:               func() strfmt.Duration { d := strfmt.Duration(keepFiringFor); return d }(),
-		NotificationSettings:        notificationSettings,
-		Record:                      record,
+	if args.NotificationSettings != nil {
+		rule.NotificationSettings = convertNotificationSettings(args.NotificationSettings)
+	}
+	if args.Record != nil {
+		rule.Record = convertRecord(args.Record)
+	}
+	if args.MissingSeriesEvalsToResolve != nil {
+		rule.MissingSeriesEvalsToResolve = *args.MissingSeriesEvalsToResolve
 	}
 
 	if err := rule.Validate(strfmt.Default); err != nil {

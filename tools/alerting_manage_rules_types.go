@@ -427,10 +427,10 @@ type UpdateAlertRuleParams struct {
 	ExecErrState                string                `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
 	For                         string                `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
 	KeepFiringFor               string                `json:"keepFiringFor,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
-	IsPaused                    bool                  `json:"isPaused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive"`
+	IsPaused                    *bool                 `json:"isPaused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive"`
 	NotificationSettings        *NotificationSettings `json:"notificationSettings,omitempty" jsonschema:"description=Alert rule notification settings"`
 	Record                      *Record               `json:"record,omitempty" jsonschema:"description=Settings for a recording type alert rule"`
-	MissingSeriesEvalsToResolve int64                 `json:"missingSeriesEvalsToResolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
+	MissingSeriesEvalsToResolve *int64                `json:"missingSeriesEvalsToResolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string     `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
 	Labels                      map[string]string     `json:"labels,omitempty" jsonschema:"description=Optional labels"`
 	OrgID                       int64                 `json:"orgID" jsonschema:"required,description=The organization ID"`
@@ -652,10 +652,10 @@ type ManageRulesWriteParams struct {
 	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=Grafana-managed only. State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
 	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m'. Required for Grafana-managed create/update. Optional for datasource-managed rules (default 0s)."`
 	KeepFiringFor               string            `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
-	IsPaused                    bool              `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
+	IsPaused                    *bool             `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
 	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string). snake_case keys are also accepted."`
 	Record                      map[string]any    `json:"record,omitempty" jsonschema:"description=Recording rule config. Fields: from (string\\, required - ref ID e.g. 'A')\\, metric (string\\, required - metric name)\\, targetDatasourceUid (string\\, optional)."`
-	MissingSeriesEvalsToResolve int64             `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
+	MissingSeriesEvalsToResolve *int64            `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
 	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=Grafana-managed organization ID (required for 'create'\\, 'update')"`
@@ -801,6 +801,11 @@ func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) 
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid record: %w", err)
 	}
+	isPaused := p.IsPaused != nil && *p.IsPaused
+	missingEvals := int64(0)
+	if p.MissingSeriesEvalsToResolve != nil {
+		missingEvals = *p.MissingSeriesEvalsToResolve
+	}
 	params := CreateAlertRuleParams{
 		Title:                       p.Title,
 		RuleGroup:                   p.RuleGroup,
@@ -815,10 +820,10 @@ func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) 
 		OrgID:                       p.OrgID,
 		DisableProvenance:           p.DisableProvenance,
 		KeepFiringFor:               p.KeepFiringFor,
-		IsPaused:                    p.IsPaused,
+		IsPaused:                    isPaused,
 		NotificationSettings:        ns,
 		Record:                      rec,
-		MissingSeriesEvalsToResolve: p.MissingSeriesEvalsToResolve,
+		MissingSeriesEvalsToResolve: missingEvals,
 	}
 	if p.RuleUID != "" {
 		params.UID = &p.RuleUID
