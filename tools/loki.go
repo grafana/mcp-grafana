@@ -237,11 +237,12 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
 	}
 
-	start, err := parseStartTime(args.StartRFC3339)
+	startStr, endStr := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	start, err := parseStartTime(startStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	end, err := parseEndTime(args.EndRFC3339)
+	end, err := parseEndTime(endStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -287,11 +288,12 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
 	}
 
-	start, err := parseStartTime(args.StartRFC3339)
+	startStr, endStr := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	start, err := parseStartTime(startStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	end, err := parseEndTime(args.EndRFC3339)
+	end, err := parseEndTime(endStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -354,11 +356,15 @@ func addTimeRangeParams(params url.Values, startRFC3339, endRFC3339 string) erro
 const lokiDefaultLookback = time.Hour
 
 // getDefaultTimeRange returns default start and end times if not provided
-// Returns start time (1 hour ago) and end time (now) in RFC3339 format
+// Returns start time (1 hour before end) and end time (now) in RFC3339 format
 func getDefaultTimeRange(startRFC3339, endRFC3339 string) (string, string) {
 	if startRFC3339 == "" {
-		// Default to 1 hour ago if not specified
-		startRFC3339 = time.Now().Add(-lokiDefaultLookback).Format(time.RFC3339)
+		// Count back from end so an end-only range never starts after it.
+		anchor := time.Now()
+		if end, err := parseEndTime(endRFC3339); err == nil && !end.IsZero() {
+			anchor = end
+		}
+		startRFC3339 = anchor.Add(-lokiDefaultLookback).Format(time.RFC3339)
 	}
 	if endRFC3339 == "" {
 		// Default to now if not specified
