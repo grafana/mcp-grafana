@@ -249,6 +249,11 @@ func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSum
 		return summaries
 	}
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	if c == nil || c.Provisioning == nil {
+		// No Grafana OpenAPI client in context (provisioning unavailable); the
+		// core list already succeeded, so return it unenriched.
+		return summaries
+	}
 	resp, err := c.Provisioning.GetAlertRulesWithParams(
 		provisioning.NewGetAlertRulesParamsWithContext(ctx),
 	)
