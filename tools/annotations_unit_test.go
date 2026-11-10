@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// D1: create_annotation accepts ISO-8601 timestamps.
+// create_annotation accepts ISO-8601 timestamps.
 func TestParseISOToEpochMs(t *testing.T) {
 	want := time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC).UnixMilli()
 
@@ -166,7 +166,7 @@ func TestCreateAnnotation_GraphiteFormat_WithTagsAndData(t *testing.T) {
 
 func TestCreateAnnotation_SendsCorrectBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// B2: createAnnotation reads the stored annotation back by id.
+		// createAnnotation reads the stored annotation back by id.
 		if r.Method == http.MethodGet {
 			assert.Equal(t, "/api/annotations/1", r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")
@@ -264,7 +264,7 @@ func TestUpdateAnnotation_UsesPatchMethod(t *testing.T) {
 	timeEnd := int64(222)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// B2: updateAnnotation reads the stored annotation back by id.
+		// updateAnnotation reads the stored annotation back by id.
 		if r.Method == http.MethodGet {
 			assert.Equal(t, "/api/annotations/55", r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")
@@ -304,7 +304,7 @@ func TestUpdateAnnotation_UsesPatchMethod(t *testing.T) {
 
 func TestUpdateAnnotation_SendsOnlyProvidedFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// B2: updateAnnotation reads the stored annotation back by id.
+		// updateAnnotation reads the stored annotation back by id.
 		if r.Method == http.MethodGet {
 			assert.Equal(t, "/api/annotations/9", r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")

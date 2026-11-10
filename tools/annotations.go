@@ -124,7 +124,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		return nil, fmt.Errorf("'text' is required for standard annotations")
 	}
 
-	// D1: accept ISO-8601 timestamps as an alternative to epoch ms, so the
+	// Accept ISO-8601 timestamps as an alternative to epoch ms, so the
 	// caller does not have to convert. timeISO/timeEndISO take precedence.
 	timeMs := args.Time
 	if args.TimeISO != "" {
@@ -160,7 +160,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		return nil, fmt.Errorf("create annotation: %w", err)
 	}
 
-	// B2: echo the stored annotation so the agent can confirm the write — time,
+	// Echo the stored annotation so the agent can confirm the write — time,
 	// text and tags exactly as Grafana saved them, including server-filled
 	// defaults (e.g. time defaulting to now) — without a follow-up
 	// get_annotations. Best-effort: the create has already succeeded, and a
@@ -229,7 +229,7 @@ func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (any, err
 		return nil, fmt.Errorf("update annotation: %w", err)
 	}
 
-	// B2: PatchAnnotationOK carries only a status message, so an agent cannot
+	// PatchAnnotationOK carries only a status message, so an agent cannot
 	// see which fields now hold which values and typically issues a verify
 	// get_annotations. Return the full stored annotation instead. Best-effort:
 	// the patch has already succeeded, so fall back to the patch response if the

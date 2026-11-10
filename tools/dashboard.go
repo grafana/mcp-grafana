@@ -428,7 +428,7 @@ type AppliedOperation struct {
 }
 
 // UpdateDashboardResult is the dashboard save response plus, for patch-mode
-// updates, an echo of the operations that were applied (B1). The embedded
+// updates, an echo of the operations that were applied. The embedded
 // *models.PostDashboardOKBody keeps the existing result shape (uid, version,
 // url, status, ...) and promotes its fields; `applied` is additive. It lets an
 // agent skip the follow-up get_dashboard_by_uid it would otherwise issue just
@@ -465,7 +465,7 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*UpdateDa
 		}
 	}
 	result := &UpdateDashboardResult{PostDashboardOKBody: dashboard}
-	// B1: in patch mode, echo the operations we applied so the caller can
+	// In patch mode, echo the operations we applied so the caller can
 	// confirm the write without a verify get_dashboard_by_uid.
 	if len(args.Operations) > 0 && args.UID != "" {
 		result.Applied = make([]AppliedOperation, 0, len(args.Operations))
