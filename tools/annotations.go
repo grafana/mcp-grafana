@@ -164,22 +164,53 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 	// text and tags exactly as Grafana saved them, including server-filled
 	// defaults (e.g. time defaulting to now) — without a follow-up
 	// get_annotations. Best-effort: the create has already succeeded, and a
-	// token with only annotations:create can still create, so fall back to the
-	// create response (which carries the new id) when the read-back is
-	// unavailable.
-	if resp != nil && resp.Payload != nil && resp.Payload.ID != nil {
-		id := strconv.FormatInt(*resp.Payload.ID, 10)
-		if got, gerr := c.Annotations.GetAnnotationByID(id); gerr == nil && got.Payload != nil {
-			return got.Payload, nil
-		}
+	// token with only annotations:create can still create, so the result
+	// simply carries no annotation when the read-back is unavailable.
+	result := &CreateAnnotationResult{}
+	if resp != nil {
+		result.Payload = resp.Payload
+	}
+	if result.Payload != nil && result.Payload.ID != nil {
+		result.Annotation = readBackAnnotation(ctx, c, strconv.FormatInt(*result.Payload.ID, 10))
 	}
 
-	return resp, nil
+	return result, nil
+}
+
+// CreateAnnotationResult is the result of create_annotation for a standard
+// annotation. Payload is the create response in its existing shape (the new id
+// and a message), so callers reading the id are unaffected; Annotation is the
+// stored annotation, present when it could be read back.
+type CreateAnnotationResult struct {
+	Payload    *models.PostAnnotationOKBody `json:"Payload"`
+	Annotation *models.Annotation           `json:"annotation,omitempty"`
+}
+
+// UpdateAnnotationResult is the result of update_annotation. Payload is the
+// patch response in its existing shape (a status message); Annotation is the
+// stored annotation after the update, present when it could be read back.
+type UpdateAnnotationResult struct {
+	Payload    *models.SuccessResponseBody `json:"Payload"`
+	Annotation *models.Annotation          `json:"annotation,omitempty"`
+}
+
+// readBackAnnotation fetches an annotation that was just written. It passes the
+// request context so the read goes to the same org, with the same headers,
+// cancellation and tracing, as the write it confirms. It returns nil when the
+// annotation cannot be read.
+func readBackAnnotation(ctx context.Context, c *mcpgrafana.GrafanaClient, id string) *models.Annotation {
+	got, err := c.Annotations.GetAnnotationByIDWithParams(
+		annotations.NewGetAnnotationByIDParamsWithContext(ctx).WithAnnotationID(id),
+	)
+	if err != nil || got == nil {
+		return nil
+	}
+	return got.Payload
 }
 
 var CreateAnnotationTool = mcpgrafana.MustTool(
 	"create_annotation",
-	"Create a new annotation on a dashboard or panel. Times may be given as epoch ms ('time'/'timeEnd') or as ISO-8601 timestamps ('timeISO'/'timeEndISO', e.g. 2026-01-02T15:04:05Z) — no manual epoch conversion needed. Set format to 'graphite' and provide 'what' for Graphite-format annotations. Returns the stored annotation (standard format) so the result can be confirmed without a follow-up get_annotations.",
+	"Create a new annotation on a dashboard or panel. Times may be given as epoch ms ('time'/'timeEnd') or as ISO-8601 timestamps ('timeISO'/'timeEndISO', e.g. 2026-01-02T15:04:05Z) — no manual epoch conversion needed. Set format to 'graphite' and provide 'what' for Graphite-format annotations. For standard annotations the result also carries the stored annotation under 'annotation', so it can be confirmed without a follow-up get_annotations.",
 	createAnnotation,
 	mcpgrafana.WithTitleAnnotation("Create Annotation"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
@@ -231,19 +262,20 @@ func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (any, err
 
 	// PatchAnnotationOK carries only a status message, so an agent cannot
 	// see which fields now hold which values and typically issues a verify
-	// get_annotations. Return the full stored annotation instead. Best-effort:
-	// the patch has already succeeded, so fall back to the patch response if the
-	// read-back is unavailable.
-	if got, gerr := c.Annotations.GetAnnotationByID(id); gerr == nil && got.Payload != nil {
-		return got.Payload, nil
+	// get_annotations. Add the full stored annotation to the result.
+	// Best-effort: the patch has already succeeded, so the result simply
+	// carries no annotation when the read-back is unavailable.
+	result := &UpdateAnnotationResult{Annotation: readBackAnnotation(ctx, c, id)}
+	if resp != nil {
+		result.Payload = resp.Payload
 	}
 
-	return resp, nil
+	return result, nil
 }
 
 var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"update_annotation",
-	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged. Returns the full updated annotation so changes can be confirmed without a follow-up get_annotations.",
+	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged. The result also carries the updated annotation under 'annotation', so changes can be confirmed without a follow-up get_annotations.",
 	updateAnnotation,
 	mcpgrafana.WithTitleAnnotation("Update Annotation"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
