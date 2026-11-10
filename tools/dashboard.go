@@ -416,7 +416,7 @@ type UpdateDashboardParams struct {
 	FolderUID       string `json:"folderUid,omitempty" jsonschema:"description=The UID of the dashboard's folder"`
 	Message         string `json:"message,omitempty" jsonschema:"description=Set a commit message for the version history"`
 	Overwrite       bool   `json:"overwrite,omitempty" jsonschema:"description=Overwrite the dashboard if it exists. Otherwise create one"`
-	ExpectedVersion *int64 `json:"expectedVersion,omitempty" jsonschema:"description=For a full-body overwrite (full 'dashboard' JSON with overwrite=true)\\, the dashboard 'version' the edit is based on. If set and the dashboard has changed since\\, the save is rejected with a conflict instead of silently overwriting the newer version. Omit to overwrite unconditionally."`
+	ExpectedVersion *int64 `json:"expectedVersion,omitempty" jsonschema:"description=For a full-body save over an existing dashboard\\, the dashboard 'version' the edit is based on. If the stored version differs\\, the save is rejected with a conflict instead of overwriting the newer version\\, even with overwrite=true. Omit to save without this check."`
 	UserID          int64  `json:"userId,omitempty" jsonschema:"description=ID of the user making the change"`
 }
 
@@ -722,12 +722,24 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 		return createOrUpdateDashboardV2(ctx, args)
 	}
 
+	// expectedVersion on a classic body: Grafana's save endpoint compares the
+	// body's version with the stored one unless overwrite is set, so send the
+	// expected version as the body's version and leave overwrite off. The save
+	// is then rejected if the dashboard changed, whatever overwrite says.
+	dashboardBody := args.Dashboard
+	overwrite := args.Overwrite
+	if args.ExpectedVersion != nil {
+		dashboardBody = maps.Clone(args.Dashboard)
+		dashboardBody["version"] = *args.ExpectedVersion
+		overwrite = false
+	}
+
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	cmd := &models.SaveDashboardCommand{
-		Dashboard: args.Dashboard,
+		Dashboard: dashboardBody,
 		FolderUID: args.FolderUID,
 		Message:   args.Message,
-		Overwrite: args.Overwrite,
+		Overwrite: overwrite,
 		UserID:    args.UserID,
 	}
 	dashboard, err := c.Dashboards.PostDashboardWithParams(

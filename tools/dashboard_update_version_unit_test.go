@@ -481,3 +481,75 @@ func TestCreateOrUpdateDashboardV2_ExpectedVersion(t *testing.T) {
 		assert.Empty(t, writes)
 	})
 }
+
+// expectedVersion on a classic full body uses Grafana's own check: the save
+// carries the expected version and no overwrite, so Grafana rejects it when the
+// stored version differs.
+func TestUpdateDashboardFullBody_ExpectedVersionOnClassicBody(t *testing.T) {
+	version := func(v int64) *int64 { return &v }
+	body := func() map[string]interface{} {
+		return map[string]interface{}{"uid": "dash-1", "title": "Mine", "version": float64(99), "panels": []interface{}{}}
+	}
+
+	t.Run("overwrite=true with expectedVersion becomes a version-checked save", func(t *testing.T) {
+		rec := &legacySaveRecorder{}
+		input := body()
+		_, err := updateDashboard(legacyDashboardContext(t, rec), UpdateDashboardParams{
+			Dashboard: input, Overwrite: true, ExpectedVersion: version(3),
+		})
+		require.NoError(t, err)
+
+		saved := rec.only(t)
+		assert.False(t, saved.Overwrite, "overwrite would make Grafana skip the version check")
+		assert.Equal(t, float64(3), saved.Dashboard["version"], "the expected version, not the one in the body")
+		assert.Equal(t, "Mine", saved.Dashboard["title"])
+		assert.Equal(t, float64(99), input["version"], "the caller's body must not be modified")
+	})
+
+	t.Run("a body without a version gets the expected one", func(t *testing.T) {
+		rec := &legacySaveRecorder{}
+		input := body()
+		delete(input, "version")
+		_, err := updateDashboard(legacyDashboardContext(t, rec), UpdateDashboardParams{
+			Dashboard: input, ExpectedVersion: version(3),
+		})
+		require.NoError(t, err)
+
+		saved := rec.only(t)
+		assert.False(t, saved.Overwrite)
+		assert.Equal(t, float64(3), saved.Dashboard["version"])
+		assert.NotContains(t, input, "version", "the caller's body must not be modified")
+	})
+
+	t.Run("a stale expectedVersion is rejected by Grafana and returned to the caller", func(t *testing.T) {
+		for _, tc := range []struct {
+			status int
+			body   string
+			want   string
+		}{
+			{http.StatusPreconditionFailed, `{"message":"The dashboard has been changed by someone else","status":"version-mismatch"}`, "The dashboard has been changed by someone else"},
+			{http.StatusConflict, `{}`, "status 409"},
+		} {
+			rec := &legacySaveRecorder{saveStatus: tc.status, saveBody: tc.body}
+			result, err := updateDashboard(legacyDashboardContext(t, rec), UpdateDashboardParams{
+				Dashboard: body(), Overwrite: true, ExpectedVersion: version(2),
+			})
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.want)
+			saved := rec.only(t)
+			assert.False(t, saved.Overwrite, "the rejected save must not have been retried with overwrite")
+			assert.Equal(t, float64(2), saved.Dashboard["version"])
+		}
+	})
+
+	t.Run("without expectedVersion overwrite=true overwrites as before", func(t *testing.T) {
+		rec := &legacySaveRecorder{}
+		_, err := updateDashboard(legacyDashboardContext(t, rec), UpdateDashboardParams{Dashboard: body(), Overwrite: true})
+		require.NoError(t, err)
+
+		saved := rec.only(t)
+		assert.True(t, saved.Overwrite)
+		assert.Equal(t, float64(99), saved.Dashboard["version"], "the body is sent as given")
+	})
+}
