@@ -71,7 +71,7 @@ type DashboardResponse struct {
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*DashboardResponse, error) {
 	if args.Version != nil {
-		// D2 (GF-18): honor the advertised minimum=1 bound instead of forwarding
+		// Honor the advertised minimum=1 bound instead of forwarding
 		// a 0/negative version that Grafana would reject with an opaque error.
 		if *args.Version < 1 {
 			return nil, fmt.Errorf("version must be a positive integer (dashboard versions start at 1); omit version to fetch the current dashboard")
@@ -503,7 +503,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	for i, op := range args.Operations {
 		switch op.Op {
 		case "replace":
-			// C4 (GF-08): replace targets an existing value; error if the final
+			// Replace targets an existing value; error if the final
 			// key is absent instead of silently creating it. Use "add" to create.
 			if err := applyJSONPath(dashboardMap, op.Path, op.Value, false, true); err != nil {
 				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
@@ -513,7 +513,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
 			}
 		case "remove":
-			// C4 (GF-08): remove targets an existing value; error if the final
+			// Remove targets an existing value; error if the final
 			// key is absent instead of silently succeeding.
 			if err := applyJSONPath(dashboardMap, op.Path, nil, true, true); err != nil {
 				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
@@ -1321,7 +1321,7 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 		path = path[2:]
 	}
 
-	// C3 (GF-02): resolve equality selectors such as panels[?(@.id==2)] or
+	// Resolve equality selectors such as panels[?(@.id==2)] or
 	// panels[?(@.title=='CPU')] to the matching numeric index against the live
 	// dashboard, so a patch can target a panel by a stable id/title instead of a
 	// fragile array position. Runs before the reject checks below, so resolved
@@ -1371,8 +1371,8 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 var selectorRe = regexp.MustCompile(`\[\?\(?@?\.?\s*([A-Za-z0-9_]+)\s*==\s*('?"?)([^'"\)\]]+?)('?"?)\)?\]`)
 
 // resolveArraySelectors rewrites each equality selector in path to the numeric
-// [index] of the matching array element, evaluated left to right against data
-// (C3/GF-02). It errors if a selector matches no element or more than one, so
+// [index] of the matching array element, evaluated left to right against data.
+// It errors if a selector matches no element or more than one, so
 // an ambiguous or stale target fails loudly rather than patching the wrong
 // panel. Paths with no selector are returned unchanged.
 func resolveArraySelectors(data map[string]interface{}, path string) (string, error) {
@@ -1597,7 +1597,7 @@ func setAtSegment(current map[string]interface{}, segment JSONPathSegment, value
 	}
 
 	// Set the value directly. In strict mode (replace), the key must already
-	// exist — otherwise the operation would silently create it (C4/GF-08).
+	// exist — otherwise the operation would silently create it.
 	if strict {
 		if _, ok := current[segment.Key]; !ok {
 			return fmt.Errorf("field '%s' does not exist; 'replace' requires an existing value (use 'add' to create it)", segment.Key)
@@ -1623,7 +1623,7 @@ func removeAtSegment(current map[string]interface{}, segment JSONPathSegment, st
 	}
 
 	// In strict mode (remove), the key must already exist — otherwise the
-	// delete would silently succeed on a non-existent field (C4/GF-08).
+	// delete would silently succeed on a non-existent field.
 	if strict {
 		if _, ok := current[segment.Key]; !ok {
 			return fmt.Errorf("field '%s' does not exist; cannot remove a field that is not present", segment.Key)

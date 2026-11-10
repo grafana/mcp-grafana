@@ -36,7 +36,7 @@ func listDashboardVersions(ctx context.Context, args ListDashboardVersionsParams
 		return nil, fmt.Errorf("uid is required")
 	}
 
-	// D2 (GF-18): honor the advertised minimum=1 bounds. 0 is the omitted
+	// Honor the advertised minimum=1 bounds. 0 is the omitted
 	// sentinel (the field is omitempty); a negative value is rejected rather
 	// than silently ignored.
 	if args.Limit < 0 {

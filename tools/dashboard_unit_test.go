@@ -503,7 +503,7 @@ func TestApplyJSONPath_UnsupportedSyntax(t *testing.T) {
 	})
 }
 
-// C3 (GF-02): equality selectors target an array element by a stable field
+// Equality selectors target an array element by a stable field
 // (id/title) instead of a fragile numeric index.
 func TestApplyJSONPath_Selectors(t *testing.T) {
 	newData := func() map[string]interface{} {
@@ -555,7 +555,7 @@ func TestApplyJSONPath_Selectors(t *testing.T) {
 	})
 }
 
-// C4 (GF-08): replace/remove on a missing final key must error in strict mode
+// replace/remove on a missing final key must error in strict mode
 // instead of silently creating or no-opping, while add still creates.
 func TestApplyJSONPath_StrictPaths(t *testing.T) {
 	newData := func() map[string]interface{} {
