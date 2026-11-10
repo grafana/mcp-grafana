@@ -34,12 +34,13 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		query := &queries[i]
 		// Frontend macros are not dashboard variables, even when the executor
 		// leaves them intact in the submitted expression.
-		references := substituteFrontendMacros(variableSearchText(*query), query.Datasource.Type, from, to)
+		options := query.interval.withLowerLimit(interp, query.Datasource.Type, nil)
+		references := substituteFrontendMacros(variableSearchText(*query), query.Datasource.Type, from, to, options)
 		references, err := substituteBackendMacros(references, query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
-		references = substituteGrafanaMacros(references, from, to)
+		references = substituteGrafanaMacros(references, from, to, options)
 		query.RequiredVariables = findPanelVariablesInQuery(references+" "+query.Datasource.UID, query.Datasource.Type, definitions, args.Variables)
 		for _, variable := range query.RequiredVariables {
 			if warning := interp.allSelectionWarning(variable.Name); warning != "" {
@@ -49,7 +50,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery, err = substituteBackendMacros(preparePanelExpression(interp, query.Query, query.Datasource.Type, from, to), query.Datasource.Type, from, to)
+		query.ProcessedQuery, err = substituteBackendMacros(preparePanelExpression(interp, query.Query, query.Datasource.Type, from, to, options), query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -105,18 +106,18 @@ func isPanelQueryMacro(name, datasourceType string) bool {
 
 // preparePanelExpression expands frontend macros before inserting variable
 // values, so a value is never rescanned, as in Grafana's single-pass replace.
-func preparePanelExpression(interp *variableInterpolator, query, datasourceType string, from, to time.Time) string {
-	return interp.interpolateQuery(substituteFrontendMacros(query, datasourceType, from, to), datasourceType)
+func preparePanelExpression(interp *variableInterpolator, query, datasourceType string, from, to time.Time, options intervalOptions) string {
+	return interp.interpolateQuery(substituteFrontendMacros(query, datasourceType, from, to, options), datasourceType)
 }
 
 // substituteFrontendMacros mirrors the executors. InfluxDB forwards macros
 // intact, and ClickHouse expands them in its SQL dialect instead.
-func substituteFrontendMacros(query, datasourceType string, from, to time.Time) string {
+func substituteFrontendMacros(query, datasourceType string, from, to time.Time, options intervalOptions) string {
 	switch normalizeDatasourceType(datasourceType) {
 	case "influxdb", "clickhouse":
 		return query
 	default:
-		return substituteGrafanaMacros(query, from, to)
+		return substituteGrafanaMacros(query, from, to, options)
 	}
 }
 

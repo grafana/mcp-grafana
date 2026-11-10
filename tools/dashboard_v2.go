@@ -149,6 +149,7 @@ func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 			rawTarget:  queryTargetFields(safeObject(query, "spec")),
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
+			interval:   panelIntervalOptionsV2(panel),
 		}
 
 		// As in v1, a target built in a visual editor has no string expression;
@@ -300,8 +301,9 @@ func extractVariableSummaryV2(vk map[string]interface{}) VariableSummary {
 // the refId and datasource the panel query executors read.
 func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
 	info := &panelInfo{
-		ID:    safeInt(panel, "id"),
-		Title: safeString(panel, "title"),
+		ID:       safeInt(panel, "id"),
+		Title:    safeString(panel, "title"),
+		Interval: panelIntervalOptionsV2(panel),
 	}
 
 	var queries []interface{}
