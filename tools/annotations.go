@@ -72,8 +72,8 @@ type CreateAnnotationInput struct {
 	PanelID      int64          `json:"panelId,omitempty"      jsonschema:"description=Panel ID"`
 	Time         int64          `json:"time,omitempty"         jsonschema:"description=Start time epoch ms. Alternatively set 'timeISO'."`
 	TimeEnd      int64          `json:"timeEnd,omitempty"      jsonschema:"description=End time epoch ms. Alternatively set 'timeEndISO'."`
-	TimeISO      string         `json:"timeISO,omitempty"      jsonschema:"description=Start time as an ISO-8601/RFC3339 timestamp (e.g. 2026-01-02T15:04:05Z) or a date (2026-01-02). Alternative to 'time' so no manual epoch-ms conversion is needed; if both are set 'timeISO' takes precedence."`
-	TimeEndISO   string         `json:"timeEndISO,omitempty"   jsonschema:"description=End time as an ISO-8601/RFC3339 timestamp or date. Alternative to 'timeEnd'; if both are set 'timeEndISO' takes precedence."`
+	TimeISO      string         `json:"timeISO,omitempty"      jsonschema:"description=Start time as an ISO-8601 timestamp (e.g. 2026-01-02T15:04:05Z; UTC if no offset is given) or a date (2026-01-02). Alternative to 'time' so no manual epoch-ms conversion is needed; if both are set 'timeISO' takes precedence."`
+	TimeEndISO   string         `json:"timeEndISO,omitempty"   jsonschema:"description=End time as an ISO-8601 timestamp or date\\, read the same way. Alternative to 'timeEnd'; if both are set 'timeEndISO' takes precedence."`
 	Tags         []string       `json:"tags,omitempty"         jsonschema:"description=Optional list of tags"`
 	Text         string         `json:"text,omitempty"         jsonschema:"description=Annotation text (required unless format is graphite)"`
 	Data         map[string]any `json:"data,omitempty"         jsonschema:"description=Optional JSON payload"`
@@ -85,15 +85,17 @@ type CreateAnnotationInput struct {
 	GraphiteData string `json:"graphiteData,omitempty"  jsonschema:"description=Optional string payload for Graphite format"`
 }
 
-// parseISOToEpochMs parses an ISO-8601/RFC3339 timestamp (with or without
-// sub-second precision) or a bare date into epoch milliseconds.
+// parseISOToEpochMs parses an ISO-8601 timestamp into epoch milliseconds: an
+// RFC3339 timestamp with an offset or Z, a timestamp without an offset, or a
+// bare date, each with or without sub-second precision where that applies. A
+// value without an offset is taken as UTC, as elsewhere in this package.
 func parseISOToEpochMs(s string) (int64, error) {
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999999999", "2006-01-02T15:04", "2006-01-02"} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t.UnixMilli(), nil
 		}
 	}
-	return 0, fmt.Errorf("expected an RFC3339 timestamp (2026-01-02T15:04:05Z) or date (2006-01-02)")
+	return 0, fmt.Errorf("expected an ISO-8601 timestamp (2026-01-02T15:04:05Z; UTC is assumed without an offset) or date (2026-01-02)")
 }
 
 // createAnnotation sends a POST request to create a Grafana annotation.

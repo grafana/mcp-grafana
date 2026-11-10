@@ -41,10 +41,30 @@ func TestParseISOToEpochMs(t *testing.T) {
 		assert.Equal(t, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC).UnixMilli(), ms)
 	})
 
+	t.Run("sub-second precision", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02T15:04:05.250Z")
+		require.NoError(t, err)
+		assert.Equal(t, want+250, ms)
+	})
+
+	t.Run("no offset is read as UTC", func(t *testing.T) {
+		for value, wantMs := range map[string]int64{
+			"2026-01-02T15:04:05":     want,
+			"2026-01-02T15:04:05.250": want + 250,
+			"2026-01-02T15:04":        want - 5000,
+		} {
+			ms, err := parseISOToEpochMs(value)
+			require.NoError(t, err, value)
+			assert.Equal(t, wantMs, ms, value)
+		}
+	})
+
 	t.Run("invalid errors", func(t *testing.T) {
-		_, err := parseISOToEpochMs("not-a-time")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "RFC3339")
+		for _, value := range []string{"not-a-time", "2026-01-02 15:04:05", "2026-13-02T15:04:05", "1767366245000", ""} {
+			_, err := parseISOToEpochMs(value)
+			require.Error(t, err, value)
+			assert.Contains(t, err.Error(), "ISO-8601", value)
+		}
 	})
 }
 
