@@ -1,6 +1,6 @@
 # Interval golden cases
 
-`golden.json` holds 515 cases from Grafana's `calculateInterval`. Each has a time span in milliseconds and a step count. Cases with `min` also have a lower limit. `interval` and `interval_ms` are what Grafana returned. `TestIntervalMatchesGrafana` checks `$__interval`, `$__interval_ms` and `$__auto` (the 100-step cases) and `grafanaCalculateInterval` (the cases with `min`, as used for `auto` interval variables).
+`golden.json` holds 515 cases from Grafana's `calculateInterval`. Each has a time span in milliseconds and a step count. Cases with `min` also have a lower limit. `interval` and `interval_ms` are what Grafana returned. `TestIntervalMatchesGrafana` checks `$__interval`, `$__interval_ms` and `$__auto` with each case's step count and minimum (the panel's max data points and min interval), and `grafanaCalculateInterval` for the cases with `min` (as used for `auto` interval variables).
 
 The file is data only. It contains no Grafana code.
 

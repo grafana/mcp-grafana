@@ -36,10 +36,9 @@ func TestIntervalMatchesGrafana(t *testing.T) {
 		span := time.Duration(c.SpanMs) * time.Millisecond
 		if c.Min != "" {
 			assert.Equal(t, c.Interval, grafanaCalculateInterval(span, c.Steps, c.Min), "span %dms, %v steps, min %s", c.SpanMs, c.Steps, c.Min)
-			continue
 		}
 		want := fmt.Sprintf("%s %d %s", c.Interval, c.IntervalMs, c.Interval)
-		got := substituteGrafanaMacros("$__interval ${__interval_ms} $__auto", start, start.Add(span))
-		assert.Equal(t, want, got, "span %dms", c.SpanMs)
+		got := substituteGrafanaMacros("$__interval ${__interval_ms} $__auto", start, start.Add(span), intervalOptions{maxDataPoints: c.Steps, minInterval: c.Min})
+		assert.Equal(t, want, got, "span %dms, %v steps, min %q", c.SpanMs, c.Steps, c.Min)
 	}
 }
