@@ -4,7 +4,23 @@ import type { RenderHandle } from '../renderer/renderer.js';
 import { McpAppShell } from '../src/McpAppShell';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
-import { buildVizSpec, type VizSpec } from './vizSpec';
+import { buildVizSpec, type VizArgs, type VizSpec } from './vizSpec';
+
+// The query text of the common data sources: Prometheus and Loki, SQL, and others.
+const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText'];
+
+/**
+ * The summary title: the text of the first query on one line, or the data source when the query has no text.
+ * The count of the other queries follows.
+ */
+export function describeQueries(args: VizArgs): string {
+  const [first, ...rest] = args.queries;
+  const text = QUERY_TEXT_FIELDS.map((name) => first?.[name])
+    .map((value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''))
+    .find(Boolean);
+  const title = text || `Data source ${args.datasourceUid}`;
+  return rest.length ? `${title} (+${rest.length} more)` : title;
+}
 
 /** Draws the result of query_datasource with the viz contract Renderer. */
 export function VizApplication({ host }: { host: AppHostState }) {
@@ -23,9 +39,13 @@ export function VizApplication({ host }: { host: AppHostState }) {
       colorMode={colorMode}
       summary={{
         label: 'Data source query',
-        title: viz?.chart ?? 'Query result',
+        title: vizArgs ? describeQueries(vizArgs) : 'Query result',
         // Errors go to the feedback banner; repeating them here reads as a stutter.
-        description: spec || state.isError ? undefined : state.status,
+        description: state.isError
+          ? undefined
+          : viz && vizArgs
+            ? `${viz.chart} · ${vizArgs.datasourceUid}`
+            : state.status,
       }}
       feedback={state.isError ? { tone: 'error', message: state.status } : undefined}
       openInGrafana={
