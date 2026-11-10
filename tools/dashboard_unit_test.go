@@ -481,12 +481,11 @@ func TestApplyJSONPath_UnsupportedSyntax(t *testing.T) {
 		},
 	}
 
-	t.Run("filter expression returns actionable error", func(t *testing.T) {
-		err := applyJSONPath(data, `$.panels[?(@.id==2)].title`, "New Title", false, false)
+	t.Run("unsupported (non-equality) filter returns actionable error", func(t *testing.T) {
+		err := applyJSONPath(data, `$.panels[?(@.id>2)].title`, "New Title", false, false)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "filter expressions")
-		assert.Contains(t, err.Error(), "not supported")
-		assert.Contains(t, err.Error(), "numeric array indices")
+		assert.Contains(t, err.Error(), "filter")
+		assert.Contains(t, err.Error(), "not")
 	})
 
 	t.Run("wildcard expression returns actionable error", func(t *testing.T) {
@@ -501,6 +500,58 @@ func TestApplyJSONPath_UnsupportedSyntax(t *testing.T) {
 		require.NoError(t, err)
 		panel := data["panels"].([]interface{})[1].(map[string]interface{})
 		assert.Equal(t, "New Title", panel["title"])
+	})
+}
+
+// C3 (GF-02): equality selectors target an array element by a stable field
+// (id/title) instead of a fragile numeric index.
+func TestApplyJSONPath_Selectors(t *testing.T) {
+	newData := func() map[string]interface{} {
+		return map[string]interface{}{
+			"panels": []interface{}{
+				map[string]interface{}{"id": float64(10), "title": "CPU"},
+				map[string]interface{}{"id": float64(20), "title": "Mem"},
+				map[string]interface{}{"id": float64(30), "title": "Disk"},
+			},
+		}
+	}
+
+	t.Run("select by numeric id", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.id==20)].title`, "Memory", false, true)
+		require.NoError(t, err)
+		assert.Equal(t, "Memory", data["panels"].([]interface{})[1].(map[string]interface{})["title"])
+	})
+
+	t.Run("select by quoted title", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.title=='Disk')].id`, float64(99), false, true)
+		require.NoError(t, err)
+		assert.Equal(t, float64(99), data["panels"].([]interface{})[2].(map[string]interface{})["id"])
+	})
+
+	t.Run("bare selector form without @.", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?id==10].title`, "Processor", false, true)
+		require.NoError(t, err)
+		assert.Equal(t, "Processor", data["panels"].([]interface{})[0].(map[string]interface{})["title"])
+	})
+
+	t.Run("no match errors", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.id==999)].title`, "x", false, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no array element")
+	})
+
+	t.Run("remove by selector", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.id==20)]`, nil, true, true)
+		require.NoError(t, err)
+		panels := data["panels"].([]interface{})
+		require.Len(t, panels, 2)
+		assert.Equal(t, float64(10), panels[0].(map[string]interface{})["id"])
+		assert.Equal(t, float64(30), panels[1].(map[string]interface{})["id"])
 	})
 }
 
