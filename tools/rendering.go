@@ -364,10 +364,10 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 	// Add time range. Explore carries it inside the pane state instead.
 	if args.TimeRange != nil && !hasExplore {
 		if args.TimeRange.From != "" {
-			params.Set("from", args.TimeRange.From)
+			params.Set("from", toGrafanaTimeParam(args.TimeRange.From, false))
 		}
 		if args.TimeRange.To != "" {
-			params.Set("to", args.TimeRange.To)
+			params.Set("to", toGrafanaTimeParam(args.TimeRange.To, true))
 		}
 	}
 
