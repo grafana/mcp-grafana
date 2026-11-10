@@ -39,13 +39,21 @@ type CloudWatchQueryParams struct {
 	AccountId     string            `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to query metrics from a specific source account\\, or 'all' to query all accounts the monitoring account is permitted to query. Only relevant when using a CloudWatch monitoring account datasource."`
 }
 
-// CloudWatchQueryResult represents the result of a CloudWatch query
-type CloudWatchQueryResult struct {
+// CloudWatchSeries is one time series returned by a CloudWatch query.
+type CloudWatchSeries struct {
 	Label      string             `json:"label"`
 	Timestamps []int64            `json:"timestamps"`
 	Values     []float64          `json:"values"`
 	Statistics map[string]float64 `json:"statistics,omitempty"`
-	Hints      []string           `json:"hints,omitempty"`
+}
+
+// CloudWatchQueryResult holds a single series inline, or several in Series.
+// Several frames come back when the query becomes a SEARCH expression
+// (a "*" dimension value or accountId "all").
+type CloudWatchQueryResult struct {
+	*CloudWatchSeries
+	Series []CloudWatchSeries `json:"series,omitempty"`
+	Hints  []string           `json:"hints,omitempty"`
 }
 
 // cloudWatchClient handles communication with Grafana's CloudWatch datasource
@@ -201,121 +209,127 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 		return nil, err
 	}
 
-	// Process response
-	result := &CloudWatchQueryResult{
-		Label:      fmt.Sprintf("%s - %s", args.Namespace, args.MetricName),
-		Timestamps: []int64{},
-		Values:     []float64{},
-		Statistics: make(map[string]float64),
-	}
+	return cloudWatchResultFromResponse(resp, fmt.Sprintf("%s - %s", args.Namespace, args.MetricName))
+}
 
-	// Check for errors in the response
+// cloudWatchResultFromResponse returns one series per frame. A single series
+// stays in the top-level fields; several go in Series.
+func cloudWatchResultFromResponse(resp *backend.QueryDataResponse, defaultLabel string) (*CloudWatchQueryResult, error) {
+	var series []CloudWatchSeries
+	points := 0
 	for refID, r := range resp.Responses {
 		if r.Error != nil {
 			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error.Error())
 		}
-
-		// Process frames - accumulate statistics across all frames
-		var sum, min, max float64
-		var count int64
-		first := true
-
 		for _, frame := range r.Frames {
-			// Find time and value columns
-			var timeColIdx, valueColIdx = -1, -1
-			for i, field := range frame.Fields {
-				switch {
-				case field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime:
-					timeColIdx = i
-				case field.Type().Numeric():
-					valueColIdx = i
-					// Update label if available from field config
-					if field.Config != nil && field.Config.DisplayNameFromDS != "" {
-						result.Label = field.Config.DisplayNameFromDS
-					}
-				}
-			}
-
-			if timeColIdx == -1 || valueColIdx == -1 {
+			s, ok := cloudWatchSeriesFromFrame(frame, defaultLabel)
+			if !ok {
 				continue
 			}
-
-			// Extract data
-			rowCount := frame.Rows()
-			for i := 0; i < rowCount; i++ {
-				// Parse timestamp (can be float64 or int64 from JSON)
-				var ts int64
-				switch v := frame.At(timeColIdx, i).(type) {
-				case float64:
-					ts = int64(v)
-				case int64:
-					ts = v
-				case time.Time:
-					ts = v.UnixMilli()
-				case *time.Time:
-					if v == nil {
-						continue
-					}
-					ts = v.UnixMilli()
-				default:
-					continue
-				}
-
-				// Parse value
-				var val float64
-				switch v := frame.At(valueColIdx, i).(type) {
-				case float64:
-					val = v
-				case int64:
-					val = float64(v)
-				case *float64:
-					if v == nil {
-						continue
-					}
-					val = *v
-				case nil:
-					continue
-				default:
-					continue
-				}
-
-				result.Timestamps = append(result.Timestamps, ts)
-				result.Values = append(result.Values, val)
-
-				// Calculate statistics
-				sum += val
-				count++
-				if first {
-					min = val
-					max = val
-					first = false
-				} else {
-					if val < min {
-						min = val
-					}
-					if val > max {
-						max = val
-					}
-				}
-			}
-		}
-
-		// Add computed statistics across all frames
-		if count > 0 {
-			result.Statistics["sum"] = sum
-			result.Statistics["min"] = min
-			result.Statistics["max"] = max
-			result.Statistics["avg"] = sum / float64(count)
-			result.Statistics["count"] = float64(count)
+			points += len(s.Values)
+			series = append(series, s)
 		}
 	}
 
-	// Add hints if no data was found
-	if len(result.Values) == 0 {
+	result := &CloudWatchQueryResult{}
+	switch len(series) {
+	case 0:
+		result.CloudWatchSeries = &CloudWatchSeries{
+			Label:      defaultLabel,
+			Timestamps: []int64{},
+			Values:     []float64{},
+		}
+	case 1:
+		result.CloudWatchSeries = &series[0]
+	default:
+		result.Series = series
+	}
+
+	if points == 0 {
 		result.Hints = generateCloudWatchEmptyResultHints()
 	}
-
 	return result, nil
+}
+
+// cloudWatchSeriesFromFrame reads one frame. ok is false when the frame has
+// no time or numeric field.
+func cloudWatchSeriesFromFrame(frame *data.Frame, defaultLabel string) (CloudWatchSeries, bool) {
+	s := CloudWatchSeries{Label: defaultLabel}
+
+	timeColIdx, valueColIdx := -1, -1
+	for i, field := range frame.Fields {
+		switch {
+		case field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime:
+			timeColIdx = i
+		case field.Type().Numeric():
+			valueColIdx = i
+			if field.Config != nil && field.Config.DisplayNameFromDS != "" {
+				s.Label = field.Config.DisplayNameFromDS
+			}
+		}
+	}
+	if timeColIdx == -1 || valueColIdx == -1 {
+		return s, false
+	}
+	s.Timestamps = make([]int64, 0, frame.Rows())
+	s.Values = make([]float64, 0, frame.Rows())
+
+	var sum, min, max float64
+	for i := 0; i < frame.Rows(); i++ {
+		// Timestamps can be float64 or int64 from JSON.
+		var ts int64
+		switch v := frame.At(timeColIdx, i).(type) {
+		case float64:
+			ts = int64(v)
+		case int64:
+			ts = v
+		case time.Time:
+			ts = v.UnixMilli()
+		case *time.Time:
+			if v == nil {
+				continue
+			}
+			ts = v.UnixMilli()
+		default:
+			continue
+		}
+
+		var val float64
+		switch v := frame.At(valueColIdx, i).(type) {
+		case float64:
+			val = v
+		case int64:
+			val = float64(v)
+		case *float64:
+			if v == nil {
+				continue
+			}
+			val = *v
+		default:
+			continue
+		}
+
+		if len(s.Values) == 0 || val < min {
+			min = val
+		}
+		if len(s.Values) == 0 || val > max {
+			max = val
+		}
+		sum += val
+		s.Timestamps = append(s.Timestamps, ts)
+		s.Values = append(s.Values, val)
+	}
+
+	if n := len(s.Values); n > 0 {
+		s.Statistics = map[string]float64{
+			"sum":   sum,
+			"min":   min,
+			"max":   max,
+			"avg":   sum / float64(n),
+			"count": float64(n),
+		}
+	}
+	return s, true
 }
 
 // generateCloudWatchEmptyResultHints generates helpful hints when a CloudWatch query returns no data
@@ -341,7 +355,9 @@ Common namespaces: AWS/EC2, AWS/ECS, AWS/RDS, AWS/Lambda, ECS/ContainerInsights
 
 Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}
 
-Cross-account monitoring: Use accountId to query metrics from a specific source account (e.g. '123456789012') or 'all' to query all linked accounts. Only applicable when using a CloudWatch monitoring account datasource.`,
+Cross-account monitoring: Use accountId to query metrics from a specific source account (e.g. '123456789012') or 'all' to query all linked accounts. Only applicable when using a CloudWatch monitoring account datasource.
+
+A dimension value of '*' or accountId 'all' can match several series. Each is then returned in 'series' with its own label, values and statistics.`,
 	queryCloudWatch,
 	mcpgrafana.WithTitleAnnotation("Query CloudWatch"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
