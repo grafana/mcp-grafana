@@ -210,7 +210,7 @@ func readBackAnnotation(ctx context.Context, c *mcpgrafana.GrafanaClient, id str
 
 var CreateAnnotationTool = mcpgrafana.MustTool(
 	"create_annotation",
-	"Create a new annotation on a dashboard or panel. Times may be given as epoch ms ('time'/'timeEnd') or as ISO-8601 timestamps ('timeISO'/'timeEndISO', e.g. 2026-01-02T15:04:05Z) — no manual epoch conversion needed. Set format to 'graphite' and provide 'what' for Graphite-format annotations. For standard annotations the result also carries the stored annotation under 'annotation', so it can be confirmed without a follow-up get_annotations.",
+	"Create a new annotation on a dashboard or panel. Times may be given as epoch ms ('time'/'timeEnd') or as ISO-8601 timestamps ('timeISO'/'timeEndISO', e.g. 2026-01-02T15:04:05Z) — no manual epoch conversion needed. Set format to 'graphite' and provide 'what' for Graphite-format annotations. For standard annotations the result also carries the stored annotation under 'annotation', so no follow-up read is needed to confirm it.",
 	createAnnotation,
 	mcpgrafana.WithTitleAnnotation("Create Annotation"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
@@ -275,7 +275,7 @@ func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (any, err
 
 var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"update_annotation",
-	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged. The result also carries the updated annotation under 'annotation', so changes can be confirmed without a follow-up get_annotations.",
+	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged. The result also carries the updated annotation under 'annotation', so no follow-up read is needed to confirm the change.",
 	updateAnnotation,
 	mcpgrafana.WithTitleAnnotation("Update Annotation"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
