@@ -419,9 +419,31 @@ type UpdateDashboardParams struct {
 	UserID    int64  `json:"userId,omitempty" jsonschema:"description=ID of the user making the change"`
 }
 
+// AppliedOperation echoes a single patch operation that update_dashboard
+// applied, so a caller can confirm the change landed without re-reading.
+type AppliedOperation struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value,omitempty"`
+}
+
+// UpdateDashboardResult is the dashboard save response plus, for patch-mode
+// updates, an echo of the operations that were applied (B1). The embedded
+// *models.PostDashboardOKBody keeps the existing result shape (uid, version,
+// url, status, ...) and promotes its fields; `applied` is additive. It lets an
+// agent skip the follow-up get_dashboard_by_uid it would otherwise issue just
+// to confirm a patch took effect: the save succeeding (and the version field
+// advancing) together with this echo of exactly what was written is the
+// confirmation. It is an echo of the applied operations, not a re-read of the
+// full resulting dashboard state.
+type UpdateDashboardResult struct {
+	*models.PostDashboardOKBody
+	Applied []AppliedOperation `json:"applied,omitempty"`
+}
+
 // updateDashboard intelligently handles dashboard updates using either full JSON or patch operations.
 // It automatically uses the most efficient approach based on the provided parameters.
-func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
+func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*UpdateDashboardResult, error) {
 	dashboard, err := updateDashboardContent(ctx, args)
 	if err != nil {
 		return nil, err
@@ -442,7 +464,20 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.P
 			)
 		}
 	}
-	return dashboard, nil
+	result := &UpdateDashboardResult{PostDashboardOKBody: dashboard}
+	// B1: in patch mode, echo the operations we applied so the caller can
+	// confirm the write without a verify get_dashboard_by_uid.
+	if len(args.Operations) > 0 && args.UID != "" {
+		result.Applied = make([]AppliedOperation, 0, len(args.Operations))
+		for _, op := range args.Operations {
+			result.Applied = append(result.Applied, AppliedOperation{
+				Op:    op.Op,
+				Path:  op.Path,
+				Value: op.Value,
+			})
+		}
+	}
+	return result, nil
 }
 
 func updateDashboardContent(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
@@ -1035,7 +1070,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: "+dashboardV2Skeleton+". For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
+	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. In patch mode the result also includes an 'applied' array echoing the operations that were applied, so a successful save (with an advanced 'version') confirms the change without a follow-up get_dashboard_by_uid. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: "+dashboardV2Skeleton+". For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
 	updateDashboard,
 	mcpgrafana.WithTitleAnnotation("Create or update dashboard"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
