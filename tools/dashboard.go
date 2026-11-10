@@ -1074,6 +1074,8 @@ type panelQuery struct {
 
 	// Keep expression target dependencies without exposing another response field.
 	rawTarget map[string]interface{}
+	// interval holds the panel's max data points and min interval.
+	interval intervalOptions
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {

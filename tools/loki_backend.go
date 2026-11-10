@@ -55,12 +55,12 @@ type lokiBackend interface {
 
 // lokiQueryParams is the normalized request shape passed to lokiBackend.QueryLogs.
 type lokiQueryParams struct {
-	Query       string
-	QueryType   string // "instant" or "range"
-	Start, End  time.Time
-	Limit       int    // already clamped to the configured max
-	Direction   string // "forward" or "backward"
-	StepSeconds int    // for range metric queries
+	Query      string
+	QueryType  string // "instant" or "range"
+	Start, End time.Time
+	Limit      int           // already clamped to the configured max
+	Direction  string        // "forward" or "backward"
+	Step       time.Duration // for range metric queries
 }
 
 // lokiQueryResult is the backend's contribution to QueryLokiLogsResult.
@@ -217,8 +217,10 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 		// Becomes X-Query-Tags: Source=mcp-grafana on the request to Loki.
 		query["supportingQueryType"] = lokiQuerySource
 	}
-	if p.StepSeconds > 0 {
-		query["step"] = fmt.Sprintf("%ds", p.StepSeconds)
+	if p.Step >= time.Second && p.Step%time.Second == 0 {
+		query["step"] = fmt.Sprintf("%ds", p.Step/time.Second)
+	} else if p.Step > 0 {
+		query["step"] = fmt.Sprintf("%dms", p.Step.Milliseconds())
 	} else if queryType == "range" {
 		// Without a step Grafana picks one from its default 1s interval, far
 		// finer than Loki's own default of range/250, so send Loki's default.

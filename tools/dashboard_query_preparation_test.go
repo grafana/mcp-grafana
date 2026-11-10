@@ -50,10 +50,15 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			multi             bool
 			datasourceType    string
 			targetFields      map[string]interface{}
+			queryOptions      map[string]interface{}
 			requiredNames     []string
 		}{
-			{name: "macro-prefixed variable selection", query: "SELECT '$__interval_env', $__interval", overrides: map[string]string{"__interval_env": "production"}, want: "SELECT 'production', 30s"},
-			{name: "macro-like saved value", query: "SELECT '${choice}', $__interval", current: "$__interval", want: "SELECT '$__interval', 30s"},
+			{name: "macro-prefixed variable selection", query: "SELECT '$__interval_env', $__interval", overrides: map[string]string{"__interval_env": "production"}, want: "SELECT 'production', 1m"},
+			{name: "macro-like saved value", query: "SELECT '${choice}', $__interval", current: "$__interval", want: "SELECT '$__interval', 1m"},
+			{name: "SQL datasource min interval macros", query: "SELECT $__interval, $__interval_ms", want: "SELECT 1m, 60000"},
+			{name: "panel max data points and min interval macros", query: "SELECT $__interval, $__interval_ms", queryOptions: map[string]interface{}{"maxDataPoints": float64(1000), "interval": "1s"}, want: "SELECT 5s, 5000"},
+			{name: "panel min interval variable", query: "SELECT $__interval", current: "2m", queryOptions: map[string]interface{}{"interval": "$choice"}, want: "SELECT 2m"},
+			{name: "CloudWatch max data points macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", queryOptions: map[string]interface{}{"maxDataPoints": float64(1000)}, want: "SELECT 5000"},
 			{name: "macro-like override", query: "SELECT '$choice', $__range_s", current: "saved", overrides: map[string]string{"choice": "${__range_s}"}, want: "SELECT '${__range_s}', 3600"},
 			{name: "macro-like multi-value", query: "SELECT * FROM t WHERE w IN ($choice)", current: []interface{}{"$__interval", "$__range"}, multi: true, want: "SELECT * FROM t WHERE w IN ('$__interval','$__range')"},
 			{name: "CloudWatch macro-like value", query: "SELECT $choice, $__interval_ms", current: "$__interval_ms", datasourceType: "cloudwatch", want: "SELECT $__interval_ms, 30000", requiredNames: []string{"choice"}},
@@ -84,7 +89,7 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "null", query: "SELECT '${choice}'", want: "SELECT ''"},
 			{name: "null with All label", query: "SELECT '${choice}'", currentText: "All", want: "SELECT ''"},
 			{name: "saved option metadata", query: "SELECT ${choice:sqlstring}", current: "saved", defaultValue: "east", want: "SELECT 'saved'"},
-			{name: "time macros", query: "SELECT $__range_s, $__interval_ms", want: "SELECT 3600, 30000"},
+			{name: "time macros", query: "SELECT $__range_s, $__interval_ms", want: "SELECT 3600, 60000"},
 			{name: "default time range", query: "SELECT $__range_s", want: "SELECT 3600", defaultRange: true},
 			{name: "constant fallback", query: "SELECT ${choice:sqlstring}", kind: "Constant", fallback: "constant", want: "SELECT 'constant'"},
 			{name: "textbox fallback", query: "SELECT ${choice:sqlstring}", kind: "Textbox", fallback: "text", want: "SELECT 'text'"},
@@ -164,12 +169,16 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 				if tc.datasource != "" {
 					panelUID = tc.datasource
 				}
+				panel := map[string]interface{}{
+					"id": float64(1), "datasource": map[string]interface{}{"uid": panelUID, "type": datasourceType},
+					"targets": []interface{}{target},
+				}
+				for key, value := range tc.queryOptions {
+					panel[key] = value
+				}
 				db := map[string]interface{}{
 					"templating": map[string]interface{}{"list": []interface{}{variable}},
-					"panels": []interface{}{map[string]interface{}{
-						"id": float64(1), "datasource": map[string]interface{}{"uid": panelUID, "type": datasourceType},
-						"targets": []interface{}{target},
-					}},
+					"panels":     []interface{}{panel},
 				}
 				target["refId"] = "A"
 				target["datasource"] = map[string]interface{}{"uid": panelUID}
@@ -181,7 +190,7 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 								map[string]interface{}{"spec": map[string]interface{}{"refId": "A", "query": map[string]interface{}{
 									"group": datasourceType, "datasource": map[string]interface{}{"name": panelUID}, "spec": target,
 								}}},
-							}}},
+							}, "queryOptions": tc.queryOptions}},
 						}}},
 					}
 				}
@@ -406,4 +415,39 @@ func TestPanelRequiredVariablesExcludeSQLMacros(t *testing.T) {
 		}
 		assert.ElementsMatch(t, []string{"job", "__timeFilter_env"}, names)
 	}
+}
+
+// A datasource read during execution brings its min interval (jsonData.timeInterval).
+func TestRunPanelQueryDatasourceTimeInterval(t *testing.T) {
+	var submitted string
+	db := map[string]interface{}{"panels": []interface{}{map[string]interface{}{
+		"id": float64(1), "datasource": map[string]interface{}{"uid": "old", "type": "postgres"},
+		"targets": []interface{}{map[string]interface{}{"refId": "A", "rawSql": "SELECT $__interval"}},
+	}}}
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/dashboards/uid/test":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"dashboard": db})
+		case "/api/datasources/uid/pg":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"uid": "pg", "type": "grafana-postgresql-datasource",
+				"jsonData": map[string]interface{}{"timeInterval": "2m"}})
+		case "/api/ds/query":
+			var payload map[string]interface{}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			submitted = safeString(safeArray(payload, "queries")[0].(map[string]interface{}), "rawSql")
+			frames := data.Frames{data.NewFrame("", data.NewField("value", nil, []int64{1}))}
+			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: frames}}})
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	result, err := runPanelQuery(enforceTestCtx(ts, false), RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1},
+		DatasourceUID: "pg", Start: "1704067200000", End: "1704070800000"})
+	require.NoError(t, err)
+	require.Empty(t, result.Errors)
+	assert.Equal(t, "SELECT 2m", submitted)
 }

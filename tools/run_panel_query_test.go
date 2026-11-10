@@ -1009,7 +1009,7 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
 			end := start.Add(tt.duration)
-			result := substituteGrafanaMacros(tt.query, start, end)
+			result := substituteGrafanaMacros(tt.query, start, end, intervalOptions{})
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1040,10 +1040,78 @@ func TestSubstituteGrafanaMacrosRoundsInterval(t *testing.T) {
 	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
 	for _, tt := range tests {
 		t.Run(tt.span.String(), func(t *testing.T) {
-			got := substituteGrafanaMacros("$__interval ${__interval_ms} $__auto", start, start.Add(tt.span))
+			got := substituteGrafanaMacros("$__interval ${__interval_ms} $__auto", start, start.Add(tt.span), intervalOptions{})
 			assert.Equal(t, tt.interval+" "+tt.ms+" "+tt.interval, got)
 		})
 	}
+}
+
+// Expected values come from Grafana's rangeutil.calculateInterval(range, maxDataPoints, lowerLimit).
+func TestSubstituteGrafanaMacrosIntervalOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		span    time.Duration
+		options intervalOptions
+		want    string
+	}{
+		{"fallback data points", time.Hour, intervalOptions{}, "30s 30000"},
+		{"panel max data points", time.Hour, intervalOptions{maxDataPoints: 1000}, "5s 5000"},
+		{"panel max data points short range", 5 * time.Minute, intervalOptions{maxDataPoints: 1000}, "200ms 200"},
+		{"min interval raises", time.Hour, intervalOptions{minInterval: "1m"}, "1m 60000"},
+		{"min interval below calculated", time.Hour, intervalOptions{minInterval: "10s"}, "30s 30000"},
+		{"prometheus 15s on 5m", 5 * time.Minute, intervalOptions{minInterval: "15s"}, "15s 15000"},
+		{"both", time.Hour, intervalOptions{maxDataPoints: 1000, minInterval: "10s"}, "10s 10000"},
+	}
+	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := substituteGrafanaMacros("$__interval ${__interval_ms}", start, start.Add(tt.span), tt.options)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// Precedence follows SceneQueryRunner.prepareRequests: the panel's min interval,
+// else the datasource's (Prometheus timeInterval or 15s, SQL timeInterval or 1m).
+func TestIntervalOptionsLowerLimit(t *testing.T) {
+	tests := []struct {
+		name          string
+		panelInterval string
+		dsType        string
+		jsonData      interface{}
+		want          string
+	}{
+		{"prometheus default", "", "prometheus", nil, "15s"},
+		{"prometheus scrape interval", "", "prometheus", map[string]interface{}{"timeInterval": "30s"}, "30s"},
+		{"panel beats datasource", "1m", "prometheus", map[string]interface{}{"timeInterval": "30s"}, "1m"},
+		{"panel variable", "$min", "prometheus", nil, "2m"},
+		{"postgres default", "", "grafana-postgresql-datasource", nil, "1m"},
+		{"mysql time interval", "", "mysql", map[string]interface{}{"timeInterval": "5m"}, "5m"},
+		{"mssql default", "", "mssql", nil, "1m"},
+		{"loki has none", "", "loki", map[string]interface{}{"timeInterval": "30s"}, ""},
+		{"cloudwatch has none", "", "cloudwatch", nil, ""},
+		{"stackdriver is not prometheus", "", "stackdriver", nil, ""},
+		{"panel on loki", "10s", "loki", nil, "10s"},
+	}
+	interp := newVariableInterpolator(templateVariableValues{"min": {"2m"}}, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := intervalOptions{maxDataPoints: 500, minInterval: tt.panelInterval}.withLowerLimit(interp, tt.dsType, tt.jsonData)
+			assert.Equal(t, intervalOptions{maxDataPoints: 500, minInterval: tt.want}, got)
+		})
+	}
+}
+
+func TestPanelIntervalOptions(t *testing.T) {
+	v1 := map[string]interface{}{"maxDataPoints": float64(1000), "interval": "1m"}
+	assert.Equal(t, intervalOptions{maxDataPoints: 1000, minInterval: "1m"}, panelIntervalOptions(v1))
+
+	v2 := map[string]interface{}{"data": map[string]interface{}{"spec": map[string]interface{}{
+		"queryOptions": map[string]interface{}{"maxDataPoints": float64(800), "interval": "30s"},
+	}}}
+	assert.Equal(t, intervalOptions{maxDataPoints: 800, minInterval: "30s"}, panelIntervalOptionsV2(v2))
+
+	assert.Equal(t, intervalOptions{}, panelIntervalOptions(map[string]interface{}{"maxDataPoints": nil}))
 }
 
 func TestFormatPrometheusDuration(t *testing.T) {
@@ -1688,14 +1756,14 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 }
 
 // executeLokiAutoQuery runs a $__auto count query, expanded as runSinglePanelQuery does.
-func executeLokiAutoQuery(t *testing.T, server *httptest.Server, start, end string) error {
+func executeLokiAutoQuery(t *testing.T, server *httptest.Server, start, end string, options intervalOptions) error {
 	t.Helper()
 	from, err := parseTime(start)
 	require.NoError(t, err)
 	to, err := parseTime(end)
 	require.NoError(t, err)
-	query := substituteGrafanaMacros(`sum(count_over_time({app="a"}[$__auto]))`, from, to)
-	_, err = executeLokiQuery(enforceTestCtx(server, false), "loki", query, start, end)
+	query := substituteGrafanaMacros(`sum(count_over_time({app="a"}[$__auto]))`, from, to, options)
+	_, err = executeLokiQuery(enforceTestCtx(server, false), "loki", query, start, end, options)
 	return err
 }
 
@@ -1706,7 +1774,7 @@ func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z", intervalOptions{})
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[30s]))`, q["expr"])
@@ -1718,7 +1786,7 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z", intervalOptions{})
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[2m]))`, q["expr"])
@@ -1730,11 +1798,35 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	err := executeLokiAutoQuery(t, server, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
+	err := executeLokiAutoQuery(t, server, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z", intervalOptions{})
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[15m]))`, q["expr"])
 	assert.Equal(t, "900s", q["step"], "step must equal $__auto")
+}
+
+// Under 150s the interval is sub-second; Grafana's Loki backend sends it as the step unchanged.
+func TestExecuteLokiQuerySubSecondStep(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T10:00:30Z", intervalOptions{})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[200ms]))`, q["expr"])
+	assert.Equal(t, "200ms", q["step"], "step must equal $__auto")
+}
+
+// The panel's max data points shrink $__auto, and the step follows it.
+func TestExecuteLokiQueryStepFollowsPanelMaxDataPoints(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z", intervalOptions{maxDataPoints: 1000})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[5s]))`, q["expr"])
+	assert.Equal(t, "5s", q["step"], "step must equal $__auto")
 }
 
 func TestSubstituteGrafanaMacrosPreservesLongerNames(t *testing.T) {
@@ -1742,6 +1834,6 @@ func TestSubstituteGrafanaMacrosPreservesLongerNames(t *testing.T) {
 	end := start.Add(time.Hour)
 	for _, name := range []string{"__interval_env", "__range_bucket", "__auto_mode", "__rate_interval_custom", "__interval_ms2", "__interval_ENV"} {
 		query := "$" + name + " ${" + name + "} $__interval"
-		assert.Equal(t, "$"+name+" ${"+name+"} 30s", substituteGrafanaMacros(query, start, end))
+		assert.Equal(t, "$"+name+" ${"+name+"} 30s", substituteGrafanaMacros(query, start, end, intervalOptions{}))
 	}
 }
