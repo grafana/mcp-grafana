@@ -68,22 +68,31 @@ func elasticsearchDashboard(panel map[string]interface{}) map[string]interface{}
 // https://github.com/grafana/scenes/blob/40193645cac97b558b2c6f22225553666f75aae2/packages/scenes/src/variables/interpolation/formatRegistry.ts#L36-L56
 func TestLuceneFormat(t *testing.T) {
 	in := newVariableInterpolator(templateVariableValues{
-		"service": {"api-gateway", "auth"},
-		"one":     {"auth"},
-		"host":    {`a b:c/d"e\f`},
-		"code":    {"-1.5"},
-		"empty":   {},
-	}, map[string]bool{"service": true, "one": true})
+		"service":      {"api-gateway", "auth"},
+		"one":          {"auth"},
+		"host":         {`a b:c/d"e\f`},
+		"code":         {"-1.5"},
+		"empty":        {},
+		"single_empty": {},
+	}, map[string]bool{"service": true, "one": true, "empty": true})
 	lucene := func(s string) string { return in.interpolateQuery(s, elasticsearchDatasourceType) }
 
 	assert.Equal(t, `("api\-gateway" OR "auth")`, lucene("$service"))
 	assert.Equal(t, `("auth")`, lucene("$one"), "a multi-value variable is a list")
 	assert.Equal(t, `a\ b\:c\/d\"e\\f`, lucene("$host"), "a single value is escaped")
 	assert.Equal(t, "-1.5", lucene("$code"), "numbers are not escaped")
-	assert.Equal(t, "", lucene("$empty"))
+	assert.Equal(t, "", lucene("$single_empty"))
+	assert.Equal(t, "__empty__", lucene("$empty"), "an empty selection matches nothing")
 	assert.Equal(t, "{api-gateway,auth}", lucene("${service:glob}"), "an explicit format wins")
 	assert.Equal(t, "api-gateway", in.interpolate("$service"), "other fields keep generic formatting")
-	assert.Equal(t, `("api\-gateway" OR "auth")`, in.interpolateQuery("${service:lucene}", "prometheus"), "explicit :lucene")
+
+	// Explicit :lucene follows the variable, not the number of selected values.
+	for _, datasourceType := range []string{"prometheus", elasticsearchDatasourceType} {
+		assert.Equal(t, `("api\-gateway" OR "auth")`, in.interpolateQuery("${service:lucene}", datasourceType))
+		assert.Equal(t, `("auth")`, in.interpolateQuery("${one:lucene}", datasourceType))
+		assert.Equal(t, "__empty__", in.interpolateQuery("${empty:lucene}", datasourceType))
+		assert.Equal(t, `a\ b\:c\/d\"e\\f`, in.interpolateQuery("${host:lucene}", datasourceType))
+	}
 }
 
 func TestExtractPanelInfo_ElasticsearchEmptyQuery(t *testing.T) {
@@ -198,4 +207,23 @@ func TestRunSinglePanelQuery_OpenSearchNotRoutedAsElasticsearch(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not supported by run_panel_query")
+}
+
+func TestRunSinglePanelQuery_ElasticsearchEmptySelectionMatchesNothing(t *testing.T) {
+	var payload map[string]interface{}
+	ts := neo4jDSQueryServer(t, &payload)
+	defer ts.Close()
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+
+	panel := elasticsearchPanel("service:$service")
+	filter := panel["targets"].([]interface{})[0].(map[string]interface{})["bucketAggs"].([]interface{})[0].(map[string]interface{})["settings"].(map[string]interface{})["filters"].([]interface{})[0].(map[string]interface{})
+	filter["query"] = "$service"
+	db := elasticsearchDashboard(panel)
+	db["templating"].(map[string]interface{})["list"].([]interface{})[0].(map[string]interface{})["current"] = map[string]interface{}{"value": []interface{}{}}
+
+	result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{DB: db, PanelID: 7, Start: "now-1h", End: "now"})
+	require.NoError(t, err)
+	assert.Equal(t, "service:__empty__", result.Query)
+	filters := sentNeo4jQuery(t, payload)["bucketAggs"].([]interface{})[0].(map[string]interface{})["settings"].(map[string]interface{})["filters"].([]interface{})
+	assert.Equal(t, "__empty__", filters[0].(map[string]interface{})["query"], "not *, which would match every document")
 }
