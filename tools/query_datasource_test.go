@@ -114,6 +114,9 @@ func TestQueryDatasourceRejectsBadArguments(t *testing.T) {
 		"reversed range":  {`{"datasourceUid":"prom","from":"now","to":"now-1h","queries":[{"refId":"A"}]}`, "before"},
 		"bad time":        {`{"datasourceUid":"prom","from":"yesterday-ish","queries":[{"refId":"A"}]}`, "from"},
 		"long title":      {`{"datasourceUid":"prom","title":"` + strings.Repeat("é", maxDSTitleChars+1) + `","queries":[{"refId":"A"}]}`, "title"},
+		"empty title":     {`{"datasourceUid":"prom","title":"","queries":[{"refId":"A"}]}`, "white space"},
+		"blank title":     {`{"datasourceUid":"prom","title":" \t\n","queries":[{"refId":"A"}]}`, "white space"},
+		"nbsp title":      {`{"datasourceUid":"prom","title":"\u00a0\u3000\ufeff","queries":[{"refId":"A"}]}`, "white space"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			queried := false
@@ -229,6 +232,19 @@ func TestQueryDatasourceTitle(t *testing.T) {
 	}
 }
 
+func TestQueryDatasourceTitleKeepsWhiteSpace(t *testing.T) {
+	// tool.31: a title with one character that is not white space is valid, and it has no change. U+0085 is not
+	// white space for the schema pattern.
+	for _, title := range []string{" a ", "\u0085"} {
+		body, err := json.Marshal(map[string]any{"datasourceUid": "prom", "title": title, "queries": []any{map[string]any{"refId": "A"}}})
+		require.NoError(t, err)
+		result, _, err := runQueryDatasource(t, string(body), dsQueryResponse)
+		require.NoError(t, err)
+		require.False(t, result.IsError)
+		assert.Equal(t, title, result.StructuredContent.(*QueryDatasourceResult).Panel.Title)
+	}
+}
+
 func TestQueryDatasourceNoTitleHasNoTitle(t *testing.T) {
 	result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A"}]}`, dsQueryResponse)
 	require.NoError(t, err)
@@ -240,12 +256,12 @@ func TestQueryDatasourceNoTitleHasNoTitle(t *testing.T) {
 func TestQueryDatasourceSchemaLimitsTitle(t *testing.T) {
 	var schema struct {
 		Properties map[string]struct {
-			MinLength int `json:"minLength"`
-			MaxLength int `json:"maxLength"`
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
 		} `json:"properties"`
 	}
 	require.NoError(t, json.Unmarshal(QueryDatasource.Tool.InputSchema.(json.RawMessage), &schema))
-	assert.Equal(t, 1, schema.Properties["title"].MinLength)
+	assert.Equal(t, `\S`, schema.Properties["title"].Pattern)
 	assert.Equal(t, maxDSTitleChars, schema.Properties["title"].MaxLength)
 }
 

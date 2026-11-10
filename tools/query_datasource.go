@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
@@ -57,7 +58,7 @@ type QueryDatasourceParams struct {
 	To            dsTime           `json:"to,omitempty" jsonschema:"description=End of the time range\\, in a format that /api/ds/query accepts\\, for example now or epoch milliseconds. Defaults to now."`
 	Type          dsChartType      `json:"type,omitempty"`
 	Unit          string           `json:"unit,omitempty" jsonschema:"minLength=1,description=Optional Grafana unit ID for all values\\, for example bytes\\, percent or reqps."`
-	Title         string           `json:"title,omitempty" jsonschema:"minLength=1,maxLength=100,description=Optional title of the chart\\, for example HTTP requests by handler. The chart shows it as a panel title."`
+	Title         *string          `json:"title,omitempty" jsonschema:"pattern=\\S,maxLength=100,description=Optional title of the chart\\, for example HTTP requests by handler. The chart shows it as a panel title."`
 }
 
 // dsChartType is a chart of chart-types.json (tool.7). With no type, the Source picks the chart.
@@ -147,6 +148,27 @@ type dsRange struct {
 	To   int64 `json:"to"`
 }
 
+// dsTitle checks the title of the arguments: at most maxDSTitleChars characters, and one that is not white space
+// (tool.31). An empty title is not valid, so it is a pointer.
+func dsTitle(title *string) (string, error) {
+	if title == nil {
+		return "", nil
+	}
+	if strings.IndexFunc(*title, func(r rune) bool { return !isJSSpace(r) }) < 0 {
+		return "", fmt.Errorf("title must have a character that is not white space")
+	}
+	if n := utf8.RuneCountInString(*title); n > maxDSTitleChars {
+		return "", fmt.Errorf("title must be at most %d characters, got %d", maxDSTitleChars, n)
+	}
+	return *title, nil
+}
+
+// isJSSpace is \s of the JavaScript regular expressions, which the schema pattern \S uses. It is unicode.IsSpace
+// with U+FEFF and without U+0085.
+func isJSSpace(r rune) bool {
+	return r == '\uFEFF' || (r != '\u0085' && unicode.IsSpace(r))
+}
+
 // dsNow is the clock of the Source. The conformance tests set it.
 var dsNow = time.Now
 
@@ -154,8 +176,9 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	if args.DatasourceUID == "" {
 		return nil, fmt.Errorf("datasourceUid is required")
 	}
-	if n := utf8.RuneCountInString(args.Title); n > maxDSTitleChars {
-		return nil, fmt.Errorf("title must be at most %d characters, got %d", maxDSTitleChars, n)
+	title, err := dsTitle(args.Title)
+	if err != nil {
+		return nil, err
 	}
 	if args.Type != "" && vizChartByName(vizCharts, string(args.Type)) == nil {
 		return nil, fmt.Errorf("type must be one of: %s", strings.Join(vizChartNames(), ", "))
@@ -193,7 +216,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 		return nil, fmt.Errorf("the data source %s returned no results", args.DatasourceUID)
 	}
 
-	chart, alternatives, mismatch, err := chooseDSChart(envelope.Results, args.Type, args.Unit, args.Title)
+	chart, alternatives, mismatch, err := chooseDSChart(envelope.Results, args.Type, args.Unit, title)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +225,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	}
 	result := &QueryDatasourceResult{
 		Chart:        chart.Name,
-		Panel:        dsPanelOf(*chart, args.Unit, args.Title),
+		Panel:        dsPanelOf(*chart, args.Unit, title),
 		Alternatives: alternatives,
 		Data: dsData{
 			Range:      dsRange{From: from.UnixMilli(), To: to.UnixMilli()},
