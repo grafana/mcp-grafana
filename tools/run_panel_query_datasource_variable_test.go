@@ -23,7 +23,8 @@ func TestRunSinglePanelQuery_DatasourceVariableWithoutValue(t *testing.T) {
 		{"id":2,"uid":"zeta-uid","name":"Zeta","type":"prometheus"},
 		{"id":3,"uid":"alpha-uid","name":"alpha","type":"prometheus"},
 		{"id":4,"uid":"prod-uid","name":"PROD metrics","type":"prometheus"},
-		{"id":5,"uid":"staging-uid","name":"staging-Zeta","type":"prometheus"}
+		{"id":5,"uid":"staging-uid","name":"staging-Zeta","type":"prometheus"},
+		{"id":6,"uid":"amp-uid","name":"AMP","type":"grafana-amazonprometheus-datasource"}
 	]`
 	tests := []struct {
 		name, regex, want, wantErr string
@@ -41,6 +42,8 @@ func TestRunSinglePanelQuery_DatasourceVariableWithoutValue(t *testing.T) {
 		{name: "bare regex is anchored", pluginID: "prometheus", regex: "Zeta", want: "zeta-uid"},
 		{name: "slash regex is not anchored", pluginID: "prometheus", regex: "/Zeta/", want: "staging-uid"},
 		{name: "unknown regex flag", pluginID: "prometheus", regex: "/PROD/x", wantErr: "datasource variable '${ds}' not found"},
+		// Grafana's matchPluginId treats grafana-*prometheus-datasource as prometheus.
+		{name: "prometheus flavor", pluginID: "prometheus", regex: "/^AMP$/", want: "amp-uid"},
 		{name: "schema v2 variable", pluginID: "prometheus", v2: true, want: "alpha-uid"},
 		{name: "no datasource of the type", pluginID: "tempo", wantErr: "datasource variable '${ds}' not found"},
 		{name: "no name matches the regex", pluginID: "prometheus", regex: "/^nope/", wantErr: "datasource variable '${ds}' not found"},
@@ -53,6 +56,8 @@ func TestRunSinglePanelQuery_DatasourceVariableWithoutValue(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/datasources":
 					_, _ = io.WriteString(w, list)
+				case "/api/datasources/uid/amp-uid":
+					_, _ = io.WriteString(w, `{"uid":"amp-uid","type":"grafana-amazonprometheus-datasource"}`)
 				case "/api/datasources/uid/alpha-uid", "/api/datasources/uid/zeta-uid", "/api/datasources/uid/prod-uid", "/api/datasources/uid/staging-uid":
 					uid := r.URL.Path[len("/api/datasources/uid/"):]
 					_, _ = io.WriteString(w, `{"uid":"`+uid+`","type":"prometheus"}`)
