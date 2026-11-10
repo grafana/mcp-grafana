@@ -65,6 +65,7 @@ type alertRuleSummary struct {
 // full configuration from the Provisioning API with runtime state from the
 // Prometheus rules API.
 type alertRuleDetail struct {
+	OrgID        int64             `json:"org_id,omitempty"`
 	UID          string            `json:"uid"`
 	Title        string            `json:"title"`
 	FolderUID    string            `json:"folder_uid"`
@@ -590,7 +591,7 @@ func (f listFilterParams) parseLabelSelectors() ([]Selector, error) {
 type listFilterParams struct {
 	RuleLimit      int      `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
 	LabelSelectors []string `json:"label_selectors,omitempty" jsonschema:"description=Prometheus-style selectors to filter alert rules by labels. Each string is a selector e.g. '{severity=\"critical\"\\, team=~\"backend.*\"}'. All selectors must match (AND)."`
-	LimitAlerts    int      `json:"limit_alerts,omitempty" jsonschema:"description=Limit alert instances per rule. For list: 0 omits alerts. For get: <=0 defaults to 200. Max 200."`
+	LimitAlerts    int      `json:"limit_alerts,omitempty" jsonschema:"description=Number of alert instances to include per rule (0 or omitted = none\\, max 200)."`
 	SearchFolder   string   `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid."`
 	SearchRuleName string   `json:"search_rule_name,omitempty" jsonschema:"description=Search alert rule names/titles using partial matching. Requires Grafana 12.4+ (for 'list' operation)"`
 	States         []string `json:"states,omitempty" jsonschema:"description=Filter by alert state: firing\\, pending\\, normal\\, recovering\\, nodata\\, error (for 'list' operation)"`

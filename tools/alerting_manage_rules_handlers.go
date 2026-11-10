@@ -133,6 +133,9 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 		MissingSeriesEvalsToResolve: provisioned.MissingSeriesEvalsToResolve,
 	}
 
+	if provisioned.OrgID != nil {
+		detail.OrgID = *provisioned.OrgID
+	}
 	if provisioned.Title != nil {
 		detail.Title = *provisioned.Title
 	}
