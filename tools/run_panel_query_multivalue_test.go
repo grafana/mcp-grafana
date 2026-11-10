@@ -52,9 +52,14 @@ func TestMultiValueTemplateVariables(t *testing.T) {
 		map[string]interface{}{"name": "all", "includeAll": true},
 		map[string]interface{}{"name": "single", "multi": false},
 		map[string]interface{}{"name": "unset"},
+		map[string]interface{}{"name": "both", "multi": true, "includeAll": true},
 	}}}
-	assert.Equal(t, map[string]bool{"multi": true, "all": true}, multiValueTemplateVariables(db))
-	assert.Empty(t, multiValueTemplateVariables(map[string]interface{}{}))
+	multi, includeAll := multiValueTemplateVariables(db)
+	assert.Equal(t, map[string]bool{"multi": true, "both": true}, multi)
+	assert.Equal(t, map[string]bool{"all": true, "both": true}, includeAll)
+	multi, includeAll = multiValueTemplateVariables(map[string]interface{}{})
+	assert.Empty(t, multi)
+	assert.Empty(t, includeAll)
 }
 
 // multiValuePanelDashboard has one panel on the given datasource whose expr
