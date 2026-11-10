@@ -127,12 +127,26 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		return nil, fmt.Errorf("create annotation: %w", err)
 	}
 
+	// B2: echo the stored annotation so the agent can confirm the write — time,
+	// text and tags exactly as Grafana saved them, including server-filled
+	// defaults (e.g. time defaulting to now) — without a follow-up
+	// get_annotations. Best-effort: the create has already succeeded, and a
+	// token with only annotations:create can still create, so fall back to the
+	// create response (which carries the new id) when the read-back is
+	// unavailable.
+	if resp != nil && resp.Payload != nil && resp.Payload.ID != nil {
+		id := strconv.FormatInt(*resp.Payload.ID, 10)
+		if got, gerr := c.Annotations.GetAnnotationByID(id); gerr == nil && got.Payload != nil {
+			return got.Payload, nil
+		}
+	}
+
 	return resp, nil
 }
 
 var CreateAnnotationTool = mcpgrafana.MustTool(
 	"create_annotation",
-	"Create a new annotation on a dashboard or panel. Set format to 'graphite' and provide 'what' for Graphite-format annotations.",
+	"Create a new annotation on a dashboard or panel. Set format to 'graphite' and provide 'what' for Graphite-format annotations. Returns the stored annotation (standard format) so the result can be confirmed without a follow-up get_annotations.",
 	createAnnotation,
 	mcpgrafana.WithTitleAnnotation("Create Annotation"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
@@ -153,7 +167,7 @@ type UpdateAnnotationInput struct {
 }
 
 // updateAnnotation updates an annotation using PATCH semantics — only provided fields are modified.
-func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (*annotations.PatchAnnotationOK, error) {
+func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (any, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	id := strconv.FormatInt(args.ID, 10)
 
@@ -181,12 +195,22 @@ func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (*annotat
 	if err != nil {
 		return nil, fmt.Errorf("update annotation: %w", err)
 	}
+
+	// B2: PatchAnnotationOK carries only a status message, so an agent cannot
+	// see which fields now hold which values and typically issues a verify
+	// get_annotations. Return the full stored annotation instead. Best-effort:
+	// the patch has already succeeded, so fall back to the patch response if the
+	// read-back is unavailable.
+	if got, gerr := c.Annotations.GetAnnotationByID(id); gerr == nil && got.Payload != nil {
+		return got.Payload, nil
+	}
+
 	return resp, nil
 }
 
 var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"update_annotation",
-	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged.",
+	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged. Returns the full updated annotation so changes can be confirmed without a follow-up get_annotations.",
 	updateAnnotation,
 	mcpgrafana.WithTitleAnnotation("Update Annotation"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
