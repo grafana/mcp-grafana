@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"strconv"
 	"testing"
 	"time"
@@ -462,4 +463,54 @@ func TestVLTimeToNanos_Fallback(t *testing.T) {
 	// Unparseable → returned verbatim.
 	assert.Equal(t, "garbage", vlTimeToNanos("garbage"))
 	assert.Equal(t, "", vlTimeToNanos(""))
+}
+
+func TestLokiLabelTools_VictoriaLogsDefaultToLastHour(t *testing.T) {
+	var sent map[string]url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/datasources/uid/vl-uid" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"uid": "vl-uid", "type": victoriaLogsDatasourceType})
+			return
+		}
+		require.NoError(t, r.ParseForm())
+		sent[path.Base(r.URL.Path)] = r.Form
+		_, _ = io.WriteString(w, `{"status":"success","values":[],"data":{"result":[]}}`)
+	}))
+	t.Cleanup(srv.Close)
+	ctx := dsQueryGuardCtx(srv, false)
+
+	for _, tc := range []struct {
+		name      string
+		call      func() error
+		endpoints []string
+	}{
+		{"list_loki_label_names", func() error {
+			_, err := listLokiLabelNames(ctx, ListLokiLabelNamesParams{DatasourceUID: "vl-uid"})
+			return err
+		}, []string{"field_names"}},
+		{"list_loki_label_values", func() error {
+			_, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{DatasourceUID: "vl-uid", LabelName: "app"})
+			return err
+		}, []string{"field_values"}},
+		{"analyze_loki_labels", func() error {
+			_, err := analyzeLokiLabels(ctx, AnalyzeLokiLabelsParams{DatasourceUID: "vl-uid", Selector: "*"})
+			return err
+		}, []string{"field_names", "stats_query"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sent = map[string]url.Values{}
+			require.NoError(t, tc.call())
+			for _, endpoint := range tc.endpoints {
+				q, ok := sent[endpoint]
+				require.True(t, ok, "no request reached %s", endpoint)
+				start, err := time.Parse(time.RFC3339Nano, q.Get("start"))
+				require.NoError(t, err, "%s sent no start", endpoint)
+				end, err := time.Parse(time.RFC3339Nano, q.Get("end"))
+				require.NoError(t, err, "%s sent no end", endpoint)
+				// Defaults have second precision, so allow a tick between the two time.Now calls.
+				assert.InDelta(t, lokiDefaultLookback.Seconds(), end.Sub(start).Seconds(), 1, endpoint)
+			}
+		})
+	}
 }

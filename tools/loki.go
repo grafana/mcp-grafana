@@ -237,11 +237,12 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
 	}
 
-	start, err := parseStartTime(args.StartRFC3339)
+	startStr, endStr := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	start, err := parseStartTime(startStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	end, err := parseEndTime(args.EndRFC3339)
+	end, err := parseEndTime(endStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -287,11 +288,12 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
 	}
 
-	start, err := parseStartTime(args.StartRFC3339)
+	startStr, endStr := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	start, err := parseStartTime(startStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	end, err := parseEndTime(args.EndRFC3339)
+	end, err := parseEndTime(endStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
