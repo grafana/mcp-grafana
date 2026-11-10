@@ -6,6 +6,7 @@ import type { TraceViewResult } from '../src/trace/types';
 import { applyHostContext } from './hostContext';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
+import { parseVizArgs, parseVizResult, type VizArgs, type VizResult } from './vizSpec';
 
 // Attach handlers before connecting: hosts may deliver results before React's first commit.
 /** Source query inputs retained for refresh and range selection. */
@@ -22,9 +23,15 @@ export type QueryArgs = {
 export type AppHostSnapshot = {
   result?: ParsedMetrics;
   trace?: TraceViewResult;
+  /** The result of query_datasource, which the Renderer draws. */
+  viz?: VizResult;
   toolName?: string;
   args?: QueryArgs;
+  /** The arguments of query_datasource, for the viz spec. */
+  vizArgs?: VizArgs;
   colorMode: McpAppColorMode;
+  /** The IANA time zone of the host context, if it gives one. */
+  timeZone?: string;
   status: string;
   isError: boolean;
   /** Transient message about the last user-initiated action. */
@@ -51,6 +58,10 @@ export type AppHostState = {
 };
 
 const WAITING = 'Waiting for query results…';
+const UNAVAILABLE = 'Interactive view unavailable; data remains available in the tool output.';
+
+/** The fields that hold a view. A new call or a failure clears all of them, so no old view stays under the new one. */
+const NO_VIEW = { result: undefined, trace: undefined, viz: undefined } as const;
 
 const error = (message: string): McpAppFeedback => ({ tone: 'error', message });
 
@@ -95,9 +106,19 @@ export function createAppHostState(app: App): AppHostState {
       return false;
     }
 
+    if (snapshot.toolName === 'query_datasource') {
+      const viz = parseVizResult(payload);
+      if (viz && snapshot.vizArgs) {
+        set({ ...patch, ...NO_VIEW, viz, isError: false });
+        return true;
+      }
+      set({ ...patch, isError: true, status: UNAVAILABLE });
+      return false;
+    }
+
     const trace = snapshot.toolName === 'get_tempo_trace' ? parseTraceResult(payload) : undefined;
     if (trace) {
-      set({ ...patch, trace, result: undefined, isError: false });
+      set({ ...patch, ...NO_VIEW, trace, isError: false });
       return true;
     }
 
@@ -106,12 +127,12 @@ export function createAppHostState(app: App): AppHostState {
       set({
         ...patch,
         isError: true,
-        status: 'Interactive view unavailable; data remains available in the tool output.',
+        status: UNAVAILABLE,
       });
       return false;
     }
 
-    set({ ...patch, result: parsed, trace: undefined, isError: false });
+    set({ ...patch, ...NO_VIEW, result: parsed, isError: false });
     return true;
   };
 
@@ -128,12 +149,13 @@ export function createAppHostState(app: App): AppHostState {
     if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return;
     // The previous chart is not this query's; keeping it would title old data
     // with the new expression until the result arrives.
+    const toolName = typeof call.toolName === 'string' ? call.toolName : undefined;
     set({
       ...nextCall(),
-      toolName: typeof call.toolName === 'string' ? call.toolName : undefined,
+      ...NO_VIEW,
+      toolName,
       args: { ...incoming, ...(typeof call.orgId === 'number' ? { orgId: call.orgId } : {}) } as QueryArgs,
-      result: undefined,
-      trace: undefined,
+      vizArgs: toolName === 'query_datasource' ? parseVizArgs(incoming) : undefined,
       isError: false,
       status: WAITING,
     });
@@ -143,28 +165,28 @@ export function createAppHostState(app: App): AppHostState {
     if (response.isError) {
       set({
         ...nextCall(),
-        result: undefined,
-        trace: undefined,
+        ...NO_VIEW,
         isError: true,
         status: 'The query failed. Check the query inputs and datasource access, then run render_grafana_app again.',
       });
       return;
     }
     // An unreadable result replaces the previous chart rather than sitting under it.
-    applyResult(response, { ...nextCall(), result: undefined, trace: undefined });
+    applyResult(response, { ...nextCall(), ...NO_VIEW });
   };
 
   app.ontoolcancelled = () => {
-    set({ ...nextCall(), result: undefined, trace: undefined, isError: true, status: 'The query was cancelled.' });
+    set({ ...nextCall(), ...NO_VIEW, isError: true, status: 'The query was cancelled.' });
   };
 
   app.onhostcontextchanged = (context) => {
     const colorMode = applyHostContext(context);
-    if (colorMode) set({ colorMode });
+    const timeZone = typeof context.timeZone === 'string' && context.timeZone ? context.timeZone : undefined;
+    if (colorMode || timeZone) set({ ...(colorMode ? { colorMode } : {}), ...(timeZone ? { timeZone } : {}) });
   };
 
   app.onteardown = async () => {
-    set({ ...nextCall(), result: undefined, trace: undefined, isError: true, status: 'Grafana App closed.' });
+    set({ ...nextCall(), ...NO_VIEW, isError: true, status: 'Grafana App closed.' });
     return {};
   };
 
@@ -177,8 +199,7 @@ export function createAppHostState(app: App): AppHostState {
     })
     .catch(() => {
       set({
-        result: undefined,
-        trace: undefined,
+        ...NO_VIEW,
         isError: true,
         status: 'Could not connect to the MCP host. Reopen the Grafana App to try again.',
       });

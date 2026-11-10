@@ -36,6 +36,8 @@ bundle_sha="$(hash "$dist/renderer.js")"
 [ "$(manifest sha256)" = "$bundle_sha" ] || { echo "the manifest sha256 is not the hash of renderer.js" >&2; exit 1; }
 
 cp "$dist/renderer.js" "$dist/renderer.manifest.json" "$dist/package.json" "$work/src/LICENSE" "$out/"
+# The types of the Renderer API, from the contract copy of the Renderer, so they match its contractVersion.
+cp "$work/src/$package/src/renderer/contract/renderer-api.d.ts" "$out/renderer.d.ts"
 cat >"$out/RENDERER" <<PIN
 repository: grafana/dataViz
 commit: $sha
