@@ -399,7 +399,7 @@ func k8sNestedString(obj map[string]interface{}, keys ...string) string {
 
 // PatchOperation represents a single patch operation
 type PatchOperation struct {
-	Op    string      `json:"op" jsonschema:"required,description=Operation type: 'replace'\\, 'add'\\, 'remove'"`
+	Op    string      `json:"op" jsonschema:"required,description=Operation type: 'replace' (change an existing value; errors if the target key does not exist)\\, 'add' (create or set a value\\, or append with /-)\\, 'remove' (delete an existing value; errors if the target key does not exist)"`
 	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, '$.templating.list/-' (append a variable)\\, '$.annotations.list/-' (append a saved dashboard annotation query/definition). For appending to arrays\\, use '/- ' syntax: '$.panels/- ' (append to panels array) or '$.panels[2]/- ' (append to nested array at index 2)."`
 	Value interface{} `json:"value,omitempty" jsonschema:"description=New value for replace/add operations. When adding a saved dashboard annotation query/definition\\, append an object to '$.annotations.list'."`
 }
@@ -497,12 +497,20 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	// differ (e.g. $.panels[0].title vs $.elements.<name>.spec.title).
 	for i, op := range args.Operations {
 		switch op.Op {
-		case "replace", "add":
-			if err := applyJSONPath(dashboardMap, op.Path, op.Value, false); err != nil {
+		case "replace":
+			// C4 (GF-08): replace targets an existing value; error if the final
+			// key is absent instead of silently creating it. Use "add" to create.
+			if err := applyJSONPath(dashboardMap, op.Path, op.Value, false, true); err != nil {
+				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
+			}
+		case "add":
+			if err := applyJSONPath(dashboardMap, op.Path, op.Value, false, false); err != nil {
 				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
 			}
 		case "remove":
-			if err := applyJSONPath(dashboardMap, op.Path, nil, true); err != nil {
+			// C4 (GF-08): remove targets an existing value; error if the final
+			// key is absent instead of silently succeeding.
+			if err := applyJSONPath(dashboardMap, op.Path, nil, true, true); err != nil {
 				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
 			}
 		default:
@@ -1299,7 +1307,7 @@ var GetDashboardSummary = mcpgrafana.MustTool(
 )
 
 // applyJSONPath applies a value to a JSONPath or removes it if remove=true
-func applyJSONPath(data map[string]interface{}, path string, value interface{}, remove bool) error {
+func applyJSONPath(data map[string]interface{}, path string, value interface{}, remove bool, strict bool) error {
 	// Trim whitespace to handle paths like "$.panels/- " (trailing space)
 	path = strings.TrimSpace(path)
 
@@ -1335,9 +1343,9 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 	// Apply the final operation
 	finalSegment := segments[len(segments)-1]
 	if remove {
-		return removeAtSegment(current, finalSegment)
+		return removeAtSegment(current, finalSegment, strict)
 	}
-	return setAtSegment(current, finalSegment, value)
+	return setAtSegment(current, finalSegment, value, strict)
 }
 
 // JSONPathSegment represents a segment of a JSONPath
@@ -1446,7 +1454,7 @@ func navigateSegment(current map[string]interface{}, segment JSONPathSegment) (m
 }
 
 // setAtSegment sets a value at the final segment
-func setAtSegment(current map[string]interface{}, segment JSONPathSegment, value interface{}) error {
+func setAtSegment(current map[string]interface{}, segment JSONPathSegment, value interface{}, strict bool) error {
 	if segment.IsAppend {
 		// Handle append operation: add to the end of the array
 		arr, err := validateArrayAccess(current, segment)
@@ -1471,13 +1479,19 @@ func setAtSegment(current map[string]interface{}, segment JSONPathSegment, value
 		return nil
 	}
 
-	// Set the value directly
+	// Set the value directly. In strict mode (replace), the key must already
+	// exist — otherwise the operation would silently create it (C4/GF-08).
+	if strict {
+		if _, ok := current[segment.Key]; !ok {
+			return fmt.Errorf("field '%s' does not exist; 'replace' requires an existing value (use 'add' to create it)", segment.Key)
+		}
+	}
 	current[segment.Key] = value
 	return nil
 }
 
 // removeAtSegment removes a value at the final segment
-func removeAtSegment(current map[string]interface{}, segment JSONPathSegment) error {
+func removeAtSegment(current map[string]interface{}, segment JSONPathSegment, strict bool) error {
 	if segment.IsAppend {
 		return fmt.Errorf("cannot use remove operation with append syntax (/- ) at %s", segment.Key)
 	}
@@ -1491,6 +1505,13 @@ func removeAtSegment(current map[string]interface{}, segment JSONPathSegment) er
 		return nil
 	}
 
+	// In strict mode (remove), the key must already exist — otherwise the
+	// delete would silently succeed on a non-existent field (C4/GF-08).
+	if strict {
+		if _, ok := current[segment.Key]; !ok {
+			return fmt.Errorf("field '%s' does not exist; cannot remove a field that is not present", segment.Key)
+		}
+	}
 	delete(current, segment.Key)
 	return nil
 }
