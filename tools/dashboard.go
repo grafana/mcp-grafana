@@ -413,10 +413,11 @@ type UpdateDashboardParams struct {
 	Operations []PatchOperation `json:"operations,omitempty" jsonschema:"description=Array of patch operations for targeted updates. More efficient than full dashboard JSON for small changes. Common paths: '$.templating.list/-' to add a variable\\, '$.annotations.list/-' to add a saved dashboard annotation query/definition\\, '$.panels[0].targets[0].expr' to replace a panel query. v2 paths: '$.elements.<name>.spec.title'\\, '$.variables/-'\\, '$.layout.spec.items/-'."`
 
 	// Common parameters
-	FolderUID string `json:"folderUid,omitempty" jsonschema:"description=The UID of the dashboard's folder"`
-	Message   string `json:"message,omitempty" jsonschema:"description=Set a commit message for the version history"`
-	Overwrite bool   `json:"overwrite,omitempty" jsonschema:"description=Overwrite the dashboard if it exists. Otherwise create one"`
-	UserID    int64  `json:"userId,omitempty" jsonschema:"description=ID of the user making the change"`
+	FolderUID       string `json:"folderUid,omitempty" jsonschema:"description=The UID of the dashboard's folder"`
+	Message         string `json:"message,omitempty" jsonschema:"description=Set a commit message for the version history"`
+	Overwrite       bool   `json:"overwrite,omitempty" jsonschema:"description=Overwrite the dashboard if it exists. Otherwise create one"`
+	ExpectedVersion *int64 `json:"expectedVersion,omitempty" jsonschema:"description=For a full-body overwrite (full 'dashboard' JSON with overwrite=true)\\, the dashboard 'version' your edit is based on (from the get_dashboard_by_uid you built it from). If set and the dashboard has changed since\\, the save is rejected with a conflict instead of silently overwriting the newer version. Omit to overwrite unconditionally."`
+	UserID          int64  `json:"userId,omitempty" jsonschema:"description=ID of the user making the change"`
 }
 
 // updateDashboard intelligently handles dashboard updates using either full JSON or patch operations.
@@ -887,6 +888,20 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			if !existing.IsV2 {
 				return nil, fmt.Errorf("dashboard %q is stored as classic v1 and cannot be replaced in place with a v2 (elements/layout) body: Grafana pins the stored schema version, so the v2 content would be silently down-converted to v1. Create a new dashboard (a different uid) for the v2 version instead", uid)
 			}
+			// C2 (GF-19): a full-body overwrite reuses the server's current
+			// resourceVersion, so a concurrent edit would be silently lost. When
+			// the caller supplies the version their edit is based on, reject the
+			// save if the dashboard has advanced past it. The legacy dashboard
+			// "version" is the k8s metadata.generation.
+			if args.ExpectedVersion != nil {
+				if metadata, ok := existing.Object["metadata"].(map[string]interface{}); ok {
+					if generation, ok := metadata["generation"].(float64); ok {
+						if current := int64(generation); current != *args.ExpectedVersion {
+							return nil, fmt.Errorf("dashboard %q has changed since version %d (current version is %d); refusing to overwrite and lose the newer change. Re-fetch it with get_dashboard_by_uid, reapply your edit, and retry with expectedVersion=%d", uid, *args.ExpectedVersion, current, current)
+						}
+					}
+				}
+			}
 			obj := existing.Object
 			obj["spec"] = spec
 			applyV2WriteMetadata(obj, args)
@@ -1046,7 +1061,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: "+dashboardV2Skeleton+". For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
+	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. For a full-body overwrite you can pass 'expectedVersion' (the 'version' from the dashboard you edited) to get a conflict error instead of silently overwriting a concurrent change. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: "+dashboardV2Skeleton+". For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
 	updateDashboard,
 	mcpgrafana.WithTitleAnnotation("Create or update dashboard"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
