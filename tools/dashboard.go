@@ -470,11 +470,7 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*UpdateDa
 	if len(args.Operations) > 0 && args.UID != "" {
 		result.Applied = make([]AppliedOperation, 0, len(args.Operations))
 		for _, op := range args.Operations {
-			result.Applied = append(result.Applied, AppliedOperation{
-				Op:    op.Op,
-				Path:  op.Path,
-				Value: op.Value,
-			})
+			result.Applied = append(result.Applied, AppliedOperation(op))
 		}
 	}
 	return result, nil
