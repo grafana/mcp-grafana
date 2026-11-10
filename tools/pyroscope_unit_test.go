@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,8 +14,10 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestQueryPyroscope_QueryTypeValidation(t *testing.T) {
@@ -157,6 +160,62 @@ func TestListPyroscopeLabels_EmptyReturnsEmptySlice(t *testing.T) {
 	values, err := listPyroscopeLabelValues(ctx, ListPyroscopeLabelValuesParams{DataSourceUID: "test-pyro", Name: "service_name"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{}, values)
+}
+
+func TestPyroscopeMatchers(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                   "{}",
+		"  ":                 "{}",
+		"{}":                 "{}",
+		`service_name="x"`:   `{service_name="x"}`,
+		`{service_name="x"}`: `{service_name="x"}`,
+		`a="1", b=~"2"`:      `{a="1", b=~"2"}`,
+	} {
+		assert.Equal(t, want, pyroscopeMatchers(in), "input %q", in)
+	}
+}
+
+// TestListPyroscopeLabels_WrapsBareMatchers checks the label tools send a
+// bare matcher wrapped in braces, like query_pyroscope does.
+func TestListPyroscopeLabels_WrapsBareMatchers(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/datasources/uid/test-pyro", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"uid": "test-pyro", "type": "grafana-pyroscope-datasource", "id": 1})
+	})
+	mux.HandleFunc("/api/datasources/proxy/uid/test-pyro/", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		if strings.HasSuffix(r.URL.Path, "/LabelNames") {
+			var req typesv1.LabelNamesRequest
+			assert.NoError(t, proto.Unmarshal(body, &req))
+			got = append(got, req.Matchers...)
+		} else {
+			var req typesv1.LabelValuesRequest
+			assert.NoError(t, proto.Unmarshal(body, &req))
+			got = append(got, req.Matchers...)
+		}
+		w.Header().Set("Content-Type", "application/proto")
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	u, _ := url.Parse(ts.URL)
+	cfg := client.DefaultTransportConfig()
+	cfg.Host = u.Host
+	cfg.Schemes = []string{"http"}
+	ctx := mcpgrafana.WithGrafanaClient(
+		mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: ts.URL}),
+		&mcpgrafana.GrafanaClient{GrafanaHTTPAPI: client.NewHTTPClientWithConfig(nil, cfg)},
+	)
+
+	_, err := listPyroscopeLabelNames(ctx, ListPyroscopeLabelNamesParams{DataSourceUID: "test-pyro", Matchers: `service_name="x"`})
+	require.NoError(t, err)
+	_, err = listPyroscopeLabelValues(ctx, ListPyroscopeLabelValuesParams{DataSourceUID: "test-pyro", Name: "env", Matchers: `service_name="x"`})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{`{service_name="x"}`, `{service_name="x"}`}, got)
 }
 
 // testFlameFrame is the nested-set frame Grafana's Pyroscope datasource
