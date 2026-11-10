@@ -1,0 +1,18 @@
+{
+  "name": "@plugins/grafana-echarts-renderer",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./renderer.js",
+    "./renderer.manifest.json": "./renderer.manifest.json"
+  },
+  "peerDependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "@grafana/ui": "^13.2.2",
+    "@grafana/data": "^13.2.2",
+    "@emotion/css": "^11.10.6"
+  }
+}
