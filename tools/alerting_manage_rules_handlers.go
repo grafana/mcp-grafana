@@ -513,21 +513,10 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
-	duration, err := time.ParseDuration(args.For)
-	if err != nil {
-		return nil, fmt.Errorf("update alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
-	}
-
-	convertedData, err := convertAlertQueries(args.Data)
-	if err != nil {
-		return nil, fmt.Errorf("update alert rule: %w", err)
-	}
-
-	// The provisioning PUT replaces the whole rule, so any optional field
-	// the caller omits would be reset. Fetch the existing rule first and keep the
-	// optional fields that were not supplied, so a partial update (e.g. pausing a
-	// rule or changing one label) does not silently clear labels, annotations,
-	// notification settings, keepFiringFor or the paused state.
+	// The provisioning PUT replaces the whole rule, so any field the caller omits
+	// would be reset. Fetch the existing rule first and overlay only the fields
+	// that were supplied, so a partial update (e.g. pausing a rule or changing
+	// one label) leaves everything else exactly as stored.
 	existing, err := c.Provisioning.GetAlertRuleWithParams(
 		provisioning.NewGetAlertRuleParamsWithContext(ctx).WithUID(args.UID),
 	)
@@ -535,44 +524,11 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		return nil, fmt.Errorf("update alert rule: fetch existing %s: %w", args.UID, err)
 	}
 	rule := existing.Payload
-
-	// Required fields always overlay.
-	rule.UID = args.UID
-	rule.Title = &args.Title
-	rule.RuleGroup = &args.RuleGroup
-	rule.FolderUID = &args.FolderUID
-	rule.Condition = &args.Condition
-	rule.Data = convertedData
-	rule.NoDataState = &args.NoDataState
-	rule.ExecErrState = &args.ExecErrState
-	rule.For = func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }()
-	rule.OrgID = &args.OrgID
-
-	// Optional fields overlay only when supplied; otherwise the stored value stays.
-	if args.Labels != nil {
-		rule.Labels = args.Labels
+	if rule == nil {
+		return nil, fmt.Errorf("update alert rule: fetch existing %s: empty response", args.UID)
 	}
-	if args.Annotations != nil {
-		rule.Annotations = args.Annotations
-	}
-	if args.IsPaused != nil {
-		rule.IsPaused = *args.IsPaused
-	}
-	if args.KeepFiringFor != "" {
-		keepFiringFor, err := time.ParseDuration(args.KeepFiringFor)
-		if err != nil {
-			return nil, fmt.Errorf("update alert rule: invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
-		}
-		rule.KeepFiringFor = strfmt.Duration(keepFiringFor)
-	}
-	if args.NotificationSettings != nil {
-		rule.NotificationSettings = convertNotificationSettings(args.NotificationSettings)
-	}
-	if args.Record != nil {
-		rule.Record = convertRecord(args.Record)
-	}
-	if args.MissingSeriesEvalsToResolve != nil {
-		rule.MissingSeriesEvalsToResolve = *args.MissingSeriesEvalsToResolve
+	if err := applyAlertRuleUpdate(rule, args); err != nil {
+		return nil, fmt.Errorf("update alert rule: %w", err)
 	}
 
 	if err := rule.Validate(strfmt.Default); err != nil {
@@ -596,6 +552,89 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 	}
 
 	return response.Payload, nil
+}
+
+// applyAlertRuleUpdate overlays the fields supplied in args onto rule, which is
+// the rule as currently stored. A field left at its zero value in args was not
+// supplied and keeps the stored value.
+func applyAlertRuleUpdate(rule *models.ProvisionedAlertRule, args UpdateAlertRuleParams) error {
+	rule.UID = args.UID
+	if args.Title != "" {
+		rule.Title = &args.Title
+	}
+	if args.RuleGroup != "" {
+		rule.RuleGroup = &args.RuleGroup
+	}
+	if args.FolderUID != "" {
+		rule.FolderUID = &args.FolderUID
+	}
+	if args.Condition != "" {
+		rule.Condition = &args.Condition
+	}
+	if args.Data != nil {
+		convertedData, err := convertAlertQueries(args.Data)
+		if err != nil {
+			return err
+		}
+		rule.Data = convertedData
+	}
+	if args.NoDataState != "" {
+		rule.NoDataState = &args.NoDataState
+	}
+	if args.ExecErrState != "" {
+		rule.ExecErrState = &args.ExecErrState
+	}
+	if args.For != "" {
+		duration, err := time.ParseDuration(args.For)
+		if err != nil {
+			return fmt.Errorf("invalid duration format for parameter for: %q: %w", args.For, err)
+		}
+		d := strfmt.Duration(duration)
+		rule.For = &d
+	}
+	if args.OrgID > 0 {
+		rule.OrgID = &args.OrgID
+	}
+	if args.Labels != nil {
+		rule.Labels = args.Labels
+	}
+	if args.Annotations != nil {
+		rule.Annotations = args.Annotations
+	}
+	if args.IsPaused != nil {
+		rule.IsPaused = *args.IsPaused
+	}
+	if args.KeepFiringFor != "" {
+		keepFiringFor, err := time.ParseDuration(args.KeepFiringFor)
+		if err != nil {
+			return fmt.Errorf("invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
+		}
+		rule.KeepFiringFor = strfmt.Duration(keepFiringFor)
+	}
+	if args.NotificationSettings != nil {
+		rule.NotificationSettings = convertNotificationSettings(args.NotificationSettings)
+	}
+	if args.Record != nil {
+		rule.Record = convertRecord(args.Record)
+	}
+	if args.MissingSeriesEvalsToResolve != nil {
+		rule.MissingSeriesEvalsToResolve = *args.MissingSeriesEvalsToResolve
+	}
+
+	// Grafana ignores noDataState and execErrState on recording rules and returns
+	// them empty, which the client-side enum validation rejects. Send the same
+	// placeholder a full update has to pass for these ignored fields.
+	if rule.Record != nil {
+		if rule.NoDataState == nil || *rule.NoDataState == "" {
+			noData := "OK"
+			rule.NoDataState = &noData
+		}
+		if rule.ExecErrState == nil || *rule.ExecErrState == "" {
+			execErr := "OK"
+			rule.ExecErrState = &execErr
+		}
+	}
+	return nil
 }
 
 func deleteAlertRule(ctx context.Context, args DeleteAlertRuleParams) (string, error) {

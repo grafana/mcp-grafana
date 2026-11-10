@@ -28,7 +28,7 @@ const alertRulesWriteDescription = `Create, update, and delete Grafana alert rul
 When to use:
 - Creating, updating, or deleting alert rules
 
-Operation 'update' is a partial update: supply the rule_uid and only the fields to change. Omitted optional fields (labels, annotations, is_paused, notification_settings, keep_firing_for, missing_series_evals_to_resolve) keep their current values rather than being reset; required rule fields are preserved from the existing rule when not supplied. Set is_paused explicitly (true/false) to change the paused state.
+Operation 'update' is a partial update: supply rule_uid and only the fields to change. Every omitted field keeps its current value from the existing rule; only 'create' requires the full set of rule fields. Set is_paused explicitly (true/false) to change the paused state.
 
 Creation defaults to Grafana-managed, even when queries use an external datasource.
 Use managed_by='datasource' when requested or when established conversation or environment context clearly identifies a datasource-managed workflow. An external query datasource or an empty Grafana rule list alone is insufficient. Ask if context conflicts.
