@@ -284,6 +284,63 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
+			name:    "RFC3339 time range is sent as epoch millis",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				PanelID:      intPtr(1),
+				TimeRange: &RenderTimeRange{
+					From: "2024-01-01T00:00:00Z",
+					To:   "2024-01-01T12:00:00Z",
+				},
+			},
+			contains: []string{
+				"from=1704067200000",
+				"to=1704110400000",
+			},
+			notContains: []string{"2024-01-01T"},
+		},
+		{
+			name:    "Date-only to resolves to end of day",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				TimeRange:    &RenderTimeRange{From: "2024-01-01", To: "2024-01-01"},
+			},
+			contains: []string{
+				"from=1704067200000",
+				"to=1704153599999",
+			},
+		},
+		{
+			name:    "Relative and epoch times pass through",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				TimeRange:    &RenderTimeRange{From: "now-6h", To: "1704110400000"},
+			},
+			contains: []string{
+				"from=now-6h",
+				"to=1704110400000",
+			},
+		},
+		{
+			name:    "Provisioning preview converts RFC3339 time range",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{Repo: "repo", Path: "dash.json"},
+				TimeRange: &RenderTimeRange{
+					From: "2024-01-01T00:00:00Z",
+					To:   "2024-01-01T12:00:00Z",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/repo/preview/dash.json",
+				"from=1704067200000",
+				"to=1704110400000",
+			},
+		},
+		{
 			name:    "With theme",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
