@@ -59,6 +59,15 @@ type alertRuleSummary struct {
 	// rules API "file" field). Mimir and Loki identify a rule group by
 	// namespace + group name, so group names alone can collide.
 	Namespace string `json:"namespace,omitempty"`
+
+	// A1: enrichment from the provisioning API for Grafana-managed rules, so a
+	// list exposes paused state, the notification target and the queried
+	// datasources without a per-rule 'get'. Left empty when provisioning config
+	// is unavailable (e.g. the token lacks provisioning read) or for
+	// datasource-managed rules.
+	IsPaused             *bool                                 `json:"is_paused,omitempty"`
+	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty"`
+	DatasourceUIDs       []string                              `json:"datasource_uids,omitempty"`
 }
 
 // alertRuleDetail is the enriched response for a single rule, combining
@@ -597,6 +606,7 @@ type listFilterParams struct {
 	States         []string `json:"states,omitempty" jsonschema:"description=Filter by alert state: firing\\, pending\\, normal\\, recovering\\, nodata\\, error (for 'list' operation)"`
 	RuleType       string   `json:"rule_type,omitempty" jsonschema:"enum=alerting,enum=recording,description=Filter by rule type (for 'list' operation)"`
 	Matchers       []string `json:"matchers,omitempty" jsonschema:"description=Label matchers to filter alert instances. Each string is a Prometheus-style matcher e.g. 'severity=\"critical\"'\\, 'env!=\"dev\"'\\, 'team=~\"backend.*\"'. Requires Grafana 12.4+."`
+	Receiver       *string  `json:"receiver,omitempty" jsonschema:"description=Filter Grafana-managed rules by notification receiver/contact point name (for 'list' operation). Matches the per-rule notification_settings.receiver now included in list output."`
 }
 
 // ManageRulesReadParams is the param struct for alerting_rules_read.

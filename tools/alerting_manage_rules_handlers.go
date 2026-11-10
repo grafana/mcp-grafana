@@ -32,7 +32,7 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
 			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
 		}
-		return listGrafanaRules(ctx, opts, selectors)
+		return listGrafanaRules(ctx, opts, selectors, args.Receiver)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -197,7 +197,7 @@ func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {
 	return nil
 }
 
-func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []Selector) ([]alertRuleSummary, error) {
+func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []Selector, receiver *string) ([]alertRuleSummary, error) {
 	client, err := newAlertingClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating alerting client: %w", err)
@@ -221,13 +221,93 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 		}
 	}
 
-	// Server-side rule_limit returns complete groups, so it may exceed the
-	// requested limit. Enforce the limit client-side as well.
-	if opts != nil {
-		summaries = applyRuleLimit(summaries, opts.RuleLimit)
+	// A1: enrich each rule with its provisioning config (paused state,
+	// notification settings, queried datasources) using a single bulk
+	// provisioning call, so callers no longer issue one 'get' per rule.
+	summaries = enrichGrafanaManagedSummaries(ctx, summaries)
+
+	// Receiver filter applies after enrichment (notification_settings is only
+	// populated there) and before the limit so it is not truncated first.
+	if receiver != nil && *receiver != "" {
+		summaries = filterSummariesByReceiver(summaries, *receiver)
 	}
 
+	// Server-side rule_limit returns complete groups, so it may exceed the
+	// requested limit. Enforce the limit client-side as well.
+	summaries = applyRuleLimit(summaries, opts.RuleLimit)
+
 	return summaries, nil
+}
+
+// enrichGrafanaManagedSummaries fills each summary's provisioning-derived
+// fields (is_paused, notification_settings, datasource_uids) from a single bulk
+// GET of all provisioned rules, joined by UID. Best-effort: on error (e.g. the
+// token lacks provisioning read) the list is returned unenriched rather than
+// failing, since the core list already succeeded.
+func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSummary) []alertRuleSummary {
+	if len(summaries) == 0 {
+		return summaries
+	}
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	resp, err := c.Provisioning.GetAlertRulesWithParams(
+		provisioning.NewGetAlertRulesParamsWithContext(ctx),
+	)
+	if err != nil {
+		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
+			"listing alert rules: could not enrich with provisioning config", "error", err)
+		return summaries
+	}
+	byUID := make(map[string]*models.ProvisionedAlertRule, len(resp.Payload))
+	for _, p := range resp.Payload {
+		if p != nil && p.UID != "" {
+			byUID[p.UID] = p
+		}
+	}
+	for i := range summaries {
+		p, ok := byUID[summaries[i].UID]
+		if !ok {
+			continue
+		}
+		paused := p.IsPaused
+		summaries[i].IsPaused = &paused
+		summaries[i].NotificationSettings = p.NotificationSettings
+		summaries[i].DatasourceUIDs = datasourceUIDsFromQueries(p.Data)
+	}
+	return summaries
+}
+
+// datasourceUIDsFromQueries returns the distinct datasource UIDs a rule queries,
+// skipping the server-side expression node (__expr__ / -100).
+func datasourceUIDsFromQueries(queries []*models.AlertQuery) []string {
+	seen := make(map[string]struct{})
+	var uids []string
+	for _, q := range queries {
+		if q == nil || q.DatasourceUID == "" {
+			continue
+		}
+		if q.DatasourceUID == "__expr__" || q.DatasourceUID == "-100" {
+			continue
+		}
+		if _, dup := seen[q.DatasourceUID]; dup {
+			continue
+		}
+		seen[q.DatasourceUID] = struct{}{}
+		uids = append(uids, q.DatasourceUID)
+	}
+	return uids
+}
+
+// filterSummariesByReceiver keeps rules whose notification receiver matches name.
+func filterSummariesByReceiver(summaries []alertRuleSummary, name string) []alertRuleSummary {
+	filtered := make([]alertRuleSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if s.NotificationSettings != nil &&
+			s.NotificationSettings.Receiver != nil &&
+			*s.NotificationSettings.Receiver == name {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
 }
 
 func filterSummaryByRuleType(summaries []alertRuleSummary, ruleType string) []alertRuleSummary {
