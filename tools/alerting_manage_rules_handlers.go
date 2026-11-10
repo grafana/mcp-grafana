@@ -224,11 +224,22 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	// Enrich each rule with its provisioning config (paused state,
 	// notification settings, queried datasources) using a single bulk
 	// provisioning call, so callers no longer issue one 'get' per rule.
-	summaries = enrichGrafanaManagedSummaries(ctx, summaries)
+	// Enrichment is best-effort for a plain list: the core list already
+	// succeeded, so it is returned unenriched when provisioning is unavailable.
+	summaries, enrichErr := enrichGrafanaManagedSummaries(ctx, summaries)
+	if enrichErr != nil {
+		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
+			"listing alert rules: could not enrich with provisioning config", "error", enrichErr)
+	}
 
 	// Receiver filter applies after enrichment (notification_settings is only
-	// populated there) and before the limit so it is not truncated first.
+	// populated there) and before the limit so it is not truncated first. It
+	// cannot be answered without the provisioning config: filtering unenriched
+	// rules would match nothing and read as "no rule uses this receiver".
 	if receiver != nil && *receiver != "" {
+		if enrichErr != nil {
+			return nil, fmt.Errorf("listing alert rules: cannot filter by receiver %q because the rules' notification settings could not be read: %w", *receiver, enrichErr)
+		}
 		summaries = filterSummariesByReceiver(summaries, *receiver)
 	}
 
@@ -241,26 +252,23 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 
 // enrichGrafanaManagedSummaries fills each summary's provisioning-derived
 // fields (is_paused, notification_settings, datasource_uids) from a single bulk
-// GET of all provisioned rules, joined by UID. Best-effort: on error (e.g. the
-// token lacks provisioning read) the list is returned unenriched rather than
-// failing, since the core list already succeeded.
-func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSummary) []alertRuleSummary {
+// GET of all provisioned rules, joined by UID. When the provisioning config
+// cannot be read (e.g. the token lacks provisioning read) it returns the
+// summaries unenriched together with the error, and the caller decides whether
+// the unenriched list is still a valid answer.
+func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSummary) ([]alertRuleSummary, error) {
 	if len(summaries) == 0 {
-		return summaries
+		return summaries, nil
 	}
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	if c == nil || c.Provisioning == nil {
-		// No Grafana OpenAPI client in context (provisioning unavailable); the
-		// core list already succeeded, so return it unenriched.
-		return summaries
+	if c == nil || c.GrafanaHTTPAPI == nil || c.Provisioning == nil {
+		return summaries, fmt.Errorf("no Grafana provisioning client available")
 	}
 	resp, err := c.Provisioning.GetAlertRulesWithParams(
 		provisioning.NewGetAlertRulesParamsWithContext(ctx),
 	)
 	if err != nil {
-		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
-			"listing alert rules: could not enrich with provisioning config", "error", err)
-		return summaries
+		return summaries, fmt.Errorf("get provisioned alert rules: %w", err)
 	}
 	byUID := make(map[string]*models.ProvisionedAlertRule, len(resp.Payload))
 	for _, p := range resp.Payload {
@@ -278,7 +286,7 @@ func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSum
 		summaries[i].NotificationSettings = p.NotificationSettings
 		summaries[i].DatasourceUIDs = datasourceUIDsFromQueries(p.Data)
 	}
-	return summaries
+	return summaries, nil
 }
 
 // datasourceUIDsFromQueries returns the distinct datasource UIDs a rule queries,
