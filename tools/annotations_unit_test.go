@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -17,6 +18,35 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// D1: create_annotation accepts ISO-8601 timestamps.
+func TestParseISOToEpochMs(t *testing.T) {
+	want := time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC).UnixMilli()
+
+	t.Run("RFC3339", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02T15:04:05Z")
+		require.NoError(t, err)
+		assert.Equal(t, want, ms)
+	})
+
+	t.Run("RFC3339 with offset", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02T10:04:05-05:00")
+		require.NoError(t, err)
+		assert.Equal(t, want, ms)
+	})
+
+	t.Run("date only", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02")
+		require.NoError(t, err)
+		assert.Equal(t, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC).UnixMilli(), ms)
+	})
+
+	t.Run("invalid errors", func(t *testing.T) {
+		_, err := parseISOToEpochMs("not-a-time")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "RFC3339")
+	})
+}
 
 func mockCtxWithClient(server *httptest.Server) context.Context {
 	u, _ := url.Parse(server.URL)

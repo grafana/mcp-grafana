@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -69,8 +70,10 @@ var GetAnnotationsTool = mcpgrafana.MustTool(
 type CreateAnnotationInput struct {
 	DashboardUID string         `json:"dashboardUid,omitempty" jsonschema:"description=Dashboard UID"`
 	PanelID      int64          `json:"panelId,omitempty"      jsonschema:"description=Panel ID"`
-	Time         int64          `json:"time,omitempty"         jsonschema:"description=Start time epoch ms"`
-	TimeEnd      int64          `json:"timeEnd,omitempty"      jsonschema:"description=End time epoch ms"`
+	Time         int64          `json:"time,omitempty"         jsonschema:"description=Start time epoch ms. Alternatively set 'timeISO'."`
+	TimeEnd      int64          `json:"timeEnd,omitempty"      jsonschema:"description=End time epoch ms. Alternatively set 'timeEndISO'."`
+	TimeISO      string         `json:"timeISO,omitempty"      jsonschema:"description=Start time as an ISO-8601/RFC3339 timestamp (e.g. 2026-01-02T15:04:05Z) or a date (2026-01-02). Alternative to 'time' so no manual epoch-ms conversion is needed; if both are set 'timeISO' takes precedence."`
+	TimeEndISO   string         `json:"timeEndISO,omitempty"   jsonschema:"description=End time as an ISO-8601/RFC3339 timestamp or date. Alternative to 'timeEnd'; if both are set 'timeEndISO' takes precedence."`
 	Tags         []string       `json:"tags,omitempty"         jsonschema:"description=Optional list of tags"`
 	Text         string         `json:"text,omitempty"         jsonschema:"description=Annotation text (required unless format is graphite)"`
 	Data         map[string]any `json:"data,omitempty"         jsonschema:"description=Optional JSON payload"`
@@ -80,6 +83,17 @@ type CreateAnnotationInput struct {
 	What         string `json:"what,omitempty"          jsonschema:"description=Annotation text for Graphite format (required when format is graphite)"`
 	When         int64  `json:"when,omitempty"          jsonschema:"description=Epoch ms timestamp for Graphite format"`
 	GraphiteData string `json:"graphiteData,omitempty"  jsonschema:"description=Optional string payload for Graphite format"`
+}
+
+// parseISOToEpochMs parses an ISO-8601/RFC3339 timestamp (with or without
+// sub-second precision) or a bare date into epoch milliseconds.
+func parseISOToEpochMs(s string) (int64, error) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UnixMilli(), nil
+		}
+	}
+	return 0, fmt.Errorf("expected an RFC3339 timestamp (2026-01-02T15:04:05Z) or date (2006-01-02)")
 }
 
 // createAnnotation sends a POST request to create a Grafana annotation.
@@ -110,11 +124,30 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		return nil, fmt.Errorf("'text' is required for standard annotations")
 	}
 
+	// D1: accept ISO-8601 timestamps as an alternative to epoch ms, so the
+	// caller does not have to convert. timeISO/timeEndISO take precedence.
+	timeMs := args.Time
+	if args.TimeISO != "" {
+		ms, err := parseISOToEpochMs(args.TimeISO)
+		if err != nil {
+			return nil, fmt.Errorf("invalid timeISO %q: %w", args.TimeISO, err)
+		}
+		timeMs = ms
+	}
+	timeEndMs := args.TimeEnd
+	if args.TimeEndISO != "" {
+		ms, err := parseISOToEpochMs(args.TimeEndISO)
+		if err != nil {
+			return nil, fmt.Errorf("invalid timeEndISO %q: %w", args.TimeEndISO, err)
+		}
+		timeEndMs = ms
+	}
+
 	req := models.PostAnnotationsCmd{
 		DashboardUID: args.DashboardUID,
 		PanelID:      args.PanelID,
-		Time:         args.Time,
-		TimeEnd:      args.TimeEnd,
+		Time:         timeMs,
+		TimeEnd:      timeEndMs,
 		Tags:         args.Tags,
 		Text:         &args.Text,
 		Data:         args.Data,
@@ -146,7 +179,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 
 var CreateAnnotationTool = mcpgrafana.MustTool(
 	"create_annotation",
-	"Create a new annotation on a dashboard or panel. Set format to 'graphite' and provide 'what' for Graphite-format annotations. Returns the stored annotation (standard format) so the result can be confirmed without a follow-up get_annotations.",
+	"Create a new annotation on a dashboard or panel. Times may be given as epoch ms ('time'/'timeEnd') or as ISO-8601 timestamps ('timeISO'/'timeEndISO', e.g. 2026-01-02T15:04:05Z) — no manual epoch conversion needed. Set format to 'graphite' and provide 'what' for Graphite-format annotations. Returns the stored annotation (standard format) so the result can be confirmed without a follow-up get_annotations.",
 	createAnnotation,
 	mcpgrafana.WithTitleAnnotation("Create Annotation"),
 	mcpgrafana.WithIdempotentHintAnnotation(false),
