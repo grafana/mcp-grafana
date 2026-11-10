@@ -165,6 +165,7 @@ The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrai
 
 The points check budgets the requested resolution, not the number of series, samples, or subquery evaluations. The range check ignores `offset` and `@`. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured. An expression the guardrail still cannot parse, such as one with a dashboard variable like `$window`, is checked against its time range and step only. Decisions are exported as `mcp_prometheus_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, and `_fail_open_total`. See [Observability](../../developer/observability-metrics-and-tracing/#prometheus-guardrail-metrics).
 
+- `--dashboard-schema`: Set to `v2` to make `update_dashboard` reject a classic v1 (`panels[]`) body that would create a new dashboard when Grafana serves dashboard schema v2. The error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable as v1, and a Grafana that does not serve v2 is unaffected. Off (empty) by default. Falls back to `GRAFANA_DASHBOARD_SCHEMA`.
 - `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 #### Prometheus selector policy

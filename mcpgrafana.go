@@ -269,6 +269,10 @@ const (
 	PrometheusGuardrailEnforce = "enforce"
 )
 
+// DashboardSchemaV2 is the GrafanaConfig.DashboardSchema value that requires
+// new dashboards to use dashboard schema v2.
+const DashboardSchemaV2 = "v2"
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -419,6 +423,12 @@ type GrafanaConfig struct {
 	// "unfiltered" (allow unscoped enumeration; never exposes log lines, only
 	// low-cardinality label metadata). Empty means "reject".
 	LokiLabelEnumerationFallback string
+
+	// DashboardSchema, when DashboardSchemaV2, makes update_dashboard reject a
+	// classic v1 (panels[]) body that would create a new dashboard on a Grafana
+	// that serves a v2 dashboard API. Existing dashboards, v2 bodies and
+	// Grafanas without v2 are unaffected. Empty (default) changes nothing.
+	DashboardSchema string
 
 	// BaseTransport is an optional base HTTP transport used as the innermost
 	// layer of the middleware chain in NewGrafanaClient. When set, it replaces
