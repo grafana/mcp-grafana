@@ -375,6 +375,9 @@ type QueryLokiLogsParams struct {
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries."`
+
+	// step overrides StepSeconds for run_panel_query, whose $__auto can be sub-second.
+	step time.Duration
 }
 
 // QueryMetadata provides context about the query results for AI agents
@@ -636,14 +639,18 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		direction = "backward"
 	}
 
+	step := time.Duration(args.StepSeconds) * time.Second
+	if args.step > 0 {
+		step = args.step
+	}
 	result, err := backend.QueryLogs(ctx, lokiQueryParams{
-		Query:       args.LogQL,
-		QueryType:   args.QueryType,
-		Start:       startTime,
-		End:         endTime,
-		Limit:       queryLimit,
-		Direction:   direction,
-		StepSeconds: args.StepSeconds,
+		Query:     args.LogQL,
+		QueryType: args.QueryType,
+		Start:     startTime,
+		End:       endTime,
+		Limit:     queryLimit,
+		Direction: direction,
+		Step:      step,
 	})
 	if err != nil {
 		return nil, err
