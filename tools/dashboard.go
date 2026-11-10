@@ -405,7 +405,7 @@ func k8sNestedString(obj map[string]interface{}, keys ...string) string {
 // PatchOperation represents a single patch operation
 type PatchOperation struct {
 	Op    string      `json:"op" jsonschema:"required,description=Operation type: 'replace' (change an existing value; errors if the target key does not exist)\\, 'add' (create or set a value\\, or append with /-)\\, 'remove' (delete an existing value; errors if the target key does not exist)"`
-	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, '$.templating.list/-' (append a variable)\\, '$.annotations.list/-' (append a saved dashboard annotation query/definition). For appending to arrays\\, use '/- ' syntax: '$.panels/- ' (append to panels array) or '$.panels[2]/- ' (append to nested array at index 2). Array elements may also be targeted by a single-field equality selector instead of an index\\, e.g. '$.panels[?(@.id==2)].title' or '$.panels[?(@.title==CPU)]'\\, which must match exactly one element."`
+	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, '$.templating.list/-' (append a variable)\\, '$.annotations.list/-' (append a saved dashboard annotation query/definition). For appending to arrays\\, use '/- ' syntax: '$.panels/- ' (append to panels array) or '$.panels[2]/- ' (append to nested array at index 2). Array elements may also be targeted by a single-field equality selector instead of an index\\, e.g. '$.panels[?(@.id==2)].title' or $.panels[?(@.title=='CPU (avg)')] (quote a value containing spaces\\, ')' or ']')\\, which must match exactly one element."`
 	Value interface{} `json:"value,omitempty" jsonschema:"description=New value for replace/add operations. When adding a saved dashboard annotation query/definition\\, append an object to '$.annotations.list'."`
 }
 
@@ -1048,7 +1048,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Array elements can be targeted by numeric index ('$.panels[1]') or by a simple equality selector on a stable field ('$.panels[?(@.id==2)]' or '$.panels[?(@.title==CPU)]'), which resolves to the matching index and is preferred over indices when panel order may change; the selector must match exactly one element. Other filter expressions and wildcards ('[*]') are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: "+dashboardV2Skeleton+". For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
+	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Array elements can be targeted by numeric index ('$.panels[1]') or by a simple equality selector on a stable field ('$.panels[?(@.id==2)]' or $.panels[?(@.title=='CPU (avg)')], quoting values that contain spaces, ')' or ']'), which resolves to the matching index and is preferred over indices when panel order may change; the selector must match exactly one element. Other filter expressions and wildcards ('[*]') are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: "+dashboardV2Skeleton+". For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
 	updateDashboard,
 	mcpgrafana.WithTitleAnnotation("Create or update dashboard"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
@@ -1366,9 +1366,30 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 
 // selectorRe matches a simple equality array selector such as
 // panels[?(@.id==2)], panels[?@.title=='CPU'] or panels[?id==2]: one field,
-// '==', one value, with the @., parentheses and quotes all optional. Capture
-// groups: 1=field, 3=value.
-var selectorRe = regexp.MustCompile(`\[\?\(?@?\.?\s*([A-Za-z0-9_]+)\s*==\s*('?"?)([^'"\)\]]+?)('?"?)\)?\]`)
+// '==', one value, with the @. and parentheses optional. The value is either
+// quoted ('...' or "...") or bare. A quoted value may contain any character,
+// including ')' and ']' and the other kind of quote, with a backslash escaping
+// its own quote; a bare value ends at the first quote, ')' or ']'. Capture
+// groups: 1=field, 2=single-quoted value, 3=double-quoted value, 4=bare value.
+var selectorRe = regexp.MustCompile(`\[\?\(?\s*@?\.?\s*([A-Za-z0-9_]+)\s*==\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|([^'"\)\]\s][^'"\)\]]*?))\s*\)?\]`)
+
+// selectorEscapeRe matches a backslash escape inside a quoted selector value.
+var selectorEscapeRe = regexp.MustCompile(`\\(.)`)
+
+// selectorMatch returns the field and value of the selector whose submatch
+// indices are loc, with quoting and escapes removed from the value.
+func selectorMatch(path string, loc []int) (field, val string) {
+	field = path[loc[2]:loc[3]]
+	switch {
+	case loc[4] >= 0:
+		val = selectorEscapeRe.ReplaceAllString(path[loc[4]:loc[5]], "$1")
+	case loc[6] >= 0:
+		val = selectorEscapeRe.ReplaceAllString(path[loc[6]:loc[7]], "$1")
+	default:
+		val = path[loc[8]:loc[9]]
+	}
+	return field, val
+}
 
 // resolveArraySelectors rewrites each equality selector in path to the numeric
 // [index] of the matching array element, evaluated left to right against data.
@@ -1381,8 +1402,7 @@ func resolveArraySelectors(data map[string]interface{}, path string) (string, er
 		if loc == nil {
 			return path, nil
 		}
-		field := path[loc[2]:loc[3]]
-		val := path[loc[6]:loc[7]]
+		field, val := selectorMatch(path, loc)
 		prefix := path[:loc[0]] // everything up to the array field key
 		arr, err := arrayAtPath(data, prefix)
 		if err != nil {
