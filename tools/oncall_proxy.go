@@ -261,15 +261,9 @@ func proxyListAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*O
 		path += "?" + params.Encode()
 	}
 
-	var internal []onCallAlertGroupInternal
-	var err2 error
-	if args.Page > 0 {
-		internal, err2 = fetchSinglePage[onCallAlertGroupInternal](ctx, client, path)
-	} else {
-		internal, err2 = fetchPaginated[onCallAlertGroupInternal](ctx, client, path)
-	}
-	if err2 != nil {
-		return nil, fmt.Errorf("listing alert groups: %w", err2)
+	internal, err := fetchSinglePage[onCallAlertGroupInternal](ctx, client, path)
+	if err != nil {
+		return nil, fmt.Errorf("listing alert groups: %w", err)
 	}
 
 	result := make([]*OnCallAlertGroup, 0, len(internal))
@@ -344,12 +338,7 @@ func proxyListSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]
 		path += "?" + params.Encode()
 	}
 
-	var schedules []onCallScheduleInternal
-	if args.Page > 0 {
-		schedules, err = fetchSinglePage[onCallScheduleInternal](ctx, client, path)
-	} else {
-		schedules, err = fetchPaginated[onCallScheduleInternal](ctx, client, path)
-	}
+	schedules, err := fetchSinglePage[onCallScheduleInternal](ctx, client, path)
 	if err != nil {
 		return nil, fmt.Errorf("listing schedules: %w", err)
 	}
@@ -416,10 +405,11 @@ func proxyListUsers(ctx context.Context, args ListOnCallUsersParams) ([]*OnCallU
 	}
 
 	var internal []onCallUserInternal
-	if args.Page > 0 {
-		internal, err = fetchSinglePage[onCallUserInternal](ctx, client, path)
-	} else {
+	// search is fuzzy and filtered to an exact match below, so a username lookup must see every page.
+	if args.Username != "" && args.Page == 0 {
 		internal, err = fetchPaginated[onCallUserInternal](ctx, client, path)
+	} else {
+		internal, err = fetchSinglePage[onCallUserInternal](ctx, client, path)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("listing users: %w", err)
@@ -451,12 +441,7 @@ func proxyListTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*OnCallT
 		path += "?" + params.Encode()
 	}
 
-	var internal []onCallTeamInternal
-	if args.Page > 0 {
-		internal, err = fetchSinglePage[onCallTeamInternal](ctx, client, path)
-	} else {
-		internal, err = fetchPaginated[onCallTeamInternal](ctx, client, path)
-	}
+	internal, err := fetchSinglePage[onCallTeamInternal](ctx, client, path)
 	if err != nil {
 		return nil, fmt.Errorf("listing teams: %w", err)
 	}
