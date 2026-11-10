@@ -186,6 +186,24 @@ func TestDashboardInterpolator(t *testing.T) {
 	assert.Equal(t, "api", cleared.interpolate("$all"))
 }
 
+// Grafana picks a value for a variable saved without one from its options,
+// which mcp-grafana doesn't fetch, so a reference to it is rejected.
+func TestDashboardInterpolatorNoSavedValue(t *testing.T) {
+	db := map[string]interface{}{"templating": map[string]interface{}{"list": []interface{}{
+		map[string]interface{}{"name": "job", "type": "query", "current": map[string]interface{}{}},
+		map[string]interface{}{"name": "env", "type": "custom"},
+		map[string]interface{}{"name": "source", "type": "datasource", "current": map[string]interface{}{}},
+		map[string]interface{}{"name": "none", "type": "query", "current": map[string]interface{}{"value": []interface{}{}}},
+	}}}
+	in := newDashboardInterpolator(db, nil)
+	assert.Equal(t, `Variable "job" has no saved value. Supply an explicit value in variables.`, in.allSelectionWarning("job"))
+	assert.Contains(t, in.allSelectionWarning("env"), "no saved value")
+	assert.Empty(t, in.allSelectionWarning("source"), "datasource variables resolve to the default datasource")
+	assert.Empty(t, in.allSelectionWarning("none"), "an empty selection is a value")
+	assert.Empty(t, in.allSelectionWarning("missing"), "names outside the dashboard are not variables")
+	assert.Empty(t, newDashboardInterpolator(db, map[string]string{"job": "api"}).allSelectionWarning("job"))
+}
+
 // The single pass reaches dashboard inspection: a value that contains another
 // variable's reference is sent as written.
 func TestPreparePanelQueriesSinglePass(t *testing.T) {

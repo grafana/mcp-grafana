@@ -33,7 +33,7 @@ Ask the assistant to search for dashboards by title, folder, tag, or starred sta
 
 When you need an overview of a dashboard without the full JSON, ask for a **dashboard summary**. You get title, panel count, panel types, variables, and similar metadata. To see what each panel queries, ask for **panel queries**: the assistant uses the tool that returns panel title, query string, and datasource UID and type for every panel.
 
-To prepare panel query text, pass `variables: {}` to use saved selections, or provide explicit variable overrides. Optional `start` and `end` use the same frontend time macros as panel execution. Use absolute bounds when comparing separate calls. A referenced All selection returns a warning asking for an explicit value. Inspection reads the dashboard without querying variable options or looking up datasource types. Datasource plugin macros and visual targets retain their existing behavior.
+To prepare panel query text, pass `variables: {}` to use saved selections, or provide explicit variable overrides. Optional `start` and `end` use the same frontend time macros as panel execution. Use absolute bounds when comparing separate calls. A referenced All selection, or a variable saved without a value, returns a warning asking for an explicit value. Inspection reads the dashboard without querying variable options or looking up datasource types. Datasource plugin macros and visual targets retain their existing behavior.
 
 ## Get specific properties with JSONPath
 

@@ -24,7 +24,7 @@ type templateVariableValues map[string][]string
 type variableInterpolator struct {
 	values   templateVariableValues
 	multi    map[string]bool   // multi-value or include-All variables
-	warnings map[string]string // variables set to All, by name
+	warnings map[string]string // variables set to All or without a value, by name
 	pattern  *regexp.Regexp    // nil when there is nothing to substitute
 }
 
@@ -95,8 +95,8 @@ func (v *variableInterpolator) firstValue(name string) (string, bool) {
 }
 
 // allSelectionWarning explains why a query that references name can't run, or
-// is empty: Grafana expands All from the variable's options, which mcp-grafana
-// doesn't fetch.
+// is empty: Grafana expands All, or picks a missing value, from the variable's
+// options, which mcp-grafana doesn't fetch.
 func (v *variableInterpolator) allSelectionWarning(name string) string {
 	return v.warnings[name]
 }
@@ -425,6 +425,7 @@ func extractTemplateVariableValues(db map[string]interface{}) templateVariableVa
 func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[string]string, values templateVariableValues) map[string]string {
 	warnings := make(map[string]string)
 	const message = "Variable %q is set to All. Supply an explicit value in variables."
+	const noValueMessage = "Variable %q has no saved value. Supply an explicit value in variables."
 	for _, item := range safeArray(safeObject(db, "templating"), "list") {
 		variable, ok := item.(map[string]interface{})
 		if !ok {
@@ -438,8 +439,12 @@ func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[strin
 			hasValue = true
 		}
 		_, resolved := values[name]
-		if isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All") {
+		switch {
+		case isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All"):
 			warnings[name] = fmt.Sprintf(message, name)
+		case !resolved && name != "" && safeString(variable, "type") != "datasource":
+			// Datasource variables fall back to the default datasource instead.
+			warnings[name] = fmt.Sprintf(noValueMessage, name)
 		}
 	}
 	for name, value := range overrides {
