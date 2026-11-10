@@ -537,7 +537,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		Dashboard: dashboardMap,
 		FolderUID: folderUID,
 		Message:   args.Message,
-		Overwrite: true,
+		Overwrite: args.Overwrite, // GF-01: honor caller overwrite (default false) so Grafana version-checks; a concurrent save conflicts (412) instead of silently losing
 		UserID:    args.UserID,
 	})
 }
