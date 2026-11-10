@@ -353,7 +353,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 		ops := []PatchOperation{
 			{Op: "remove", Path: "$.panels[2]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[2]", result[0].Path)
 	})
@@ -364,7 +364,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[2]"},
 			{Op: "remove", Path: "$.panels[0]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[4]", result[0].Path)
 		assert.Equal(t, "$.panels[2]", result[1].Path)
@@ -376,7 +376,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[1]"},
 			{Op: "remove", Path: "$.panels[3]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[3]", result[0].Path)
 		assert.Equal(t, "$.panels[1]", result[1].Path)
@@ -387,7 +387,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[1]"},
 			{Op: "remove", Path: "$.annotations[3]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[1]", result[0].Path)
 		assert.Equal(t, "$.annotations[3]", result[1].Path)
@@ -398,7 +398,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[0].targets[1]"},
 			{Op: "remove", Path: "$.panels[0].targets[3]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[0].targets[3]", result[0].Path)
 		assert.Equal(t, "$.panels[0].targets[1]", result[1].Path)
@@ -411,7 +411,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "add", Path: "$.panels/-", Value: map[string]interface{}{"id": 1}},
 			{Op: "remove", Path: "$.panels[2]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		// Non-remove ops stay in place
 		assert.Equal(t, "replace", result[0].Op)
@@ -427,7 +427,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.description"},
 			{Op: "remove", Path: "$.tags"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.description", result[0].Path)
 		assert.Equal(t, "$.tags", result[1].Path)
@@ -441,7 +441,7 @@ func TestSortArrayRemovesDescending_SameIndexMultipleTimes(t *testing.T) {
 		{Op: "remove", Path: "$.panels[11]"},
 		{Op: "remove", Path: "$.panels[11]"},
 	}
-	_, err := sortArrayRemovesDescending(ops)
+	_, err := sortArrayRemovesDescending(ops, nil)
 	require.Error(t, err, "Same index multiple times should be rejected")
 	assert.Contains(t, err.Error(), "duplicate remove")
 }

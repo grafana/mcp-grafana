@@ -475,13 +475,6 @@ func updateDashboardContent(ctx context.Context, args UpdateDashboardParams) (*m
 
 // updateDashboardWithPatches applies patch operations to an existing dashboard
 func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
-	// Sort array element remove operations from highest to lowest index to avoid index-shifting issues
-	sortedOps, err := sortArrayRemovesDescending(args.Operations)
-	if err != nil {
-		return nil, err
-	}
-	args.Operations = sortedOps
-
 	// Get the current dashboard in its native stored schema.
 	res, err := fetchDashboard(ctx, args.UID, true)
 	if err != nil {
@@ -497,30 +490,8 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	// accidental mutation by patch operations (classic v1 dashboards only).
 	origID := dashboardMap["id"]
 
-	// Apply each patch operation. The JSONPath engine is schema-agnostic, so
-	// the same code patches both classic v1 bodies and v2 specs; only the paths
-	// differ (e.g. $.panels[0].title vs $.elements.<name>.spec.title).
-	for i, op := range args.Operations {
-		switch op.Op {
-		case "replace":
-			// Replace targets an existing value; error if the final
-			// key is absent instead of silently creating it. Use "add" to create.
-			if err := applyJSONPath(dashboardMap, op.Path, op.Value, false, true); err != nil {
-				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
-			}
-		case "add":
-			if err := applyJSONPath(dashboardMap, op.Path, op.Value, false, false); err != nil {
-				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
-			}
-		case "remove":
-			// Remove targets an existing value; error if the final
-			// key is absent instead of silently succeeding.
-			if err := applyJSONPath(dashboardMap, op.Path, nil, true, true); err != nil {
-				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
-			}
-		default:
-			return nil, fmt.Errorf("operation %d: unsupported operation '%s'", i, op.Op)
-		}
+	if err := applyPatchOperations(dashboardMap, args.Operations); err != nil {
+		return nil, err
 	}
 
 	// v2 dashboards are written back through the Kubernetes API to preserve the
@@ -934,15 +905,103 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	return postDashboardOKBodyFromK8s(created, createdUID), nil
 }
 
+// plannedOperation is a patch operation in the order it will be applied.
+type plannedOperation struct {
+	PatchOperation
+
+	// resolvedPath is set for an array-element remove that is addressed
+	// through a selector and was reordered with other removes on the same
+	// array: the path with every selector replaced by the index it matched in
+	// the dashboard as fetched. The remove was ordered by that index, so it is
+	// only applied if the selector still resolves to it.
+	resolvedPath string
+}
+
+// applyPatchOperations applies operations to dashboard in place. Array-element
+// removes on the same array are first reordered (see sortArrayRemovesDescending).
+// The JSONPath engine is schema-agnostic, so the same code patches both classic
+// v1 bodies and v2 specs; only the paths differ (e.g. $.panels[0].title vs
+// $.elements.<name>.spec.title).
+func applyPatchOperations(dashboard map[string]interface{}, operations []PatchOperation) error {
+	planned, err := sortArrayRemovesDescending(operations, dashboard)
+	if err != nil {
+		return err
+	}
+
+	for i, op := range planned {
+		switch op.Op {
+		case "replace":
+			// Replace targets an existing value; error if the final
+			// key is absent instead of silently creating it. Use "add" to create.
+			if err := applyJSONPath(dashboard, op.Path, op.Value, false, true); err != nil {
+				return fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
+			}
+		case "add":
+			if err := applyJSONPath(dashboard, op.Path, op.Value, false, false); err != nil {
+				return fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
+			}
+		case "remove":
+			// A selector remove was ordered by the index its selector matched
+			// in the fetched dashboard. If an earlier operation in this call
+			// moved the element, that order no longer protects the removes
+			// around it, so stop instead of risking the wrong element.
+			if op.resolvedPath != "" {
+				now, err := resolveArraySelectors(dashboard, removePathBody(op.Path))
+				if err != nil {
+					return fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
+				}
+				if now != op.resolvedPath {
+					return fmt.Errorf("operation %d (%s at %s): the selected element moved from %s to %s while earlier operations in this call were applied; send this remove in a separate call", i, op.Op, op.Path, op.resolvedPath, now)
+				}
+			}
+			// Remove targets an existing value; error if the final
+			// key is absent instead of silently succeeding.
+			if err := applyJSONPath(dashboard, op.Path, nil, true, true); err != nil {
+				return fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
+			}
+		default:
+			return fmt.Errorf("operation %d: unsupported operation '%s'", i, op.Op)
+		}
+	}
+	return nil
+}
+
+// removePathBody normalizes a patch path the way applyJSONPath does before it
+// resolves selectors: surrounding whitespace and the leading "$." are dropped.
+func removePathBody(path string) string {
+	path = strings.TrimSpace(path)
+	if len(path) > 2 && path[:2] == "$." {
+		path = path[2:]
+	}
+	return path
+}
+
 // sortArrayRemovesDescending reorders remove operations on the same array
 // from highest index to lowest. This prevents the index-shifting footgun
 // where removing a lower index first causes subsequent operations to target wrong elements.
 // It also rejects duplicate indices on the same array (likely an LLM mistake).
-func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, error) {
+//
+// A remove may address its element, or an array on the way to it, with a
+// selector instead of an index. Selectors are resolved against data, the
+// dashboard as fetched, so that a selector remove is ordered together with the
+// index removes on the same array and counts as a duplicate when it names an
+// element that another remove already targets. Without that a selector remove
+// would run in its written position, shift the array, and leave a later index
+// remove pointing at the wrong element. data may be nil when no path uses a
+// selector.
+func sortArrayRemovesDescending(operations []PatchOperation, data map[string]interface{}) ([]plannedOperation, error) {
 	type arrayRemoveInfo struct {
 		arrayPath string
 		index     int
 		opIndex   int
+		// resolvedPath is the remove path with selectors resolved, set only
+		// when the path used a selector.
+		resolvedPath string
+	}
+
+	result := make([]plannedOperation, len(operations))
+	for i, op := range operations {
+		result[i] = plannedOperation{PatchOperation: op}
 	}
 
 	// Collect array remove operations grouped by array path
@@ -954,10 +1013,24 @@ func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, 
 		}
 
 		// Parse the path to check if it's an array element removal
-		path := op.Path
-		if len(path) > 2 && path[:2] == "$." {
-			path = path[2:]
+		path := removePathBody(op.Path)
+		resolved, err := resolveArraySelectors(data, path)
+		if err != nil {
+			if strings.HasSuffix(path, "]") {
+				// An array-element remove whose selector does not identify
+				// exactly one element of the fetched dashboard cannot be
+				// ordered safely against the other removes.
+				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
+			}
+			// A field remove does not shift anything; it reports its own
+			// selector error when it is applied.
+			continue
 		}
+		selectorPath := ""
+		if resolved != path {
+			selectorPath = resolved
+		}
+		path = resolved
 
 		segments := parseJSONPath(path)
 		if len(segments) == 0 {
@@ -969,7 +1042,6 @@ func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, 
 		if !finalSeg.IsArray || finalSeg.IsAppend {
 			continue
 		}
-
 		// Build the array path (everything except the index)
 		arrayPath := ""
 		for j, seg := range segments {
@@ -983,9 +1055,10 @@ func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, 
 		}
 
 		removesByArray[arrayPath] = append(removesByArray[arrayPath], arrayRemoveInfo{
-			arrayPath: arrayPath,
-			index:     finalSeg.Index,
-			opIndex:   i,
+			arrayPath:    arrayPath,
+			index:        finalSeg.Index,
+			opIndex:      i,
+			resolvedPath: selectorPath,
 		})
 	}
 
@@ -1008,23 +1081,27 @@ func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, 
 	}
 
 	// Rebuild the operations slice with array removes reordered
-	result := make([]PatchOperation, len(operations))
-	copy(result, operations)
+	unordered := make([]plannedOperation, len(result))
+	copy(unordered, result)
 
 	for _, removes := range removesByArray {
 		if len(removes) <= 1 {
+			// A lone remove is not reordered. A selector resolves again when
+			// the remove is applied, so it follows its element wherever earlier
+			// operations left it.
 			continue
 		}
 		// Collect the original positions of these remove ops
 		positions := make([]int, len(removes))
 		for i, r := range removes {
 			positions[i] = r.opIndex
+			unordered[r.opIndex].resolvedPath = r.resolvedPath
 		}
 		// Sort positions ascending so we can place sorted removes in order
 		sort.Ints(positions)
 		// Place the sorted (descending by index) removes into the original positions
 		for i, pos := range positions {
-			result[pos] = operations[removes[i].opIndex]
+			result[pos] = unordered[removes[i].opIndex]
 		}
 	}
 
