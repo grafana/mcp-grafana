@@ -533,7 +533,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		folderUID = res.Meta.FolderUID
 	}
 
-	// GF-01 (v13): a classic dashboard read via the k8s API carries a spec
+	// A classic dashboard read via the k8s API carries a spec
 	// "version" that is not in the legacy save's version space, so a version-
 	// checked legacy save would 409 spuriously. The legacy version is the k8s
 	// metadata.generation, so use that value for the conflict check.
@@ -549,7 +549,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		Dashboard: dashboardMap,
 		FolderUID: folderUID,
 		Message:   args.Message,
-		Overwrite: args.Overwrite, // GF-01: honor caller overwrite (default false) so Grafana version-checks; a concurrent save conflicts (412) instead of silently losing
+		Overwrite: args.Overwrite, // Honor caller overwrite (default false) so Grafana version-checks; a concurrent save conflicts (412) instead of silently losing
 		UserID:    args.UserID,
 	})
 }
@@ -888,7 +888,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			if !existing.IsV2 {
 				return nil, fmt.Errorf("dashboard %q is stored as classic v1 and cannot be replaced in place with a v2 (elements/layout) body: Grafana pins the stored schema version, so the v2 content would be silently down-converted to v1. Create a new dashboard (a different uid) for the v2 version instead", uid)
 			}
-			// C2 (GF-19): a full-body overwrite reuses the server's current
+			// A full-body overwrite reuses the server's current
 			// resourceVersion, so a concurrent edit would be silently lost. When
 			// the caller supplies the version their edit is based on, reject the
 			// save if the dashboard has advanced past it. The legacy dashboard
