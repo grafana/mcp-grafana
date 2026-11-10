@@ -840,6 +840,52 @@ func TestTempoGetAttributeValues(t *testing.T) {
 	assert.Equal(t, `{ resource.service.name = "frontend" }`, capturedQuery.Get("q"))
 }
 
+func TestTempoAttributeTools_TimeBounds(t *testing.T) {
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"list_tempo_attribute_names", map[string]any{"scope": "span"}},
+		{"list_tempo_attribute_values", map[string]any{"name": "resource.service.name"}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			var capturedQuery url.Values
+			ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				capturedQuery = r.URL.Query()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			})
+			defer cleanup()
+			call := tempoTestContext(t, ts.URL)
+
+			args := map[string]any{
+				"datasourceUid": "test-tempo",
+				"start":         "2025-01-01T00:00:00Z",
+				"end":           "2025-01-01T01:00:00Z",
+			}
+			for k, v := range tc.args {
+				args[k] = v
+			}
+			result, err := call(makeTempoRequest(tc.tool, args))
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+			assert.Equal(t, "1735689600", capturedQuery.Get("start"))
+			assert.Equal(t, "1735693200", capturedQuery.Get("end"))
+
+			delete(args, "start")
+			delete(args, "end")
+			result, err = call(makeTempoRequest(tc.tool, args))
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+			start, err := strconv.ParseInt(capturedQuery.Get("start"), 10, 64)
+			require.NoError(t, err)
+			end, err := strconv.ParseInt(capturedQuery.Get("end"), 10, 64)
+			require.NoError(t, err)
+			assert.Equal(t, int64(time.Hour.Seconds()), end-start, "an omitted range should default to the past hour")
+		})
+	}
+}
+
 func TestTempoGetAttributeValues_RejectsORFilter(t *testing.T) {
 	called := false
 	ts, cleanup := tempoTestServer(t, func(w http.ResponseWriter, r *http.Request) {

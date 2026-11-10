@@ -220,12 +220,16 @@ type DiffTempoTracesParams struct {
 type ListTempoAttributeNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	Scope         string `json:"scope,omitempty" jsonschema:"description=Scope to filter attributes by (span\\, resource\\, event\\, link\\, instrumentation). Strongly recommended — omitting scope returns all attributes across all scopes which can be very large (100K+ chars)."`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
 }
 
 type ListTempoAttributeValuesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
 	Name          string `json:"name" jsonschema:"required,description=The attribute name to get values for (e.g. 'span.http.method'\\, 'resource.service.name')"`
 	FilterQuery   string `json:"filter-query,omitempty" jsonschema:"description=Filter query to apply to the attribute values. It can only have one spanset and only &&'ed conditions like { <cond> && <cond> && ... }. This is useful for filtering the values to a specific set of values."`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
 }
 
 type GetTempoTraceQLDocsParams struct {
@@ -555,6 +559,11 @@ func listTempoAttributeNames(ctx context.Context, args ListTempoAttributeNamesPa
 		params.Set("scope", args.Scope)
 	}
 
+	params, err = tempoDefaultTimeBoundsSeconds(params, args.Start, args.End)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
 	body, err := backend.doGet(ctx, "/api/v2/search/tags", params)
 	if err != nil {
 		return mcpgrafana.NewToolResultError(err.Error()), nil
@@ -604,6 +613,11 @@ func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValues
 			return mcpgrafana.NewToolResultError("OR conditions (||) are not supported in filter queries — Tempo silently reduces them to an empty filter, returning unfiltered values. Use separate calls for each alternative instead."), nil
 		}
 		params.Set("q", args.FilterQuery)
+	}
+
+	params, err = tempoDefaultTimeBoundsSeconds(params, args.Start, args.End)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
 	}
 
 	body, err := backend.doGet(ctx, "/api/v2/search/tag/"+url.PathEscape(args.Name)+"/values", params)
