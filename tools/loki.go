@@ -356,11 +356,15 @@ func addTimeRangeParams(params url.Values, startRFC3339, endRFC3339 string) erro
 const lokiDefaultLookback = time.Hour
 
 // getDefaultTimeRange returns default start and end times if not provided
-// Returns start time (1 hour ago) and end time (now) in RFC3339 format
+// Returns start time (1 hour before end) and end time (now) in RFC3339 format
 func getDefaultTimeRange(startRFC3339, endRFC3339 string) (string, string) {
 	if startRFC3339 == "" {
-		// Default to 1 hour ago if not specified
-		startRFC3339 = time.Now().Add(-lokiDefaultLookback).Format(time.RFC3339)
+		// Count back from end so an end-only range never starts after it.
+		anchor := time.Now()
+		if end, err := parseEndTime(endRFC3339); err == nil && !end.IsZero() {
+			anchor = end
+		}
+		startRFC3339 = anchor.Add(-lokiDefaultLookback).Format(time.RFC3339)
 	}
 	if endRFC3339 == "" {
 		// Default to now if not specified
