@@ -95,6 +95,44 @@ func TestLuceneFormat(t *testing.T) {
 	}
 }
 
+// Grafana leaves a value as is when isNaN(+value) is false. The expected values
+// are the output of Grafana's luceneEscape in Node.
+func TestLuceneEscape(t *testing.T) {
+	for _, tc := range []struct{ value, want string }{
+		{"Infinity", "Infinity"},
+		{"+Infinity", "+Infinity"},
+		{"-Infinity", "-Infinity"},
+		{" -Infinity ", " -Infinity "},
+		{"-1.5", "-1.5"},
+		{"+.5e-3", "+.5e-3"},
+		{"1e+400", "1e+400"},
+		{"0x1F", "0x1F"},
+		{"0b101", "0b101"},
+		{"0o17", "0o17"},
+		{"   ", "   "},
+		{"\u00a0-5\u00a0", "\u00a0-5\u00a0"},
+		{"\ufeff-5", "\ufeff-5"},
+		// Strings strconv.ParseFloat reads as numbers but JavaScript does not.
+		{"-inf", `\-inf`},
+		{"+Inf", `\+Inf`},
+		{"-INFINITY", `\-INFINITY`},
+		{"0x1p-2", `0x1p\-2`},
+		{"-0x1F", `\-0x1F`},
+		{"-", `\-`},
+		// JavaScript's \s covers Unicode whitespace; Go's covers ASCII only.
+		{"a b", `a\ b`},
+		{"a\vb", "a\\\vb"},
+		{"a\u00a0b", "a\\\u00a0b"},
+		{"a\u2028b", "a\\\u2028b"},
+		{"a\u3000b", "a\\\u3000b"},
+		{"\u0085-5", "\u0085\\-5"},
+		{"api-gateway", `api\-gateway`},
+		{"server/1", `server\/1`},
+	} {
+		assert.Equal(t, tc.want, luceneEscape(tc.value), "luceneEscape(%q)", tc.value)
+	}
+}
+
 func TestExtractPanelInfo_ElasticsearchEmptyQuery(t *testing.T) {
 	info, err := extractPanelInfo(elasticsearchPanel(""), 0)
 	require.NoError(t, err, "an empty Lucene query matches all documents")

@@ -2,10 +2,8 @@ package tools
 
 import (
 	"fmt"
-	"math"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -268,14 +266,25 @@ func prometheusRegularEscape(value string) string {
 	return strings.ReplaceAll(value, "'", `\\'`)
 }
 
-// luceneSpecialCharacters are the characters Grafana's luceneEscape escapes.
-var luceneSpecialCharacters = regexp.MustCompile(`[!*+\-=<>\s&|()\[\]{}^~?:\\/"]`)
+// jsWhitespace is JavaScript's \s (WhiteSpace and LineTerminator) as a
+// character class body. Go's \s only covers ASCII whitespace.
+const jsWhitespace = `\t\n\v\f\r\p{Zs}\x{2028}\x{2029}\x{FEFF}`
 
-// luceneEscape escapes value as Grafana's luceneEscape does, leaving numbers as
-// they are.
+// luceneSpecialCharacters are the characters Grafana's luceneEscape escapes.
+var luceneSpecialCharacters = regexp.MustCompile(`[!*+\-=<>` + jsWhitespace + `&|()\[\]{}^~?:\\/"]`)
+
+// jsNumber matches the strings JavaScript's unary + converts to a number rather
+// than NaN (StringNumericLiteral): blank, a decimal or Infinity with an optional
+// sign, or an unsigned 0x, 0o or 0b integer. strconv.ParseFloat differs: it
+// accepts inf, nan and hex floats, and rejects 0b101 and out-of-range values.
+var jsNumber = regexp.MustCompile(`^[` + jsWhitespace + `]*` +
+	`(?:[+-]?(?:Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)?` +
+	`[` + jsWhitespace + `]*$`)
+
+// luceneEscape escapes value as Grafana's luceneEscape does, leaving values
+// that JavaScript reads as numbers as they are.
 func luceneEscape(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if f, err := strconv.ParseFloat(trimmed, 64); trimmed == "" || err == nil && !math.IsInf(f, 0) {
+	if jsNumber.MatchString(value) {
 		return value
 	}
 	return luceneSpecialCharacters.ReplaceAllString(value, `\${0}`)
