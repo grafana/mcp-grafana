@@ -467,3 +467,24 @@ func TestQueryLokiStatsFallsBackToLokiResourcesRoute(t *testing.T) {
 	assert.Contains(t, *paths, "/api/datasources/uid/loki/resources/index/stats")
 	assert.NotContains(t, *paths, "/api/datasources/uid/loki/resources/loki/api/v1/index/stats")
 }
+
+func TestRunPanelQueryLokiKeepsMacroLikeVariableValue(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+	db := map[string]interface{}{
+		"templating": map[string]interface{}{"list": []interface{}{
+			map[string]interface{}{"name": "app", "type": "custom", "current": map[string]interface{}{"value": "$__auto"}},
+		}},
+		"panels": []interface{}{map[string]interface{}{
+			"id": float64(1), "datasource": map[string]interface{}{"uid": "loki", "type": "loki"},
+			"targets": []interface{}{map[string]interface{}{"refId": "A", "expr": `sum(count_over_time({app="$app"}[$__auto]))`}},
+		}},
+	}
+
+	_, err := runSinglePanelQuery(enforceTestCtx(server, false), singlePanelQueryParams{
+		DB: db, PanelID: 1, Start: "2024-01-15T10:00:00Z", End: "2024-01-15T11:00:00Z",
+	})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="$__auto"}[36s]))`, q["expr"])
+}

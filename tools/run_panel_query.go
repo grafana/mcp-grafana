@@ -264,8 +264,16 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		}
 	}
 
-	// Substitute variables in the query
-	query := interp.interpolateQuery(panelData.Query, datasourceType)
+	startTime, err := parseTime(params.Start)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(params.End)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
+	}
+	// Executors receive the expression with frontend macros and variables substituted.
+	query := preparePanelExpression(interp, panelData.Query, datasourceType, startTime, endTime)
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -500,7 +508,7 @@ func grafanaSecondsToHms(seconds float64) string {
 
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
 func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
-	// Parse time range for macro substitution
+	// Parse time range for the step
 	startTime, err := parseTime(start)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
@@ -509,9 +517,6 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
-
-	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
-	query = substituteGrafanaMacros(query, startTime, endTime)
 
 	return queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: datasourceUID,
@@ -548,9 +553,6 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
-
-	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
-	query = substituteGrafanaMacros(query, startTime, endTime)
 
 	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
@@ -612,8 +614,11 @@ func executeStructuredPanelQuery(ctx context.Context, datasourceUID, datasourceT
 		return nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	target := newVariableInterpolator(variables, nil).interpolateTarget(panelData.RawTarget)
-	substituteGrafanaMacrosInMap(target, startTime, endTime)
+	// Macros first, so a variable value that looks like a macro stays literal.
+	interp := newVariableInterpolator(variables, nil)
+	target := mapStrings(panelData.RawTarget, func(s string) string {
+		return interp.interpolate(substituteStructuredTargetMacros(s, startTime, endTime))
+	}).(map[string]interface{})
 
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
@@ -639,34 +644,6 @@ func substituteStructuredTargetMacros(s string, start, end time.Time) string {
 		}
 		return strconv.FormatInt(end.UnixMilli(), 10)
 	})
-}
-
-// substituteGrafanaMacrosInMap applies substituteStructuredTargetMacros to every string in target,
-// which must already be a private deep copy (variableInterpolator.interpolateTarget).
-func substituteGrafanaMacrosInMap(target map[string]interface{}, start, end time.Time) {
-	for k, v := range target {
-		switch val := v.(type) {
-		case string:
-			target[k] = substituteStructuredTargetMacros(val, start, end)
-		case map[string]interface{}:
-			substituteGrafanaMacrosInMap(val, start, end)
-		case []interface{}:
-			substituteGrafanaMacrosInSlice(val, start, end)
-		}
-	}
-}
-
-func substituteGrafanaMacrosInSlice(slice []interface{}, start, end time.Time) {
-	for i, v := range slice {
-		switch val := v.(type) {
-		case string:
-			slice[i] = substituteStructuredTargetMacros(val, start, end)
-		case map[string]interface{}:
-			substituteGrafanaMacrosInMap(val, start, end)
-		case []interface{}:
-			substituteGrafanaMacrosInSlice(val, start, end)
-		}
-	}
 }
 
 // InfinityDatasourceType is the plugin ID of the Infinity datasource (yesoreyeram-infinity-datasource),
@@ -807,8 +784,8 @@ func defaultSQLFormat(datasourceType string) interface{} {
 
 // executeSQLPanelQuery runs a panel query against a SQL datasource via Grafana's
 // /api/ds/query endpoint. Those datasources resolve SQL macros such as
-// $__timeFilter/$__timeFrom/$__timeGroup server-side in their backend plugin, so we
-// only substitute the frontend-only macros ($__interval, $__range, etc.) here. The
+// $__timeFilter/$__timeFrom/$__timeGroup server-side in their backend plugin, so the
+// query arrives with only frontend macros ($__interval, $__range, etc.) expanded. The
 // panel's raw target is preserved so datasource-specific fields (BigQuery's location,
 // project and dataset, for example) reach the backend; only rawSql, datasource, refId
 // and format are overridden.
@@ -827,14 +804,11 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Substitute Grafana frontend macros; leave SQL macros for the backend plugin.
-	processedQuery := substituteGrafanaMacros(query, startTime, endTime)
-
 	// Deep copy the raw target and substitute variables in its fields (e.g. location).
 	target := newVariableInterpolator(variables, nil).interpolateTarget(panelData.RawTarget)
 
 	// Override the SQL with the fully-processed query and ensure required fields are set.
-	target["rawSql"] = processedQuery
+	target["rawSql"] = query
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
@@ -862,7 +836,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		Columns:        columns,
 		Rows:           rows,
 		RowCount:       len(rows),
-		ProcessedQuery: processedQuery,
+		ProcessedQuery: query,
 	}, nil
 }
 

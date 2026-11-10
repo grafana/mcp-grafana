@@ -114,19 +114,24 @@ func (v *variableInterpolator) interpolate(s string) string {
 // interpolateValue returns a deep copy of value with every string inside it
 // interpolated. Maps and slices are copied; other values are returned as is.
 func (v *variableInterpolator) interpolateValue(value interface{}) interface{} {
+	return mapStrings(value, v.interpolate)
+}
+
+// mapStrings returns a deep copy of value with f applied to every string in it.
+func mapStrings(value interface{}, f func(string) string) interface{} {
 	switch val := value.(type) {
 	case string:
-		return v.interpolate(val)
+		return f(val)
 	case map[string]interface{}:
 		result := make(map[string]interface{}, len(val))
 		for k, item := range val {
-			result[k] = v.interpolateValue(item)
+			result[k] = mapStrings(item, f)
 		}
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(val))
 		for i, item := range val {
-			result[i] = v.interpolateValue(item)
+			result[i] = mapStrings(item, f)
 		}
 		return result
 	default:

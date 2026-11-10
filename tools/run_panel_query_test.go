@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -1655,6 +1656,18 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 	assert.Equal(t, "static-value", result[1])
 }
 
+// executeLokiAutoQuery runs a $__auto count query, expanded as runSinglePanelQuery does.
+func executeLokiAutoQuery(t *testing.T, server *httptest.Server, start, end string) error {
+	t.Helper()
+	from, err := parseTime(start)
+	require.NoError(t, err)
+	to, err := parseTime(end)
+	require.NoError(t, err)
+	query := substituteGrafanaMacros(`sum(count_over_time({app="a"}[$__auto]))`, from, to)
+	_, err = executeLokiQuery(enforceTestCtx(server, false), "loki", query, start, end)
+	return err
+}
+
 // Grafana replaces $__auto with the step of a Loki range query, so the step sent to Loki must
 // match the value substituted for $__auto. Otherwise Loki falls back to range/250 and
 // count_over_time windows overlap, counting each line more than once.
@@ -1662,7 +1675,7 @@ func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, q["expr"])
@@ -1674,7 +1687,7 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[1m48s]))`, q["expr"])
@@ -1686,7 +1699,7 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
 
-	_, err := executeLokiQuery(enforceTestCtx(server, false), "loki", `sum(count_over_time({app="a"}[$__auto]))`, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
+	err := executeLokiAutoQuery(t, server, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, `sum(count_over_time({app="a"}[14m24s]))`, q["expr"])

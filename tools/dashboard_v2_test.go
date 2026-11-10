@@ -257,7 +257,7 @@ func TestRunSinglePanelQuery_V2Dashboard(t *testing.T) {
 
 	// An unsupported datasource type fails only after the panel, its query and
 	// the dashboard variables are read, so no Grafana client is needed.
-	_, err := runSinglePanelQuery(context.Background(), singlePanelQueryParams{DB: spec, IsV2: true, PanelID: 7})
+	_, err := runSinglePanelQuery(context.Background(), singlePanelQueryParams{DB: spec, IsV2: true, PanelID: 7, Start: "now-1h", End: "now"})
 	assert.ErrorContains(t, err, "datasource type 'test-unsupported' is not supported by run_panel_query")
 
 	// The v1 lookup cannot read a v2 spec.

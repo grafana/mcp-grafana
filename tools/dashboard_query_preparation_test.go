@@ -53,6 +53,10 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			requiredNames     []string
 		}{
 			{name: "macro-prefixed variable selection", query: "SELECT '$__interval_env', $__interval", overrides: map[string]string{"__interval_env": "production"}, want: "SELECT 'production', 36s"},
+			{name: "macro-like saved value", query: "SELECT '${choice}', $__interval", current: "$__interval", want: "SELECT '$__interval', 36s"},
+			{name: "macro-like override", query: "SELECT '$choice', $__range_s", current: "saved", overrides: map[string]string{"choice": "${__range_s}"}, want: "SELECT '${__range_s}', 3600"},
+			{name: "macro-like multi-value", query: "SELECT * FROM t WHERE w IN ($choice)", current: []interface{}{"$__interval", "$__range"}, multi: true, want: "SELECT * FROM t WHERE w IN ('$__interval','$__range')"},
+			{name: "CloudWatch macro-like value", query: "SELECT $choice, $__interval_ms", current: "$__interval_ms", datasourceType: "cloudwatch", want: "SELECT $__interval_ms, 36000", requiredNames: []string{"choice"}},
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "multi-value unformatted", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east','west')"},
 			{name: "multi-value single selection", query: "SELECT * FROM t WHERE region IN (${choice})", current: []interface{}{"east"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east')"},
