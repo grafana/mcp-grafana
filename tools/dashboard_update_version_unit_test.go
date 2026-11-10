@@ -155,55 +155,184 @@ func TestUpdateDashboardPatch_SaveIsVersionChecked(t *testing.T) {
 	})
 }
 
-// On a Grafana that serves dashboards through the Kubernetes API, a classic
-// dashboard is read from there and saved through the legacy endpoint, whose
-// version is the object's metadata.generation.
-func TestUpdateDashboardPatch_K8sReadSavesWithGenerationAsVersion(t *testing.T) {
-	newContext := func(t *testing.T, rec *legacySaveRecorder) context.Context {
-		t.Helper()
-		ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
-			if serveDashboardDiscovery(w, r, "v1beta1") {
-				return
+// k8sClassicDashboard is a fake Grafana that serves one classic dashboard
+// through the Kubernetes API (generation 7) and records how it is saved:
+// updates of the Kubernetes object in puts, legacy saves in legacy.
+type k8sClassicDashboard struct {
+	legacy          legacySaveRecorder
+	resourceVersion string
+	putStatus       int
+
+	mu   sync.Mutex
+	puts []map[string]interface{}
+	path string
+}
+
+const k8sClassicDashboardPath = "/apis/dashboard.grafana.app/v1beta1/namespaces/default/dashboards/dash-1"
+
+func (f *k8sClassicDashboard) context(t *testing.T) context.Context {
+	t.Helper()
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if serveDashboardDiscovery(w, r, "v1beta1") {
+			return
+		}
+		if f.legacy.handleSave(t, w, r) {
+			return
+		}
+		if r.URL.Path != k8sClassicDashboardPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			metadata := map[string]interface{}{
+				"name": "dash-1", "namespace": "default", "generation": 7,
+				"labels": map[string]interface{}{"grafana.app/deprecatedInternalID": "42"},
+				"annotations": map[string]interface{}{
+					"grafana.app/folder":    "folder-1",
+					"grafana.app/message":   "note of the previous save",
+					"grafana.app/createdBy": "user:u1",
+				},
 			}
-			if rec.handleSave(t, w, r) {
-				return
+			if f.resourceVersion != "" {
+				metadata["resourceVersion"] = f.resourceVersion
 			}
-			if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/v1beta1/") && strings.HasSuffix(r.URL.Path, "/dashboards/dash-1") {
-				w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v1beta1",
+				"kind":       "Dashboard",
+				"metadata":   metadata,
+				// The stored spec carries its own, unrelated version number.
+				"spec": map[string]interface{}{
+					"title": "Before", "version": 99, "schemaVersion": 41,
+					"panels": []interface{}{map[string]interface{}{"id": 1, "title": "CPU"}},
+				},
+			})
+		case http.MethodPut:
+			var body map[string]interface{}
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			f.mu.Lock()
+			f.puts = append(f.puts, body)
+			f.path = r.URL.Path
+			f.mu.Unlock()
+			if f.putStatus != 0 && f.putStatus != http.StatusOK {
+				w.WriteHeader(f.putStatus)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"apiVersion": "dashboard.grafana.app/v1beta1",
-					"kind":       "Dashboard",
-					"metadata": map[string]interface{}{
-						"name": "dash-1", "generation": 7, "resourceVersion": "1731000000000",
-						"annotations": map[string]interface{}{"grafana.app/folder": "folder-1"},
-					},
-					// The stored spec carries its own, unrelated version number.
-					"spec": map[string]interface{}{"title": "Before", "version": 99, "panels": []interface{}{}},
+					"kind": "Status", "status": "Failure", "code": f.putStatus,
+					"message": "the object has been modified; please apply your changes to the latest version and try again",
 				})
 				return
 			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		t.Cleanup(ts.Close)
-		return staleCtx(ts)
-	}
+			if metadata, ok := body["metadata"].(map[string]interface{}); ok {
+				metadata["generation"] = 8
+			}
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	return staleCtx(ts)
+}
 
-	t.Run("generation is sent as the version, without overwrite", func(t *testing.T) {
-		rec := &legacySaveRecorder{}
-		_, err := updateDashboard(newContext(t, rec), UpdateDashboardParams{UID: "dash-1", Operations: retitle})
+func (f *k8sClassicDashboard) onlyPut(t *testing.T) (metadata, annotations, spec map[string]interface{}) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	require.Len(t, f.puts, 1, "expected exactly one update through the k8s API")
+	metadata, _ = f.puts[0]["metadata"].(map[string]interface{})
+	require.NotNil(t, metadata)
+	annotations, _ = metadata["annotations"].(map[string]interface{})
+	require.NotNil(t, annotations)
+	spec, _ = f.puts[0]["spec"].(map[string]interface{})
+	require.NotNil(t, spec)
+	return metadata, annotations, spec
+}
+
+// On a Grafana that serves dashboards through the Kubernetes API, a patch to a
+// classic dashboard is saved as an update of the object that was read, carrying
+// its resourceVersion, so the server rejects it if the dashboard changed.
+func TestUpdateDashboardPatch_K8sReadSavesThroughK8sWithResourceVersion(t *testing.T) {
+	t.Run("the object goes back with the resourceVersion that was read", func(t *testing.T) {
+		fake := &k8sClassicDashboard{resourceVersion: "1731000000000"}
+		result, err := updateDashboard(fake.context(t), UpdateDashboardParams{UID: "dash-1", Operations: retitle})
 		require.NoError(t, err)
 
-		saved := rec.only(t)
-		assert.False(t, saved.Overwrite)
-		assert.Equal(t, float64(7), saved.Dashboard["version"], "metadata.generation, not the spec's own version")
+		assert.Empty(t, fake.legacy.saves, "the legacy save endpoint must not be used")
+		metadata, annotations, spec := fake.onlyPut(t)
+		assert.Equal(t, k8sClassicDashboardPath, fake.path)
+		assert.Equal(t, "1731000000000", metadata["resourceVersion"])
+		assert.Equal(t, "dash-1", metadata["name"])
+		assert.Equal(t, map[string]interface{}{"grafana.app/deprecatedInternalID": "42"}, metadata["labels"], "labels go back as read")
+		assert.Equal(t, "folder-1", annotations["grafana.app/folder"], "the dashboard must stay in its folder")
+		assert.Equal(t, "user:u1", annotations["grafana.app/createdBy"], "other annotations go back as read")
+		assert.NotContains(t, annotations, "grafana.app/message", "the previous save's note must not label this version")
+
+		assert.Equal(t, "After", spec["title"])
+		assert.Equal(t, float64(41), spec["schemaVersion"])
+		assert.Equal(t, []interface{}{map[string]interface{}{"id": float64(1), "title": "CPU"}}, spec["panels"])
+		assert.NotContains(t, spec, "uid", "identity is metadata.name, not a spec field")
+		assert.NotContains(t, spec, "version", "the version is metadata.generation, not a spec field")
+
+		require.NotNil(t, result)
+		assert.Equal(t, "dash-1", *result.UID)
+		assert.Equal(t, "After", *result.Title)
+		assert.Equal(t, int64(8), *result.Version)
+		assert.Equal(t, "folder-1", result.FolderUID)
+		assert.Equal(t, "success", *result.Status)
+	})
+
+	t.Run("the caller's message and folder are applied", func(t *testing.T) {
+		fake := &k8sClassicDashboard{resourceVersion: "1731000000000"}
+		_, err := updateDashboard(fake.context(t), UpdateDashboardParams{
+			UID: "dash-1", Operations: retitle, Message: "rename", FolderUID: "folder-2",
+		})
+		require.NoError(t, err)
+
+		_, annotations, _ := fake.onlyPut(t)
+		assert.Equal(t, "rename", annotations["grafana.app/message"])
+		assert.Equal(t, "folder-2", annotations["grafana.app/folder"])
+	})
+
+	t.Run("a 409 is returned to the caller as a conflict", func(t *testing.T) {
+		fake := &k8sClassicDashboard{resourceVersion: "1731000000000", putStatus: http.StatusConflict}
+		result, err := updateDashboard(fake.context(t), UpdateDashboardParams{UID: "dash-1", Operations: retitle})
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "unable to save dashboard")
+		assert.Contains(t, err.Error(), "changed since it was read")
+		assert.Contains(t, err.Error(), "get_dashboard_by_uid")
+		assert.Contains(t, err.Error(), "HTTP 409")
+
+		fake.onlyPut(t)
+		assert.Empty(t, fake.legacy.saves, "a rejected save must not be retried through the legacy endpoint")
+	})
+
+	t.Run("another failure is returned as it is", func(t *testing.T) {
+		fake := &k8sClassicDashboard{resourceVersion: "1731000000000", putStatus: http.StatusInternalServerError}
+		_, err := updateDashboard(fake.context(t), UpdateDashboardParams{UID: "dash-1", Operations: retitle})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `update dashboard "dash-1" via k8s api`)
+		assert.NotContains(t, err.Error(), "changed since it was read")
+		assert.Empty(t, fake.legacy.saves, "a failed save must not be retried through the legacy endpoint")
+	})
+
+	t.Run("overwrite=true keeps the legacy overwrite", func(t *testing.T) {
+		fake := &k8sClassicDashboard{resourceVersion: "1731000000000"}
+		_, err := updateDashboard(fake.context(t), UpdateDashboardParams{UID: "dash-1", Operations: retitle, Overwrite: true})
+		require.NoError(t, err)
+
+		assert.Empty(t, fake.puts)
+		saved := fake.legacy.only(t)
+		assert.True(t, saved.Overwrite)
 		assert.Equal(t, "After", saved.Dashboard["title"])
 		assert.Equal(t, "dash-1", saved.Dashboard["uid"])
 		assert.Equal(t, "folder-1", saved.FolderUID)
 	})
 
-	t.Run("a patch cannot change the version used for the check", func(t *testing.T) {
-		rec := &legacySaveRecorder{}
-		_, err := updateDashboard(newContext(t, rec), UpdateDashboardParams{
+	t.Run("without a resourceVersion the version-checked legacy save is used", func(t *testing.T) {
+		fake := &k8sClassicDashboard{}
+		_, err := updateDashboard(fake.context(t), UpdateDashboardParams{
 			UID: "dash-1",
 			Operations: []PatchOperation{
 				{Op: "replace", Path: "$.version", Value: float64(1)},
@@ -211,16 +340,22 @@ func TestUpdateDashboardPatch_K8sReadSavesWithGenerationAsVersion(t *testing.T) 
 			},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, float64(7), rec.only(t).Dashboard["version"])
+
+		assert.Empty(t, fake.puts)
+		saved := fake.legacy.only(t)
+		assert.False(t, saved.Overwrite)
+		assert.Equal(t, float64(7), saved.Dashboard["version"], "metadata.generation, whatever the spec or a patch says")
+		assert.Equal(t, "After", saved.Dashboard["title"])
 	})
 
-	t.Run("a conflict on the version-checked save is returned to the caller", func(t *testing.T) {
-		rec := &legacySaveRecorder{saveStatus: http.StatusConflict, saveBody: `{}`}
-		_, err := updateDashboard(newContext(t, rec), UpdateDashboardParams{UID: "dash-1", Operations: retitle})
+	t.Run("a conflict on that legacy save is returned to the caller", func(t *testing.T) {
+		fake := &k8sClassicDashboard{}
+		fake.legacy.saveStatus = http.StatusConflict
+		fake.legacy.saveBody = `{}`
+		_, err := updateDashboard(fake.context(t), UpdateDashboardParams{UID: "dash-1", Operations: retitle})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "status 409")
 		assert.Contains(t, err.Error(), "changed since it was read")
-		assert.Equal(t, float64(7), rec.only(t).Dashboard["version"])
 	})
 }
 

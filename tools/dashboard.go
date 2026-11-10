@@ -517,6 +517,16 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		return updateDashboardV2(ctx, args.UID, res, args)
 	}
 
+	// A classic dashboard that was read through the Kubernetes API is written
+	// back through it, with the resourceVersion that was read: that API
+	// rejects one of two simultaneous saves, which the legacy save endpoint
+	// does not do reliably even when both carry the same version. An explicit
+	// overwrite, and a read without a resourceVersion to check against, keep
+	// using the legacy save below.
+	if !args.Overwrite && k8sNestedString(res.Object, "metadata", "resourceVersion") != "" {
+		return updateClassicDashboardViaK8s(ctx, args.UID, res, args)
+	}
+
 	// Restore identity fields so the Grafana API updates the existing
 	// dashboard in place instead of creating a clone with a new UID.
 	// The UID is always taken from the request args (the value used to
@@ -552,6 +562,49 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		Overwrite: args.Overwrite, // Honor caller overwrite (default false) so Grafana version-checks; a concurrent save conflicts (412) instead of silently losing
 		UserID:    args.UserID,
 	})
+}
+
+// updateClassicDashboardViaK8s saves a patched classic (v1) dashboard as an
+// update of the Kubernetes object it was read from. The object goes back with
+// the metadata it was read with, including resourceVersion, so the server
+// rejects the save with a conflict if the dashboard changed in between.
+func updateClassicDashboardViaK8s(ctx context.Context, uid string, res *dashboardResult, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
+	k8s := mcpgrafana.KubernetesClientFromContext(ctx)
+	if k8s == nil {
+		return nil, fmt.Errorf("a Kubernetes-capable Grafana is required to update dashboard %q through the k8s api, but no k8s client is available", uid)
+	}
+
+	// The read copies the uid and version into the body for the legacy save
+	// (see dashboardResultFromK8s); in the Kubernetes object they live in
+	// metadata.name and metadata.generation, not in the spec.
+	spec := maps.Clone(res.Spec)
+	delete(spec, "uid")
+	delete(spec, "version")
+	res.Object["spec"] = spec
+
+	// The object carries the note of the save that produced it. Drop it so this
+	// version is not recorded under the previous version's message, then apply
+	// the caller's message and folder, if any.
+	if metadata, ok := res.Object["metadata"].(map[string]interface{}); ok {
+		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+			delete(annotations, annoKeyMessage)
+		}
+	}
+	applyV2WriteMetadata(res.Object, args)
+
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := k8s.Update(ctx, dashboardDescriptor(res.APIVersion), ns, uid, res.Object)
+	if err != nil {
+		var apiErr *mcpgrafana.KubernetesAPIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+			return nil, fmt.Errorf("unable to save dashboard: it changed since it was read, so the patch was not applied. Send the same patch again (it is applied to a fresh read), or fetch the dashboard with get_dashboard_by_uid to see what changed. overwrite=true would discard whatever changed in between: %w", err)
+		}
+		return nil, fmt.Errorf("update dashboard %q via k8s api: %w", uid, err)
+	}
+	return postDashboardOKBodyFromK8s(updated, uid), nil
 }
 
 // updateDashboardV2 writes a (patched) v2 dashboard back through the
