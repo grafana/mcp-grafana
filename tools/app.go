@@ -13,7 +13,7 @@ import (
 
 type renderAppParams struct {
 	ToolName  string         `json:"toolName" jsonschema:"required,description=The query tool whose result to display"`
-	Arguments map[string]any `json:"arguments" jsonschema:"required,description=Inputs for the selected query tool using its existing schema"`
+	Arguments map[string]any `json:"arguments" jsonschema:"required,description=Inputs for the selected query tool: the schema whose title is toolName"`
 }
 
 // AddAppTool registers one explicit viewer for the supplied enabled query tools.
@@ -36,6 +36,9 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 		if err := json.Unmarshal(source.Tool.InputSchema.(json.RawMessage), schema); err != nil {
 			panic(fmt.Errorf("read app source schema: %w", err))
 		}
+		// The source is not in tools/list, so its branch carries its name and description.
+		schema.Title = source.Tool.Name
+		schema.Description = source.Tool.Description
 		schemas = append(schemas, schema)
 		required, _ := mcpgrafana.ToolRequiredPermissions(source.Tool)
 		for _, permission := range required {
@@ -81,8 +84,10 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 			if err := json.Unmarshal(tool.InputSchema.(json.RawMessage), &schema); err != nil {
 				panic(err)
 			}
-			schema.Properties.Set("toolName", &jsonschema.Schema{Type: "string", Enum: names})
-			schema.Properties.Set("arguments", &jsonschema.Schema{Type: "object", AnyOf: schemas})
+			toolName, _ := schema.Properties.Get("toolName")
+			toolName.Enum = names
+			arguments, _ := schema.Properties.Get("arguments")
+			arguments.AnyOf = schemas
 			body, err := json.Marshal(schema)
 			if err != nil {
 				panic(err)

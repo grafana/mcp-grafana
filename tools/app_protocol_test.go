@@ -57,16 +57,29 @@ func TestAppProtocolDiscovery(t *testing.T) {
 	assert.NotContains(t, byName["get_tempo_trace"].Meta, "ui")
 	var schema struct {
 		Properties map[string]struct {
-			AnyOf []json.RawMessage `json:"anyOf"`
+			Description string            `json:"description"`
+			Enum        []string          `json:"enum"`
+			AnyOf       []json.RawMessage `json:"anyOf"`
 		} `json:"properties"`
 	}
 	body, err := json.Marshal(chart.InputSchema)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(body, &schema))
-	for i, name := range []string{"query_prometheus", "get_tempo_trace"} {
-		original, err := json.Marshal(byName[name].InputSchema)
+	names := []string{"query_prometheus", "get_tempo_trace"}
+	assert.Equal(t, names, schema.Properties["toolName"].Enum)
+	assert.NotEmpty(t, schema.Properties["toolName"].Description)
+	assert.NotEmpty(t, schema.Properties["arguments"].Description)
+	for i, name := range names {
+		// Each branch is the source schema, named and described as the source.
+		var want map[string]any
+		body, err := json.Marshal(byName[name].InputSchema)
 		require.NoError(t, err)
-		assert.JSONEq(t, string(original), string(schema.Properties["arguments"].AnyOf[i]))
+		require.NoError(t, json.Unmarshal(body, &want))
+		want["title"] = name
+		want["description"] = byName[name].Description
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(schema.Properties["arguments"].AnyOf[i], &got))
+		assert.Equal(t, want, got)
 	}
 	ui, ok := chart.Meta["ui"].(map[string]any)
 	require.True(t, ok)
