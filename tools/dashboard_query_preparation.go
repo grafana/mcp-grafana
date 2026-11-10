@@ -34,7 +34,8 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		query := &queries[i]
 		// Frontend macros are not dashboard variables, even when the executor
 		// leaves them intact in the submitted expression.
-		references, err := substituteInspectionMacros(variableSearchText(*query), query.Datasource.Type, from, to)
+		references := substituteFrontendMacros(variableSearchText(*query), query.Datasource.Type, from, to)
+		references, err := substituteBackendMacros(references, query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -48,7 +49,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		if len(query.Warnings) > 0 {
 			continue
 		}
-		query.ProcessedQuery, err = substituteInspectionMacros(interp.interpolateQuery(query.Query, query.Datasource.Type), query.Datasource.Type, from, to)
+		query.ProcessedQuery, err = substituteBackendMacros(preparePanelExpression(interp, query.Query, query.Datasource.Type, from, to), query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -102,19 +103,32 @@ func isPanelQueryMacro(name, datasourceType string) bool {
 	return false
 }
 
-// Inspection uses the executor's macro handling. InfluxDB forwards expressions
-// intact, while ClickHouse uses its SQL dialect.
-func substituteInspectionMacros(query, datasourceType string, from, to time.Time) (string, error) {
+// preparePanelExpression expands frontend macros before inserting variable
+// values, so a value is never rescanned, as in Grafana's single-pass replace.
+func preparePanelExpression(interp *variableInterpolator, query, datasourceType string, from, to time.Time) string {
+	return interp.interpolateQuery(substituteFrontendMacros(query, datasourceType, from, to), datasourceType)
+}
+
+// substituteFrontendMacros mirrors the executors. InfluxDB forwards macros
+// intact, and ClickHouse expands them in its SQL dialect instead.
+func substituteFrontendMacros(query, datasourceType string, from, to time.Time) string {
 	switch normalizeDatasourceType(datasourceType) {
-	case "influxdb":
-		return query, nil
-	case "clickhouse":
-		dialect, err := sqldialect.DialectFor(sqldialect.ClickHouseDatasourceType)
-		if err != nil {
-			return "", err
-		}
-		return dialect.SubstituteMacros(query, from, to), nil
+	case "influxdb", "clickhouse":
+		return query
 	default:
-		return substituteGrafanaMacros(query, from, to), nil
+		return substituteGrafanaMacros(query, from, to)
 	}
+}
+
+// substituteBackendMacros applies the ClickHouse dialect, which query_sql runs
+// after variables, like the plugin backend does.
+func substituteBackendMacros(query, datasourceType string, from, to time.Time) (string, error) {
+	if normalizeDatasourceType(datasourceType) != "clickhouse" {
+		return query, nil
+	}
+	dialect, err := sqldialect.DialectFor(sqldialect.ClickHouseDatasourceType)
+	if err != nil {
+		return "", err
+	}
+	return dialect.SubstituteMacros(query, from, to), nil
 }
