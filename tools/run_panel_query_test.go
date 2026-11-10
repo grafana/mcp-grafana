@@ -893,7 +893,7 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			name:     "interval_matches_interval_ms",
 			query:    "rate(requests[$__interval]) * $__interval_ms",
 			duration: 3 * time.Hour,
-			expected: "rate(requests[1m48s]) * 108000", // 10800/100 = 108s
+			expected: "rate(requests[2m]) * 120000", // 10800/100 = 108s, rounded to 2m
 		},
 		{
 			name:     "rate_interval",
@@ -917,31 +917,31 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			name:     "interval_1_hour",
 			query:    "rate(requests[$__interval])",
 			duration: time.Hour,
-			expected: "rate(requests[36s])", // 3600/100 = 36s
+			expected: "rate(requests[30s])", // 3600/100 = 36s, rounded to 30s
 		},
 		{
 			name:     "interval_braced",
 			query:    "rate(requests[${__interval}])",
 			duration: time.Hour,
-			expected: "rate(requests[36s])",
+			expected: "rate(requests[30s])",
 		},
 		{
 			name:     "auto",
 			query:    `count_over_time({job="x"}[$__auto])`,
 			duration: time.Hour,
-			expected: `count_over_time({job="x"}[36s])`,
+			expected: `count_over_time({job="x"}[30s])`,
 		},
 		{
 			name:     "auto_braced",
 			query:    `count_over_time({job="x"}[${__auto}])`,
 			duration: time.Hour,
-			expected: `count_over_time({job="x"}[36s])`,
+			expected: `count_over_time({job="x"}[30s])`,
 		},
 		{
 			name:     "interval_ms",
 			query:    "timestamp(up) - $__interval_ms",
 			duration: time.Hour,
-			expected: "timestamp(up) - 36000", // 36s = 36000ms
+			expected: "timestamp(up) - 30000", // 30s = 30000ms
 		},
 		{
 			name:     "multiple_macros",
@@ -956,10 +956,10 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			expected: "up{job='api'}",
 		},
 		{
-			name:     "short_duration_floor_to_1s",
+			name:     "short_duration_sub_second",
 			query:    "rate(x[$__interval])",
-			duration: 30 * time.Second, // 30s/100 = 0.3s, floors to 1s
-			expected: "rate(x[1s])",
+			duration: 30 * time.Second, // 30s/100 = 0.3s, rounded to 200ms
+			expected: "rate(x[200ms])",
 		},
 		{
 			name:     "range_s_macro",
@@ -1001,7 +1001,7 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			name:     "interval_ms_braced",
 			query:    "timestamp(up) - ${__interval_ms}",
 			duration: time.Hour,
-			expected: "timestamp(up) - 36000",
+			expected: "timestamp(up) - 30000",
 		},
 	}
 
@@ -1011,6 +1011,37 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			end := start.Add(tt.duration)
 			result := substituteGrafanaMacros(tt.query, start, end)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// Expected values come from Grafana's rangeutil.calculateInterval with 100 data points.
+func TestSubstituteGrafanaMacrosRoundsInterval(t *testing.T) {
+	day := 24 * time.Hour
+	tests := []struct {
+		span     time.Duration
+		interval string
+		ms       string
+	}{
+		{30 * time.Second, "200ms", "200"},
+		{5 * time.Minute, "2s", "2000"},
+		{14 * time.Minute, "10s", "10000"},
+		{30 * time.Minute, "20s", "20000"},
+		{time.Hour, "30s", "30000"},
+		{3 * time.Hour, "2m", "120000"},
+		{6 * time.Hour, "5m", "300000"},
+		{day, "15m", "900000"},
+		{7 * day, "2h", "7200000"},
+		{30 * day, "6h", "21600000"},
+		{90 * day, "12h", "43200000"},
+		{365 * day, "1d", "86400000"},
+		{730 * day, "7d", "604800000"},
+	}
+	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.span.String(), func(t *testing.T) {
+			got := substituteGrafanaMacros("$__interval ${__interval_ms} $__auto", start, start.Add(tt.span))
+			assert.Equal(t, tt.interval+" "+tt.ms+" "+tt.interval, got)
 		})
 	}
 }
@@ -1678,11 +1709,11 @@ func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
 	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
-	assert.Equal(t, `sum(count_over_time({app="a"}[36s]))`, q["expr"])
-	assert.Equal(t, "36s", q["step"], "step must equal $__auto")
+	assert.Equal(t, `sum(count_over_time({app="a"}[30s]))`, q["expr"])
+	assert.Equal(t, "30s", q["step"], "step must equal $__auto")
 }
 
-// Over 3h the interval is 108s, which $__auto renders as "1m48s"; the step must match it.
+// Over 3h the interval rounds to 2m; the step must match it.
 func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
@@ -1690,11 +1721,11 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
 	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z")
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
-	assert.Equal(t, `sum(count_over_time({app="a"}[1m48s]))`, q["expr"])
-	assert.Equal(t, "108s", q["step"], "step must equal $__auto")
+	assert.Equal(t, `sum(count_over_time({app="a"}[2m]))`, q["expr"])
+	assert.Equal(t, "120s", q["step"], "step must equal $__auto")
 }
 
-// Over 24h the interval is 864s, which $__auto renders as "14m24s"; the step must match it.
+// Over 24h the interval rounds to 15m; the step must match it.
 func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
 	server, payload := lokiQueryStub()
 	defer server.Close()
@@ -1702,8 +1733,8 @@ func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
 	err := executeLokiAutoQuery(t, server, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z")
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
-	assert.Equal(t, `sum(count_over_time({app="a"}[14m24s]))`, q["expr"])
-	assert.Equal(t, "864s", q["step"], "step must equal $__auto")
+	assert.Equal(t, `sum(count_over_time({app="a"}[15m]))`, q["expr"])
+	assert.Equal(t, "900s", q["step"], "step must equal $__auto")
 }
 
 func TestSubstituteGrafanaMacrosPreservesLongerNames(t *testing.T) {
@@ -1711,6 +1742,6 @@ func TestSubstituteGrafanaMacrosPreservesLongerNames(t *testing.T) {
 	end := start.Add(time.Hour)
 	for _, name := range []string{"__interval_env", "__range_bucket", "__auto_mode", "__rate_interval_custom", "__interval_ms2", "__interval_ENV"} {
 		query := "$" + name + " ${" + name + "} $__interval"
-		assert.Equal(t, "$"+name+" ${"+name+"} 36s", substituteGrafanaMacros(query, start, end))
+		assert.Equal(t, "$"+name+" ${"+name+"} 30s", substituteGrafanaMacros(query, start, end))
 	}
 }

@@ -458,11 +458,16 @@ func resolveAutoIntervalVariables(db map[string]interface{}, values templateVari
 // range divided by the step count, rounded to a "nice" interval, no lower than
 // the minimum, and formatted with secondsToHms.
 func grafanaCalculateInterval(span time.Duration, steps float64, minimum string) string {
+	return grafanaSecondsToHms(grafanaIntervalMs(span, steps, minimum) / 1000)
+}
+
+// grafanaIntervalMs is the intervalMs of rangeutil.calculateInterval.
+func grafanaIntervalMs(span time.Duration, steps float64, minimum string) float64 {
 	ms := grafanaRoundInterval(float64(span.Milliseconds()) / steps)
 	if low, err := gtime.ParseInterval(minimum); err == nil && float64(low.Milliseconds()) > ms {
 		ms = float64(low.Milliseconds())
 	}
-	return grafanaSecondsToHms(ms / 1000)
+	return ms
 }
 
 // grafanaRoundInterval is rangeutil.roundInterval: thresholds in milliseconds
@@ -563,7 +568,7 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Direction:     "backward",
 		QueryType:     "range",
 		// $__auto is substituted with this interval, and Grafana defines it as the step.
-		StepSeconds: int(autoInterval(startTime, endTime) / time.Second),
+		StepSeconds: int(macroInterval(startTime, endTime) / time.Second),
 	})
 	if err != nil {
 		return nil, err
@@ -883,20 +888,10 @@ func dsQueryResponsesError(responses backend.Responses) error {
 	return errors.New(strings.Join(failures, "; "))
 }
 
-// macroInterval is the value of $__interval and $__auto: the time range over ~100 data points,
-// at least one second.
+// macroInterval is $__interval and $__auto: Grafana's calculateInterval over 100 data points,
+// rounded to a nice value, with its default 1ms lower limit.
 func macroInterval(start, end time.Time) time.Duration {
-	return max(end.Sub(start)/100, time.Second)
-}
-
-// autoInterval is the duration $__auto is written as in the query. It parses the formatted string
-// back, so a step derived from it always matches the substituted window.
-func autoInterval(start, end time.Time) time.Duration {
-	d := macroInterval(start, end)
-	if parsed, err := time.ParseDuration(formatPrometheusDuration(d)); err == nil {
-		return parsed
-	}
-	return d
+	return time.Duration(grafanaIntervalMs(end.Sub(start), 100, "")) * time.Millisecond
 }
 
 var grafanaTemporalMacroRE = regexp.MustCompile(`\$(?:\{__\w+\}|__\w+\b)`)
@@ -905,7 +900,7 @@ var grafanaTemporalMacroRE = regexp.MustCompile(`\$(?:\{__\w+\}|__\w+\b)`)
 func substituteGrafanaMacros(query string, start, end time.Time) string {
 	duration := end.Sub(start)
 	interval := macroInterval(start, end)
-	intervalStr := formatPrometheusDuration(interval)
+	intervalStr := grafanaSecondsToHms(interval.Seconds())
 	values := map[string]string{
 		"__range_ms":         fmt.Sprintf("%d", duration.Milliseconds()),
 		"__range_s":          fmt.Sprintf("%d", int64(duration.Seconds())),
