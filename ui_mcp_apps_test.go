@@ -6,7 +6,28 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/html"
 )
+
+// externalScripts gives the src of each script element. The tokenizer reads a script body as text, so a string in
+// the bundle that looks like a tag, for example in react-dom/server, is not an element.
+func externalScripts(page string) []string {
+	var srcs []string
+	z := html.NewTokenizer(strings.NewReader(page))
+	for tt := z.Next(); tt != html.ErrorToken; tt = z.Next() {
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			continue
+		}
+		if t := z.Token(); t.Data == "script" {
+			for _, a := range t.Attr {
+				if a.Key == "src" {
+					srcs = append(srcs, a.Val)
+				}
+			}
+		}
+	}
+	return srcs
+}
 
 func TestMCPAppResources(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
@@ -37,7 +58,7 @@ func TestMCPAppResources(t *testing.T) {
 			require.Equal(t, uri, content.URI)
 			require.Equal(t, appMIMEType, content.MIMEType)
 			require.Contains(t, strings.ToLower(content.Text), "<!doctype html>")
-			require.NotContains(t, content.Text, "<script src=")
+			require.Empty(t, externalScripts(content.Text), "the app loads no script file")
 			ui, ok := content.Meta["ui"].(map[string]any)
 			require.True(t, ok)
 			csp, ok := ui["csp"].(map[string]any)

@@ -13,6 +13,9 @@
 import { AppBridge } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { PostMessageTransport } from '@modelcontextprotocol/ext-apps';
 
+import vizArgs from '../test/viz-contract/prometheus-line/args.json';
+import vizResult from '../test/viz-contract/prometheus-line/result.json';
+
 const log: string[] = [];
 (window as unknown as { __hostLog: string[] }).__hostLog = log;
 
@@ -176,6 +179,22 @@ async function main() {
     single: 'go_goroutines',
     buckets: 'rate(http_request_duration_seconds_bucket[5m])',
   };
+  // `?fixture=viz` sends the prometheus-line set of the viz contract as a query_datasource call.
+  if (fixtureName === 'viz') {
+    await bridge.sendToolInput({
+      toolName: 'render_grafana_app',
+      arguments: { toolName: 'query_datasource', arguments: vizArgs },
+    } as never);
+    record('tool-input sent (query_datasource)');
+    await bridge.sendToolResult({
+      content: [{ type: 'text', text: 'Queried data source lgtm-prometheus.' }],
+      structuredContent: vizResult,
+      isError: false,
+    } as never);
+    record('tool-result sent (fixture=viz)');
+    return;
+  }
+
   await bridge.sendToolInput({
     toolName: 'render_grafana_app',
     arguments: { toolName: 'query_prometheus', arguments: {

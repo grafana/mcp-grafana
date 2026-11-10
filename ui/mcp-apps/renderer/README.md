@@ -3,7 +3,8 @@
 `renderer.js`, `renderer.manifest.json` and `package.json` are a build of the Renderer in
 [grafana/dataViz](https://github.com/grafana/dataViz) (`plugins/packages/@plugins/grafana-echarts`), which is under
 the Apache License 2.0 (`LICENSE` in this directory). The App gives it the viz spec of `query_datasource`.
-`package.json` lists the peers that the App bundles for it (viz-contract `renderer.9`).
+`package.json` lists the peers that the App bundles for it (viz-contract `renderer.9`). `renderer.d.ts` is the
+`renderer-api.d.ts` of the contract copy in dataViz, so the types match the `contractVersion` of the Renderer.
 
 `RENDERER` pins the copy: the commit of dataViz, the Renderer and contract versions, and the SHA-256 of
 `renderer.js`. A test fails if the bundle or the manifest differs from its pin, so a hand edit does not pass.

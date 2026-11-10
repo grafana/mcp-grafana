@@ -1,0 +1,141 @@
+{
+  "specVersion": 1,
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "line"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "reqps"
+      }
+    },
+    "datasource": {
+      "uid": "lgtm-prometheus"
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "sum by (handler) (rate(grafana_http_request_duration_seconds_count[5m]))",
+        "legendFormat": "{{handler}}",
+        "format": "time_series"
+      }
+    ]
+  },
+  "data": {
+    "range": {
+      "from": 1790349877294,
+      "to": 1790353477294
+    },
+    "capturedAt": 1790353477806,
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": [
+          {
+            "schema": {
+              "refId": "A",
+              "meta": {
+                "type": "timeseries-multi",
+                "typeVersion": [
+                  0,
+                  1
+                ]
+              },
+              "fields": [
+                {
+                  "name": "Time",
+                  "type": "time",
+                  "typeInfo": {
+                    "frame": "time.Time"
+                  }
+                },
+                {
+                  "name": "Value",
+                  "type": "number",
+                  "typeInfo": {
+                    "frame": "float64"
+                  },
+                  "labels": {
+                    "handler": "/api/ds/query"
+                  },
+                  "config": {
+                    "displayNameFromDS": "/api/ds/query"
+                  }
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1790351737294,
+                  1790351797294,
+                  1790351857294,
+                  1790351917294,
+                  1790351977294,
+                  1790352037294,
+                  1790352097294,
+                  1790352157294,
+                  1790352217294,
+                  1790352277294,
+                  1790352337294,
+                  1790352397294,
+                  1790352457294,
+                  1790352517294,
+                  1790352577294,
+                  1790352637294,
+                  1790352697294,
+                  1790352757294,
+                  1790352817294,
+                  1790352877294,
+                  1790352937294,
+                  1790352997294,
+                  1790353057294,
+                  1790353117294,
+                  1790353177294,
+                  1790353237294,
+                  1790353297294,
+                  1790353357294,
+                  1790353417294,
+                  1790353477294
+                ],
+                [
+                  12,
+                  12.65,
+                  13.24,
+                  13.68,
+                  13.94,
+                  13.99,
+                  13.82,
+                  13.45,
+                  12.91,
+                  12.28,
+                  11.62,
+                  11,
+                  10.49,
+                  10.14,
+                  10,
+                  10.08,
+                  10.37,
+                  10.84,
+                  11.44,
+                  12.1,
+                  12.75,
+                  13.31,
+                  13.73,
+                  13.97,
+                  13.98,
+                  13.77,
+                  13.38,
+                  12.82,
+                  12.18,
+                  11.52
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
