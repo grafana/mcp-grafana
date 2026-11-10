@@ -532,6 +532,17 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		folderUID = res.Meta.FolderUID
 	}
 
+	// GF-01 (v13): a classic dashboard read via the k8s API carries a spec
+	// "version" that is not in the legacy save's version space, so a version-
+	// checked legacy save would 409 spuriously. The legacy version is the k8s
+	// metadata.generation, so use that value for the conflict check.
+	if res.Object != nil {
+		if metadata, ok := res.Object["metadata"].(map[string]interface{}); ok {
+			if generation, ok := metadata["generation"].(float64); ok {
+				dashboardMap["version"] = generation
+			}
+		}
+	}
 	// Update with the patched dashboard
 	return updateDashboardWithFullJSON(ctx, UpdateDashboardParams{
 		Dashboard: dashboardMap,
