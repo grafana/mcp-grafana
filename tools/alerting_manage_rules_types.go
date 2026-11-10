@@ -60,7 +60,7 @@ type alertRuleSummary struct {
 	// namespace + group name, so group names alone can collide.
 	Namespace string `json:"namespace,omitempty"`
 
-	// A1: enrichment from the provisioning API for Grafana-managed rules, so a
+	// Enrichment from the provisioning API for Grafana-managed rules, so a
 	// list exposes paused state, the notification target and the queried
 	// datasources without a per-rule 'get'. Left empty when provisioning config
 	// is unavailable (e.g. the token lacks provisioning read) or for

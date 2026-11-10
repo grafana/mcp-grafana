@@ -221,7 +221,7 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 		}
 	}
 
-	// A1: enrich each rule with its provisioning config (paused state,
+	// Enrich each rule with its provisioning config (paused state,
 	// notification settings, queried datasources) using a single bulk
 	// provisioning call, so callers no longer issue one 'get' per rule.
 	summaries = enrichGrafanaManagedSummaries(ctx, summaries)
@@ -523,7 +523,7 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		return nil, fmt.Errorf("update alert rule: %w", err)
 	}
 
-	// GF-03: the provisioning PUT replaces the whole rule, so any optional field
+	// The provisioning PUT replaces the whole rule, so any optional field
 	// the caller omits would be reset. Fetch the existing rule first and keep the
 	// optional fields that were not supplied, so a partial update (e.g. pausing a
 	// rule or changing one label) does not silently clear labels, annotations,
