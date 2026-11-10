@@ -81,6 +81,7 @@ func TestFormatForDatasource(t *testing.T) {
 		{"grafana-postgresql-datasource", `'a.b','O''Brien'`, `'a.b','O''Brien'`},
 		{"mysql", `'a.b','O''Brien'`, `'a.b','O''Brien'`},
 		{"MSSQL", `'a.b','O''Brien'`, `'a.b','O''Brien'`},
+		{"elasticsearch", `("a.b" OR "O'Brien")`, `'a.b','O''Brien'`},
 		{"grafana-bigquery-datasource", `a.b`, `"a.b","O'Brien"`},
 		{"stackdriver", `a.b`, `'a.b','O''Brien'`},
 		{"influxdb", `a.b`, `'a.b','O''Brien'`},

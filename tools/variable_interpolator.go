@@ -2,8 +2,10 @@ package tools
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -223,7 +225,8 @@ var genericFormat = datasourceFormat{explicit: formatTemplateVariable}
 // formatForDatasource returns the formatting for a datasource type, matched
 // case-insensitively. BigQuery has its own sqlstring quoting; Prometheus, Loki
 // and the SQL datasources format multi-value variables, and Prometheus and the
-// SQL datasources escape single-value ones.
+// SQL datasources escape single-value ones. Elasticsearch formats every
+// variable in the lucene format, as its interpolateLuceneQuery does.
 func formatForDatasource(datasourceType string) datasourceFormat {
 	lower := strings.ToLower(datasourceType)
 	f := genericFormat
@@ -239,6 +242,9 @@ func formatForDatasource(datasourceType string) datasourceFormat {
 	case "postgres", "grafana-postgresql-datasource", "mysql", "mssql":
 		f.multi = formatSQLLiteralList
 		f.single = func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	case elasticsearchDatasourceType:
+		f.multi = formatLuceneList
+		f.single = luceneEscape
 	}
 	return f
 }
@@ -248,6 +254,29 @@ func formatForDatasource(datasourceType string) datasourceFormat {
 func prometheusRegularEscape(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	return strings.ReplaceAll(value, "'", `\\'`)
+}
+
+// luceneSpecialCharacters are the characters Grafana's luceneEscape escapes.
+var luceneSpecialCharacters = regexp.MustCompile(`[!*+\-=<>\s&|()\[\]{}^~?:\\/"]`)
+
+// luceneEscape escapes value as Grafana's luceneEscape does, leaving numbers as
+// they are.
+func luceneEscape(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if f, err := strconv.ParseFloat(trimmed, 64); trimmed == "" || err == nil && !math.IsInf(f, 0) {
+		return value
+	}
+	return luceneSpecialCharacters.ReplaceAllString(value, `\${0}`)
+}
+
+// formatLuceneList formats a list of values as Grafana's lucene format does:
+// ("a" OR "b"), each value escaped.
+func formatLuceneList(values []string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = `"` + luceneEscape(value) + `"`
+	}
+	return "(" + strings.Join(quoted, " OR ") + ")"
 }
 
 var regexMetacharacters = regexp.MustCompile(`[$^*{}\[\]+?.()|]`)
@@ -286,16 +315,22 @@ func firstTemplateVariableValue(values []string) string {
 	return values[0]
 }
 
-// formatTemplateVariable applies an explicit format. sqlstring follows
-// Grafana's formatter; unknown formats fall back to Grafana's glob.
+// formatTemplateVariable applies an explicit format. sqlstring and lucene follow
+// Grafana's formatters; unknown formats fall back to Grafana's glob.
 func formatTemplateVariable(values []string, format string) string {
 	formatName := format
 	if separator := strings.IndexByte(format, ':'); separator >= 0 {
 		formatName = format[:separator]
 	}
 
-	if formatName == "sqlstring" {
+	switch formatName {
+	case "sqlstring":
 		return formatSQLStringVariable(values)
+	case "lucene":
+		if len(values) > 1 {
+			return formatLuceneList(values)
+		}
+		return luceneEscape(firstTemplateVariableValue(values))
 	}
 
 	// Grafana uses glob as the fallback for unknown formatting options.

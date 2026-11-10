@@ -31,7 +31,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Fallback datasource type used only when the datasource cannot be read (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres). When the datasource is readable its real type is used and this is ignored."`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Fallback datasource type used only when the datasource cannot be read (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres\\, elasticsearch). When the datasource is readable its real type is used and this is ignored."`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -303,6 +303,12 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		if err == nil {
 			// Report the Cypher that ran, with macros substituted as well as variables.
 			query = safeString(target, "cypherQuery")
+		}
+	case elasticsearchDatasourceType:
+		results, target, err = executeElasticsearchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, interp)
+		if err == nil {
+			// Report the Lucene query that ran, with macros substituted as well as variables.
+			query = safeString(target, "query")
 		}
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
@@ -630,7 +636,12 @@ func executeStructuredPanelQuery(ctx context.Context, datasourceUID, datasourceT
 	target := mapStrings(panelData.RawTarget, func(s string) string {
 		return interp.interpolate(substituteStructuredTargetMacros(s, startTime, endTime, panelData.Interval))
 	}).(map[string]interface{})
+	return queryStructuredTarget(ctx, datasourceUID, datasourceType, target, startTime, endTime)
+}
 
+// queryStructuredTarget sets the datasource and default refId of target, a deep copy of a panel
+// target with macros and variables substituted, and runs it through /api/ds/query.
+func queryStructuredTarget(ctx context.Context, datasourceUID, datasourceType string, target map[string]interface{}, startTime, endTime time.Time) (interface{}, map[string]interface{}, error) {
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
@@ -665,8 +676,11 @@ const InfinityDatasourceType = "yesoreyeram-infinity-datasource"
 // from cypherQuery directly, so a leftover field such as query (copied or migrated panels)
 // cannot stand in for the Cypher that runs.
 func panelQueryExpression(target map[string]interface{}, datasourceType string) string {
-	if normalizeDatasourceType(datasourceType) == Neo4jDatasourceType {
+	switch normalizeDatasourceType(datasourceType) {
+	case Neo4jDatasourceType:
 		return safeString(target, "cypherQuery")
+	case elasticsearchDatasourceType:
+		return safeString(target, "query")
 	}
 	return extractQueryExpression(target)
 }
@@ -675,7 +689,8 @@ func panelQueryExpression(target map[string]interface{}, datasourceType string) 
 // target fields rather than in a string expression such as expr or rawSql.
 func usesStructuredTarget(datasourceType string) bool {
 	switch normalizeDatasourceType(datasourceType) {
-	case "cloudwatch", "infinity":
+	// An Elasticsearch target with an empty Lucene query matches all documents.
+	case "cloudwatch", "infinity", elasticsearchDatasourceType:
 		return true
 	default:
 		return false
@@ -752,6 +767,59 @@ func executeInfinityPanelQuery(ctx context.Context, datasourceUID, datasourceTyp
 // run_panel_query is read-only because this plugin opens its Neo4j sessions in read access
 // mode, which another Neo4j plugin need not do.
 const Neo4jDatasourceType = "kniepdennis-neo4j-datasource"
+
+// executeElasticsearchPanelQuery runs an Elasticsearch panel target through /api/ds/query,
+// interpolated as Grafana's Elasticsearch datasource does in applyTemplateVariables: the Lucene
+// query and the queries of filters aggregations in the lucene format, the rest of the target
+// generically. The target also carries intervalMs, the interval $__interval stands for: the
+// plugin sizes auto date histograms from it, and without it uses one second, which exceeds
+// Elasticsearch's bucket limit on ranges longer than about 18 hours.
+func executeElasticsearchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, interp *variableInterpolator) (interface{}, map[string]interface{}, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, nil, fmt.Errorf("panel target not available")
+	}
+	raw := panelData.RawTarget
+	if safeString(raw, "queryType") == "esql" {
+		return nil, nil, fmt.Errorf("elasticsearch ES|QL panels get their time range filter from Grafana's frontend and cannot run through the API; run the query in Explore instead")
+	}
+	startTime, err := parseTime(start)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(end)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing end time: %w", err)
+	}
+
+	// Macros first, so a variable value that looks like a macro stays literal.
+	raw = mapStrings(raw, func(s string) string {
+		return substituteStructuredTargetMacros(s, startTime, endTime, panelData.Interval)
+	}).(map[string]interface{})
+	lucene := func(s string) string { return interp.interpolateQuery(s, elasticsearchDatasourceType) }
+	target := interp.interpolateTarget(raw)
+	target["query"] = lucene(safeString(raw, "query"))
+	// The copy has the shape of raw, so its filters are found at the same indexes.
+	aggs := safeArray(target, "bucketAggs")
+	for i, agg := range safeArray(raw, "bucketAggs") {
+		rawAgg, ok := agg.(map[string]interface{})
+		if !ok || safeString(rawAgg, "type") != "filters" {
+			continue
+		}
+		filters := safeArray(safeObject(aggs[i].(map[string]interface{}), "settings"), "filters")
+		for j, filter := range safeArray(safeObject(rawAgg, "settings"), "filters") {
+			if rawFilter, ok := filter.(map[string]interface{}); ok {
+				query := lucene(safeString(rawFilter, "query"))
+				if query == "" {
+					query = "*" // matches all documents, as in Grafana
+				}
+				filters[j].(map[string]interface{})["query"] = query
+			}
+		}
+	}
+	target["intervalMs"] = macroInterval(startTime, endTime, panelData.Interval).Milliseconds()
+
+	return queryStructuredTarget(ctx, datasourceUID, elasticsearchDatasourceType, target, startTime, endTime)
+}
 
 // executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
 // panel's queryType field tells us which dialect to use (influxql vs flux);
@@ -1212,6 +1280,11 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- The URL or inline content may have returned no rows for these variables - the query field shows the substituted URL",
 			"- root_selector may not match the response shape - verify it against a sample response in the panel editor",
 		)
+	case elasticsearchDatasourceType:
+		hints = append(hints,
+			"- The Lucene query or filters may not match any documents for these variables - the query field shows the substituted Lucene query",
+			"- The index pattern or time field in the datasource settings may not cover these documents - query_elasticsearch with the same index shows what is there",
+		)
 	case Neo4jDatasourceType:
 		hints = append(hints,
 			"- The MATCH pattern, labels or property filters may not match any nodes for these variables - the query field shows the substituted Cypher",
@@ -1272,7 +1345,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Elasticsearch, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcpgrafana.WithTitleAnnotation("Run panel query"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
