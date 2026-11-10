@@ -22,10 +22,11 @@ type templateVariableValues map[string][]string
 // decides the default formatting, and interpolate or interpolateValue for other
 // fields (datasource UIDs, target fields), which keep generic formatting.
 type variableInterpolator struct {
-	values   templateVariableValues
-	multi    map[string]bool   // multi-value or include-All variables
-	warnings map[string]string // variables set to All or without a value, by name
-	pattern  *regexp.Regexp    // nil when there is nothing to substitute
+	values     templateVariableValues
+	multi      map[string]bool   // multi-value variables
+	includeAll map[string]bool   // include-All variables
+	warnings   map[string]string // variables set to All or without a value, by name
+	pattern    *regexp.Regexp    // nil when there is nothing to substitute
 }
 
 // newDashboardInterpolator reads the selected values of a dashboard's variables
@@ -36,14 +37,16 @@ func newDashboardInterpolator(db map[string]interface{}, overrides map[string]st
 	for name, value := range overrides {
 		values[name] = []string{value}
 	}
-	v := newVariableInterpolator(values, multiValueTemplateVariables(db))
+	multi, includeAll := multiValueTemplateVariables(db)
+	v := newVariableInterpolator(values, multi)
+	v.includeAll = includeAll
 	v.warnings = allTemplateSelectionWarnings(db, overrides, values)
 	return v
 }
 
 // newVariableInterpolator substitutes the given values. multi names the
-// variables that Grafana formats as a list in an unformatted reference; nil
-// keeps the first value for every variable.
+// multi-value variables, whose selection Grafana formats as a list; nil keeps
+// the first value for every variable.
 func newVariableInterpolator(values templateVariableValues, multi map[string]bool) *variableInterpolator {
 	return &variableInterpolator{values: values, multi: multi, pattern: variableReferencePattern(values)}
 }
@@ -200,12 +203,15 @@ func (v *variableInterpolator) formatReference(s string, m []int, f datasourceFo
 	if f.unformatted != nil {
 		return f.unformatted(values, v.multi[name])
 	}
-	if f.multi != nil && v.multi[name] && len(values) > 0 {
+	// interpolateQueryExpr and interpolateVariable treat an include-All
+	// variable like a multi-value one.
+	multiOrAll := v.multi[name] || v.includeAll[name]
+	if f.multi != nil && multiOrAll && len(values) > 0 {
 		return f.multi(values)
 	}
 	// Only dashboard variables are escaped; query_sql's variables (multi is
 	// nil) are inserted as given.
-	if f.single != nil && v.multi != nil && !v.multi[name] && len(values) > 0 {
+	if f.single != nil && v.multi != nil && !multiOrAll && len(values) > 0 {
 		return f.single(values[0])
 	}
 	return firstTemplateVariableValue(values)
@@ -226,8 +232,7 @@ type datasourceFormat struct {
 	// variable, as the same functions do. nil keeps the value raw.
 	single func(value string) string
 	// unformatted, when set, formats every unformatted reference instead of
-	// multi and single; list is whether the variable is multi-value or
-	// include-All.
+	// multi and single; list is whether the variable is multi-value.
 	unformatted func(values []string, list bool) string
 }
 
@@ -378,22 +383,27 @@ func formatSQLStringVariable(values []string) string {
 	return strings.Join(formatted, ",")
 }
 
-// multiValueTemplateVariables names the dashboard variables with multi-value or
-// include-All enabled.
-func multiValueTemplateVariables(db map[string]interface{}) map[string]bool {
-	multi := make(map[string]bool)
+// multiValueTemplateVariables names the dashboard variables with multi-value
+// enabled and those with include-All enabled.
+func multiValueTemplateVariables(db map[string]interface{}) (multi, includeAll map[string]bool) {
+	multi, includeAll = make(map[string]bool), make(map[string]bool)
 	for _, item := range safeArray(safeObject(db, "templating"), "list") {
 		variable, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		isMulti, _ := variable["multi"].(bool)
-		includeAll, _ := variable["includeAll"].(bool)
-		if name := safeString(variable, "name"); name != "" && (isMulti || includeAll) {
+		name := safeString(variable, "name")
+		if name == "" {
+			continue
+		}
+		if isMulti, _ := variable["multi"].(bool); isMulti {
 			multi[name] = true
 		}
+		if all, _ := variable["includeAll"].(bool); all {
+			includeAll[name] = true
+		}
 	}
-	return multi
+	return multi, includeAll
 }
 
 // extractTemplateVariableValues extracts all selected values of each dashboard

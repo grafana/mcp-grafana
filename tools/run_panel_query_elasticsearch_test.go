@@ -95,6 +95,26 @@ func TestLuceneFormat(t *testing.T) {
 	}
 }
 
+// Grafana holds a multi-value variable's selection as an array and any other
+// selection as a string, include-All or not, so the lucene format escapes an
+// include-All variable that isn't multi-value rather than wrapping it:
+// https://github.com/grafana/scenes/blob/22a0dbe1898c6318602e8a93c114109fd5325887/packages/scenes/src/variables/variants/MultiValueVariable.ts#L152-L192
+// Prometheus still formats it like a multi-value variable, because its
+// interpolateQueryExpr checks multi or includeAll.
+func TestLuceneFormatIncludeAll(t *testing.T) {
+	in := newDashboardInterpolator(map[string]interface{}{"templating": map[string]interface{}{"list": []interface{}{
+		map[string]interface{}{"name": "env", "type": "custom", "includeAll": true,
+			"current": map[string]interface{}{"value": "a.b-1"}},
+		map[string]interface{}{"name": "svc", "type": "custom", "multi": true, "includeAll": true,
+			"current": map[string]interface{}{"value": []interface{}{"api"}}},
+	}}}, nil)
+
+	assert.Equal(t, `a.b\-1`, in.interpolateQuery("$env", elasticsearchDatasourceType))
+	assert.Equal(t, `a.b\-1`, in.interpolateQuery("${env:lucene}", "prometheus"))
+	assert.Equal(t, `("api")`, in.interpolateQuery("$svc", elasticsearchDatasourceType))
+	assert.Equal(t, `a\\.b-1`, in.interpolateQuery("$env", "prometheus"))
+}
+
 // Grafana leaves a value as is when isNaN(+value) is false. The expected values
 // are the output of Grafana's luceneEscape in Node.
 func TestLuceneEscape(t *testing.T) {
