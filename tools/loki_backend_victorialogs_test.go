@@ -309,20 +309,47 @@ func TestVictoriaLogsBackend_QueryLogs_ForwardReversesOrder(t *testing.T) {
 	assert.Equal(t, "newest", res.Entries[2].Line)
 }
 
-func TestVictoriaLogsBackend_QueryLogs_InstantCollapsesWindow(t *testing.T) {
-	server, payload := newDSQueryVLServer(t, backend.DataResponse{Frames: data.Frames{vlLogFrame()}})
+func TestVictoriaLogsBackend_QueryLogs_InstantReadsLookbackWindow(t *testing.T) {
+	anchor := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	from := anchor.Add(-lokiDefaultLookback)
+	server, payload := newDSQueryVLServer(t, backend.DataResponse{Frames: data.Frames{vlLogFrame(
+		vlRow{time: anchor.Add(time.Nanosecond), msg: "after anchor", fields: `{}`},
+		vlRow{time: anchor, msg: "at anchor", fields: `{}`},
+		vlRow{time: from, msg: "window start", fields: `{}`},
+		vlRow{time: from.Add(-time.Nanosecond), msg: "before window", fields: `{}`},
+	)}})
 	b := newTestVLBackend(t, server)
 
-	end := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
-	_, err := b.QueryLogs(context.Background(), lokiQueryParams{
+	res, err := b.QueryLogs(context.Background(), lokiQueryParams{
 		Query:     "*",
 		QueryType: "instant",
-		End:       end,
-		Limit:     1,
+		End:       anchor,
+		Limit:     10,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, strconv.FormatInt(end.UnixMilli(), 10), (*payload)["from"])
-	assert.Equal(t, strconv.FormatInt(end.UnixMilli(), 10), (*payload)["to"])
+	assert.Equal(t, strconv.FormatInt(from.UnixMilli(), 10), (*payload)["from"])
+	assert.Equal(t, strconv.FormatInt(anchor.Add(time.Millisecond).UnixMilli(), 10), (*payload)["to"])
+	require.Len(t, res.Entries, 2)
+	assert.Equal(t, "at anchor", res.Entries[0].Line)
+	assert.Equal(t, "window start", res.Entries[1].Line)
+}
+
+func TestQueryLokiLogs_VictoriaLogsInstantGuardsLookbackWindow(t *testing.T) {
+	var sent map[string]interface{}
+	srv := dsQueryGuardServer(t, map[string]string{"vl-uid": victoriaLogsDatasourceType}, nil, &sent)
+	ctx := dsQueryGuardCtx(srv, false)
+	config := mcpgrafana.GrafanaConfigFromContext(ctx)
+	config.LokiGuardrailMode = mcpgrafana.LokiGuardrailEnforce
+	config.LokiGuardrailMaxRange = 30 * time.Minute
+	ctx = mcpgrafana.WithGrafanaConfig(ctx, config)
+
+	// The instant window is lokiDefaultLookback long, so a 30m cap rejects it.
+	_, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+		DatasourceUID: "vl-uid", LogQL: `{app="a"}`, QueryType: "instant", Limit: 10,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "time range")
+	assert.Nil(t, sent)
 }
 
 func TestVictoriaLogsBackend_QueryLogs_DSQueryError(t *testing.T) {

@@ -350,12 +350,15 @@ func addTimeRangeParams(params url.Values, startRFC3339, endRFC3339 string) erro
 	return nil
 }
 
+// lokiDefaultLookback is how far back log queries read when no start is given.
+const lokiDefaultLookback = time.Hour
+
 // getDefaultTimeRange returns default start and end times if not provided
 // Returns start time (1 hour ago) and end time (now) in RFC3339 format
 func getDefaultTimeRange(startRFC3339, endRFC3339 string) (string, string) {
 	if startRFC3339 == "" {
 		// Default to 1 hour ago if not specified
-		startRFC3339 = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+		startRFC3339 = time.Now().Add(-lokiDefaultLookback).Format(time.RFC3339)
 	}
 	if endRFC3339 == "" {
 		// Default to now if not specified
@@ -372,7 +375,7 @@ type QueryLokiLogsParams struct {
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now')"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (default max: 100\\, configurable by MCP server)."`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
-	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
+	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value. On VictoriaLogs\\, 'instant' returns the newest log lines from the hour before endRfc3339 (default now)."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries."`
 
@@ -627,7 +630,13 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	if err := guardLokiQuery(ctx, backend, args.LogQL, args.QueryType, startTime, endTime); err != nil {
+	guardType, guardStart, guardEnd := args.QueryType, startTime, endTime
+	if _, ok := backend.(*victoriaLogsBackend); ok && args.QueryType == "instant" {
+		// VictoriaLogs reads instant as a lookback window, so check that window.
+		guardType = "range"
+		guardStart, guardEnd = vlInstantWindow(startTime, endTime)
+	}
+	if err := guardLokiQuery(ctx, backend, args.LogQL, guardType, guardStart, guardEnd); err != nil {
 		return nil, err
 	}
 
