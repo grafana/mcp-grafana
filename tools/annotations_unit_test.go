@@ -166,6 +166,15 @@ func TestCreateAnnotation_GraphiteFormat_WithTagsAndData(t *testing.T) {
 
 func TestCreateAnnotation_SendsCorrectBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// B2: createAnnotation reads the stored annotation back by id.
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/api/annotations/1", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1,"panelId":7,"text":"hello"}`))
+			return
+		}
+
 		assert.Equal(t, "/api/annotations", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
 
@@ -255,6 +264,15 @@ func TestUpdateAnnotation_UsesPatchMethod(t *testing.T) {
 	timeEnd := int64(222)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// B2: updateAnnotation reads the stored annotation back by id.
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/api/annotations/55", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":55,"text":"hello"}`))
+			return
+		}
+
 		assert.Equal(t, "/api/annotations/"+strconv.Itoa(55), r.URL.Path)
 		assert.Equal(t, "PATCH", r.Method)
 
@@ -286,6 +304,15 @@ func TestUpdateAnnotation_UsesPatchMethod(t *testing.T) {
 
 func TestUpdateAnnotation_SendsOnlyProvidedFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// B2: updateAnnotation reads the stored annotation back by id.
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/api/annotations/9", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":9,"text":"patched"}`))
+			return
+		}
+
 		assert.Equal(t, "/api/annotations/"+strconv.Itoa(9), r.URL.Path)
 		assert.Equal(t, "PATCH", r.Method)
 
