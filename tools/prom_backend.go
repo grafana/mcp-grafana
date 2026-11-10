@@ -71,6 +71,19 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 	}
 }
 
+// promFlavorPattern matches Prometheus flavor plugins such as
+// grafana-amazonprometheus-datasource, as Grafana's matchPluginId does.
+var promFlavorPattern = regexp.MustCompile(`^grafana-[0-9a-z]+prometheus-datasource$`)
+
+func isPromFlavor(pluginID string) bool {
+	return pluginID == "prometheus" || promFlavorPattern.MatchString(pluginID)
+}
+
+// matchPluginID ports Grafana's matchPluginId, except for plugin aliasIDs.
+func matchPluginID(idToMatch, pluginID string) bool {
+	return pluginID == idToMatch || (isPromFlavor(idToMatch) && isPromFlavor(pluginID))
+}
+
 // prometheusBackend runs queries through Grafana's /api/ds/query endpoint, so
 // they go through the query service like dashboard and Explore queries. Discovery
 // calls (labels, metric names, metadata) use the Prometheus client library via

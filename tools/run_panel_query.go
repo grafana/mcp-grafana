@@ -1046,7 +1046,7 @@ func defaultDatasourceVariableValue(ctx context.Context, db map[string]interface
 		}
 		var candidates []*models.DataSourceListItemDTO
 		for _, ds := range list {
-			if ds != nil && ds.Type == pluginID && (filter == nil || filter.MatchString(ds.Name)) {
+			if ds != nil && matchPluginID(pluginID, ds.Type) && (filter == nil || filter.MatchString(ds.Name)) {
 				candidates = append(candidates, ds)
 			}
 		}
@@ -1109,12 +1109,12 @@ func getAvailableDatasourceUIDs(ctx context.Context, dsType string) []string {
 }
 
 // normalizeDatasourceType maps a datasource API type to a canonical short name.
-// Prometheus, Loki, and CloudWatch use exact (case-insensitive) matching;
+// Prometheus flavors match via isPromFlavor; Loki and CloudWatch use exact (case-insensitive) matching;
 // ClickHouse uses substring matching because the API type is "grafana-clickhouse-datasource".
 func normalizeDatasourceType(dsType string) string {
 	lower := strings.ToLower(dsType)
 	switch {
-	case lower == "prometheus" || lower == "stackdriver":
+	case isPromFlavor(lower) || lower == "stackdriver":
 		return "prometheus"
 	case lower == "loki":
 		return "loki"

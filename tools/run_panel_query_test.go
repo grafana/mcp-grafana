@@ -1442,6 +1442,8 @@ func TestNormalizeDatasourceType(t *testing.T) {
 		{"prometheus", "prometheus"},
 		{"Prometheus", "prometheus"},
 		{"PROMETHEUS", "prometheus"},
+		{"grafana-amazonprometheus-datasource", "prometheus"},
+		{"grafana-azureprometheus-datasource", "prometheus"},
 		{"loki", "loki"},
 		{"Loki", "loki"},
 		{"cloudwatch", "cloudwatch"},
