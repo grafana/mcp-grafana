@@ -57,13 +57,13 @@ var ListPyroscopeLabelNames = mcpgrafana.MustTool(
 
 type ListPyroscopeLabelNamesParams struct {
 	DataSourceUID string `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
-	Matchers      string `json:"matchers,omitempty" jsonschema:"Prometheus style matchers used t0 filter the result set (defaults to: {})"`
+	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, Prometheus style matchers used to filter the result set (defaults to: {})"`
 	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format or relative time (e.g. 'now-1h') (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now') (defaults to now)"`
 }
 
 func listPyroscopeLabelNames(ctx context.Context, args ListPyroscopeLabelNamesParams) ([]string, error) {
-	args.Matchers = stringOrDefault(args.Matchers, "{}")
+	args.Matchers = pyroscopeMatchers(args.Matchers)
 
 	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
@@ -131,7 +131,7 @@ func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValues
 		return nil, fmt.Errorf("name is required")
 	}
 
-	args.Matchers = stringOrDefault(args.Matchers, "{}")
+	args.Matchers = pyroscopeMatchers(args.Matchers)
 
 	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
@@ -395,6 +395,15 @@ func cleanupDotProfile(profile string) string {
 }
 
 var matchersRegex = regexp.MustCompile(`^\{.*\}$`)
+
+// pyroscopeMatchers defaults empty matchers to {} and wraps a bare one like service_name="x" in braces.
+func pyroscopeMatchers(s string) string {
+	s = stringOrDefault(s, "{}")
+	if !matchersRegex.MatchString(s) {
+		return fmt.Sprintf("{%s}", s)
+	}
+	return s
+}
 
 // rawSeries is the JSON structure returned for a single time-series.
 type rawSeries struct {
@@ -788,10 +797,7 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 	}
 
 	// Common setup
-	matchers := stringOrDefault(args.Matchers, "{}")
-	if !matchersRegex.MatchString(matchers) {
-		matchers = fmt.Sprintf("{%s}", matchers)
-	}
+	matchers := pyroscopeMatchers(args.Matchers)
 
 	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
