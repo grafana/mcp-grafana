@@ -451,19 +451,15 @@ type UpdateAlertRuleParams struct {
 
 // validate checks only what an update needs up front: the rule UID, plus the
 // shape of any field that was supplied. Fields that were not supplied are taken
-// from the existing rule in updateAlertRule, and the merged rule is validated
-// there before it is sent.
+// from the existing rule in updateAlertRule, nested notification settings and
+// record fields included, and the merged rule is validated there before it is
+// sent.
 func (p UpdateAlertRuleParams) validate() error {
 	if p.UID == "" {
 		return fmt.Errorf("rule_uid is required")
 	}
 	if p.Data != nil && len(p.Data) == 0 {
 		return fmt.Errorf("data must contain at least one query when supplied; omit it to keep the current queries")
-	}
-	if p.Record != nil {
-		if err := p.Record.validate(); err != nil {
-			return err
-		}
 	}
 	if p.OrgID < 0 {
 		return fmt.Errorf("org_id must be greater than 0 when supplied")
@@ -648,8 +644,8 @@ type ManageRulesWriteParams struct {
 	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m'. Required for Grafana-managed create. Optional for datasource-managed rules (default 0s)."`
 	KeepFiringFor               string            `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    *bool             `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive. Default false on create"`
-	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string). snake_case keys are also accepted."`
-	Record                      map[string]any    `json:"record,omitempty" jsonschema:"description=Recording rule config. Fields: from (string\\, required - ref ID e.g. 'A')\\, metric (string\\, required - metric name)\\, targetDatasourceUid (string\\, optional)."`
+	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string). snake_case keys are also accepted. On 'update' only the fields supplied change."`
+	Record                      map[string]any    `json:"record,omitempty" jsonschema:"description=Recording rule config. Fields: from (string\\, required - ref ID e.g. 'A')\\, metric (string\\, required - metric name)\\, targetDatasourceUid (string\\, optional). On 'update' only the fields supplied change."`
 	MissingSeriesEvalsToResolve *int64            `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`

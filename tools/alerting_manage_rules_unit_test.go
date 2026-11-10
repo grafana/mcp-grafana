@@ -300,9 +300,9 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 		require.Contains(t, err.Error(), "data must contain at least one query")
 	})
 
-	t.Run("supplied record is validated", func(t *testing.T) {
-		err := UpdateAlertRuleParams{UID: "test-uid", Record: &Record{}}.validate()
-		require.Error(t, err)
+	t.Run("a partial record is accepted and merged with the stored one later", func(t *testing.T) {
+		metric := "m"
+		require.NoError(t, UpdateAlertRuleParams{UID: "test-uid", Record: &Record{Metric: &metric}}.validate())
 	})
 
 	t.Run("with disableProvenance true", func(t *testing.T) {

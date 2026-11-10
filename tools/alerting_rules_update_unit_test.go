@@ -522,3 +522,120 @@ func TestAlertRulesWrite_SchemaMatchesPartialUpdate(t *testing.T) {
 	require.Contains(t, AlertRulesWrite.Tool.Description, "only 'create' requires the full set of rule fields")
 	require.NotContains(t, AlertRulesWrite.Tool.Description, "replaces the whole rule")
 }
+
+// notification_settings and record are objects with their own optional fields.
+// A partial update merges the supplied fields into the stored object rather
+// than replacing it, so changing the receiver does not drop grouping or timing.
+func TestManageRulesWrite_UpdateMergesNestedSettings(t *testing.T) {
+	update := func(t *testing.T, stored string, params ManageRulesWriteParams) (*alertRuleUpdateRecorder, error) {
+		t.Helper()
+		rec, ctx := newAlertRuleUpdateRecorder(t, stored)
+		params.Operation = "update"
+		params.RuleUID = "rule-1"
+		_, err := manageRulesWrite(ctx, params)
+		return rec, err
+	}
+	sentSettings := func(t *testing.T, rec *alertRuleUpdateRecorder) map[string]json.RawMessage {
+		t.Helper()
+		require.Len(t, rec.putBodies, 1)
+		return jsonFields(t, jsonFields(t, rec.putBodies[0])["notification_settings"])
+	}
+	storedSettings := jsonFields(t, jsonFields(t, []byte(storedAlertRuleJSON))["notification_settings"])
+
+	t.Run("changing the receiver keeps grouping, timing and intervals", func(t *testing.T) {
+		rec, err := update(t, storedAlertRuleJSON, ManageRulesWriteParams{
+			NotificationSettings: map[string]any{"receiver": "email"},
+		})
+		require.NoError(t, err)
+
+		sent := sentSettings(t, rec)
+		require.Equal(t, `"email"`, canonicalJSON(t, sent["receiver"]))
+		for _, name := range []string{"group_by", "group_wait", "group_interval", "repeat_interval", "mute_time_intervals", "active_time_intervals"} {
+			require.Containsf(t, sent, name, "stored %s was dropped", name)
+			require.Equalf(t, canonicalJSON(t, storedSettings[name]), canonicalJSON(t, sent[name]), "stored %s changed", name)
+		}
+		// Nothing outside notification_settings moved either.
+		requireFieldsUnchanged(t, storedAlertRuleJSON, rec.putBodies[0], "notification_settings")
+	})
+
+	t.Run("one timing field changes alone", func(t *testing.T) {
+		rec, err := update(t, storedAlertRuleJSON, ManageRulesWriteParams{
+			NotificationSettings: map[string]any{"repeatInterval": "12h"},
+		})
+		require.NoError(t, err)
+
+		sent := sentSettings(t, rec)
+		require.Equal(t, `"12h"`, canonicalJSON(t, sent["repeat_interval"]))
+		for _, name := range []string{"receiver", "group_by", "group_wait", "group_interval", "mute_time_intervals", "active_time_intervals"} {
+			require.Equalf(t, canonicalJSON(t, storedSettings[name]), canonicalJSON(t, sent[name]), "stored %s changed", name)
+		}
+	})
+
+	t.Run("an explicitly empty list clears that list only", func(t *testing.T) {
+		rec, err := update(t, storedAlertRuleJSON, ManageRulesWriteParams{
+			NotificationSettings: map[string]any{"muteTimeIntervals": []string{}},
+		})
+		require.NoError(t, err)
+
+		sent := sentSettings(t, rec)
+		require.Equal(t, `[]`, canonicalJSON(t, sent["mute_time_intervals"]))
+		for _, name := range []string{"receiver", "group_by", "group_wait", "group_interval", "repeat_interval", "active_time_intervals"} {
+			require.Equalf(t, canonicalJSON(t, storedSettings[name]), canonicalJSON(t, sent[name]), "stored %s changed", name)
+		}
+	})
+
+	t.Run("an empty object changes nothing", func(t *testing.T) {
+		rec, err := update(t, storedAlertRuleJSON, ManageRulesWriteParams{
+			NotificationSettings: map[string]any{}, Record: map[string]any{},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, rec.putBodies, 1)
+		requireFieldsUnchanged(t, storedAlertRuleJSON, rec.putBodies[0])
+		require.Equal(t, clientEncoding(t, storedAlertRuleJSON, nil), canonicalJSON(t, rec.putBodies[0]))
+	})
+
+	t.Run("settings without a receiver on a rule that has none are rejected before writing", func(t *testing.T) {
+		rec, err := update(t, storedRecordingRuleJSON, ManageRulesWriteParams{
+			NotificationSettings: map[string]any{"groupWait": "1m"},
+		})
+		require.ErrorContains(t, err, "invalid rule configuration")
+		require.ErrorContains(t, err, "receiver")
+		require.Empty(t, rec.putBodies)
+	})
+
+	t.Run("one record field changes alone", func(t *testing.T) {
+		rec, err := update(t, storedRecordingRuleJSON, ManageRulesWriteParams{
+			Record: map[string]any{"targetDatasourceUid": "other-prom"},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, rec.putBodies, 1)
+		record := jsonFields(t, jsonFields(t, rec.putBodies[0])["record"])
+		require.Equal(t, `"A"`, canonicalJSON(t, record["from"]))
+		require.Equal(t, `"cpu:rate5m"`, canonicalJSON(t, record["metric"]))
+		require.Equal(t, `"other-prom"`, canonicalJSON(t, record["target_datasource_uid"]))
+	})
+
+	t.Run("an incomplete record on a rule that has none is rejected before writing", func(t *testing.T) {
+		rec, err := update(t, storedAlertRuleJSON, ManageRulesWriteParams{
+			Record: map[string]any{"metric": "cpu:rate5m"},
+		})
+		require.ErrorContains(t, err, "invalid rule configuration")
+		require.ErrorContains(t, err, "from")
+		require.Empty(t, rec.putBodies)
+	})
+
+	t.Run("a complete record turns an alert rule into a recording rule", func(t *testing.T) {
+		rec, err := update(t, storedAlertRuleJSON, ManageRulesWriteParams{
+			Record: map[string]any{"from": "A", "metric": "cpu:rate5m"},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, rec.putBodies, 1)
+		record := jsonFields(t, jsonFields(t, rec.putBodies[0])["record"])
+		require.Equal(t, `"A"`, canonicalJSON(t, record["from"]))
+		require.Equal(t, `"cpu:rate5m"`, canonicalJSON(t, record["metric"]))
+		requireFieldsUnchanged(t, storedAlertRuleJSON, rec.putBodies[0], "record")
+	})
+}

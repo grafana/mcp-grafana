@@ -620,10 +620,10 @@ func applyAlertRuleUpdate(rule *models.ProvisionedAlertRule, args UpdateAlertRul
 		rule.KeepFiringFor = strfmt.Duration(keepFiringFor)
 	}
 	if args.NotificationSettings != nil {
-		rule.NotificationSettings = convertNotificationSettings(args.NotificationSettings)
+		rule.NotificationSettings = mergeNotificationSettings(rule.NotificationSettings, args.NotificationSettings)
 	}
 	if args.Record != nil {
-		rule.Record = convertRecord(args.Record)
+		rule.Record = mergeRecord(rule.Record, args.Record)
 	}
 	if args.MissingSeriesEvalsToResolve != nil {
 		rule.MissingSeriesEvalsToResolve = *args.MissingSeriesEvalsToResolve
@@ -643,6 +643,67 @@ func applyAlertRuleUpdate(rule *models.ProvisionedAlertRule, args UpdateAlertRul
 		}
 	}
 	return nil
+}
+
+// mergeNotificationSettings overlays the supplied notification settings onto
+// the stored ones by the same rule as the top level: a field left at its zero
+// value was not supplied and keeps the stored value. An empty list is a
+// supplied value and clears the stored list. Replacing the object as a whole
+// would silently drop grouping, timing and mute intervals when a caller changes
+// only the receiver.
+func mergeNotificationSettings(stored *models.AlertRuleNotificationSettings, in *NotificationSettings) *models.AlertRuleNotificationSettings {
+	if stored == nil {
+		if in.Receiver == nil && in.GroupBy == nil && in.GroupWait == "" && in.GroupInterval == "" &&
+			in.RepeatInterval == "" && in.MuteTimeIntervals == nil && in.ActiveTimeIntervals == nil {
+			return nil
+		}
+		return convertNotificationSettings(in)
+	}
+	merged := *stored
+	if in.Receiver != nil {
+		merged.Receiver = in.Receiver
+	}
+	if in.GroupBy != nil {
+		merged.GroupBy = in.GroupBy
+	}
+	if in.GroupWait != "" {
+		merged.GroupWait = in.GroupWait
+	}
+	if in.GroupInterval != "" {
+		merged.GroupInterval = in.GroupInterval
+	}
+	if in.RepeatInterval != "" {
+		merged.RepeatInterval = in.RepeatInterval
+	}
+	if in.MuteTimeIntervals != nil {
+		merged.MuteTimeIntervals = in.MuteTimeIntervals
+	}
+	if in.ActiveTimeIntervals != nil {
+		merged.ActiveTimeIntervals = in.ActiveTimeIntervals
+	}
+	return &merged
+}
+
+// mergeRecord overlays the supplied recording-rule settings onto the stored
+// ones; fields that were not supplied keep their stored values.
+func mergeRecord(stored *models.Record, in *Record) *models.Record {
+	if stored == nil {
+		if in.From == nil && in.Metric == nil && in.TargetDatasourceUID == "" {
+			return nil
+		}
+		return convertRecord(in)
+	}
+	merged := *stored
+	if in.From != nil {
+		merged.From = in.From
+	}
+	if in.Metric != nil {
+		merged.Metric = in.Metric
+	}
+	if in.TargetDatasourceUID != "" {
+		merged.TargetDatasourceUID = in.TargetDatasourceUID
+	}
+	return &merged
 }
 
 func deleteAlertRule(ctx context.Context, args DeleteAlertRuleParams) (string, error) {
