@@ -248,6 +248,11 @@ func getAnnotationTags(ctx context.Context, args GetAnnotationTagsInput) (*annot
 
 	var limitStr *string
 	if args.Limit != nil {
+		// D2 (GF-18): honor the advertised minimum=1 bound rather than forwarding
+		// a 0/negative limit that Grafana would silently treat as its default.
+		if *args.Limit < 1 {
+			return nil, fmt.Errorf("limit must be >= 1; omit it to use the default (100)")
+		}
 		s := strconv.FormatInt(*args.Limit, 10)
 		limitStr = &s
 	}

@@ -71,6 +71,11 @@ type DashboardResponse struct {
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*DashboardResponse, error) {
 	if args.Version != nil {
+		// D2 (GF-18): honor the advertised minimum=1 bound instead of forwarding
+		// a 0/negative version that Grafana would reject with an opaque error.
+		if *args.Version < 1 {
+			return nil, fmt.Errorf("version must be >= 1 (dashboard versions start at 1); omit version to fetch the current dashboard")
+		}
 		return fetchDashboardVersion(ctx, args.UID, *args.Version)
 	}
 	res, err := fetchDashboard(ctx, args.UID, false)
