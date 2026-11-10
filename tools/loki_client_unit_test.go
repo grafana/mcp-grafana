@@ -486,5 +486,5 @@ func TestRunPanelQueryLokiKeepsMacroLikeVariableValue(t *testing.T) {
 	})
 	require.NoError(t, err)
 	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
-	assert.Equal(t, `sum(count_over_time({app="$__auto"}[36s]))`, q["expr"])
+	assert.Equal(t, `sum(count_over_time({app="$__auto"}[30s]))`, q["expr"])
 }
