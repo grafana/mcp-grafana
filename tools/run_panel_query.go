@@ -233,14 +233,14 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 	var datasourceJSONData interface{}
 	// Resolve the datasource type authoritatively from its UID whenever the
-	// caller overrode the datasource, or when we don't yet have a type. The
+	// caller overrode the datasource, when we don't yet have a type, or when
+	// Prometheus enforcement requires verifying the panel's declared type. The
 	// datasource's real type — not a caller-supplied one — decides which
 	// executor runs, because the executors build different queries. Loki
 	// label-matcher enforcement does not depend on this routing: doDSQuery
 	// resolves every target from its UID and enforces or refuses it there. A
-	// type declared in the panel JSON (no override) is trusted as-is: it comes
-	// from the dashboard, not the caller.
-	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
+	// type declared in panel JSON is trusted only without Prometheus enforcement.
+	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "" || len(prometheusEnforcedMatchers(ctx)) > 0) {
 		ds, lookupErr := datasource.ByUID(ctx, datasourceUID)
 		if lookupErr != nil && params.DsUID == "" {
 			// Dashboards saved before schema version 33 reference a

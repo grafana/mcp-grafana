@@ -197,3 +197,33 @@ func TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement(t *testing.
 		assert.Contains(t, err.Error(), "Prometheus label-matcher enforcement is enabled")
 	})
 }
+
+func TestRunSinglePanelQuery_PanelTypeCannotBypassPrometheusEnforcement(t *testing.T) {
+	var dsQueryHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/datasources/uid/mystery-prom-uid", "/api/datasources/name/mystery-prom-uid":
+			w.WriteHeader(http.StatusForbidden)
+		case "/api/frontend/settings":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"datasources":{}}`))
+		case "/api/ds/query":
+			dsQueryHit = true
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected request path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := enforceTestCtx(srv, false)
+	matchers, err := ParseEnforcedMatchers(`cluster="prod"`)
+	require.NoError(t, err)
+	ctx = mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfig{URL: srv.URL, PrometheusEnforcedMatchers: matchers})
+	_, err = runSinglePanelQuery(ctx, singlePanelQueryParams{
+		DB:      panelWithType("mystery-prom-uid", "grafana-bigquery-datasource"),
+		PanelID: 1, Start: "now-1h", End: "now",
+	})
+	require.Error(t, err)
+	assert.False(t, dsQueryHit, "an unverified panel type must not bypass enforcement")
+}
