@@ -1,2 +1,16 @@
 * @grafana/grafana-assistant-loop
 
+# Grafana App viz: render_grafana_app sources, viz contract and Renderer
+/tools/app.go                          @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/tools/app_*_test.go                   @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/tools/query_datasource*.go            @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/tools/viz_contract*.go                @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/tools/viz_contract/                   @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/tools/testdata/viz-contract/          @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/scripts/sync-viz-*.sh                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/renderer/                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/VizApplication.tsx    @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/vizSpec.ts            @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/test/viz-*.test.ts        @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/test/viz-contract/        @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/test/renderer-pin.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
