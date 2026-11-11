@@ -523,6 +523,96 @@ func TestRejectV1BodyOverV2Stored_AllowsNewAndV1(t *testing.T) {
 	assert.NoError(t, rejectV1BodyOverV2Stored(ctx, map[string]interface{}{"title": "no uid"}))
 }
 
+// TestRejectNewV1Dashboard walks the decision table of --dashboard-schema=v2:
+// only a v1 body that creates a new dashboard on a Grafana serving v2 is
+// rejected, and an inconclusive discovery fails closed.
+func TestRejectNewV1Dashboard(t *testing.T) {
+	bodies := map[string]struct {
+		body   map[string]interface{}
+		create bool // v1 body that would create a new dashboard
+	}{
+		"v1 no uid":         {map[string]interface{}{"title": "t", "panels": []interface{}{}}, true},
+		"v1 new uid":        {map[string]interface{}{"uid": "missing", "panels": []interface{}{}}, true},
+		"v1 existing uid":   {map[string]interface{}{"uid": "existing", "panels": []interface{}{}}, false},
+		"v1 existing by id": {map[string]interface{}{"id": float64(7), "panels": []interface{}{}}, false},
+		"v1 new uid and id": {map[string]interface{}{"uid": "missing", "id": float64(7), "panels": []interface{}{}}, true},
+		"v2 no uid":         {map[string]interface{}{"title": "t", "elements": map[string]interface{}{}}, false},
+		"v2 existing uid":   {map[string]interface{}{"uid": "existing", "layout": map[string]interface{}{}}, false},
+	}
+	discovery := map[string][]string{"v2 served": {"v1beta1", "v2"}, "v2 not served": {"v0alpha1", "v1beta1"}, "discovery error": nil}
+	for _, schema := range []string{"", mcpgrafana.DashboardSchemaV2} {
+		for served, versions := range discovery {
+			for name, tc := range bodies {
+				t.Run("schema="+schema+"/"+served+"/"+name, func(t *testing.T) {
+					ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+						if versions == nil {
+							w.WriteHeader(http.StatusInternalServerError)
+							return
+						}
+						if serveDashboardDiscovery(w, r, versions...) {
+							return
+						}
+						if r.URL.Path == "/apis/dashboard.grafana.app/v2/namespaces/default/dashboards/existing" {
+							w.Header().Set("Content-Type", "application/json")
+							_ = json.NewEncoder(w).Encode(map[string]interface{}{"metadata": map[string]interface{}{"name": "existing"}})
+							return
+						}
+						w.WriteHeader(http.StatusNotFound)
+					}))
+					defer ts.Close()
+					k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+					ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL, DashboardSchema: schema})
+					ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+					err := rejectNewV1Dashboard(ctx, tc.body)
+					v1 := !isV2DashboardJSON(tc.body)
+					_, hasID := tc.body["id"]
+					_, hasUID := tc.body["uid"]
+					switch {
+					case schema == "" || !v1 || (hasID && !hasUID):
+						assert.NoError(t, err)
+					case versions == nil:
+						require.Error(t, err)
+						assert.Contains(t, err.Error(), "cannot check whether this Grafana serves dashboard schema v2")
+					case served == "v2 served" && tc.create:
+						require.Error(t, err)
+						assert.Contains(t, err.Error(), "requires new dashboards to use dashboard schema v2")
+						assert.Contains(t, err.Error(), "Existing v1 dashboards stay editable")
+						assert.Contains(t, err.Error(), dashboardV2Skeleton)
+					default:
+						assert.NoError(t, err)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestUpdateDashboard_DashboardSchemaV2RejectsBeforeWrite verifies the guard is
+// wired into update_dashboard: a v1 create is refused without any write.
+func TestUpdateDashboard_DashboardSchemaV2RejectsBeforeWrite(t *testing.T) {
+	var wrote bool
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if serveDashboardDiscovery(w, r, "v1beta1", "v2") {
+			return
+		}
+		if r.Method != http.MethodGet {
+			wrote = true
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+	ctx := staleCtx(ts)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	cfg.DashboardSchema = mcpgrafana.DashboardSchemaV2
+	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
+
+	_, err := updateDashboard(ctx, UpdateDashboardParams{Dashboard: map[string]interface{}{"title": "t", "panels": []interface{}{}}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), dashboardV2Skeleton)
+	assert.False(t, wrote, "a rejected v1 create must not reach Grafana")
+}
+
 // staleStoredVersionServer serves a dashboard whose status.conversion.storedVersion
 // is a stale "v1" while its v2beta1 view has the given spec fields (title and
 // elements are filled in), mimicking a dashboard created as v1 and later saved

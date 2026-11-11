@@ -503,7 +503,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
 
 **Grafana Client Options:**
-- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
+- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `30s`
 - `--allow-cross-origin-redirects`: Allow outbound Grafana clients to follow redirects to a different scheme, host, or port. Defaults to false; `GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS` is the environment fallback. Enabling this can send Grafana credentials to the redirect target. Request-selected Grafana URLs remain pinned to their selected target.
 - `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
 
@@ -532,6 +532,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--prometheus-enforced-matchers`: PromQL label matchers AND-ed into every native-Prometheus query to restrict which series can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Prometheus query enforcement](#prometheus-query-enforcement).
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
 - `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
+- `--dashboard-schema`: Set to `v2` to make `update_dashboard` reject a classic v1 (`panels[]`) body that would create a new dashboard when Grafana serves dashboard schema v2; the error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable, and a Grafana without v2 is unaffected. Default: empty (no change). Env fallback: `GRAFANA_DASHBOARD_SCHEMA`.
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools

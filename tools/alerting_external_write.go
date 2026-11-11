@@ -149,7 +149,7 @@ func (d externalAlertingDatasource) supportsCreation(receiver, explicit bool) bo
 	if receiver {
 		// Match Grafana's external Alertmanager proxy default. A missing or null
 		// implementation means Cortex, but an explicitly empty value is invalid.
-		implementation := "cortex"
+		implementation := defaultAlertmanagerImplementation
 		if d.JSONData.Implementation != nil {
 			implementation = *d.JSONData.Implementation
 		}

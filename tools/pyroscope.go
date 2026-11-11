@@ -248,7 +248,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   10 * time.Second,
+		Timeout:   cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout),
 	}
 
 	_, err = datasource.ByUID(ctx, uid)

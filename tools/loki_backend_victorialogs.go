@@ -78,7 +78,7 @@ func newVictoriaLogsBackend(ctx context.Context, uid string, ds *models.DataSour
 	}
 
 	return &victoriaLogsBackend{
-		httpClient:    &http.Client{Transport: rt, Timeout: 30 * time.Second},
+		httpClient:    &http.Client{Transport: rt, Timeout: cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout)},
 		baseURL:       baseURL,
 		dsQueryClient: dsQueryClient,
 		dsQueryURL:    dsQueryURL,

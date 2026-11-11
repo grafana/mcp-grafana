@@ -122,7 +122,7 @@ func listAlertmanagerReceivers(ctx context.Context, args ListContactPointsParams
 		return nil, fmt.Errorf("datasource %s (type: %s) is not an Alertmanager datasource", dsUID, ds.Type)
 	}
 
-	implementation := "prometheus"
+	implementation := defaultAlertmanagerImplementation
 	if ds.JSONData != nil {
 		if jsonDataMap, ok := ds.JSONData.(map[string]interface{}); ok {
 			if impl, ok := jsonDataMap["implementation"].(string); ok && impl != "" {

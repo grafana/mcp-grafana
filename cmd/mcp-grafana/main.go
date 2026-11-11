@@ -222,6 +222,8 @@ type grafanaConfig struct {
 	prometheusEnforcedMatchers   string
 	lokiEnforcedMatchers         string
 	lokiLabelEnumerationFallback string
+
+	dashboardSchema string
 }
 
 func (dt *disabledTools) addFlags() {
@@ -296,8 +298,10 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
 	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
 
+	flag.StringVar(&gc.dashboardSchema, "dashboard-schema", "", "Set to 'v2' to make update_dashboard reject a classic v1 (panels[]) body that would create a new dashboard, when the connected Grafana serves dashboard schema v2. The error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable, and a Grafana without v2 is unaffected. Empty (default) changes nothing. Falls back to the GRAFANA_DASHBOARD_SCHEMA environment variable when the flag is not set.")
+
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
-	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+	flag.DurationVar(&gc.timeout, "grafana-timeout", 0, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms. Unset, it is 30s.")
 
 	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", false, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema.")
 }
@@ -390,6 +394,19 @@ func (gc *grafanaConfig) applyPrometheusGuardrailEnv(setFlags map[string]bool) e
 			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS %q: %w", v, err)
 		}
 		gc.prometheusGuardrailRequireSelectiveLabels = b
+	}
+	return nil
+}
+
+// applyDashboardSchemaEnv fills --dashboard-schema from GRAFANA_DASHBOARD_SCHEMA
+// when the flag is not set, with the same precedence as applyLokiGuardrailEnv,
+// and rejects any value other than empty or v2.
+func (gc *grafanaConfig) applyDashboardSchemaEnv(setFlags map[string]bool) error {
+	if v := os.Getenv("GRAFANA_DASHBOARD_SCHEMA"); v != "" && !setFlags["dashboard-schema"] {
+		gc.dashboardSchema = v
+	}
+	if gc.dashboardSchema != "" && gc.dashboardSchema != mcpgrafana.DashboardSchemaV2 {
+		return fmt.Errorf("invalid dashboard schema %q (--dashboard-schema or GRAFANA_DASHBOARD_SCHEMA): must be v2 or empty", gc.dashboardSchema)
 	}
 	return nil
 }
@@ -1641,6 +1658,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	if err := gc.applyDashboardSchemaEnv(setFlags); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if err := gc.applyGrafanaURLOverrideEnv(setFlags); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -1697,6 +1718,7 @@ func main() {
 		IncludeArgumentsInSpans:                   gc.includeArgsInSpans,
 		Timeout:                                   gc.timeout,
 		SOCKS5ProxyURL:                            socks5Proxy,
+		DashboardSchema:                           gc.dashboardSchema,
 	}
 	grafanaConfig.AllowedGrafanaURLs, err = mcpgrafana.ParseGrafanaURLOverrides(gc.allowedURLs)
 	if err != nil {

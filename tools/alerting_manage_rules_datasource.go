@@ -6,13 +6,14 @@ import (
 	"strings"
 	"time"
 
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
 func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesOpts, labelSelectors []Selector) ([]alertRuleSummary, error) {
 	// Bound the entire scan, rather than giving every page a fresh timeout.
-	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, mcpgrafana.GrafanaConfigFromContext(ctx).TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout))
 	defer cancel()
 	ds, err := datasource.ByUID(ctx, dsUID)
 	if err != nil {

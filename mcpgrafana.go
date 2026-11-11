@@ -269,6 +269,10 @@ const (
 	PrometheusGuardrailEnforce = "enforce"
 )
 
+// DashboardSchemaV2 is the GrafanaConfig.DashboardSchema value that requires
+// new dashboards to use dashboard schema v2.
+const DashboardSchemaV2 = "v2"
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -430,6 +434,12 @@ type GrafanaConfig struct {
 	// low-cardinality label metadata). Empty means "reject".
 	LokiLabelEnumerationFallback string
 
+	// DashboardSchema, when DashboardSchemaV2, makes update_dashboard reject a
+	// classic v1 (panels[]) body that would create a new dashboard on a Grafana
+	// that serves a v2 dashboard API. Existing dashboards, v2 bodies and
+	// Grafanas without v2 are unaffected. Empty (default) changes nothing.
+	DashboardSchema string
+
 	// BaseTransport is an optional base HTTP transport used as the innermost
 	// layer of the middleware chain in NewGrafanaClient. When set, it replaces
 	// the default http.Transport that NewGrafanaClient would otherwise create.
@@ -497,7 +507,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
-	DefaultGrafanaClientTimeout = 10 * time.Second
+	DefaultGrafanaClientTimeout = 30 * time.Second
 )
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -557,6 +567,14 @@ func isLocalHostPort(hostPort string) bool {
 	host = strings.ToLower(strings.Trim(host, "[]"))
 	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
 		host == "127.0.0.1" || host == "::1"
+}
+
+// TimeoutOr returns the --grafana-timeout value, or def when it is unset.
+func (c GrafanaConfig) TimeoutOr(def time.Duration) time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return def
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.

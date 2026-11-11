@@ -901,6 +901,38 @@ func TestWarnPrometheusEnforcementBypasses(t *testing.T) {
 	})
 }
 
+func TestApplyDashboardSchemaEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    string
+		env     string
+		flagSet bool
+		want    string
+		wantErr bool
+	}{
+		{name: "default is empty"},
+		{name: "flag v2", flag: "v2", flagSet: true, want: "v2"},
+		{name: "env fills an unset flag", env: "v2", want: "v2"},
+		{name: "explicit empty flag wins over env", env: "v2", flagSet: true},
+		{name: "unknown flag value rejected", flag: "v3", flagSet: true, wantErr: true},
+		{name: "unknown env value rejected", env: "V2", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GRAFANA_DASHBOARD_SCHEMA", tc.env)
+			gc := grafanaConfig{dashboardSchema: tc.flag}
+			err := gc.applyDashboardSchemaEnv(map[string]bool{"dashboard-schema": tc.flagSet})
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "--dashboard-schema or GRAFANA_DASHBOARD_SCHEMA")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, gc.dashboardSchema)
+		})
+	}
+}
+
 func TestSplitAndTrim(t *testing.T) {
 	cases := []struct {
 		name string

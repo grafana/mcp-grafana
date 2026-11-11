@@ -260,6 +260,31 @@ func TestPrometheusBackendQuery_StringResultUnsupported(t *testing.T) {
 	require.ErrorContains(t, err, "string results are not supported")
 }
 
+// Prometheus answers an instant query on a range vector selector with a
+// matrix, and Grafana marks those frames with custom.resultType "matrix".
+func TestPrometheusBackendQuery_InstantRangeVectorKeepsAllSamples(t *testing.T) {
+	t1, t2, t3 := time.Unix(1700000000, 0), time.Unix(1700000015, 0), time.Unix(1700000030, 0)
+	frame := data.NewFrame("",
+		data.NewField("Time", nil, []time.Time{t1, t2, t3}),
+		data.NewField("Value", data.Labels{"job": "api"}, []float64{1, 0, 1}),
+	)
+	frame.SetMeta(&data.FrameMeta{Custom: map[string]interface{}{"resultType": "matrix"}})
+	fake := newFakeVMServer(t, backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{frame}},
+	}})
+
+	v, _, err := newTestPrometheusBackend(t, fake.server).Query(context.Background(), "up[1m]", "instant", time.Time{}, t3, 0)
+	require.NoError(t, err)
+	assert.Equal(t, model.Matrix{{
+		Metric: model.Metric{"job": "api"},
+		Values: []model.SamplePair{
+			{Timestamp: model.TimeFromUnix(t1.Unix()), Value: 1},
+			{Timestamp: model.TimeFromUnix(t2.Unix()), Value: 0},
+			{Timestamp: model.TimeFromUnix(t3.Unix()), Value: 1},
+		},
+	}}, v)
+}
+
 func TestNewPrometheusBackend_NoClientTimeout(t *testing.T) {
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://grafana.example"})
 	b, err := newPrometheusBackend(ctx, "uid", &models.DataSource{UID: "uid", Type: "prometheus"})
