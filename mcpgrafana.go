@@ -487,7 +487,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
-	DefaultGrafanaClientTimeout = 10 * time.Second
+	DefaultGrafanaClientTimeout = 30 * time.Second
 )
 
 // WithGrafanaConfig adds Grafana configuration to the context.

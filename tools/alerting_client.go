@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	defaultTimeout    = 30 * time.Second
 	rulesEndpointPath = "/api/prometheus/grafana/api/v1/rules"
 )
 
@@ -53,7 +52,7 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		baseURL: parsedBaseURL,
 		httpClient: &http.Client{
 			Transport: transport,
-			Timeout:   cfg.TimeoutOr(defaultTimeout),
+			Timeout:   cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout),
 		},
 	}, nil
 }
