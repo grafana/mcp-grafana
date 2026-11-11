@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -405,6 +407,30 @@ type QueryLokiLogsResult struct {
 	Streams  []CompactStream   `json:"streams,omitempty"` // Populated instead of per-entry labels when format=compact
 	Hints    *EmptyResultHints `json:"hints,omitempty"`
 	Metadata *QueryMetadata    `json:"metadata,omitempty"`
+
+	native *lokiNativeResponse // returned as structuredContent by query_loki_logs
+}
+
+// lokiNativeResponse is the body of Loki's /loki/api/v1/query_range, without stats.
+type lokiNativeResponse struct {
+	Status string         `json:"status"`
+	Data   lokiNativeData `json:"data"`
+}
+
+type lokiNativeData struct {
+	ResultType string `json:"resultType"`
+	Result     []any  `json:"result"`
+}
+
+type lokiNativeStream struct {
+	Stream map[string]string `json:"stream"`
+	Values [][2]string       `json:"values"`
+}
+
+type lokiNativeSeries struct {
+	Metric map[string]string `json:"metric"`
+	Values [][2]any          `json:"values,omitempty"` // matrix
+	Value  []any             `json:"value,omitempty"`  // vector
 }
 
 // CompactStream groups log lines that share the same label set. The compact
@@ -598,6 +624,62 @@ func varyingOnly(entry, constant map[string]string) map[string]string {
 	return out
 }
 
+// newLokiNativeResponse rebuilds Loki's query_range response from entries.
+// Streams use the uncategorized form: stream labels, structured metadata and parsed labels in one set.
+func newLokiNativeResponse(resultType string, entries []LogEntry) (*lokiNativeResponse, error) {
+	result := []any{}
+	streams := map[string]*lokiNativeStream{}
+	for _, e := range entries {
+		switch resultType {
+		case "streams":
+			labels := maps.Clone(e.Labels)
+			if labels == nil {
+				labels = map[string]string{}
+			}
+			maps.Copy(labels, e.StructuredMetadata)
+			maps.Copy(labels, e.Parsed)
+			key := labelsKey(labels)
+			s, ok := streams[key]
+			if !ok {
+				s = &lokiNativeStream{Stream: labels}
+				streams[key] = s
+				result = append(result, s)
+			}
+			s.Values = append(s.Values, [2]string{e.Timestamp, e.Line})
+		case "vector":
+			if e.Value == nil {
+				continue
+			}
+			ts, err := lokiNativeTime(e.Timestamp)
+			if err != nil {
+				return nil, err
+			}
+			value := []any{ts, strconv.FormatFloat(*e.Value, 'f', -1, 64)}
+			result = append(result, &lokiNativeSeries{Metric: e.Labels, Value: value})
+		default:
+			series := &lokiNativeSeries{Metric: e.Labels}
+			for _, v := range e.Values {
+				ts, err := lokiNativeTime(v.Timestamp)
+				if err != nil {
+					return nil, err
+				}
+				series.Values = append(series.Values, [2]any{ts, strconv.FormatFloat(v.Value, 'f', -1, 64)})
+			}
+			result = append(result, series)
+		}
+	}
+	return &lokiNativeResponse{Status: "success", Data: lokiNativeData{ResultType: resultType, Result: result}}, nil
+}
+
+// lokiNativeTime turns a "seconds.millis" sample timestamp into the JSON number Loki emits.
+func lokiNativeTime(ts string) (json.Number, error) {
+	f, err := strconv.ParseFloat(ts, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid Loki sample timestamp %q: %w", ts, err)
+	}
+	return json.Number(strconv.FormatFloat(f, 'f', -1, 64)), nil
+}
+
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLogsResult, error) {
 	if strings.TrimSpace(args.LogQL) == "" {
 		return nil, fmt.Errorf("logql is required")
@@ -716,6 +798,10 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		}
 	}
 
+	if out.native, err = newLokiNativeResponse(result.ResultType, entries); err != nil {
+		return nil, err
+	}
+
 	// Compact format only applies to log (streams) responses; metric results
 	// carry values rather than log lines and are left untouched. Data is kept
 	// as an empty array so the field's "always a JSON array" contract holds.
@@ -727,11 +813,26 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	return out, nil
 }
 
+// queryLokiLogsTool returns the usual JSON text plus Loki's native response as structured content.
+func queryLokiLogsTool(ctx context.Context, args QueryLokiLogsParams) (*mcp.CallToolResult, error) {
+	out, err := queryLokiLogs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Loki query result: %w", err)
+	}
+	result := mcpgrafana.NewToolResultText(string(body))
+	result.StructuredContent = out.native
+	return result, nil
+}
+
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
 	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line. Query cost is the bytes scanned, which the index statistics for the stream selector over the same time range estimate before a broad selector or long time range is run. If this server enables the Loki cost guardrail, expensive queries are rejected before execution: query cost is bytes SCANNED, determined only by the stream selector and time range — line filters (|=) and parsers (| json) reduce what is returned, not what is scanned. Use a stream selector with at least one selective positive label matcher (never `{}`, `=~\".*\"`/`=~\".+\"`, or negative-only matchers), keep time ranges narrow; rejected queries return rewrite guidance.",
-	queryLokiLogs,
+	queryLokiLogsTool,
 	mcpgrafana.WithTitleAnnotation("Query Loki logs"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),

@@ -29,6 +29,10 @@ You ask your assistant to search logs or run a LogQL expression; the assistant u
 
 In your MCP client, ask the assistant to query Loki. For example, “Show me recent error logs from the Loki datasource” or “Run this LogQL: {job=\"myapp\"} |= \"error\".” The assistant uses the server’s Loki query tool with the datasource UID, time range, and limit. You can run log queries (streams of log lines) or metric queries (counts, rates, etc.).
 
+## Read results in Loki's format
+
+Besides its text output, `query_loki_logs` returns the result in the tool result's `structuredContent`, in the shape of Loki's `/loki/api/v1/query_range` response: `{"status":"success","data":{"resultType":...,"result":[...]}}`. Scripts written for the Loki HTTP API can read it without converting. Log results are `streams`, and each `stream` holds the stream labels, structured metadata and parsed labels together, as Loki returns them without the `categorize-labels` encoding flag. Metric results are `matrix` for range queries and `vector` for instant queries. Loki's `stats` object is not included. The text output's `metadata` field shows whether the results were truncated.
+
 ## Explore labels and patterns
 
 Ask the assistant to list label names or label values for a selector, or to retrieve detected log patterns. These tools help you discover what’s in your logs before writing LogQL.
