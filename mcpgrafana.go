@@ -269,6 +269,10 @@ const (
 	PrometheusGuardrailEnforce = "enforce"
 )
 
+// DashboardSchemaV2 is the GrafanaConfig.DashboardSchema value that requires
+// new dashboards to use dashboard schema v2.
+const DashboardSchemaV2 = "v2"
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -399,6 +403,23 @@ type GrafanaConfig struct {
 	// step. Zero disables the points check.
 	PrometheusGuardrailMaxPoints int64
 
+	// PrometheusGuardrailMaxMetricCardinality enables a best-effort TSDB
+	// cardinality policy when positive and the guardrail mode is not off.
+	// An exact metric name reported above this threshold must have a non-empty
+	// exact matcher on a CardinalityScopeLabels label. This is a scope heuristic,
+	// not a bound on matched series or query cost. Zero disables the check.
+	PrometheusGuardrailMaxMetricCardinality int64
+
+	// PrometheusGuardrailCardinalityCacheTTL controls the lifetime of cached
+	// TSDB snapshots. Zero uses 10 minutes. Metadata failures fail open.
+	PrometheusGuardrailCardinalityCacheTTL time.Duration
+
+	// PrometheusGuardrailCardinalityScopeLabels names labels whose non-empty
+	// exact matchers satisfy the cardinality policy. Nil or empty uses job,
+	// instance, namespace, pod, service and cluster. Regex and negative matchers
+	// do not satisfy this policy; __name__ is never a scope label.
+	PrometheusGuardrailCardinalityScopeLabels []string
+
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server
 	// issues (query, stats, patterns, and label enumeration). It lets an
@@ -419,6 +440,12 @@ type GrafanaConfig struct {
 	// "unfiltered" (allow unscoped enumeration; never exposes log lines, only
 	// low-cardinality label metadata). Empty means "reject".
 	LokiLabelEnumerationFallback string
+
+	// DashboardSchema, when DashboardSchemaV2, makes update_dashboard reject a
+	// classic v1 (panels[]) body that would create a new dashboard on a Grafana
+	// that serves a v2 dashboard API. Existing dashboards, v2 bodies and
+	// Grafanas without v2 are unaffected. Empty (default) changes nothing.
+	DashboardSchema string
 
 	// BaseTransport is an optional base HTTP transport used as the innermost
 	// layer of the middleware chain in NewGrafanaClient. When set, it replaces
@@ -487,7 +514,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
-	DefaultGrafanaClientTimeout = 10 * time.Second
+	DefaultGrafanaClientTimeout = 30 * time.Second
 )
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -547,6 +574,14 @@ func isLocalHostPort(hostPort string) bool {
 	host = strings.ToLower(strings.Trim(host, "[]"))
 	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
 		host == "127.0.0.1" || host == "::1"
+}
+
+// TimeoutOr returns the --grafana-timeout value, or def when it is unset.
+func (c GrafanaConfig) TimeoutOr(def time.Duration) time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return def
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.
@@ -1939,6 +1974,17 @@ func KubernetesClientFromContext(ctx context.Context) *KubernetesClient {
 
 type incidentClientKey struct{}
 
+// newIncidentClient returns an incident client and its transport options.
+// incident-go only sends bearer tokens, so without one AuthRoundTripper handles auth.
+func newIncidentClient(incidentURL, apiKey string) (*incident.Client, []TransportOption) {
+	client := incident.NewClient(incidentURL, apiKey)
+	if apiKey == "" {
+		client.BeforeRequest = nil
+		return client, nil
+	}
+	return client, []TransportOption{WithoutAuth()}
+}
+
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
 // It configures the client using environment variables and applies any custom TLS settings from the context.
 var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
@@ -1954,11 +2000,11 @@ var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) co
 		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
 	}
 	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
 	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
 	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
@@ -1975,14 +2021,14 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	logger := config.LoggerOrDefault()
 	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
 	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
 	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))

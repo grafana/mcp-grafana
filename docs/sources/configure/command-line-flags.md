@@ -33,6 +33,8 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--sse-keepalive`: Interval between ping requests the server sends to each SSE client, so a reverse proxy or load balancer doesn't close an idle event stream and end the session. Set it below the proxy's idle timeout, for example, `30s` behind ingress-nginx's default 60-second `proxy-read-timeout`. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum `1s`. Default: `0` (disabled). Applies only to `--transport sse`.
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
+When `--address` uses port `0`, the operating system allocates a free port and the server atomically writes the bound address to `mcp-grafana-address` in its working directory. The file contains the address followed by a newline and is created with mode `0600`.
+
 ## Configure HTTP transport security
 
 The SSE and streamable-http transports validate `Host` and `Origin` headers on every route on the MCP listener (`/sse`, `/mcp`, and `/healthz` / `/metrics` when they stay on that listener) to block DNS-rebinding attacks. Stdio transport is unaffected. Side listeners started by `--healthz-address` or `--metrics-address` are not wrapped.
@@ -161,9 +163,13 @@ The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrai
 - `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
 - `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query: its own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, with nested subquery ranges added up. Defaults to `192h`. Takes a Go duration, so write `192h`, not `8d`. `0` disables the range check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
 - `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1`. Defaults to `11000`; `0` disables the points check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
+- `--prometheus-guardrail-max-metric-cardinality`: Opt-in TSDB scope policy. Default: `0` (disabled). An exact metric name reported above this series-count threshold requires a non-empty exact matcher on a configured scope label. Only active when the mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY`.
+- `--prometheus-guardrail-cardinality-cache-ttl`: Lifetime of cached TSDB snapshots. Default: `10m`; `0` also uses `10m`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL`.
+- `--prometheus-guardrail-cardinality-scope-labels`: Comma-separated labels whose non-empty exact matchers satisfy the cardinality policy. Default: `job,instance,namespace,pod,service,cluster`; empty uses these defaults. `__name__` is not allowed. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS`. Explicit CLI settings override the corresponding environment variables.
 
 The points check budgets the requested resolution, not the number of series, samples, or subquery evaluations. The range check ignores `offset` and `@`. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured. An expression the guardrail still cannot parse, such as one with a dashboard variable like `$window`, is checked against its time range and step only. Decisions are exported as `mcp_prometheus_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, and `_fail_open_total`. See [Observability](../../developer/observability-metrics-and-tracing/#prometheus-guardrail-metrics).
 
+- `--dashboard-schema`: Set to `v2` to make `update_dashboard` reject a classic v1 (`panels[]`) body that would create a new dashboard when Grafana serves dashboard schema v2. The error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable as v1, and a Grafana that does not serve v2 is unaffected. Off (empty) by default. Falls back to `GRAFANA_DASHBOARD_SCHEMA`.
 - `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 #### Prometheus selector policy
@@ -189,6 +195,25 @@ The regex recognizer handles common universal and non-empty-universal forms, inc
 This is a static heuristic, not a query-cost or cardinality bound and not an exhaustive regex-equivalence checker. Unrecognized non-empty positive regexes can satisfy the policy. Even `job="api"` can select many series. Blanket regexes do not inherently disable the inverted index: Prometheus can skip `=~".*"` and short-circuit `!~".*"`. Backend limits remain necessary. Removing a wildcard alone does not reduce the selected series; use actual label values that narrow the intended query scope. The guardrail returns guidance and does not rewrite query semantics automatically.
 
 The check applies to instant and range queries, including selectors inside range vectors and subqueries, across all three guarded tool paths. If parsing fails, selector and expression-window checks are unavailable; request time range and points are still checked. If neither blocks, the query fails open with `reason="unparseable"`.
+
+#### Prometheus cardinality policy
+
+Enable `--prometheus-guardrail-mode=shadow --prometheus-guardrail-max-metric-cardinality=100000` to observe the policy before enforcing it. It uses the top 10 metric counts from Prometheus' `/api/v1/status/tsdb`, fetched through Grafana with the request's authentication. This endpoint describes the current TSDB head, not the selected series for the query or all historical data. The check is independent of the static selector, range and points policies.
+
+A selector naming a metric whose reported count exceeds the threshold needs a non-empty **exact** matcher on one of the configured scope labels. The default scope labels are `job`, `instance`, `namespace`, `pod`, `service`, and `cluster`; customize them for your deployment. Each selector is checked independently, including inside functions, range vectors, subqueries and binary operands. Selectors with contradictory metric-name matchers select no series and skip the cardinality check.
+
+For a known `http_requests_total` count of 200,000 and a threshold of 100,000:
+
+| Selector | Cardinality policy |
+|----------|--------------------|
+| `http_requests_total{status="200"}` | Block: `status` is not a configured scope label |
+| `http_requests_total{status="200",namespace="payments"}` | Allow: an exact scope matcher is present |
+| `http_requests_total{namespace=~"payments.*"}` | Block: regex scope is not accepted by this policy |
+| `http_requests_total{namespace!=""}` | Block: negative and existence matchers are insufficient |
+
+This is a scope heuristic, not a series-count limit: `namespace="payments"` or `job="api"` can still match many series. The guardrail does not claim that the narrowed query is cheap and does not rewrite it automatically. A metric missing from the top 10, or one that cannot be identified by an exact metric-name matcher, is unknown rather than proven safe. Unsupported backends, unavailable metadata and malformed responses fail open for this policy; existing static checks still apply. Cloud Monitoring does not expose this Prometheus endpoint.
+
+Metadata uses a cache of at most 256 entries, isolated by the request's Grafana target and authentication/tenant context. Concurrent refreshes are coalesced, with at most 8 fetches running at once. Failed fetches are cached for the smaller of the configured TTL and 30 seconds. A cache miss while all fetch slots are busy fails open. A later query can retry as soon as a slot is available. Fetches have a 2-second timeout and a 1 MiB response limit. Custom `BaseTransport` and TLS client-certificate configurations bypass the shared cache because their caller identity can change independently. Server-only TLS settings (a custom CA or skipping server-certificate verification) retain caching. A client timeout does not guarantee that the backend stops computing statistics. `off` mode or a zero cardinality threshold adds no TSDB requests. Selectors already carrying an exact scope matcher need no metadata lookup; queries with a static violation also skip metadata, including in shadow mode. Start in `shadow` mode: it records `reason="cardinality"` for would-be blocks, but still executes the query. Enforce mode rejects with guidance to add a real scope matcher. Unknown assessments use `reason="cardinality_unknown"` on the fail-open counter.
 
 ## Run without query execution
 

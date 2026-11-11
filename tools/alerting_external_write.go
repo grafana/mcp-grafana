@@ -91,13 +91,12 @@ func validateAlertingTarget(managedBy, uid string) error {
 	return nil
 }
 
-func (p ManageRulesReadWriteParams) validateCreationTarget() error {
+func (p ManageRulesWriteParams) validateCreationTarget() error {
 	uid := ""
 	if p.DatasourceUID != nil {
 		uid = *p.DatasourceUID
 	}
-	// Preserve the existing selector on list and ignored UID on all other
-	// non-create operations. This only changes creation target selection.
+	// datasource_uid only selects a creation target; other operations ignore it.
 	if p.Operation != "create" && p.ManagedBy != "datasource" {
 		uid = ""
 	}
@@ -113,7 +112,7 @@ func (p ManageRulesReadWriteParams) validateCreationTarget() error {
 	return nil
 }
 
-func (p ManageRulesReadWriteParams) validateDatasourceRule() error {
+func (p ManageRulesWriteParams) validateDatasourceRule() error {
 	if strings.TrimSpace(p.Title) == "" || strings.TrimSpace(p.Namespace) == "" || strings.TrimSpace(p.RuleGroup) == "" || strings.TrimSpace(p.Expression) == "" {
 		return fmt.Errorf("title, namespace, rule_group and expression are required for datasource-managed creation")
 	}
@@ -150,7 +149,7 @@ func (d externalAlertingDatasource) supportsCreation(receiver, explicit bool) bo
 	if receiver {
 		// Match Grafana's external Alertmanager proxy default. A missing or null
 		// implementation means Cortex, but an explicitly empty value is invalid.
-		implementation := "cortex"
+		implementation := defaultAlertmanagerImplementation
 		if d.JSONData.Implementation != nil {
 			implementation = *d.JSONData.Implementation
 		}

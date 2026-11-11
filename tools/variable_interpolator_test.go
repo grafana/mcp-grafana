@@ -81,6 +81,7 @@ func TestFormatForDatasource(t *testing.T) {
 		{"grafana-postgresql-datasource", `'a.b','O''Brien'`, `'a.b','O''Brien'`},
 		{"mysql", `'a.b','O''Brien'`, `'a.b','O''Brien'`},
 		{"MSSQL", `'a.b','O''Brien'`, `'a.b','O''Brien'`},
+		{"elasticsearch", `("a.b" OR "O'Brien")`, `'a.b','O''Brien'`},
 		{"grafana-bigquery-datasource", `a.b`, `"a.b","O'Brien"`},
 		{"stackdriver", `a.b`, `'a.b','O''Brien'`},
 		{"influxdb", `a.b`, `'a.b','O''Brien'`},
@@ -97,6 +98,34 @@ func TestFormatForDatasource(t *testing.T) {
 	}
 	// Routing is unchanged: stackdriver still runs on the Prometheus executor.
 	assert.Equal(t, "prometheus", normalizeDatasourceType("stackdriver"))
+}
+
+// Grafana escapes an unformatted single-value dashboard variable too: SQL
+// doubles single quotes, Prometheus escapes backslashes and single quotes, and
+// Loki keeps the value raw. Backslashes are spelled BS.
+func TestVariableInterpolatorSingleValueEscape(t *testing.T) {
+	bs := func(s string) string { return strings.ReplaceAll(s, "BS", `\`) }
+	tests := []struct{ name, datasourceType, query, value, want string }{
+		{"PostgreSQL", "grafana-postgresql-datasource", "WHERE name = '$name'", "O'Reilly", "WHERE name = 'O''Reilly'"},
+		{"MySQL", "mysql", "WHERE name = '${name}'", "it's", "WHERE name = 'it''s'"},
+		{"MSSQL", "mssql", "WHERE name = '[[name]]'", "a'b'c", "WHERE name = 'a''b''c'"},
+		{"Prometheus quote and backslash", "prometheus", `up{path="$name"}`, "C:BSdir's", `up{path="C:BSBSdirBSBS's"}`},
+		{"Prometheus regex metacharacters", "prometheus", `up{job="$name"}`, "api.v1", `up{job="api.v1"}`},
+		{"Loki", "loki", `{name="$name"}`, "it'sBS", `{name="it'sBS"}`},
+		{"generic", "influxdb", `WHERE name = '$name'`, "O'Reilly", `WHERE name = 'O'Reilly'`},
+		{"explicit format", "mysql", "WHERE name = '${name:raw}'", "O'Reilly", "WHERE name = 'O'Reilly'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := templateVariableValues{"name": {bs(tt.value)}}
+			dashboard := newVariableInterpolator(values, map[string]bool{})
+			assert.Equal(t, bs(tt.want), dashboard.interpolateQuery(tt.query, tt.datasourceType))
+		})
+	}
+
+	// query_sql has no dashboard variables, so its values are not escaped.
+	querySQL := newVariableInterpolator(templateVariableValues{"name": {"O'Reilly"}}, nil)
+	assert.Equal(t, "WHERE name = 'O'Reilly'", querySQL.interpolateQuery("WHERE name = '$name'", "mysql"))
 }
 
 // Fields other than the query expression keep generic formatting, so a
@@ -156,6 +185,24 @@ func TestDashboardInterpolator(t *testing.T) {
 	cleared := newDashboardInterpolator(db, map[string]string{"all": "api"})
 	assert.Empty(t, cleared.allSelectionWarning("all"))
 	assert.Equal(t, "api", cleared.interpolate("$all"))
+}
+
+// Grafana picks a value for a variable saved without one from its options,
+// which mcp-grafana doesn't fetch, so a reference to it is rejected.
+func TestDashboardInterpolatorNoSavedValue(t *testing.T) {
+	db := map[string]interface{}{"templating": map[string]interface{}{"list": []interface{}{
+		map[string]interface{}{"name": "job", "type": "query", "current": map[string]interface{}{}},
+		map[string]interface{}{"name": "env", "type": "custom"},
+		map[string]interface{}{"name": "source", "type": "datasource", "current": map[string]interface{}{}},
+		map[string]interface{}{"name": "none", "type": "query", "current": map[string]interface{}{"value": []interface{}{}}},
+	}}}
+	in := newDashboardInterpolator(db, nil)
+	assert.Equal(t, `Variable "job" has no saved value. Supply an explicit value in variables.`, in.allSelectionWarning("job"))
+	assert.Contains(t, in.allSelectionWarning("env"), "no saved value")
+	assert.Empty(t, in.allSelectionWarning("source"), "datasource variables resolve to the default datasource")
+	assert.Empty(t, in.allSelectionWarning("none"), "an empty selection is a value")
+	assert.Empty(t, in.allSelectionWarning("missing"), "names outside the dashboard are not variables")
+	assert.Empty(t, newDashboardInterpolator(db, map[string]string{"job": "api"}).allSelectionWarning("job"))
 }
 
 // The single pass reaches dashboard inspection: a value that contains another

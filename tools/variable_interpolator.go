@@ -22,10 +22,11 @@ type templateVariableValues map[string][]string
 // decides the default formatting, and interpolate or interpolateValue for other
 // fields (datasource UIDs, target fields), which keep generic formatting.
 type variableInterpolator struct {
-	values   templateVariableValues
-	multi    map[string]bool   // multi-value or include-All variables
-	warnings map[string]string // variables set to All, by name
-	pattern  *regexp.Regexp    // nil when there is nothing to substitute
+	values     templateVariableValues
+	multi      map[string]bool   // multi-value variables
+	includeAll map[string]bool   // include-All variables
+	warnings   map[string]string // variables set to All or without a value, by name
+	pattern    *regexp.Regexp    // nil when there is nothing to substitute
 }
 
 // newDashboardInterpolator reads the selected values of a dashboard's variables
@@ -36,14 +37,16 @@ func newDashboardInterpolator(db map[string]interface{}, overrides map[string]st
 	for name, value := range overrides {
 		values[name] = []string{value}
 	}
-	v := newVariableInterpolator(values, multiValueTemplateVariables(db))
+	multi, includeAll := multiValueTemplateVariables(db)
+	v := newVariableInterpolator(values, multi)
+	v.includeAll = includeAll
 	v.warnings = allTemplateSelectionWarnings(db, overrides, values)
 	return v
 }
 
 // newVariableInterpolator substitutes the given values. multi names the
-// variables that Grafana formats as a list in an unformatted reference; nil
-// keeps the first value for every variable.
+// multi-value variables, whose selection Grafana formats as a list; nil keeps
+// the first value for every variable.
 func newVariableInterpolator(values templateVariableValues, multi map[string]bool) *variableInterpolator {
 	return &variableInterpolator{values: values, multi: multi, pattern: variableReferencePattern(values)}
 }
@@ -95,8 +98,8 @@ func (v *variableInterpolator) firstValue(name string) (string, bool) {
 }
 
 // allSelectionWarning explains why a query that references name can't run, or
-// is empty: Grafana expands All from the variable's options, which mcp-grafana
-// doesn't fetch.
+// is empty: Grafana expands All, or picks a missing value, from the variable's
+// options, which mcp-grafana doesn't fetch.
 func (v *variableInterpolator) allSelectionWarning(name string) string {
 	return v.warnings[name]
 }
@@ -114,19 +117,24 @@ func (v *variableInterpolator) interpolate(s string) string {
 // interpolateValue returns a deep copy of value with every string inside it
 // interpolated. Maps and slices are copied; other values are returned as is.
 func (v *variableInterpolator) interpolateValue(value interface{}) interface{} {
+	return mapStrings(value, v.interpolate)
+}
+
+// mapStrings returns a deep copy of value with f applied to every string in it.
+func mapStrings(value interface{}, f func(string) string) interface{} {
 	switch val := value.(type) {
 	case string:
-		return v.interpolate(val)
+		return f(val)
 	case map[string]interface{}:
 		result := make(map[string]interface{}, len(val))
 		for k, item := range val {
-			result[k] = v.interpolateValue(item)
+			result[k] = mapStrings(item, f)
 		}
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(val))
 		for i, item := range val {
-			result[i] = v.interpolateValue(item)
+			result[i] = mapStrings(item, f)
 		}
 		return result
 	default:
@@ -184,10 +192,27 @@ func (v *variableInterpolator) formatReference(s string, m []int, f datasourceFo
 	}
 	values := v.values[name]
 	if hasFormat {
+		// Unlike the other formats, lucene depends on whether the variable
+		// holds a list: Grafana passes a multi-value selection as an array,
+		// even with one value or none.
+		if formatName, _, _ := strings.Cut(format, ":"); formatName == "lucene" {
+			return formatLucene(values, v.multi[name])
+		}
 		return f.explicit(values, format)
 	}
-	if f.multi != nil && v.multi[name] && len(values) > 0 {
+	if f.unformatted != nil {
+		return f.unformatted(values, v.multi[name])
+	}
+	// interpolateQueryExpr and interpolateVariable treat an include-All
+	// variable like a multi-value one.
+	multiOrAll := v.multi[name] || v.includeAll[name]
+	if f.multi != nil && multiOrAll && len(values) > 0 {
 		return f.multi(values)
+	}
+	// Only dashboard variables are escaped; query_sql's variables (multi is
+	// nil) are inserted as given.
+	if f.single != nil && v.multi != nil && !multiOrAll && len(values) > 0 {
+		return f.single(values[0])
 	}
 	return firstTemplateVariableValue(values)
 }
@@ -203,13 +228,21 @@ type datasourceFormat struct {
 	// variable, as Grafana's interpolateQueryExpr (Prometheus, Loki) and
 	// interpolateVariable (SQL) do. nil keeps the first value.
 	multi func(values []string) string
+	// single escapes an unformatted reference to any other dashboard
+	// variable, as the same functions do. nil keeps the value raw.
+	single func(value string) string
+	// unformatted, when set, formats every unformatted reference instead of
+	// multi and single; list is whether the variable is multi-value.
+	unformatted func(values []string, list bool) string
 }
 
 var genericFormat = datasourceFormat{explicit: formatTemplateVariable}
 
 // formatForDatasource returns the formatting for a datasource type, matched
 // case-insensitively. BigQuery has its own sqlstring quoting; Prometheus, Loki
-// and the SQL datasources format multi-value variables.
+// and the SQL datasources format multi-value variables, and Prometheus and the
+// SQL datasources escape single-value ones. Elasticsearch formats every
+// variable in the lucene format, as its interpolateLuceneQuery does.
 func formatForDatasource(datasourceType string) datasourceFormat {
 	lower := strings.ToLower(datasourceType)
 	f := genericFormat
@@ -219,12 +252,64 @@ func formatForDatasource(datasourceType string) datasourceFormat {
 	switch lower {
 	case "prometheus":
 		f.multi = func(values []string) string { return regexAlternation(values, true) }
+		f.single = prometheusRegularEscape
 	case "loki":
 		f.multi = func(values []string) string { return regexAlternation(values, false) }
 	case "postgres", "grafana-postgresql-datasource", "mysql", "mssql":
 		f.multi = formatSQLLiteralList
+		f.single = func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	case elasticsearchDatasourceType:
+		f.unformatted = formatLucene
 	}
 	return f
+}
+
+// prometheusRegularEscape is Grafana's classic escaping of a single-value
+// variable in PromQL: backslashes are doubled and single quotes escaped.
+func prometheusRegularEscape(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return strings.ReplaceAll(value, "'", `\\'`)
+}
+
+// jsWhitespace is JavaScript's \s (WhiteSpace and LineTerminator) as a
+// character class body. Go's \s only covers ASCII whitespace.
+const jsWhitespace = `\t\n\v\f\r\p{Zs}\x{2028}\x{2029}\x{FEFF}`
+
+// luceneSpecialCharacters are the characters Grafana's luceneEscape escapes.
+var luceneSpecialCharacters = regexp.MustCompile(`[!*+\-=<>` + jsWhitespace + `&|()\[\]{}^~?:\\/"]`)
+
+// jsNumber matches the strings JavaScript's unary + converts to a number rather
+// than NaN (StringNumericLiteral): blank, a decimal or Infinity with an optional
+// sign, or an unsigned 0x, 0o or 0b integer. strconv.ParseFloat differs: it
+// accepts inf, nan and hex floats, and rejects 0b101 and out-of-range values.
+var jsNumber = regexp.MustCompile(`^[` + jsWhitespace + `]*` +
+	`(?:[+-]?(?:Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)|0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+)?` +
+	`[` + jsWhitespace + `]*$`)
+
+// luceneEscape escapes value as Grafana's luceneEscape does, leaving values
+// that JavaScript reads as numbers as they are.
+func luceneEscape(value string) string {
+	if jsNumber.MatchString(value) {
+		return value
+	}
+	return luceneSpecialCharacters.ReplaceAllString(value, `\${0}`)
+}
+
+// formatLucene formats values as Grafana's lucene format does. A list is
+// written as ("a" OR "b"), each value escaped, and an empty list as __empty__,
+// which matches nothing; otherwise the first value is escaped.
+func formatLucene(values []string, list bool) string {
+	if !list {
+		return luceneEscape(firstTemplateVariableValue(values))
+	}
+	if len(values) == 0 {
+		return "__empty__"
+	}
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = `"` + luceneEscape(value) + `"`
+	}
+	return "(" + strings.Join(quoted, " OR ") + ")"
 }
 
 var regexMetacharacters = regexp.MustCompile(`[$^*{}\[\]+?.()|]`)
@@ -264,7 +349,7 @@ func firstTemplateVariableValue(values []string) string {
 }
 
 // formatTemplateVariable applies an explicit format. sqlstring follows
-// Grafana's formatter; unknown formats fall back to Grafana's glob.
+// Grafana's formatter (lucene is handled in formatReference); unknown formats fall back to Grafana's glob.
 func formatTemplateVariable(values []string, format string) string {
 	formatName := format
 	if separator := strings.IndexByte(format, ':'); separator >= 0 {
@@ -298,22 +383,27 @@ func formatSQLStringVariable(values []string) string {
 	return strings.Join(formatted, ",")
 }
 
-// multiValueTemplateVariables names the dashboard variables with multi-value or
-// include-All enabled.
-func multiValueTemplateVariables(db map[string]interface{}) map[string]bool {
-	multi := make(map[string]bool)
+// multiValueTemplateVariables names the dashboard variables with multi-value
+// enabled and those with include-All enabled.
+func multiValueTemplateVariables(db map[string]interface{}) (multi, includeAll map[string]bool) {
+	multi, includeAll = make(map[string]bool), make(map[string]bool)
 	for _, item := range safeArray(safeObject(db, "templating"), "list") {
 		variable, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		isMulti, _ := variable["multi"].(bool)
-		includeAll, _ := variable["includeAll"].(bool)
-		if name := safeString(variable, "name"); name != "" && (isMulti || includeAll) {
+		name := safeString(variable, "name")
+		if name == "" {
+			continue
+		}
+		if isMulti, _ := variable["multi"].(bool); isMulti {
 			multi[name] = true
 		}
+		if all, _ := variable["includeAll"].(bool); all {
+			includeAll[name] = true
+		}
 	}
-	return multi
+	return multi, includeAll
 }
 
 // extractTemplateVariableValues extracts all selected values of each dashboard
@@ -402,6 +492,7 @@ func extractTemplateVariableValues(db map[string]interface{}) templateVariableVa
 func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[string]string, values templateVariableValues) map[string]string {
 	warnings := make(map[string]string)
 	const message = "Variable %q is set to All. Supply an explicit value in variables."
+	const noValueMessage = "Variable %q has no saved value. Supply an explicit value in variables."
 	for _, item := range safeArray(safeObject(db, "templating"), "list") {
 		variable, ok := item.(map[string]interface{})
 		if !ok {
@@ -415,8 +506,12 @@ func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[strin
 			hasValue = true
 		}
 		_, resolved := values[name]
-		if isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All") {
+		switch {
+		case isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All"):
 			warnings[name] = fmt.Sprintf(message, name)
+		case !resolved && name != "" && safeString(variable, "type") != "datasource":
+			// Datasource variables fall back to the default datasource instead.
+			warnings[name] = fmt.Sprintf(noValueMessage, name)
 		}
 	}
 	for name, value := range overrides {

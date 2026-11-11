@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
@@ -349,4 +350,19 @@ func TestQueryLokiRequiresLogQL(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, "logql is required", err.Error())
 	}
+}
+
+func TestGetDefaultTimeRangeEndOnly(t *testing.T) {
+	start, end := getDefaultTimeRange("", "2024-01-01T12:00:00Z")
+	assert.Equal(t, "2024-01-01T11:00:00Z", start)
+	assert.Equal(t, "2024-01-01T12:00:00Z", end)
+}
+
+func TestGetDefaultTimeRangeEmpty(t *testing.T) {
+	start, end := getDefaultTimeRange("", "")
+	s, err := time.Parse(time.RFC3339, start)
+	require.NoError(t, err)
+	e, err := time.Parse(time.RFC3339, end)
+	require.NoError(t, err)
+	assert.InDelta(t, time.Hour.Seconds(), e.Sub(s).Seconds(), 1)
 }

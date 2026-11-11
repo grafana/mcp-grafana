@@ -16,14 +16,14 @@ min_version = "2026.9.5"
 # resolved: Go 1.27's crypto/tls adds ML-DSA signature schemes to the
 # ClientHello that cause F5 BIG-IP and Palo Alto Prisma Access TLS terminators
 # to RST the connection. Renovate is limited to patch bumps here for the same reason.
-go = "1.26.10"
+go = "1.26.11"
 golangci-lint = "2.15.0"
-goreleaser = "2.19.0"
+goreleaser = "2.20.0"
 # Used by goreleaser in release.yml: cosign signs the checksums, syft writes SBOMs.
 cosign = "3.1.4"
-syft = "1.55.0"
+syft = "1.57.0"
 node = "24.22.2"
-uv = "0.13.6"
+uv = "0.13.7"
 "github:sd2k/mcp-tokens" = "0.2.5"
 
 [vars]

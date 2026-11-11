@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
 // dsQueryPayload builds the standard /api/ds/query request envelope.
@@ -24,6 +26,215 @@ func dsQueryPayload(from, to time.Time, queries ...map[string]interface{}) map[s
 	}
 }
 
+// lokiLikeDatasourceType reports whether a resolved datasource type is a log
+// datasource whose reads must go through the enforced Loki path.
+func lokiLikeDatasourceType(t string) bool {
+	return t == "loki" || t == victoriaLogsDatasourceType
+}
+
+// dsQueryQueries pulls the query list out of an /api/ds/query payload,
+// accepting both the []map[string]interface{} that the in-process builders use
+// and the []interface{} shape a JSON round-trip produces. ok is false only when
+// the payload has no inspectable query list, so the guard can fail closed rather
+// than wave through traffic it cannot read.
+func dsQueryQueries(payload map[string]interface{}) (queries []map[string]interface{}, ok bool) {
+	switch qs := payload["queries"].(type) {
+	case []map[string]interface{}:
+		return qs, true
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(qs))
+		for _, e := range qs {
+			m, isMap := e.(map[string]interface{})
+			if !isMap {
+				return nil, false
+			}
+			out = append(out, m)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+// dsQueryDatasourceUID reports the datasource UID a single /api/ds/query query
+// targets, mirroring the order Grafana's query service resolves it:
+//
+//  1. "datasource.uid" (or "datasource" as a bare string, the pre-8.3 form) when
+//     it names a non-empty UID;
+//  2. otherwise the legacy numeric "datasourceId", which cannot be mapped to a
+//     type here, so its presence returns ok=false and the caller fails closed;
+//  3. otherwise ("", true), meaning "resolve the default".
+//
+// A "datasource" object that is present but carries no usable UID (missing or
+// non-string uid, or an unrecognised shape) returns ok=false so the caller fails
+// closed rather than treating it as "no datasource" and waving it through. The
+// numeric id is only consulted when the datasource field yields no UID, matching
+// Grafana — so a query that carries both a real datasource.uid and a leftover
+// datasourceId (as run_panel_query's copied panel targets do) resolves on the
+// uid.
+func dsQueryDatasourceUID(q map[string]interface{}) (uid string, ok bool) {
+	if ds, present := q["datasource"]; present {
+		switch v := ds.(type) {
+		case string:
+			if v != "" {
+				return v, true
+			}
+			// Empty string: fall through to datasourceId / default.
+		case map[string]string:
+			u, hasUID := v["uid"]
+			if !hasUID {
+				return "", false // object present but carries no uid
+			}
+			if u != "" {
+				return u, true
+			}
+			// Empty uid: fall through.
+		case map[string]interface{}:
+			u, hasUID := v["uid"]
+			if !hasUID {
+				return "", false // object present but carries no uid
+			}
+			us, isStr := u.(string)
+			if !isStr {
+				return "", false // uid present but not a string
+			}
+			if us != "" {
+				return us, true
+			}
+			// Empty uid: fall through.
+		default:
+			return "", false // unrecognised datasource shape
+		}
+	}
+	// No usable UID from the datasource field. A legacy numeric datasourceId
+	// cannot be resolved to a type here, so refuse under enforcement.
+	if _, hasLegacyID := q["datasourceId"]; hasLegacyID {
+		return "", false
+	}
+	// Nothing named the datasource: it resolves to the org default.
+	return "", true
+}
+
+// enforceLokiDSQuery applies --loki-enforced-matchers at the /api/ds/query
+// chokepoint, so every route to a Loki datasource is enforced, not only the
+// Loki tools. When enforcement is active it returns a copy of the payload in
+// which each query that reaches a Loki datasource has its LogQL "expr"
+// rewritten by enforceLogQL; the caller's maps are left untouched, so a caller
+// that reuses its query map (the Loki paging loop) is not enforced twice.
+//
+// The target type is resolved from the UID and never read from the payload,
+// whose declared type is caller-influenced (the run_panel_query bypass).
+// Queries that cannot be enforced are refused rather than sent:
+//
+//   - a VictoriaLogs datasource, whose LogsQL the matchers cannot be injected
+//     into (mirroring lokiBackendForDatasource);
+//   - a Loki query without a string "expr", or one enforceLogQL cannot rewrite;
+//   - a query that names no UID, or the magic "default" UID, when any
+//     datasource Grafana might resolve it to (a literal "default" datasource
+//     or the org default) is a log datasource. The Loki tools always name the
+//     UID, and rewriting a query whose target is ambiguous could inject
+//     matchers into a non-Loki (e.g. PromQL) expression;
+//   - anything that cannot be resolved to a type: an unreadable UID, an
+//     unrecognised datasource reference, a legacy numeric datasourceId, or a
+//     payload whose query list cannot be inspected.
+func enforceLokiDSQuery(ctx context.Context, payload map[string]interface{}) (map[string]interface{}, error) {
+	if len(enforcedMatchers(ctx)) == 0 {
+		return payload, nil
+	}
+	queries, ok := dsQueryQueries(payload)
+	if !ok {
+		return nil, fmt.Errorf("loki label-matcher enforcement is active but the /api/ds/query payload could not be inspected for its target datasources")
+	}
+	// "" and "default" resolve to different candidate sets, so each is checked
+	// on its own.
+	defaultChecked := make(map[string]bool, 2)
+	typeByUID := make(map[string]string, len(queries))
+	enforced := make([]map[string]interface{}, 0, len(queries))
+	for _, q := range queries {
+		uid, ok := dsQueryDatasourceUID(q)
+		if !ok {
+			return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query with a datasource reference that could not be resolved to a type (unrecognised shape or legacy datasourceId)")
+		}
+		if uid == "" || uid == "default" {
+			// No explicit datasource, or the magic "default" UID: refuse if any
+			// datasource Grafana might resolve it to is a log datasource. Checked
+			// once per payload for each of the two forms.
+			if !defaultChecked[uid] {
+				defaultChecked[uid] = true
+				isLog, resolvable, err := defaultTargetIsLogDatasource(ctx, uid)
+				if err != nil {
+					return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query whose default datasource could not be verified: %w", err)
+				}
+				if !resolvable {
+					return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query because no default datasource could be resolved to verify its type")
+				}
+				if isLog {
+					return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query that resolves to the default datasource, which may be a log datasource; name the Loki datasource by UID")
+				}
+			}
+			enforced = append(enforced, q)
+			continue
+		}
+		dsType, seen := typeByUID[uid]
+		if !seen {
+			ds, err := datasource.ByUID(ctx, uid)
+			if err != nil {
+				return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query for datasource %q whose type could not be verified: %w", uid, err)
+			}
+			dsType = ds.Type
+			typeByUID[uid] = dsType
+		}
+		switch dsType {
+		case "loki":
+			expr, isStr := q["expr"].(string)
+			if !isStr {
+				return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing /api/ds/query for Loki datasource %q without a LogQL expr", uid)
+			}
+			enforcedExpr, err := enforceLogQL(ctx, expr)
+			if err != nil {
+				return nil, err
+			}
+			eq := maps.Clone(q)
+			eq["expr"] = enforcedExpr
+			enforced = append(enforced, eq)
+		case victoriaLogsDatasourceType:
+			return nil, fmt.Errorf("loki label-matcher enforcement is active: refusing to query VictoriaLogs datasource %q because the enforced matchers cannot be applied to LogsQL", uid)
+		default:
+			enforced = append(enforced, q)
+		}
+	}
+	out := maps.Clone(payload)
+	out["queries"] = enforced
+	return out, nil
+}
+
+// defaultTargetIsLogDatasource reports whether an /api/ds/query query that
+// resolves against the default (uid == "" or the magic "default" UID) could
+// reach a log datasource. Grafana may resolve such a query to more than one
+// datasource depending on version — a datasource whose literal UID is "default"
+// (Grafana >= 13 treats "default" as a real UID) and the org default (older
+// Grafana, or an absent datasource) — so every candidate is checked and the
+// result is true if ANY is a log datasource. resolvable is false when no
+// candidate datasource exists, so the caller can fail closed rather than assume
+// the query is harmless.
+func defaultTargetIsLogDatasource(ctx context.Context, uid string) (isLog bool, resolvable bool, err error) {
+	list, err := datasource.List(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	for _, ds := range list {
+		candidate := ds.IsDefault || (uid == "default" && ds.UID == "default")
+		if !candidate {
+			continue
+		}
+		resolvable = true
+		if lokiLikeDatasourceType(ds.Type) {
+			return true, true, nil
+		}
+	}
+	return false, resolvable, nil
+}
+
 // doDSQuery posts a payload to Grafana's /api/ds/query endpoint and decodes
 // the response into the SDK's QueryDataResponse type.
 func doDSQuery(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}) (*backend.QueryDataResponse, error) {
@@ -32,6 +243,11 @@ func doDSQuery(ctx context.Context, client *http.Client, baseURL string, payload
 
 // doDSQueryWithLimit is like doDSQuery but allows overriding the response size limit.
 func doDSQueryWithLimit(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}, responseLimit int64) (*backend.QueryDataResponse, error) {
+	payload, err := enforceLokiDSQuery(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling query payload: %w", err)
@@ -85,7 +301,7 @@ func newDSQueryHTTPClient(ctx context.Context) (*http.Client, string, error) {
 		return nil, "", fmt.Errorf("failed to create transport: %w", err)
 	}
 
-	return &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: refuseRedirect}, baseURL, nil
+	return &http.Client{Transport: transport, Timeout: cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout), CheckRedirect: refuseRedirect}, baseURL, nil
 }
 
 // framesToTabularRows converts SDK data frames into row-oriented maps — the

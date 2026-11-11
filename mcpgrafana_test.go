@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -14,10 +15,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/go-openapi/runtime/client"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
+	"github.com/grafana/incident-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,6 +100,106 @@ func TestExtractIncidentClientFromHeaders(t *testing.T) {
 		require.NotNil(t, client)
 		assert.Equal(t, "http://configured.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 	})
+}
+
+func TestIncidentClientAuth(t *testing.T) {
+	type captured struct {
+		auth        []string
+		accessToken string
+		idToken     string
+	}
+	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:secret"))
+
+	// Each builder returns the incident client and the context its tools would use.
+	builders := map[string]func(t *testing.T, apiKey string, basicAuth, obo bool) (*incident.Client, context.Context){
+		"env": func(t *testing.T, apiKey string, basicAuth, obo bool) (*incident.Client, context.Context) {
+			t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", apiKey)
+			if basicAuth {
+				t.Setenv("GRAFANA_USERNAME", "admin")
+				t.Setenv("GRAFANA_PASSWORD", "secret")
+			}
+			ctx := ExtractGrafanaInfoFromEnv(context.Background())
+			if obo {
+				ctx = MustWithOnBehalfOfAuth(ctx, "access-token", "id-token")
+			}
+			ctx = ExtractIncidentClientFromEnv(ctx)
+			return IncidentClientFromContext(ctx), ctx
+		},
+		"headers": func(t *testing.T, apiKey string, basicAuth, obo bool) (*incident.Client, context.Context) {
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			if apiKey != "" {
+				req.Header.Set(grafanaServiceAccountTokenHeader, apiKey)
+			}
+			if basicAuth {
+				req.SetBasicAuth("admin", "secret")
+			}
+			ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+			if obo {
+				ctx = MustWithOnBehalfOfAuth(ctx, "access-token", "id-token")
+			}
+			ctx = ExtractIncidentClientFromHeaders(ctx, req)
+			return IncidentClientFromContext(ctx), ctx
+		},
+		"cached": func(t *testing.T, apiKey string, basicAuth, obo bool) (*incident.Client, context.Context) {
+			cache := NewClientCache(nil)
+			t.Cleanup(cache.Close)
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			if apiKey != "" {
+				req.Header.Set(grafanaServiceAccountTokenHeader, apiKey)
+			}
+			if basicAuth {
+				req.SetBasicAuth("admin", "secret")
+			}
+			ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+			if obo {
+				ctx = MustWithOnBehalfOfAuth(ctx, "access-token", "id-token")
+			}
+			ctx = extractIncidentClientCached(cache)(ctx, req)
+			return IncidentClientFromContext(ctx), ctx
+		},
+	}
+
+	cases := []struct {
+		name      string
+		apiKey    string
+		basicAuth bool
+		obo       bool
+		want      captured
+	}{
+		{name: "basic auth without token", basicAuth: true, want: captured{auth: []string{basic}}},
+		{name: "token", apiKey: "glsa_token", want: captured{auth: []string{"Bearer glsa_token"}}},
+		{name: "token wins over basic auth", apiKey: "glsa_token", basicAuth: true, want: captured{auth: []string{"Bearer glsa_token"}}},
+		{name: "on-behalf-of without token", obo: true, want: captured{accessToken: "access-token", idToken: "id-token"}},
+	}
+
+	for builderName, build := range builders {
+		for _, tc := range cases {
+			t.Run(builderName+"/"+tc.name, func(t *testing.T) {
+				var got captured
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					got = captured{
+						auth:        r.Header.Values("Authorization"),
+						accessToken: r.Header.Get("X-Access-Token"),
+						idToken:     r.Header.Get("X-Grafana-Id"),
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{}`))
+				}))
+				defer srv.Close()
+				t.Setenv("GRAFANA_URL", srv.URL)
+				t.Setenv("GRAFANA_API_KEY", "")
+				t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+				t.Setenv("GRAFANA_USERNAME", "")
+				t.Setenv("GRAFANA_PASSWORD", "")
+
+				client, ctx := build(t, tc.apiKey, tc.basicAuth, tc.obo)
+				require.NotNil(t, client)
+				_, err := incident.NewIncidentsService(client).GetIncident(ctx, incident.GetIncidentRequest{IncidentID: "1"})
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
+			})
+		}
+	}
 }
 
 func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
@@ -2893,4 +2996,9 @@ func TestBuildingGrafanaClientMakesNoRequests(t *testing.T) {
 	require.NotNil(t, GrafanaClientFromContext(got))
 
 	assert.Zero(t, atomic.LoadInt32(&calls))
+}
+
+func TestGrafanaConfigTimeoutOr(t *testing.T) {
+	assert.Equal(t, 30*time.Second, GrafanaConfig{}.TimeoutOr(30*time.Second))
+	assert.Equal(t, 5*time.Second, GrafanaConfig{Timeout: 5 * time.Second}.TimeoutOr(30*time.Second))
 }

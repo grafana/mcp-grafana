@@ -426,7 +426,7 @@ func searchPlugins(ctx context.Context, args SearchPluginsParams) (*SearchPlugin
 var SearchPlugins = mcpgrafana.MustTool(
 	"search_plugin_information",
 	"Search the Grafana plugin catalog by keyword, purpose, or partial name (e.g. 'azure monitoring', 'loki', 'database'). "+
-		"Returns results sorted by trust: official Grafana Labs plugins first, then commercial partner plugins, then community plugins, each with its exact pluginId. "+
+		"Returns results ordered by signature type (Grafana Labs, commercial, community), each with its exact pluginId. "+
 		"Results include warnings for enterprise-only or Angular-based plugins.",
 	searchPlugins,
 	mcpgrafana.WithTitleAnnotation("Search plugins"),

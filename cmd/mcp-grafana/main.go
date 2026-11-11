@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -29,7 +30,10 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
-const defaultServerName = "mcp-grafana"
+const (
+	defaultServerName      = "mcp-grafana"
+	dynamicAddressFileName = "mcp-grafana-address"
+)
 
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
@@ -209,6 +213,9 @@ type grafanaConfig struct {
 	prometheusGuardrailMode                   string
 	prometheusGuardrailMaxRange               time.Duration
 	prometheusGuardrailMaxPoints              int64
+	prometheusGuardrailMaxMetricCardinality   int64
+	prometheusGuardrailCardinalityCacheTTL    time.Duration
+	prometheusGuardrailCardinalityScopeLabels string
 
 	includeArgsInSpans bool
 
@@ -218,6 +225,8 @@ type grafanaConfig struct {
 
 	lokiEnforcedMatchers         string
 	lokiLabelEnumerationFallback string
+
+	dashboardSchema string
 }
 
 func (dt *disabledTools) addFlags() {
@@ -289,11 +298,17 @@ func (gc *grafanaConfig) addFlags() {
 	flag.DurationVar(&gc.prometheusGuardrailMaxRange, "prometheus-guardrail-max-range", 192*time.Hour, "Maximum effective time range for a single PromQL query: its time range plus the longest range vector or subquery window in the expression. Accepts Go duration strings, e.g. 192h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.prometheusGuardrailMaxPoints, "prometheus-guardrail-max-points", 11000, "Maximum points per series a PromQL range query may request, computed from its time range and step. 0 disables the points check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS environment variable when the flag is not set.")
 
+	flag.Int64Var(&gc.prometheusGuardrailMaxMetricCardinality, "prometheus-guardrail-max-metric-cardinality", 0, "Require an exact scope-label matcher for known metrics above this TSDB series count. 0 disables this best-effort heuristic (default); only active when the guardrail is not 'off'. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY.")
+	flag.DurationVar(&gc.prometheusGuardrailCardinalityCacheTTL, "prometheus-guardrail-cardinality-cache-ttl", 10*time.Minute, "TTL for Prometheus TSDB cardinality snapshots. 0 uses the default 10m. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL.")
+	flag.StringVar(&gc.prometheusGuardrailCardinalityScopeLabels, "prometheus-guardrail-cardinality-scope-labels", "job,instance,namespace,pod,service,cluster", "Comma-separated labels whose non-empty exact matchers satisfy the cardinality policy. Empty uses the default job,instance,namespace,pod,service,cluster. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS.")
+
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
 	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
 
+	flag.StringVar(&gc.dashboardSchema, "dashboard-schema", "", "Set to 'v2' to make update_dashboard reject a classic v1 (panels[]) body that would create a new dashboard, when the connected Grafana serves dashboard schema v2. The error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable, and a Grafana without v2 is unaffected. Empty (default) changes nothing. Falls back to the GRAFANA_DASHBOARD_SCHEMA environment variable when the flag is not set.")
+
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
-	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+	flag.DurationVar(&gc.timeout, "grafana-timeout", 0, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms. Unset, it is 30s.")
 
 	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", false, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema.")
 }
@@ -387,6 +402,37 @@ func (gc *grafanaConfig) applyPrometheusGuardrailEnv(setFlags map[string]bool) e
 		}
 		gc.prometheusGuardrailRequireSelectiveLabels = b
 	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"); v != "" && !setFlags["prometheus-guardrail-max-metric-cardinality"] {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY %q: %w", v, err)
+		}
+		gc.prometheusGuardrailMaxMetricCardinality = n
+	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"); v != "" && !setFlags["prometheus-guardrail-cardinality-cache-ttl"] {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL %q: %w", v, err)
+		}
+		gc.prometheusGuardrailCardinalityCacheTTL = d
+	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS"); v != "" && !setFlags["prometheus-guardrail-cardinality-scope-labels"] {
+		gc.prometheusGuardrailCardinalityScopeLabels = v
+	}
+
+	return nil
+}
+
+// applyDashboardSchemaEnv fills --dashboard-schema from GRAFANA_DASHBOARD_SCHEMA
+// when the flag is not set, with the same precedence as applyLokiGuardrailEnv,
+// and rejects any value other than empty or v2.
+func (gc *grafanaConfig) applyDashboardSchemaEnv(setFlags map[string]bool) error {
+	if v := os.Getenv("GRAFANA_DASHBOARD_SCHEMA"); v != "" && !setFlags["dashboard-schema"] {
+		gc.dashboardSchema = v
+	}
+	if gc.dashboardSchema != "" && gc.dashboardSchema != mcpgrafana.DashboardSchemaV2 {
+		return fmt.Errorf("invalid dashboard schema %q (--dashboard-schema or GRAFANA_DASHBOARD_SCHEMA): must be v2 or empty", gc.dashboardSchema)
+	}
 	return nil
 }
 
@@ -433,7 +479,30 @@ func (gc *grafanaConfig) validatePrometheusGuardrail() error {
 	if gc.prometheusGuardrailMaxPoints < 0 {
 		return fmt.Errorf("invalid Prometheus guardrail max points %d (--prometheus-guardrail-max-points or GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS): must be >= 0 (0 disables the points check)", gc.prometheusGuardrailMaxPoints)
 	}
+	if gc.prometheusGuardrailMaxMetricCardinality < 0 {
+		return fmt.Errorf("invalid Prometheus guardrail max metric cardinality %d (--prometheus-guardrail-max-metric-cardinality or GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY): must be >= 0 (0 disables the check)", gc.prometheusGuardrailMaxMetricCardinality)
+	}
+	if gc.prometheusGuardrailCardinalityCacheTTL < 0 {
+		return fmt.Errorf("invalid Prometheus guardrail cardinality cache TTL %s (--prometheus-guardrail-cardinality-cache-ttl or GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL): must be >= 0 (0 uses 10m)", gc.prometheusGuardrailCardinalityCacheTTL)
+	}
+	if slices.Contains(gc.cardinalityScopeLabels(), "__name__") {
+		return fmt.Errorf("invalid Prometheus guardrail cardinality scope labels (--prometheus-guardrail-cardinality-scope-labels or GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS): __name__ is not a scope label")
+	}
+
 	return nil
+}
+
+// cardinalityScopeLabels returns nil for an empty setting, selecting the
+// library defaults. Trim whitespace and duplicates for predictable matching.
+func (gc *grafanaConfig) cardinalityScopeLabels() []string {
+	var labels []string
+	for _, label := range strings.Split(gc.prometheusGuardrailCardinalityScopeLabels, ",") {
+		label = strings.TrimSpace(label)
+		if label != "" && !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 type toolEntry struct {
@@ -829,10 +898,17 @@ func withCallerAuth(token string, h http.Handler) http.Handler {
 	return mcpgrafana.RequireBearerToken(token, slog.Default())(h)
 }
 
-func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy {
+func (hsc httpSecurityConfig) policy(addresses ...string) mcpgrafana.HostOriginPolicy {
 	hosts := splitAndTrim(hsc.allowedHosts)
 	if len(hosts) == 0 {
-		hosts = mcpgrafana.DefaultAllowedHosts(address)
+		for _, address := range addresses {
+			candidates := append([]string{strings.ToLower(address)}, mcpgrafana.DefaultAllowedHosts(address)...)
+			for _, host := range candidates {
+				if !slices.Contains(hosts, host) {
+					hosts = append(hosts, host)
+				}
+			}
+		}
 	}
 	return mcpgrafana.HostOriginPolicy{
 		AllowedHosts:   hosts,
@@ -936,17 +1012,23 @@ func isBenignStdioClose(err error) bool {
 	return errors.Is(err, mcp.ErrConnectionClosed)
 }
 
-// runHTTPServer starts an *http.Server and blocks until ctx is cancelled or
-// the server returns an error. When tlsCert is non-empty, it uses TLS. On
-// context cancellation it performs a graceful shutdown with a 5-second deadline.
-func runHTTPServer(ctx context.Context, srv *http.Server, transportName, tlsCert, tlsKey string) error {
+// runHTTPServer starts an *http.Server on an already-bound listener and blocks
+// until ctx is cancelled or the server returns an error. On cancellation it
+// performs a graceful shutdown with a 5-second deadline.
+func runHTTPServer(
+	ctx context.Context,
+	srv *http.Server,
+	listener net.Listener,
+	transportName string,
+	tls tlsConfig,
+) error {
 	serverErr := make(chan error, 1)
 	go func() {
 		var err error
-		if tlsCert != "" {
-			err = srv.ListenAndServeTLS(tlsCert, tlsKey)
+		if tls.certFile != "" {
+			err = srv.ServeTLS(listener, tls.certFile, tls.keyFile)
 		} else {
-			err = srv.ListenAndServe()
+			err = srv.Serve(listener)
 		}
 		if err != nil && err != http.ErrServerClosed {
 			serverErr <- err
@@ -963,6 +1045,55 @@ func runHTTPServer(ctx context.Context, srv *http.Server, transportName, tlsCert
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+func listenHTTP(address string) (net.Listener, error) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %q: %w", address, err)
+	}
+	if _, port, splitErr := net.SplitHostPort(address); splitErr == nil && port == "0" {
+		if err := writeBoundAddress(dynamicAddressFileName, listener.Addr().String()); err != nil {
+			_ = listener.Close()
+			return nil, err
+		}
+	}
+	return listener, nil
+}
+
+func addressWithBoundPort(address, boundAddress string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return boundAddress
+	}
+	_, port, err := net.SplitHostPort(boundAddress)
+	if err != nil {
+		return boundAddress
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func writeBoundAddress(path, address string) error {
+	if path == "" {
+		return nil
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create address file beside %q: %w", path, err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if _, err := temporary.WriteString(address + "\n"); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write bound address to %q: %w", temporaryPath, err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close bound address file %q: %w", temporaryPath, err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("publish bound address file %q: %w", path, err)
+	}
+	return nil
 }
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -1347,6 +1478,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}
 
+	var listener net.Listener
+	boundAddress := addr
+	if transport == "sse" || transport == "streamable-http" {
+		listener, err = listenHTTP(addr)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = listener.Close() }()
+		boundAddress = listener.Addr().String()
+	}
+
 	disableLocalhostProtection := len(splitAndTrim(hsc.allowedHosts)) > 0
 
 	switch transport {
@@ -1404,16 +1546,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Addr:    addr,
-			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+				hsc.policy(boundAddress, addressWithBoundPort(addr, boundAddress)),
+			)(mux),
 			// Derive HTTP request contexts from the cancellable ctx so that
 			// SIGTERM cancels long-lived SSE streams and Shutdown completes
 			// within its deadline instead of blocking on open connections.
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using SSE transport",
-			"version", mcpgrafana.Version(), "address", addr, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
-		return runHTTPServer(ctx, httpSrv, "SSE", tls.certFile, tls.keyFile)
+			"version", mcpgrafana.Version(), "address", boundAddress, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
+		return runHTTPServer(ctx, httpSrv, listener, "SSE", tls)
 
 	case "streamable-http":
 		httpFn := mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)
@@ -1441,13 +1584,14 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Addr:        addr,
-			Handler:     mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+				hsc.policy(boundAddress, addressWithBoundPort(addr, boundAddress)),
+			)(mux),
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
-			"version", mcpgrafana.Version(), "address", addr, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
-		return runHTTPServer(ctx, httpSrv, "StreamableHTTP", tls.certFile, tls.keyFile)
+			"version", mcpgrafana.Version(), "address", boundAddress, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
+		return runHTTPServer(ctx, httpSrv, listener, "StreamableHTTP", tls)
 
 	default:
 		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)
@@ -1548,6 +1692,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	if err := gc.applyDashboardSchemaEnv(setFlags); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	if err := gc.applyGrafanaURLOverrideEnv(setFlags); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -1568,7 +1716,7 @@ func main() {
 		os.Exit(2)
 	}
 	if gc.prometheusGuardrailMode != mcpgrafana.PrometheusGuardrailOff {
-		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints, "require_selective_labels", gc.prometheusGuardrailRequireSelectiveLabels)
+		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints, "require_selective_labels", gc.prometheusGuardrailRequireSelectiveLabels, "max_metric_cardinality", gc.prometheusGuardrailMaxMetricCardinality, "cardinality_cache_ttl", gc.prometheusGuardrailCardinalityCacheTTL, "cardinality_scope_labels", gc.cardinalityScopeLabels())
 	}
 
 	if err := validateMountFlags(transport, *basePath, *endpointPath, *healthzAddress, obs); err != nil {
@@ -1601,9 +1749,13 @@ func main() {
 		PrometheusGuardrailMode:                   gc.prometheusGuardrailMode,
 		PrometheusGuardrailMaxRange:               gc.prometheusGuardrailMaxRange,
 		PrometheusGuardrailMaxPoints:              gc.prometheusGuardrailMaxPoints,
+		PrometheusGuardrailMaxMetricCardinality:   gc.prometheusGuardrailMaxMetricCardinality,
+		PrometheusGuardrailCardinalityCacheTTL:    gc.prometheusGuardrailCardinalityCacheTTL,
+		PrometheusGuardrailCardinalityScopeLabels: gc.cardinalityScopeLabels(),
 		IncludeArgumentsInSpans:                   gc.includeArgsInSpans,
 		Timeout:                                   gc.timeout,
 		SOCKS5ProxyURL:                            socks5Proxy,
+		DashboardSchema:                           gc.dashboardSchema,
 	}
 	grafanaConfig.AllowedGrafanaURLs, err = mcpgrafana.ParseGrafanaURLOverrides(gc.allowedURLs)
 	if err != nil {

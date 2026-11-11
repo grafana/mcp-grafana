@@ -44,6 +44,14 @@
             "automerge": true
         },
         {
+            "description": "grafana-legacy (11) and grafana-legacy-8 (8.5) in docker-compose.yaml pin old majors on purpose to exercise the legacy API fallbacks. Only the main grafana service tracks new majors.",
+            "matchDatasources": ["docker"],
+            "matchPackageNames": ["grafana/grafana"],
+            "matchCurrentVersion": "<12.0.0",
+            "matchUpdateTypes": ["major"],
+            "enabled": false
+        },
+        {
             "description": "Bump the go directive in the root go.mod, which Renovate skips by default. lokiguard keeps its own consumer minimum.",
             "matchManagers": ["gomod"],
             "matchFileNames": ["go.mod"],
@@ -57,9 +65,9 @@
             "groupName": "go"
         },
         {
-            "description": "Patch only for Go in go.mod and mise.toml. A minor in go.mod raises the minimum Go for module consumers. mise.toml builds the release binaries, which stay on 1.26 until golang/go#81199 is fixed (see mise.toml).",
-            "matchManagers": ["gomod", "mise"],
-            "matchDepNames": ["go"],
+            "description": "Patch only for Go in go.mod, mise.toml and the Dockerfile builder images. A minor in go.mod raises the minimum Go for module consumers. mise.toml and the Dockerfiles build the release binaries and images, which stay on 1.26 until golang/go#81199 is fixed (see mise.toml).",
+            "matchManagers": ["gomod", "mise", "dockerfile"],
+            "matchDepNames": ["go", "golang"],
             "matchUpdateTypes": ["major", "minor"],
             "enabled": false
         }

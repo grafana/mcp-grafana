@@ -23,8 +23,8 @@ const testMimirDatasource = `{"uid":"mimir","name":"Mimir","type":"prometheus","
 const testAMDatasource = `{"uid":"am","name":"External AM","type":"alertmanager","jsonData":{"implementation":"mimir"}}`
 const testExternalAMConfig = `{"template_files":{"notify.tmpl":"original template"},"alertmanager_config":{"global":{"smtp_auth_password":"keep-password"},"route":{"receiver":"existing","routes":[{"receiver":"existing","matchers":["team=pmo"]}]},"receivers":[{"name":"existing","webhook_configs":[{"url":"https://example.org/secret-hook"}]}],"inhibit_rules":[{"source_matchers":["severity=critical"],"target_matchers":["severity=warning"],"equal":["alertname"]}],"templates":["notify.tmpl"],"future_field":{"number":9007199254740993}}}`
 
-func externalRuleArgs() ManageRulesReadWriteParams {
-	return ManageRulesReadWriteParams{Operation: "create", ManagedBy: "datasource", Title: "NewAlert", Namespace: "team", RuleGroup: "group", Expression: "up == 0", For: "5m"}
+func externalRuleArgs() ManageRulesWriteParams {
+	return ManageRulesWriteParams{Operation: "create", ManagedBy: "datasource", Title: "NewAlert", Namespace: "team", RuleGroup: "group", Expression: "up == 0", For: "5m"}
 }
 
 func externalReceiverArgs() ManageRoutingWriteParams {
@@ -246,22 +246,22 @@ func TestExternalAlertingRejectsUnsafeInputsBeforeHTTP(t *testing.T) {
 	}))
 	defer server.Close()
 	ctx := mockDatasourcesCtx(server)
-	for _, mutate := range []func(*ManageRulesReadWriteParams){
-		func(p *ManageRulesReadWriteParams) { p.ManagedBy = "" },
-		func(p *ManageRulesReadWriteParams) { p.ManagedBy = "invalid" },
-		func(p *ManageRulesReadWriteParams) { p.DatasourceUID = new("grafana") },
-		func(p *ManageRulesReadWriteParams) { p.DatasourceUID = new("../grafana") },
-		func(p *ManageRulesReadWriteParams) { p.Operation = "update" },
-		func(p *ManageRulesReadWriteParams) { p.Operation = "delete" },
-		func(p *ManageRulesReadWriteParams) { p.Expression = "" },
-		func(p *ManageRulesReadWriteParams) { p.Namespace = "" },
-		func(p *ManageRulesReadWriteParams) { p.FolderUID = "folder" },
-		func(p *ManageRulesReadWriteParams) { p.For = "bad" },
-		func(p *ManageRulesReadWriteParams) { p.EvaluationInterval = "0s" },
+	for _, mutate := range []func(*ManageRulesWriteParams){
+		func(p *ManageRulesWriteParams) { p.ManagedBy = "" },
+		func(p *ManageRulesWriteParams) { p.ManagedBy = "invalid" },
+		func(p *ManageRulesWriteParams) { p.DatasourceUID = new("grafana") },
+		func(p *ManageRulesWriteParams) { p.DatasourceUID = new("../grafana") },
+		func(p *ManageRulesWriteParams) { p.Operation = "update" },
+		func(p *ManageRulesWriteParams) { p.Operation = "delete" },
+		func(p *ManageRulesWriteParams) { p.Expression = "" },
+		func(p *ManageRulesWriteParams) { p.Namespace = "" },
+		func(p *ManageRulesWriteParams) { p.FolderUID = "folder" },
+		func(p *ManageRulesWriteParams) { p.For = "bad" },
+		func(p *ManageRulesWriteParams) { p.EvaluationInterval = "0s" },
 	} {
 		args := externalRuleArgs()
 		mutate(&args)
-		_, err := manageRulesReadWrite(ctx, args)
+		_, err := manageRulesWrite(ctx, args)
 		require.Error(t, err)
 	}
 	for _, mutate := range []func(*ManageRoutingWriteParams){
@@ -319,7 +319,7 @@ func TestExternalCreationReadFailuresNeverWrite(t *testing.T) {
 			if tc.receiver {
 				_, err = manageRoutingWrite(ctx, externalReceiverArgs())
 			} else {
-				_, err = manageRulesReadWrite(ctx, externalRuleArgs())
+				_, err = manageRulesWrite(ctx, externalRuleArgs())
 			}
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), "keep-password")
@@ -391,7 +391,7 @@ func TestGrafanaRuleCreationRemainsDefault(t *testing.T) {
 				posts.Add(1)
 			}))
 			defer server.Close()
-			_, err := manageRulesReadWrite(mockCtxWithClient(server), ManageRulesReadWriteParams{
+			_, err := manageRulesWrite(mockCtxWithClient(server), ManageRulesWriteParams{
 				Operation: "create", ManagedBy: managedBy, Title: "Grafana rule", RuleGroup: "group", FolderUID: "folder", Condition: "A",
 				Data:        []map[string]any{{"datasourceUid": "mimir-rules", "refId": "A", "model": map[string]any{"expr": "up == 0"}}},
 				NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,

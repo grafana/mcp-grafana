@@ -54,7 +54,7 @@ _The following features are currently available in MCP server. This list is for 
 
 > **Note:** Run panel query tools are **disabled by default**. To enable them, add `runpanelquery` to your `--enabled-tools` flag.
 
-- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides. Infinity panels run when the query uses the `backend` or `jq-backend` parser (Google Sheets queries always do); the default `simple` parser and the UQL and GROQ parsers work only in the browser. Neo4j panels on the `kniepdennis-neo4j-datasource` plugin run their Cypher query through the plugin, which opens read-only sessions.
+- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides. Infinity panels run when the query uses the `backend` or `jq-backend` parser (Google Sheets queries always do); the default `simple` parser and the UQL and GROQ parsers work only in the browser. Neo4j panels on the `kniepdennis-neo4j-datasource` plugin run their Cypher query through the plugin, which opens read-only sessions. Elasticsearch panels interpolate variables in the Lucene query with the `lucene` format, as Grafana does, and auto date histograms use the same interval as `$__interval`.
 
 #### Context Window Management
 
@@ -452,6 +452,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it
 
+When `--address` uses port `0`, the operating system allocates a free port and the server atomically writes the bound address to `mcp-grafana-address` in its working directory. The file is created with mode `0600`.
+
 > [!NOTE]
 > Over SSE, per-request headers do not reach tool calls: `X-Grafana-Service-Account-Token` / `X-Grafana-API-Key`, `X-Grafana-Org-Id`, and headers listed in `GRAFANA_FORWARD_HEADERS` have no effect, tool calls use the server's environment credentials, and `X-Grafana-URL` overrides do not work. Use streamable-http when each caller needs its own Grafana URL, credentials, or organization.
 
@@ -501,7 +503,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
 
 **Grafana Client Options:**
-- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
+- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `30s`
 - `--allow-cross-origin-redirects`: Allow outbound Grafana clients to follow redirects to a different scheme, host, or port. Defaults to false; `GRAFANA_ALLOW_CROSS_ORIGIN_REDIRECTS` is the environment fallback. Enabling this can send Grafana credentials to the redirect target. Request-selected Grafana URLs remain pinned to their selected target.
 - `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
 
@@ -525,10 +527,14 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
 - `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query - default: `192h`. The effective range is the query's own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, where nested subquery ranges add up, so `max_over_time(rate(x[5m])[30d:1m])` reads 30d5m. Accepts Go duration strings, so write `192h`, not `8d`. `0` disables the range check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
 - `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1` - default: `11000`, Prometheus' own per-series limit. The guidance names the smallest `stepSeconds` that fits. `0` disables the points check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
+- `--prometheus-guardrail-max-metric-cardinality`: Opt-in TSDB scope policy. Default: `0` (disabled). An exact metric name reported above this series-count threshold requires a non-empty exact matcher on a configured scope label. Only active when the mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY`.
+- `--prometheus-guardrail-cardinality-cache-ttl`: Lifetime of cached TSDB snapshots. Default: `10m`; `0` also uses `10m`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL`.
+- `--prometheus-guardrail-cardinality-scope-labels`: Comma-separated labels whose non-empty exact matchers satisfy the cardinality policy. Default: `job,instance,namespace,pod,service,cluster`; empty uses these defaults. `__name__` is not allowed. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS`. Explicit CLI settings override the corresponding environment variables.
 
   Limits of the Prometheus guardrail: the points check budgets the requested resolution, not the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step. `offset` and `@` modifiers are ignored. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured, with the values Grafana uses (`$__rate_interval` is four times the step). Expressions the guardrail still cannot parse (for example ones with dashboard variables such as `$window`, or syntax only another dialect accepts) are checked against the query's own time range and step only, and run otherwise. `run_panel_query` has no step parameter, so it widens its 1-minute step for long ranges to stay within 11000 points, as Grafana does, or within a lower `--prometheus-guardrail-max-points` in `enforce` mode.
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
 - `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
+- `--dashboard-schema`: Set to `v2` to make `update_dashboard` reject a classic v1 (`panels[]`) body that would create a new dashboard when Grafana serves dashboard schema v2; the error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable, and a Grafana without v2 is unaffected. Default: empty (no change). Env fallback: `GRAFANA_DASHBOARD_SCHEMA`.
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -1344,9 +1350,9 @@ When the Prometheus guardrail (`--prometheus-guardrail-mode`) is enabled, four c
 | `mcp_prometheus_guardrail_admitted_total` | Counter | Queries that passed every enabled check |
 | `mcp_prometheus_guardrail_would_block_total` | Counter | Queries that failed a check in `shadow` mode and ran anyway (labels: `reason`) |
 | `mcp_prometheus_guardrail_blocked_total` | Counter | Queries rejected in `enforce` mode (labels: `reason`) |
-| `mcp_prometheus_guardrail_fail_open_total` | Counter | Queries whose expression the guardrail could not parse and admitted (labels: `reason`) |
+| `mcp_prometheus_guardrail_fail_open_total` | Counter | Queries admitted with an unavailable enabled assessment (labels: `reason`) |
 
-`reason` is `range` or `points` on `would_block` and `blocked`, counted once under the first check that failed (`range`, then `points`), and `unparseable` on `fail_open`. There is no `backend` label: every Prometheus-compatible backend gets the same checks.
+`reason` is `selector`, `range`, `points`, or `cardinality` on `would_block` and `blocked`, counted once under the first check that failed in that order. `fail_open` uses `unparseable` or `cardinality_unknown`. The optional [cardinality policy](docs/sources/configure/command-line-flags.md#prometheus-cardinality-policy) uses cached top-N TSDB statistics to require explicit scope on known high-cardinality metrics; it does not estimate the selected series or prove that missing metrics are safe. Unsupported TSDB endpoints fail open for this policy. There is no `backend` label.
 
 Library embedders should set `GrafanaConfig.MeterProvider` (the metrics counterpart of `GrafanaConfig.Logger`): the guardrail runs inside a tool handler, so it has no constructor option, and a process that installs a noop global `MeterProvider` would otherwise drop every recording.
 

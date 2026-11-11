@@ -367,16 +367,16 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 		config := GrafanaConfigFromContext(ctx)
 		logger := config.LoggerOrDefault()
 
-		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
-		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID, req)
+		grafanaURL, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+		key := cacheKeyFromRequest(grafanaURL, apiKey, basicAuth, orgID, req)
 
 		incidentClient := cache.GetOrCreateIncidentClient(key, func() *incident.Client {
 			incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 			logger.Debug("Creating new incident client (cache miss)", "url", incidentURL)
-			client := incident.NewClient(incidentURL, apiKey)
+			client, opts := newIncidentClient(incidentURL, apiKey)
 
 			config.OrgID = orgID
-			transport, err := BuildTransport(&config, nil, WithoutAuth())
+			transport, err := BuildTransport(&config, nil, opts...)
 			switch {
 			case err == nil:
 				client.HTTPClient.Transport = transport

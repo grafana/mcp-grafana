@@ -45,7 +45,7 @@ func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource, proje
 
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   30 * time.Second,
+		Timeout:   cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout),
 	}
 
 	return &cloudMonitoringBackend{

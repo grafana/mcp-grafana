@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // This file holds helpers for the dashboard schema v2 (dashboard.grafana.app
@@ -16,6 +18,57 @@ import (
 //     the datasource type is `group` and the uid is `datasource.name`.
 //   - template variables live under `variables` (an array of {kind, spec}).
 //   - the time range lives under `timeSettings` (from/to).
+
+// dashboardV2Skeleton is the minimal v2 body quoted in the update_dashboard
+// description and in the rejectNewV1Dashboard error, so the two cannot drift.
+// TestDashboardV2DescriptionSkeleton saves it against a real Grafana.
+const dashboardV2Skeleton = `{"title":"T","timeSettings":{"from":"now-6h","to":"now"},"variables":[],"links":[],"elements":{"p1":{"kind":"Panel","spec":{"id":1,"title":"Up","vizConfig":{"kind":"VizConfig","group":"timeseries","spec":{}},"data":{"kind":"QueryGroup","spec":{"queries":[{"kind":"PanelQuery","spec":{"refId":"A","query":{"kind":"DataQuery","group":"prometheus","datasource":{"name":"<ds uid>"},"spec":{"expr":"up"}}}}],"transformations":[]}}}}},"layout":{"kind":"GridLayout","spec":{"items":[{"kind":"GridLayoutItem","spec":{"x":0,"y":0,"width":24,"height":8,"element":{"kind":"ElementReference","name":"p1"}}}]}}}`
+
+// rejectNewV1Dashboard refuses a classic v1 (panels[]) body that would create a
+// new dashboard when the server requires schema v2 for new dashboards
+// (GrafanaConfig.DashboardSchema) and this Grafana serves a v2 dashboard API.
+// A body whose uid names an existing dashboard is an update and passes, as does
+// a body with an id and no uid, and everything when the setting is off or v2 is
+// not served. Like rejectV1BodyOverV2Stored, it fails closed when discovery is
+// inconclusive.
+func rejectNewV1Dashboard(ctx context.Context, dashboard map[string]interface{}) error {
+	if mcpgrafana.GrafanaConfigFromContext(ctx).DashboardSchema != mcpgrafana.DashboardSchemaV2 || isV2DashboardJSON(dashboard) {
+		return nil
+	}
+	uid, _ := dashboard["uid"].(string)
+	// Grafana saves a body with an id and no uid over that dashboard, or fails
+	// with "not found"; it never creates one. With a uid it goes by the uid and
+	// creates the dashboard when the uid is new, so the uid is checked below.
+	if id, _ := dashboard["id"].(float64); id != 0 && uid == "" {
+		return nil
+	}
+	k8s := mcpgrafana.KubernetesClientFromContext(ctx)
+	if k8s == nil {
+		return nil // no dashboard API, so no v2 to require
+	}
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		return fmt.Errorf("cannot check whether this Grafana serves dashboard schema v2, which this server requires for new dashboards, so the save was refused: %w", err)
+	}
+	version := preferredV2Version(versions)
+	if version == "" {
+		return nil
+	}
+	if uid != "" {
+		ns, err := mcpgrafana.GrafanaNamespace(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = k8s.Get(ctx, dashboardDescriptor(version), ns, uid)
+		if err == nil {
+			return nil
+		}
+		if !isK8sNotFound(err) {
+			return fmt.Errorf("check whether dashboard %q exists: %w", uid, err)
+		}
+	}
+	return fmt.Errorf("this server requires new dashboards to use dashboard schema v2, so a classic v1 (panels[]) body cannot create one. Existing v1 dashboards stay editable as v1: send the body with their uid, or use patches. Send a v2 body (top-level elements/layout) instead, with <ds uid> set to a datasource uid. Minimal v2 body: %s", dashboardV2Skeleton)
+}
 
 // v2Element is a single entry from a v2 dashboard's `elements` map.
 type v2Element struct {
@@ -149,6 +202,7 @@ func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 			rawTarget:  queryTargetFields(safeObject(query, "spec")),
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
+			interval:   panelIntervalOptionsV2(panel),
 		}
 
 		// As in v1, a target built in a visual editor has no string expression;
@@ -300,8 +354,9 @@ func extractVariableSummaryV2(vk map[string]interface{}) VariableSummary {
 // the refId and datasource the panel query executors read.
 func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
 	info := &panelInfo{
-		ID:    safeInt(panel, "id"),
-		Title: safeString(panel, "title"),
+		ID:       safeInt(panel, "id"),
+		Title:    safeString(panel, "title"),
+		Interval: panelIntervalOptionsV2(panel),
 	}
 
 	var queries []interface{}

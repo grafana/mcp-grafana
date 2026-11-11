@@ -31,7 +31,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Fallback datasource type used only when the datasource cannot be read (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres). When the datasource is readable its real type is used and this is ignored."`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Fallback datasource type used only when the datasource cannot be read (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres\\, elasticsearch). When the datasource is readable its real type is used and this is ignored."`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -80,6 +80,8 @@ type panelInfo struct {
 	DatasourceType string
 	Query          string
 	RawTarget      map[string]interface{} // For CloudWatch and other complex query types
+	// Interval holds the panel's options; runSinglePanelQuery adds the datasource's min interval.
+	Interval intervalOptions
 }
 
 // runPanelQuery executes one or more dashboard panel queries with optional time range and variable overrides
@@ -229,16 +231,15 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		datasourceType = ""
 	}
 
+	var datasourceJSONData interface{}
 	// Resolve the datasource type authoritatively from its UID whenever the
 	// caller overrode the datasource, or when we don't yet have a type. The
 	// datasource's real type — not a caller-supplied one — decides which
-	// executor runs, because the executors are not equivalent: a Loki
-	// datasource routed on a SQL/CloudWatch type would run through
-	// executeSQLPanelQuery / executeCloudWatchPanelQuery, which query
-	// /api/ds/query directly and so bypass the Loki label-matcher enforcement
-	// that is applied only in the native Loki backend (loki_backend.go /
-	// loki_enforce.go). A type declared in the panel JSON (no override) is
-	// trusted as-is: it comes from the dashboard, not the caller.
+	// executor runs, because the executors build different queries. Loki
+	// label-matcher enforcement does not depend on this routing: doDSQuery
+	// resolves every target from its UID and enforces or refuses it there. A
+	// type declared in the panel JSON (no override) is trusted as-is: it comes
+	// from the dashboard, not the caller.
 	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
 		ds, lookupErr := datasource.ByUID(ctx, datasourceUID)
 		if lookupErr != nil && params.DsUID == "" {
@@ -253,26 +254,31 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		case lookupErr == nil:
 			// The datasource's real type wins over any caller-supplied type.
 			datasourceType = ds.Type
+			datasourceJSONData = ds.JSONData
 		case datasourceType == "":
 			// Cannot resolve the type and the caller gave nothing to fall back
 			// on.
 			availableDS := getAvailableDatasourceUIDs(ctx, "")
 			return nil, fmt.Errorf("could not resolve datasource '%s' (%v) and no datasourceType was provided. Hint: provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, lookupErr, availableDS)
-		case len(enforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "loki":
-			// The datasource is unreadable, so the caller-supplied type is
-			// unverified. With Loki label-matcher enforcement active, refuse
-			// rather than route a possibly-Loki datasource onto the
-			// /api/ds/query path, which bypasses enforcement. Fails closed,
-			// mirroring the VictoriaLogs guard in lokiBackendForDatasource.
-			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Loki label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Loki via query_loki_logs, or supply an accessible datasource", datasourceUID)
 		default:
-			// Unreadable datasource, but the caller supplied a fallback type and
-			// enforcement (if any) is satisfied; keep the caller-supplied type.
+			// Unreadable datasource, but the caller supplied a fallback type;
+			// keep it. Under Loki label-matcher enforcement the executor's
+			// query still fails closed in doDSQuery, which cannot verify the
+			// type either.
 		}
 	}
 
-	// Substitute variables in the query
-	query := interp.interpolateQuery(panelData.Query, datasourceType)
+	startTime, err := parseTime(params.Start)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(params.End)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
+	}
+	panelData.Interval = panelData.Interval.withLowerLimit(interp, datasourceType, datasourceJSONData)
+	// Executors receive the expression with frontend macros and variables substituted.
+	query := preparePanelExpression(interp, panelData.Query, datasourceType, startTime, endTime, panelData.Interval)
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -284,7 +290,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "prometheus":
 		results, err = executePrometheusQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "loki":
-		results, err = executeLokiQuery(ctx, datasourceUID, query, params.Start, params.End)
+		results, err = executeLokiQuery(ctx, datasourceUID, query, params.Start, params.End, panelData.Interval)
 	case "clickhouse":
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
@@ -297,6 +303,12 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		if err == nil {
 			// Report the Cypher that ran, with macros substituted as well as variables.
 			query = safeString(target, "cypherQuery")
+		}
+	case elasticsearchDatasourceType:
+		results, target, err = executeElasticsearchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, interp)
+		if err == nil {
+			// Report the Lucene query that ran, with macros substituted as well as variables.
+			query = safeString(target, "query")
 		}
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
@@ -357,8 +369,9 @@ func panelDatasourceRef(ref interface{}) (uid, dsType string) {
 // extractPanelInfo extracts query and datasource information from a panel
 func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
 	info := &panelInfo{
-		ID:    safeInt(panel, "id"),
-		Title: safeString(panel, "title"),
+		ID:       safeInt(panel, "id"),
+		Title:    safeString(panel, "title"),
+		Interval: panelIntervalOptions(panel),
 	}
 
 	// Extract query from targets
@@ -457,11 +470,16 @@ func resolveAutoIntervalVariables(db map[string]interface{}, values templateVari
 // range divided by the step count, rounded to a "nice" interval, no lower than
 // the minimum, and formatted with secondsToHms.
 func grafanaCalculateInterval(span time.Duration, steps float64, minimum string) string {
+	return grafanaSecondsToHms(grafanaIntervalMs(span, steps, minimum) / 1000)
+}
+
+// grafanaIntervalMs is the intervalMs of rangeutil.calculateInterval.
+func grafanaIntervalMs(span time.Duration, steps float64, minimum string) float64 {
 	ms := grafanaRoundInterval(float64(span.Milliseconds()) / steps)
 	if low, err := gtime.ParseInterval(minimum); err == nil && float64(low.Milliseconds()) > ms {
 		ms = float64(low.Milliseconds())
 	}
-	return grafanaSecondsToHms(ms / 1000)
+	return ms
 }
 
 // grafanaRoundInterval is rangeutil.roundInterval: thresholds in milliseconds
@@ -507,7 +525,7 @@ func grafanaSecondsToHms(seconds float64) string {
 
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
 func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
-	// Parse time range for macro substitution
+	// Parse time range for the step
 	startTime, err := parseTime(start)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
@@ -516,9 +534,6 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
-
-	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
-	query = substituteGrafanaMacros(query, startTime, endTime)
 
 	return queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: datasourceUID,
@@ -545,7 +560,7 @@ func panelPrometheusStep(ctx context.Context, window time.Duration) int {
 }
 
 // executeLokiQuery runs a Loki query using the existing queryLokiLogs function
-func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end string) ([]LogEntry, error) {
+func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end string, options intervalOptions) ([]LogEntry, error) {
 	// Convert relative times to RFC3339 for Loki
 	startTime, err := parseTime(start)
 	if err != nil {
@@ -556,9 +571,6 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
-	query = substituteGrafanaMacros(query, startTime, endTime)
-
 	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
 		LogQL:         query,
@@ -568,7 +580,7 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Direction:     "backward",
 		QueryType:     "range",
 		// $__auto is substituted with this interval, and Grafana defines it as the step.
-		StepSeconds: int(autoInterval(startTime, endTime) / time.Second),
+		step: macroInterval(startTime, endTime, options),
 	})
 	if err != nil {
 		return nil, err
@@ -619,9 +631,17 @@ func executeStructuredPanelQuery(ctx context.Context, datasourceUID, datasourceT
 		return nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	target := newVariableInterpolator(variables, nil).interpolateTarget(panelData.RawTarget)
-	substituteGrafanaMacrosInMap(target, startTime, endTime)
+	// Macros first, so a variable value that looks like a macro stays literal.
+	interp := newVariableInterpolator(variables, nil)
+	target := mapStrings(panelData.RawTarget, func(s string) string {
+		return interp.interpolate(substituteStructuredTargetMacros(s, startTime, endTime, panelData.Interval))
+	}).(map[string]interface{})
+	return queryStructuredTarget(ctx, datasourceUID, datasourceType, target, startTime, endTime)
+}
 
+// queryStructuredTarget sets the datasource and default refId of target, a deep copy of a panel
+// target with macros and variables substituted, and runs it through /api/ds/query.
+func queryStructuredTarget(ctx context.Context, datasourceUID, datasourceType string, target map[string]interface{}, startTime, endTime time.Time) (interface{}, map[string]interface{}, error) {
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
@@ -638,42 +658,14 @@ var timeRangeMacroRe = regexp.MustCompile(`\$\{__(from|to)\}|\$__(from|to)\b`)
 // substituteStructuredTargetMacros applies substituteGrafanaMacros and replaces $__from and
 // $__to with the range bounds in epoch milliseconds, as Grafana's frontend does before it
 // sends a structured target to /api/ds/query.
-func substituteStructuredTargetMacros(s string, start, end time.Time) string {
-	s = substituteGrafanaMacros(s, start, end)
+func substituteStructuredTargetMacros(s string, start, end time.Time, options intervalOptions) string {
+	s = substituteGrafanaMacros(s, start, end, options)
 	return timeRangeMacroRe.ReplaceAllStringFunc(s, func(match string) string {
 		if strings.Contains(match, "from") {
 			return strconv.FormatInt(start.UnixMilli(), 10)
 		}
 		return strconv.FormatInt(end.UnixMilli(), 10)
 	})
-}
-
-// substituteGrafanaMacrosInMap applies substituteStructuredTargetMacros to every string in target,
-// which must already be a private deep copy (variableInterpolator.interpolateTarget).
-func substituteGrafanaMacrosInMap(target map[string]interface{}, start, end time.Time) {
-	for k, v := range target {
-		switch val := v.(type) {
-		case string:
-			target[k] = substituteStructuredTargetMacros(val, start, end)
-		case map[string]interface{}:
-			substituteGrafanaMacrosInMap(val, start, end)
-		case []interface{}:
-			substituteGrafanaMacrosInSlice(val, start, end)
-		}
-	}
-}
-
-func substituteGrafanaMacrosInSlice(slice []interface{}, start, end time.Time) {
-	for i, v := range slice {
-		switch val := v.(type) {
-		case string:
-			slice[i] = substituteStructuredTargetMacros(val, start, end)
-		case map[string]interface{}:
-			substituteGrafanaMacrosInMap(val, start, end)
-		case []interface{}:
-			substituteGrafanaMacrosInSlice(val, start, end)
-		}
-	}
 }
 
 // InfinityDatasourceType is the plugin ID of the Infinity datasource (yesoreyeram-infinity-datasource),
@@ -684,8 +676,11 @@ const InfinityDatasourceType = "yesoreyeram-infinity-datasource"
 // from cypherQuery directly, so a leftover field such as query (copied or migrated panels)
 // cannot stand in for the Cypher that runs.
 func panelQueryExpression(target map[string]interface{}, datasourceType string) string {
-	if normalizeDatasourceType(datasourceType) == Neo4jDatasourceType {
+	switch normalizeDatasourceType(datasourceType) {
+	case Neo4jDatasourceType:
 		return safeString(target, "cypherQuery")
+	case elasticsearchDatasourceType:
+		return safeString(target, "query")
 	}
 	return extractQueryExpression(target)
 }
@@ -694,7 +689,8 @@ func panelQueryExpression(target map[string]interface{}, datasourceType string) 
 // target fields rather than in a string expression such as expr or rawSql.
 func usesStructuredTarget(datasourceType string) bool {
 	switch normalizeDatasourceType(datasourceType) {
-	case "cloudwatch", "infinity":
+	// An Elasticsearch target with an empty Lucene query matches all documents.
+	case "cloudwatch", "infinity", elasticsearchDatasourceType:
 		return true
 	default:
 		return false
@@ -772,6 +768,59 @@ func executeInfinityPanelQuery(ctx context.Context, datasourceUID, datasourceTyp
 // mode, which another Neo4j plugin need not do.
 const Neo4jDatasourceType = "kniepdennis-neo4j-datasource"
 
+// executeElasticsearchPanelQuery runs an Elasticsearch panel target through /api/ds/query,
+// interpolated as Grafana's Elasticsearch datasource does in applyTemplateVariables: the Lucene
+// query and the queries of filters aggregations in the lucene format, the rest of the target
+// generically. The target also carries intervalMs, the interval $__interval stands for: the
+// plugin sizes auto date histograms from it, and without it uses one second, which exceeds
+// Elasticsearch's bucket limit on ranges longer than about 18 hours.
+func executeElasticsearchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, interp *variableInterpolator) (interface{}, map[string]interface{}, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, nil, fmt.Errorf("panel target not available")
+	}
+	raw := panelData.RawTarget
+	if safeString(raw, "queryType") == "esql" {
+		return nil, nil, fmt.Errorf("elasticsearch ES|QL panels get their time range filter from Grafana's frontend and cannot run through the API; run the query in Explore instead")
+	}
+	startTime, err := parseTime(start)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(end)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing end time: %w", err)
+	}
+
+	// Macros first, so a variable value that looks like a macro stays literal.
+	raw = mapStrings(raw, func(s string) string {
+		return substituteStructuredTargetMacros(s, startTime, endTime, panelData.Interval)
+	}).(map[string]interface{})
+	lucene := func(s string) string { return interp.interpolateQuery(s, elasticsearchDatasourceType) }
+	target := interp.interpolateTarget(raw)
+	target["query"] = lucene(safeString(raw, "query"))
+	// The copy has the shape of raw, so its filters are found at the same indexes.
+	aggs := safeArray(target, "bucketAggs")
+	for i, agg := range safeArray(raw, "bucketAggs") {
+		rawAgg, ok := agg.(map[string]interface{})
+		if !ok || safeString(rawAgg, "type") != "filters" {
+			continue
+		}
+		filters := safeArray(safeObject(aggs[i].(map[string]interface{}), "settings"), "filters")
+		for j, filter := range safeArray(safeObject(rawAgg, "settings"), "filters") {
+			if rawFilter, ok := filter.(map[string]interface{}); ok {
+				query := lucene(safeString(rawFilter, "query"))
+				if query == "" {
+					query = "*" // matches all documents, as in Grafana
+				}
+				filters[j].(map[string]interface{})["query"] = query
+			}
+		}
+	}
+	target["intervalMs"] = macroInterval(startTime, endTime, panelData.Interval).Milliseconds()
+
+	return queryStructuredTarget(ctx, datasourceUID, elasticsearchDatasourceType, target, startTime, endTime)
+}
+
 // executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
 // panel's queryType field tells us which dialect to use (influxql vs flux);
 // fall back to inference from the datasource if the panel doesn't carry one.
@@ -814,8 +863,8 @@ func defaultSQLFormat(datasourceType string) interface{} {
 
 // executeSQLPanelQuery runs a panel query against a SQL datasource via Grafana's
 // /api/ds/query endpoint. Those datasources resolve SQL macros such as
-// $__timeFilter/$__timeFrom/$__timeGroup server-side in their backend plugin, so we
-// only substitute the frontend-only macros ($__interval, $__range, etc.) here. The
+// $__timeFilter/$__timeFrom/$__timeGroup server-side in their backend plugin, so the
+// query arrives with only frontend macros ($__interval, $__range, etc.) expanded. The
 // panel's raw target is preserved so datasource-specific fields (BigQuery's location,
 // project and dataset, for example) reach the backend; only rawSql, datasource, refId
 // and format are overridden.
@@ -834,14 +883,11 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Substitute Grafana frontend macros; leave SQL macros for the backend plugin.
-	processedQuery := substituteGrafanaMacros(query, startTime, endTime)
-
 	// Deep copy the raw target and substitute variables in its fields (e.g. location).
 	target := newVariableInterpolator(variables, nil).interpolateTarget(panelData.RawTarget)
 
 	// Override the SQL with the fully-processed query and ensure required fields are set.
-	target["rawSql"] = processedQuery
+	target["rawSql"] = query
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
@@ -869,7 +915,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		Columns:        columns,
 		Rows:           rows,
 		RowCount:       len(rows),
-		ProcessedQuery: processedQuery,
+		ProcessedQuery: query,
 	}, nil
 }
 
@@ -916,66 +962,91 @@ func dsQueryResponsesError(responses backend.Responses) error {
 	return errors.New(strings.Join(failures, "; "))
 }
 
-// macroInterval is the value of $__interval and $__auto: the time range over ~100 data points,
-// at least one second.
-func macroInterval(start, end time.Time) time.Duration {
-	return max(end.Sub(start)/100, time.Second)
+// intervalOptions are the panel query inputs to Grafana's calculateInterval.
+type intervalOptions struct {
+	maxDataPoints float64
+	minInterval   string
 }
 
-// autoInterval is the duration $__auto is written as in the query. It parses the formatted string
-// back, so a step derived from it always matches the substituted window.
-func autoInterval(start, end time.Time) time.Duration {
-	d := macroInterval(start, end)
-	if parsed, err := time.ParseDuration(formatPrometheusDuration(d)); err == nil {
-		return parsed
+// defaultMaxDataPoints stands in for the panel width in pixels, which Grafana
+// uses when the panel sets no max data points and is unknown server side.
+const defaultMaxDataPoints = 100
+
+// panelIntervalOptions reads maxDataPoints and interval from a v1 panel or v2 queryOptions.
+func panelIntervalOptions(options map[string]interface{}) intervalOptions {
+	maxDataPoints, _ := options["maxDataPoints"].(float64)
+	return intervalOptions{maxDataPoints: maxDataPoints, minInterval: safeString(options, "interval")}
+}
+
+// panelIntervalOptionsV2 reads them from a v2 panel's data.spec.queryOptions.
+func panelIntervalOptionsV2(panel map[string]interface{}) intervalOptions {
+	return panelIntervalOptions(safeObject(safeObject(safeObject(panel, "data"), "spec"), "queryOptions"))
+}
+
+// withLowerLimit picks the lower limit as SceneQueryRunner.prepareRequests does:
+// the panel's interpolated min interval if set, else the datasource's.
+func (o intervalOptions) withLowerLimit(interp *variableInterpolator, datasourceType string, jsonData interface{}) intervalOptions {
+	if o.minInterval != "" {
+		o.minInterval = interp.interpolate(o.minInterval)
+	} else {
+		o.minInterval = datasourceMinInterval(datasourceType, jsonData)
 	}
-	return d
+	return o
 }
 
-// substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
-// used across datasource types (Prometheus, Loki, etc.)
-func substituteGrafanaMacros(query string, start, end time.Time) string {
+// datasourceMinInterval is the plugin's DataSourceApi.interval: jsonData.timeInterval,
+// else 15s for Prometheus and 1m for the SQL datasources. Other plugins set none.
+func datasourceMinInterval(datasourceType string, jsonData interface{}) string {
+	var fallback string
+	switch strings.ToLower(datasourceType) {
+	case "prometheus":
+		fallback = "15s"
+	case "postgres", "grafana-postgresql-datasource", "mysql", "mssql":
+		fallback = "1m"
+	default:
+		return ""
+	}
+	settings, _ := jsonData.(map[string]interface{})
+	if interval := safeString(settings, "timeInterval"); interval != "" {
+		return interval
+	}
+	return fallback
+}
+
+// macroInterval is $__interval and $__auto: Grafana's calculateInterval, rounded to a
+// nice value and no lower than the min interval (1ms when unset).
+func macroInterval(start, end time.Time, options intervalOptions) time.Duration {
+	steps := options.maxDataPoints
+	if steps <= 0 {
+		steps = defaultMaxDataPoints
+	}
+	return time.Duration(grafanaIntervalMs(end.Sub(start), steps, options.minInterval)) * time.Millisecond
+}
+
+var grafanaTemporalMacroRE = regexp.MustCompile(`\$(?:\{__\w+\}|__\w+\b)`)
+
+// substituteGrafanaMacros expands only whole frontend temporal macro names.
+func substituteGrafanaMacros(query string, start, end time.Time, options intervalOptions) string {
 	duration := end.Sub(start)
-
-	// Substitute $__range_ms and $__range_s BEFORE $__range to avoid partial replacement
-	rangeSec := int64(duration.Seconds())
-	rangeMs := duration.Milliseconds()
-	query = strings.ReplaceAll(query, "${__range_ms}", fmt.Sprintf("%d", rangeMs))
-	query = strings.ReplaceAll(query, "$__range_ms", fmt.Sprintf("%d", rangeMs))
-	query = strings.ReplaceAll(query, "${__range_s}", fmt.Sprintf("%d", rangeSec))
-	query = strings.ReplaceAll(query, "$__range_s", fmt.Sprintf("%d", rangeSec))
-
-	// $__range - total time range as duration string
-	rangeStr := formatPrometheusDuration(duration)
-	query = strings.ReplaceAll(query, "${__range}", rangeStr)
-	query = strings.ReplaceAll(query, "$__range", rangeStr)
-
-	// Substitute $__rate_interval_ms BEFORE $__rate_interval to avoid partial replacement
-	query = strings.ReplaceAll(query, "${__rate_interval_ms}", "60000")
-	query = strings.ReplaceAll(query, "$__rate_interval_ms", "60000")
-
-	// $__rate_interval - default to "1m"
-	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
-	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
-
-	interval := macroInterval(start, end)
-
-	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
-	intervalMs := int64(interval / time.Millisecond)
-	query = strings.ReplaceAll(query, "${__interval_ms}", fmt.Sprintf("%d", intervalMs))
-	query = strings.ReplaceAll(query, "$__interval_ms", fmt.Sprintf("%d", intervalMs))
-
-	// $__interval - duration string
-	intervalStr := formatPrometheusDuration(interval)
-	query = strings.ReplaceAll(query, "${__interval}", intervalStr)
-	query = strings.ReplaceAll(query, "$__interval", intervalStr)
-
-	// $__auto - Grafana fills this in with the step for range queries, which
-	// is all run_panel_query issues.
-	query = strings.ReplaceAll(query, "${__auto}", intervalStr)
-	query = strings.ReplaceAll(query, "$__auto", intervalStr)
-
-	return query
+	interval := macroInterval(start, end, options)
+	intervalStr := grafanaSecondsToHms(interval.Seconds())
+	values := map[string]string{
+		"__range_ms":         fmt.Sprintf("%d", duration.Milliseconds()),
+		"__range_s":          fmt.Sprintf("%d", int64(duration.Seconds())),
+		"__range":            formatPrometheusDuration(duration),
+		"__rate_interval_ms": "60000",
+		"__rate_interval":    "1m",
+		"__interval_ms":      fmt.Sprintf("%d", int64(interval/time.Millisecond)),
+		"__interval":         intervalStr,
+		"__auto":             intervalStr,
+	}
+	return grafanaTemporalMacroRE.ReplaceAllStringFunc(query, func(match string) string {
+		// Match whole names so a variable such as $__interval_env survives.
+		if value, ok := values[strings.Trim(match, "${}")]; ok {
+			return value
+		}
+		return match
+	})
 }
 
 // formatPrometheusDuration formats a duration for Prometheus and Loki (e.g. "14m", "1h30m",
@@ -1043,7 +1114,7 @@ func defaultDatasourceVariableValue(ctx context.Context, db map[string]interface
 		}
 		var candidates []*models.DataSourceListItemDTO
 		for _, ds := range list {
-			if ds != nil && ds.Type == pluginID && (filter == nil || filter.MatchString(ds.Name)) {
+			if ds != nil && matchPluginID(pluginID, ds.Type) && (filter == nil || filter.MatchString(ds.Name)) {
 				candidates = append(candidates, ds)
 			}
 		}
@@ -1106,12 +1177,12 @@ func getAvailableDatasourceUIDs(ctx context.Context, dsType string) []string {
 }
 
 // normalizeDatasourceType maps a datasource API type to a canonical short name.
-// Prometheus, Loki, and CloudWatch use exact (case-insensitive) matching;
+// Prometheus flavors match via isPromFlavor; Loki and CloudWatch use exact (case-insensitive) matching;
 // ClickHouse uses substring matching because the API type is "grafana-clickhouse-datasource".
 func normalizeDatasourceType(dsType string) string {
 	lower := strings.ToLower(dsType)
 	switch {
-	case lower == "prometheus" || lower == "stackdriver":
+	case isPromFlavor(lower) || lower == "stackdriver":
 		return "prometheus"
 	case lower == "loki":
 		return "loki"
@@ -1209,6 +1280,11 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- The URL or inline content may have returned no rows for these variables - the query field shows the substituted URL",
 			"- root_selector may not match the response shape - verify it against a sample response in the panel editor",
 		)
+	case elasticsearchDatasourceType:
+		hints = append(hints,
+			"- The Lucene query or filters may not match any documents for these variables - the query field shows the substituted Lucene query",
+			"- The index pattern or time field in the datasource settings may not cover these documents - query_elasticsearch with the same index shows what is there",
+		)
 	case Neo4jDatasourceType:
 		hints = append(hints,
 			"- The MATCH pattern, labels or property filters may not match any nodes for these variables - the query field shows the substituted Cypher",
@@ -1269,7 +1345,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the \"default\" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Elasticsearch, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcpgrafana.WithTitleAnnotation("Run panel query"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

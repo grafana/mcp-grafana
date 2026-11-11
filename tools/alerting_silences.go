@@ -58,11 +58,10 @@ type SilenceMatcherParam struct {
 
 // ManageSilencesParams is the param struct for the alerting_silences_write tool.
 type ManageSilencesParams struct {
-	Operation string                `json:"operation" jsonschema:"required,enum=list,enum=get,enum=create,enum=update,enum=delete,description=The operation to perform: 'list' to list silences\\, 'get' to retrieve a silence by id\\, 'create' to create a new silence\\, 'update' to modify an existing silence by id\\, 'delete' to expire a silence by id"`
-	SilenceID *string               `json:"silence_id,omitempty" jsonschema:"description=The silence id (required for 'get'\\, 'update' and 'delete')"`
-	RuleUID   *string               `json:"rule_uid,omitempty" jsonschema:"description=Optional: filter listed silences to those scoped to this alert rule UID (matches the __alert_rule_uid__ label). Only used with 'list'."`
-	Matchers  []SilenceMatcherParam `json:"matchers,omitempty" jsonschema:"description=Label matchers. Required (at least one) for 'create' and 'update'. For 'list'\\, used as an optional filter."`
-	StartsAt  *string               `json:"starts_at,omitempty" jsonschema:"description=Silence start time in RFC3339 format\\, e.g. '2026-07-11T10:00:00Z' (required for 'create' and 'update'). Grafana clamps a start time in the past to the moment of creation\\, so for 'update' pass back the starts_at returned by 'get' to keep the silence id stable."`
+	Operation string                `json:"operation" jsonschema:"required,enum=create,enum=update,enum=delete,description=The operation to perform: 'create' to create a new silence\\, 'update' to modify an existing silence by id\\, 'delete' to expire a silence by id"`
+	SilenceID *string               `json:"silence_id,omitempty" jsonschema:"description=The silence id (required for 'update' and 'delete')"`
+	Matchers  []SilenceMatcherParam `json:"matchers,omitempty" jsonschema:"description=Label matchers. Required (at least one) for 'create' and 'update'."`
+	StartsAt  *string               `json:"starts_at,omitempty" jsonschema:"description=Silence start time in RFC3339 format\\, e.g. '2026-07-11T10:00:00Z' (required for 'create' and 'update'). Grafana clamps a start time in the past to the moment of creation\\, so for 'update' pass back the silence's stored starts_at to keep the silence id stable."`
 	EndsAt    *string               `json:"ends_at,omitempty" jsonschema:"description=Silence end time in RFC3339 format\\, e.g. '2026-07-11T12:00:00Z' (required for 'create' and 'update')"`
 	Comment   *string               `json:"comment,omitempty" jsonschema:"description=A human-readable comment explaining the silence (required for 'create' and 'update')"`
 	CreatedBy *string               `json:"created_by,omitempty" jsonschema:"description=Author of the silence. Defaults to 'grafana-assistant'."`
@@ -70,10 +69,6 @@ type ManageSilencesParams struct {
 
 func (p ManageSilencesParams) validate() error {
 	switch p.Operation {
-	case "list":
-		return nil
-	case "get":
-		return requireSilenceID(p.SilenceID, "get")
 	case "create":
 		// A POST that carries an id is treated as an update by the
 		// Alertmanager API, so an accidental silence_id here could
@@ -90,7 +85,7 @@ func (p ManageSilencesParams) validate() error {
 	case "delete":
 		return requireSilenceID(p.SilenceID, "delete")
 	default:
-		return fmt.Errorf("unknown operation %q, must be one of: list, get, create, update, delete", p.Operation)
+		return fmt.Errorf("unknown operation %q, must be one of: create, update, delete", p.Operation)
 	}
 }
 
@@ -122,12 +117,6 @@ func requireSilenceID(id *string, operation string) error {
 
 // validateWritePayload checks the fields shared by 'create' and 'update'.
 func (p ManageSilencesParams) validateWritePayload() error {
-	// rule_uid only scopes 'list'. Dropping it silently on a write would post
-	// just the given matchers, so a caller aiming at one rule would end up
-	// silencing every rule those matchers touch.
-	if p.RuleUID != nil && *p.RuleUID != "" {
-		return fmt.Errorf("rule_uid must not be set for '%s' (it only filters 'list'); to scope a silence to one rule, pass a matcher with name %q", p.Operation, ruleUIDLabel)
-	}
 	if len(p.Matchers) == 0 {
 		return fmt.Errorf("matchers is required and must contain at least one matcher")
 	}
@@ -283,7 +272,7 @@ func manageSilencesRead(ctx context.Context, args ManageSilencesReadParams) (any
 	return nil, fmt.Errorf("alerting_silences_read: unknown operation %q", args.Operation)
 }
 
-func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (any, error) {
+func manageSilencesWrite(ctx context.Context, args ManageSilencesParams) (any, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_silences_write: %w", err)
 	}
@@ -294,10 +283,6 @@ func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (an
 	}
 
 	switch args.Operation {
-	case "list":
-		return c.listSilences(ctx, buildSilenceFilters(args.RuleUID, args.Matchers))
-	case "get":
-		return c.getSilence(ctx, *args.SilenceID)
 	case "create", "update":
 		s, err := args.toPostableSilence()
 		if err != nil {
@@ -428,7 +413,7 @@ var AlertSilencesRead = mcpgrafana.MustTool(
 var AlertSilencesWrite = mcpgrafana.MustTool(
 	"alerting_silences_write",
 	alertSilencesWriteDescription,
-	manageSilencesReadWrite,
+	manageSilencesWrite,
 	mcpgrafana.WithTitleAnnotation("Write alerting silences"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),

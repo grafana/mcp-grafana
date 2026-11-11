@@ -40,6 +40,49 @@ func newTestObservability(t *testing.T) *observability.Observability {
 	return obs
 }
 
+func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile(dynamicAddressFileName, []byte("stale\n"), 0o644))
+	requestedAddress := "localhost:0"
+	listener, err := listenHTTP(requestedAddress)
+	require.NoError(t, err)
+
+	document, err := os.ReadFile(dynamicAddressFileName)
+	require.NoError(t, err)
+	address := strings.TrimSpace(string(document))
+	assert.Equal(t, listener.Addr().String(), address)
+	_, port, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0", port)
+	info, err := os.Stat(dynamicAddressFileName)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", handleHealthz)
+	server := &http.Server{
+		Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+			(httpSecurityConfig{}).policy(address, addressWithBoundPort(requestedAddress, address)),
+		)(mux),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- runHTTPServer(ctx, server, listener, "test", tlsConfig{}) }()
+
+	_, port, err = net.SplitHostPort(address)
+	require.NoError(t, err)
+	requestURL := "http://" + net.JoinHostPort("localhost", port) + "/healthz"
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, requestURL, nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	cancel()
+	require.NoError(t, <-done)
+}
+
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -818,6 +861,38 @@ func TestValidatePrometheusGuardrail(t *testing.T) {
 	}
 }
 
+func TestApplyDashboardSchemaEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    string
+		env     string
+		flagSet bool
+		want    string
+		wantErr bool
+	}{
+		{name: "default is empty"},
+		{name: "flag v2", flag: "v2", flagSet: true, want: "v2"},
+		{name: "env fills an unset flag", env: "v2", want: "v2"},
+		{name: "explicit empty flag wins over env", env: "v2", flagSet: true},
+		{name: "unknown flag value rejected", flag: "v3", flagSet: true, wantErr: true},
+		{name: "unknown env value rejected", env: "V2", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GRAFANA_DASHBOARD_SCHEMA", tc.env)
+			gc := grafanaConfig{dashboardSchema: tc.flag}
+			err := gc.applyDashboardSchemaEnv(map[string]bool{"dashboard-schema": tc.flagSet})
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "--dashboard-schema or GRAFANA_DASHBOARD_SCHEMA")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, gc.dashboardSchema)
+		})
+	}
+}
+
 func TestSplitAndTrim(t *testing.T) {
 	cases := []struct {
 		name string
@@ -851,6 +926,18 @@ func TestHTTPSecurityConfigPolicy(t *testing.T) {
 			name:        "unset --allowed-hosts falls back to defaults",
 			address:     "localhost:8000",
 			wantHosts:   []string{"localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			name:        "IPv4 wildcard bind also allows the published address",
+			address:     "0.0.0.0:8000",
+			wantHosts:   []string{"0.0.0.0:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			name:        "IPv6 wildcard bind also allows the published address",
+			address:     "[::]:8000",
+			wantHosts:   []string{"[::]:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
 			wantOrigins: nil,
 		},
 		{
@@ -2302,5 +2389,54 @@ func TestPrometheusSelectiveLabelsFlag(t *testing.T) {
 		gc.addFlags()
 		require.NoError(t, flag.CommandLine.Parse(args))
 		assert.Equal(t, len(args) > 0 && args[0] == "--prometheus-guardrail-require-selective-labels", gc.prometheusGuardrailRequireSelectiveLabels)
+	}
+}
+
+func TestPrometheusCardinalityFlagsAndEnv(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		env        map[string]string
+		wantMax    int64
+		wantTTL    time.Duration
+		wantLabels []string
+		wantErr    string
+	}{
+		{name: "disabled by default", wantTTL: 10 * time.Minute, wantLabels: []string{"job", "instance", "namespace", "pod", "service", "cluster"}},
+		{name: "environment", env: map[string]string{"MAX_METRIC_CARDINALITY": "100000", "CARDINALITY_CACHE_TTL": "5m", "CARDINALITY_SCOPE_LABELS": " team, namespace,team "}, wantMax: 100000, wantTTL: 5 * time.Minute, wantLabels: []string{"team", "namespace"}},
+		{name: "explicit flags override all env", args: []string{"--prometheus-guardrail-max-metric-cardinality=0", "--prometheus-guardrail-cardinality-cache-ttl=0", "--prometheus-guardrail-cardinality-scope-labels="}, env: map[string]string{"MAX_METRIC_CARDINALITY": "bad", "CARDINALITY_CACHE_TTL": "bad", "CARDINALITY_SCOPE_LABELS": "__name__"}},
+		{name: "positive flags", args: []string{"--prometheus-guardrail-max-metric-cardinality=123", "--prometheus-guardrail-cardinality-cache-ttl=15m", "--prometheus-guardrail-cardinality-scope-labels=tenant"}, wantMax: 123, wantTTL: 15 * time.Minute, wantLabels: []string{"tenant"}},
+		{name: "invalid count", env: map[string]string{"MAX_METRIC_CARDINALITY": "NaN"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "overflow count", env: map[string]string{"MAX_METRIC_CARDINALITY": "9223372036854775808"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "invalid TTL", env: map[string]string{"CARDINALITY_CACHE_TTL": "5d"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"},
+		{name: "negative count", args: []string{"--prometheus-guardrail-max-metric-cardinality=-1"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "negative TTL", env: map[string]string{"CARDINALITY_CACHE_TTL": "-1m"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"},
+		{name: "metric name cannot provide scope", env: map[string]string{"CARDINALITY_SCOPE_LABELS": "job, __name__"}, wantErr: "__name__ is not a scope label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, suffix := range []string{"MODE", "MAX_RANGE", "MAX_POINTS", "REQUIRE_SELECTIVE_LABELS", "MAX_METRIC_CARDINALITY", "CARDINALITY_CACHE_TTL", "CARDINALITY_SCOPE_LABELS"} {
+				t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_"+suffix, tc.env[suffix])
+			}
+			flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+			gc := grafanaConfig{}
+			gc.addFlags()
+			require.NoError(t, flag.CommandLine.Parse(tc.args))
+			setFlags := map[string]bool{}
+			flag.CommandLine.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+			err := gc.applyPrometheusGuardrailEnv(setFlags)
+			if err == nil {
+				err = gc.validatePrometheusGuardrail()
+			}
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMax, gc.prometheusGuardrailMaxMetricCardinality)
+			assert.Equal(t, tc.wantTTL, gc.prometheusGuardrailCardinalityCacheTTL)
+			assert.Equal(t, tc.wantLabels, gc.cardinalityScopeLabels())
+		})
 	}
 }

@@ -8,6 +8,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -281,6 +282,35 @@ func TestDashboardLegacyFallback(t *testing.T) {
 	})
 }
 
+// TestDashboardV2PatchWithoutCursorSync patches a v2 dashboard that was created
+// without cursorSync. Grafana stores such a dashboard with cursorSync "" and
+// annotations null; the save path's list filling must not make the next
+// patch, here a title-only one, fail validation.
+func TestDashboardV2PatchWithoutCursorSync(t *testing.T) {
+	ctx := newTestContext()
+	const uid = "mcp-v2-no-cursorsync"
+
+	body := minimalV2DashboardJSON(uid, "No cursorSync")
+	delete(body, "tags")
+	_, err := updateDashboard(ctx, UpdateDashboardParams{Dashboard: body, Overwrite: true})
+	require.NoError(t, err)
+
+	_, err = updateDashboard(ctx, UpdateDashboardParams{
+		UID:        uid,
+		Operations: []PatchOperation{{Op: "replace", Path: "$.title", Value: "No cursorSync (patched)"}},
+		Message:    "title-only patch",
+	})
+	require.NoError(t, err, "a title-only patch of a dashboard stored without cursorSync must save")
+
+	res, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
+	require.NoError(t, err)
+	assert.True(t, res.IsV2)
+	spec := res.Dashboard.(map[string]interface{})
+	assert.Equal(t, "No cursorSync (patched)", spec["title"])
+	assert.Equal(t, []interface{}{}, spec["links"], "the omitted links list is stored as []")
+	assert.Equal(t, []interface{}{}, spec["tags"], "the omitted tags list is stored as []")
+}
+
 // TestDashboardV2DescriptionSkeleton saves the v2 skeletons quoted in the
 // update_dashboard description, so they can't drift from what Grafana accepts.
 func TestDashboardV2DescriptionSkeleton(t *testing.T) {
@@ -318,4 +348,159 @@ func TestDashboardV2DescriptionSkeleton(t *testing.T) {
 			assert.Equal(t, body["layout"].(map[string]interface{})["kind"], spec["layout"].(map[string]interface{})["kind"])
 		})
 	}
+}
+
+// withDashboardSchemaV2 returns ctx with the --dashboard-schema=v2 setting on.
+func withDashboardSchemaV2(ctx context.Context) context.Context {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	cfg.DashboardSchema = mcpgrafana.DashboardSchemaV2
+	return mcpgrafana.WithGrafanaConfig(ctx, cfg)
+}
+
+func deleteDashboardOnCleanup(t *testing.T, ctx context.Context, uid string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = mcpgrafana.GrafanaClientFromContext(ctx).Dashboards.DeleteDashboardByUID(uid)
+	})
+}
+
+func classicV1DashboardJSON(uid, title string) map[string]interface{} {
+	return map[string]interface{}{
+		"uid":           uid,
+		"title":         title,
+		"schemaVersion": 39,
+		"panels": []interface{}{
+			map[string]interface{}{
+				"id":      1,
+				"title":   "Up",
+				"type":    "timeseries",
+				"gridPos": map[string]interface{}{"h": 8, "w": 24, "x": 0, "y": 0},
+				"targets": []interface{}{map[string]interface{}{"refId": "A", "expr": "up"}},
+			},
+		},
+	}
+}
+
+// TestDashboardSchemaV2Enforced runs update_dashboard with --dashboard-schema=v2
+// against the Grafana that serves v2 (:3000).
+func TestDashboardSchemaV2Enforced(t *testing.T) {
+	base := newTestContext()
+	ctx := withDashboardSchemaV2(base)
+
+	t.Run("new v1 dashboard is rejected with a v2 body to retry", func(t *testing.T) {
+		const uid = "mcp-schema-v2-reject"
+		deleteDashboardOnCleanup(t, base, uid)
+
+		_, rejected := updateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: classicV1DashboardJSON(uid, "Schema v2 reject"),
+			Overwrite: true,
+		})
+		require.Error(t, rejected)
+		assert.Contains(t, rejected.Error(), "requires new dashboards to use dashboard schema v2")
+		_, err := getDashboardByUID(base, GetDashboardByUIDParams{UID: uid})
+		require.Error(t, err, "the rejected dashboard must not exist")
+
+		_, skeleton, ok := strings.Cut(rejected.Error(), "Minimal v2 body: ")
+		require.True(t, ok, "the error should carry the minimal v2 body")
+		var body map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(strings.ReplaceAll(skeleton, "<ds uid>", "prometheus")), &body))
+		body["uid"] = uid
+
+		_, err = updateDashboard(ctx, UpdateDashboardParams{Dashboard: body, Overwrite: true})
+		require.NoError(t, err, "the body from the error must save")
+		res, err := getDashboardByUID(base, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		assert.True(t, res.IsV2)
+	})
+
+	t.Run("new v1 dashboard without a uid is rejected", func(t *testing.T) {
+		body := classicV1DashboardJSON("", "Schema v2 reject no uid")
+		delete(body, "uid")
+		res, err := updateDashboard(ctx, UpdateDashboardParams{Dashboard: body})
+		if err == nil && res.UID != nil {
+			deleteDashboardOnCleanup(t, base, *res.UID)
+		}
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires new dashboards to use dashboard schema v2")
+	})
+
+	t.Run("new v1 dashboard with a uid and an unknown id is rejected", func(t *testing.T) {
+		const uid = "mcp-schema-v2-reject-id"
+		deleteDashboardOnCleanup(t, base, uid)
+
+		// Grafana creates this one: an id only names an existing dashboard
+		// when the body has no uid.
+		body := classicV1DashboardJSON(uid, "Schema v2 reject id")
+		body["id"] = float64(987654321)
+		_, err := updateDashboard(ctx, UpdateDashboardParams{Dashboard: body})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "requires new dashboards to use dashboard schema v2")
+		_, err = getDashboardByUID(base, GetDashboardByUIDParams{UID: uid})
+		require.Error(t, err, "the rejected dashboard must not exist")
+	})
+
+	t.Run("new v2 dashboard saves", func(t *testing.T) {
+		const uid = "mcp-schema-v2-create"
+		deleteDashboardOnCleanup(t, base, uid)
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: minimalV2DashboardJSON(uid, "Schema v2 create"),
+			Overwrite: true,
+		})
+		require.NoError(t, err)
+		res, err := getDashboardByUID(base, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		assert.True(t, res.IsV2)
+	})
+
+	t.Run("existing v1 dashboard still updates by full JSON and by patch", func(t *testing.T) {
+		const uid = "mcp-schema-v2-existing-v1"
+		deleteDashboardOnCleanup(t, base, uid)
+
+		// Created with the setting off, as a dashboard from before it was on.
+		_, err := updateDashboard(base, UpdateDashboardParams{
+			Dashboard: classicV1DashboardJSON(uid, "Existing v1"),
+			Overwrite: true,
+		})
+		require.NoError(t, err)
+
+		_, err = updateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: classicV1DashboardJSON(uid, "Existing v1 (full JSON)"),
+			Overwrite: true,
+		})
+		require.NoError(t, err)
+		res, err := getDashboardByUID(base, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		assert.False(t, res.IsV2)
+		assert.Equal(t, "Existing v1 (full JSON)", safeString(res.Dashboard.(map[string]interface{}), "title"))
+
+		_, err = updateDashboard(ctx, UpdateDashboardParams{
+			UID:        uid,
+			Operations: []PatchOperation{{Op: "replace", Path: "$.title", Value: "Existing v1 (patched)"}},
+		})
+		require.NoError(t, err)
+		res, err = getDashboardByUID(base, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		assert.False(t, res.IsV2)
+		assert.Equal(t, "Existing v1 (patched)", safeString(res.Dashboard.(map[string]interface{}), "title"))
+	})
+}
+
+// TestDashboardSchemaV2NotServed runs with --dashboard-schema=v2 against
+// Grafana 11 (:3002), which serves no dashboard schema v2, so v1 creates as
+// before.
+func TestDashboardSchemaV2NotServed(t *testing.T) {
+	base := newTestContextForURL("http://localhost:3002")
+	ctx := withDashboardSchemaV2(base)
+	const uid = "mcp-schema-v2-legacy"
+	deleteDashboardOnCleanup(t, base, uid)
+
+	_, err := updateDashboard(ctx, UpdateDashboardParams{
+		Dashboard: classicV1DashboardJSON(uid, "Schema v2 legacy"),
+		Overwrite: true,
+	})
+	require.NoError(t, err)
+	res, err := getDashboardByUID(base, GetDashboardByUIDParams{UID: uid})
+	require.NoError(t, err)
+	assert.False(t, res.IsV2)
 }

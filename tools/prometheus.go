@@ -52,6 +52,13 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric metadata: %w", err)
 	}
+	if args.LimitPerMetric > 0 {
+		for name, entries := range metadata {
+			if len(entries) > args.LimitPerMetric {
+				metadata[name] = entries[:args.LimitPerMetric]
+			}
+		}
+	}
 	return metadata, nil
 }
 
@@ -153,12 +160,32 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		}
 	}
 
-	if err := guardPrometheusQuery(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds); err != nil {
+	var backend promBackend
+	var backendErr error
+	var backendLoaded bool
+	loadBackend := func() error {
+		if !backendLoaded {
+			backendLoaded = true
+			backend, backendErr = backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
+		}
+		return backendErr
+	}
+	if err := guardPrometheusQuery(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds, func() promGuardDecision {
+		return assessPromCardinality(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds, func() (*prometheusBackend, error) {
+			if err := loadBackend(); err != nil {
+				return nil, err
+			}
+			b, ok := backend.(*prometheusBackend)
+			if !ok {
+				return nil, fmt.Errorf("backend does not support TSDB metadata")
+			}
+			return b, nil
+		})
+	}); err != nil {
 		return nil, nil, err
 	}
 
-	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
-	if err != nil {
+	if err := loadBackend(); err != nil {
 		return nil, nil, fmt.Errorf("getting backend: %w", err)
 	}
 

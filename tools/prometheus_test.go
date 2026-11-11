@@ -314,6 +314,22 @@ func TestPrometheusQueries(t *testing.T) {
 		assert.Equal(t, scalar[0].Metric["__name__"], model.LabelValue("up"))
 	})
 
+	t.Run("query prometheus instant range vector", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryPrometheus(ctx, QueryPrometheusParams{
+			DatasourceUID: "prometheus",
+			Expr:          "up[5s]",
+			EndTime:       "now",
+			QueryType:     "instant",
+		})
+		require.NoError(t, err)
+		require.IsType(t, model.Matrix{}, result)
+		matrix := result.(model.Matrix)
+		require.Len(t, matrix, 1)
+		// Prometheus scrapes itself every second, so the window holds several samples.
+		assert.Greater(t, len(matrix[0].Values), 1)
+	})
+
 	t.Run("query prometheus range with relative timestamps", func(t *testing.T) {
 		ctx := newTestContext()
 		beforeQuery := model.TimeFromUnix(time.Now().Unix())

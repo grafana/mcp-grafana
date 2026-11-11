@@ -227,6 +227,7 @@ func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 			rawTarget:  queryTargetFields(target),
 			Datasource: dsInfo,
 			RefID:      refID,
+			interval:   panelIntervalOptions(panel),
 		}
 
 		// Targets built in a datasource's visual editor carry no string

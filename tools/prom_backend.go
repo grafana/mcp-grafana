@@ -62,11 +62,26 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 		return newCloudMonitoringBackend(ctx, ds, proj)
 	case "tempo":
 		return nil, fmt.Errorf("datasource %s is of type %q, which is not a supported Prometheus-compatible datasource", uid, ds.Type)
+	case "loki", victoriaLogsDatasourceType:
+		return nil, fmt.Errorf("datasource %s is of type %q, a log datasource, which is not a supported Prometheus-compatible datasource; query it through the Loki tools", uid, ds.Type)
 	default:
 		// For prometheus, thanos, cortex, mimir, VictoriaMetrics and any other
 		// Prometheus-compatible datasource.
 		return newPrometheusBackend(ctx, uid, ds)
 	}
+}
+
+// promFlavorPattern matches Prometheus flavor plugins such as
+// grafana-amazonprometheus-datasource, as Grafana's matchPluginId does.
+var promFlavorPattern = regexp.MustCompile(`^grafana-[0-9a-z]+prometheus-datasource$`)
+
+func isPromFlavor(pluginID string) bool {
+	return pluginID == "prometheus" || promFlavorPattern.MatchString(pluginID)
+}
+
+// matchPluginID ports Grafana's matchPluginId, except for plugin aliasIDs.
+func matchPluginID(idToMatch, pluginID string) bool {
+	return pluginID == idToMatch || (isPromFlavor(idToMatch) && isPromFlavor(pluginID))
 }
 
 // prometheusBackend runs queries through Grafana's /api/ds/query endpoint, so
@@ -76,10 +91,12 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 type prometheusBackend struct {
 	api promv1.API
 
-	httpClient *http.Client
-	baseURL    string
-	dsUID      string
-	dsType     string
+	httpClient       *http.Client
+	baseURL          string
+	dsUID            string
+	dsType           string
+	tsdbBase         string // Authenticated Grafana proxy route, including legacy numeric IDs.
+	tsdbFallbackBase string // Legacy numeric route may fall back to resolved UID on 404.
 }
 
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
@@ -145,14 +162,22 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		dsUID = uid
 	}
 
+	_, tsdbBase := datasourceProxyPaths(dsUID)
+	tsdbFallbackBase := ""
+	if legacyMode {
+		tsdbBase, tsdbFallbackBase = primaryBase, fallbackBase
+	}
+
 	return &prometheusBackend{
 		api: promv1.NewAPI(c),
 		// No client timeout, as on the proxy client: queries are bounded by
 		// ctx and Grafana's own datasource timeout.
-		httpClient: &http.Client{Transport: baseRT, CheckRedirect: refuseRedirect},
-		baseURL:    grafanaURL,
-		dsUID:      dsUID,
-		dsType:     ds.Type,
+		httpClient:       &http.Client{Transport: baseRT, CheckRedirect: refuseRedirect},
+		baseURL:          grafanaURL,
+		dsUID:            dsUID,
+		dsType:           ds.Type,
+		tsdbBase:         tsdbBase,
+		tsdbFallbackBase: tsdbFallbackBase,
 	}, nil
 }
 
@@ -208,7 +233,13 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 
 	warnings := frameWarnings(resp)
 	histograms := takeHistogramFrames(resp)
-	v, err := framesToPrometheusValue(resp, queryType)
+	resultShape := queryType
+	if hasMatrixFrames(resp) {
+		// An instant query on a range vector selector or a subquery returns a
+		// matrix: keep every sample, not just the last one of each series.
+		resultShape = "range"
+	}
+	v, err := framesToPrometheusValue(resp, resultShape)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -231,6 +262,20 @@ func hasStringFrames(resp *backend.QueryDataResponse) bool {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+// hasMatrixFrames reports whether Prometheus returned a matrix, which Grafana
+// records on the result's frames as custom.resultType.
+func hasMatrixFrames(resp *backend.QueryDataResponse) bool {
+	for _, frame := range resp.Responses["A"].Frames {
+		if frame.Meta == nil {
+			continue
+		}
+		if custom, ok := frame.Meta.Custom.(map[string]interface{}); ok && custom["resultType"] == "matrix" {
+			return true
 		}
 	}
 	return false

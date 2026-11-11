@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	defaultTimeout    = 30 * time.Second
 	rulesEndpointPath = "/api/prometheus/grafana/api/v1/rules"
 )
 
@@ -53,7 +52,7 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		baseURL: parsedBaseURL,
 		httpClient: &http.Client{
 			Transport: transport,
-			Timeout:   defaultTimeout,
+			Timeout:   cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout),
 		},
 	}, nil
 }
@@ -331,6 +330,10 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 	return &response.Data, nil
 }
 
+// Grafana treats a missing Alertmanager jsonData.implementation as cortex
+// (defaultImplementation in pkg/services/ngalert/api/lotex_am.go).
+const defaultAlertmanagerImplementation = "cortex"
+
 // GetAlertmanagerConfig queries an Alertmanager datasource for its configuration
 // The implementation type determines the API path:
 // - prometheus: /api/v2/status (returns upstream AlertmanagerStatus with YAML config)
@@ -343,12 +346,9 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	case "prometheus":
 		apiPath = "/api/v2/status"
 		isPrometheusV2 = true
-	case "mimir", "cortex":
-		apiPath = "/api/v1/alerts"
 	default:
-		// default to prometheus
-		apiPath = "/api/v2/status"
-		isPrometheusV2 = true
+		// mimir, cortex, and unset (defaultAlertmanagerImplementation)
+		apiPath = "/api/v1/alerts"
 	}
 
 	path := fmt.Sprintf("/api/datasources/proxy/uid/%s%s", datasourceUID, apiPath)

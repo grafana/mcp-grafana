@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
@@ -54,12 +55,12 @@ type lokiBackend interface {
 
 // lokiQueryParams is the normalized request shape passed to lokiBackend.QueryLogs.
 type lokiQueryParams struct {
-	Query       string
-	QueryType   string // "instant" or "range"
-	Start, End  time.Time
-	Limit       int    // already clamped to the configured max
-	Direction   string // "forward" or "backward"
-	StepSeconds int    // for range metric queries
+	Query      string
+	QueryType  string // "instant" or "range"
+	Start, End time.Time
+	Limit      int           // already clamped to the configured max
+	Direction  string        // "forward" or "backward"
+	Step       time.Duration // for range metric queries
 }
 
 // lokiQueryResult is the backend's contribution to QueryLokiLogsResult.
@@ -157,12 +158,8 @@ func (b *lokiNativeBackend) ListLabelValues(ctx context.Context, labelName, matc
 }
 
 func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*lokiQueryResult, error) {
-	enforcedQuery, err := enforceLogQL(ctx, p.Query)
-	if err != nil {
-		return nil, err
-	}
-	p.Query = enforcedQuery
-
+	// The enforced matchers are injected by doDSQuery, which applies them to
+	// every /api/ds/query request that reaches a Loki datasource.
 	result, err := b.queryLogsViaDSQuery(ctx, p)
 	if err != nil {
 		return nil, err
@@ -213,11 +210,17 @@ func (b *lokiNativeBackend) queryLogsViaDSQuery(ctx context.Context, p lokiQuery
 		"expr":       p.Query,
 		"queryType":  queryType,
 		"direction":  p.Direction,
-		// Becomes X-Query-Tags: Source=mcp-grafana on the request to Loki.
-		"supportingQueryType": lokiQuerySource,
 	}
-	if p.StepSeconds > 0 {
-		query["step"] = fmt.Sprintf("%ds", p.StepSeconds)
+	// Grafana's Loki datasource rejects supportingQueryType values it does
+	// not know before 11.0; an unknown version counts as new.
+	if major, _, ok := parseMajorMinor(mcpgrafana.GrafanaVersion(ctx)); !ok || major >= 11 {
+		// Becomes X-Query-Tags: Source=mcp-grafana on the request to Loki.
+		query["supportingQueryType"] = lokiQuerySource
+	}
+	if p.Step >= time.Second && p.Step%time.Second == 0 {
+		query["step"] = fmt.Sprintf("%ds", p.Step/time.Second)
+	} else if p.Step > 0 {
+		query["step"] = fmt.Sprintf("%dms", p.Step.Milliseconds())
 	} else if queryType == "range" {
 		// Without a step Grafana picks one from its default 1s interval, far
 		// finer than Loki's own default of range/250, so send Loki's default.
