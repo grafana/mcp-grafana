@@ -2359,3 +2359,52 @@ func TestPrometheusSelectiveLabelsFlag(t *testing.T) {
 		assert.Equal(t, len(args) > 0 && args[0] == "--prometheus-guardrail-require-selective-labels", gc.prometheusGuardrailRequireSelectiveLabels)
 	}
 }
+
+func TestPrometheusCardinalityFlagsAndEnv(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		env        map[string]string
+		wantMax    int64
+		wantTTL    time.Duration
+		wantLabels []string
+		wantErr    string
+	}{
+		{name: "disabled by default", wantTTL: 10 * time.Minute, wantLabels: []string{"job", "instance", "namespace", "pod", "service", "cluster"}},
+		{name: "environment", env: map[string]string{"MAX_METRIC_CARDINALITY": "100000", "CARDINALITY_CACHE_TTL": "5m", "CARDINALITY_SCOPE_LABELS": " team, namespace,team "}, wantMax: 100000, wantTTL: 5 * time.Minute, wantLabels: []string{"team", "namespace"}},
+		{name: "explicit flags override all env", args: []string{"--prometheus-guardrail-max-metric-cardinality=0", "--prometheus-guardrail-cardinality-cache-ttl=0", "--prometheus-guardrail-cardinality-scope-labels="}, env: map[string]string{"MAX_METRIC_CARDINALITY": "bad", "CARDINALITY_CACHE_TTL": "bad", "CARDINALITY_SCOPE_LABELS": "__name__"}},
+		{name: "positive flags", args: []string{"--prometheus-guardrail-max-metric-cardinality=123", "--prometheus-guardrail-cardinality-cache-ttl=15m", "--prometheus-guardrail-cardinality-scope-labels=tenant"}, wantMax: 123, wantTTL: 15 * time.Minute, wantLabels: []string{"tenant"}},
+		{name: "invalid count", env: map[string]string{"MAX_METRIC_CARDINALITY": "NaN"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "overflow count", env: map[string]string{"MAX_METRIC_CARDINALITY": "9223372036854775808"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "invalid TTL", env: map[string]string{"CARDINALITY_CACHE_TTL": "5d"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"},
+		{name: "negative count", args: []string{"--prometheus-guardrail-max-metric-cardinality=-1"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "negative TTL", env: map[string]string{"CARDINALITY_CACHE_TTL": "-1m"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"},
+		{name: "metric name cannot provide scope", env: map[string]string{"CARDINALITY_SCOPE_LABELS": "job, __name__"}, wantErr: "__name__ is not a scope label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, suffix := range []string{"MODE", "MAX_RANGE", "MAX_POINTS", "REQUIRE_SELECTIVE_LABELS", "MAX_METRIC_CARDINALITY", "CARDINALITY_CACHE_TTL", "CARDINALITY_SCOPE_LABELS"} {
+				t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_"+suffix, tc.env[suffix])
+			}
+			flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+			gc := grafanaConfig{}
+			gc.addFlags()
+			require.NoError(t, flag.CommandLine.Parse(tc.args))
+			setFlags := map[string]bool{}
+			flag.CommandLine.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+			err := gc.applyPrometheusGuardrailEnv(setFlags)
+			if err == nil {
+				err = gc.validatePrometheusGuardrail()
+			}
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMax, gc.prometheusGuardrailMaxMetricCardinality)
+			assert.Equal(t, tc.wantTTL, gc.prometheusGuardrailCardinalityCacheTTL)
+			assert.Equal(t, tc.wantLabels, gc.cardinalityScopeLabels())
+		})
+	}
+}
