@@ -53,7 +53,7 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		baseURL: parsedBaseURL,
 		httpClient: &http.Client{
 			Transport: transport,
-			Timeout:   defaultTimeout,
+			Timeout:   cfg.TimeoutOr(defaultTimeout),
 		},
 	}, nil
 }

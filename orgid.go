@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -214,7 +213,7 @@ func grafanaGetJSON(ctx context.Context, cfg *GrafanaConfig, path string, out an
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := (&http.Client{Transport: transport, Timeout: 10 * time.Second}).Do(req)
+	resp, err := (&http.Client{Transport: transport, Timeout: cfg.TimeoutOr(DefaultGrafanaClientTimeout)}).Do(req)
 	if err != nil {
 		return fmt.Errorf("do request: %w", err)
 	}
