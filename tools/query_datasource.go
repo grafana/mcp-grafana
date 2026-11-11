@@ -204,9 +204,10 @@ func prepareDSQueries(uid string, queries []map[string]any, from, to time.Time) 
 	return out, nil
 }
 
+// QueryDatasource is not a registered tool: render_grafana_app runs it.
 var QueryDatasource = mcpgrafana.MustTool(
 	"query_datasource",
-	"Query any Grafana data source with /api/ds/query queries and return the frames for the Grafana App. render_grafana_app runs it: it is not a registered tool.",
+	"Query any Grafana data source with /api/ds/query queries and return the frames for the Grafana App.",
 	queryDatasource,
 	mcpgrafana.WithTitleAnnotation("Query a data source"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
