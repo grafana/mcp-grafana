@@ -38,7 +38,7 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 
 	client := &http.Client{
 		Transport:     transport,
-		Timeout:       30 * time.Second,
+		Timeout:       dsQueryTimeout(cfg),
 		CheckRedirect: refuseRedirect,
 	}
 
