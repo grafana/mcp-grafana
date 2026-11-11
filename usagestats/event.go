@@ -250,6 +250,7 @@ var transports = observability.ValueSet(TransportStdio, TransportSSE, TransportS
 // credential of that kind was supplied, which auth_method already reports.
 var configEnvVars = []string{
 	"GRAFANA_API_KEY",
+	"GRAFANA_DASHBOARD_SCHEMA",
 	"GRAFANA_EXTRA_HEADERS",
 	"GRAFANA_FORWARD_HEADERS",
 	"GRAFANA_LEGACY_8_URL",
