@@ -223,7 +223,13 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 
 	warnings := frameWarnings(resp)
 	histograms := takeHistogramFrames(resp)
-	v, err := framesToPrometheusValue(resp, queryType)
+	resultShape := queryType
+	if hasMatrixFrames(resp) {
+		// An instant query on a range vector selector or a subquery returns a
+		// matrix: keep every sample, not just the last one of each series.
+		resultShape = "range"
+	}
+	v, err := framesToPrometheusValue(resp, resultShape)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -246,6 +252,20 @@ func hasStringFrames(resp *backend.QueryDataResponse) bool {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+// hasMatrixFrames reports whether Prometheus returned a matrix, which Grafana
+// records on the result's frames as custom.resultType.
+func hasMatrixFrames(resp *backend.QueryDataResponse) bool {
+	for _, frame := range resp.Responses["A"].Frames {
+		if frame.Meta == nil {
+			continue
+		}
+		if custom, ok := frame.Meta.Custom.(map[string]interface{}); ok && custom["resultType"] == "matrix" {
+			return true
 		}
 	}
 	return false
