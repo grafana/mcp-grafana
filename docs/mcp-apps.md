@@ -52,7 +52,7 @@ tools.AddPrometheusTools(s, true)
 tools.AddAppTool(s, tools.QueryPrometheus, tools.GetTempoTraceTool)
 ```
 
-`RegisterGrafanaAppResource` registers only the shared `GrafanaAppResourceURI`. Pass only enabled read-only sources to `AddAppTool`; the standalone server applies its category and query gates before registration. The metrics view refreshes through `query_prometheus` in its existing App instance.
+`RegisterGrafanaAppResource` registers only the shared `GrafanaAppResourceURI`. Pass only enabled sources to `AddAppTool`; the standalone server applies its category, query and write gates before registration. The App tool is read-only only when every source is read-only, so a source such as `query_datasource` makes it destructive. The metrics view refreshes through `query_prometheus` in its existing App instance.
 
 The module embeds the built HTML. Go consumers serve the bundled App without a Node toolchain and receive UI updates through the module version.
 

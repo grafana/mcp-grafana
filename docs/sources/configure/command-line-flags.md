@@ -112,7 +112,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `cloudlogging`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `cloudlogging`, `examples`, `sql`, `influxdb`, `quickwit`, `runpanelquery`, and `dsquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -120,7 +120,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-prometheus`: Disable Prometheus tools.
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
-- `--enable-query`: Keep the raw-SQL query tools registered under `--disable-write` (refer to the following section).
+- `--enable-query`: Keep the raw-SQL query tools, and `query_datasource` (a source of `render_grafana_app`), available under `--disable-write` (refer to the following section).
 - `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, `generate_deeplink`, or the alerting write tools `alerting_rules_write`, `alerting_routing_write`, and `alerting_silences_write`. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
@@ -141,6 +141,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-examples`: Disable query examples tools.
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
+- `--disable-dsquery`: Disable the `query_datasource` source of `render_grafana_app`.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-tempo`: Disable Tempo tracing tools.
 - `--disable-provisioning`: Disable provisioning tools.
@@ -217,9 +218,9 @@ The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/qu
 
 ### Query execution and read-only mode
 
-The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. Read-only mode removes them along with the other write tools.
+The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. So does `query_datasource`, a source of `render_grafana_app` for the `dsquery` category, which is off by default. Read-only mode removes them along with the other write tools.
 
-`--enable-query` puts them back. Use it when the datasource credentials are known to be read-only and you want query execution in an otherwise read-only server. It doesn't re-enable any other write tool, and it has no effect alongside `--disable-query`, which always wins.
+`--enable-query` puts them back. For `query_datasource`, `--enable-write-tools=query_datasource` also works. Use it when the datasource credentials are known to be read-only and you want query execution in an otherwise read-only server. It doesn't re-enable any other write tool, and it has no effect alongside `--disable-query`, which always wins.
 
 | Flags | Safe query tools | Raw-SQL query tools |
 | --- | --- | --- |
