@@ -38,7 +38,7 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 
 	client := &http.Client{
 		Transport:     transport,
-		Timeout:       cfg.TimeoutOr(defaultDSQueryTimeout),
+		Timeout:       cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout),
 		CheckRedirect: refuseRedirect,
 	}
 

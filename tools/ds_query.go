@@ -290,9 +290,6 @@ func trimTrailingSlash(s string) string {
 	return s
 }
 
-// defaultDSQueryTimeout applies to query tools when --grafana-timeout is unset.
-const defaultDSQueryTimeout = 30 * time.Second
-
 // newDSQueryHTTPClient builds an *http.Client suitable for calling Grafana's
 // /api/ds/query endpoint, using the Grafana config from the context.
 func newDSQueryHTTPClient(ctx context.Context) (*http.Client, string, error) {
@@ -304,7 +301,7 @@ func newDSQueryHTTPClient(ctx context.Context) (*http.Client, string, error) {
 		return nil, "", fmt.Errorf("failed to create transport: %w", err)
 	}
 
-	return &http.Client{Transport: transport, Timeout: cfg.TimeoutOr(defaultDSQueryTimeout), CheckRedirect: refuseRedirect}, baseURL, nil
+	return &http.Client{Transport: transport, Timeout: cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout), CheckRedirect: refuseRedirect}, baseURL, nil
 }
 
 // framesToTabularRows converts SDK data frames into row-oriented maps — the
