@@ -77,6 +77,21 @@ func TestQueryDatasourceResult(t *testing.T) {
 	assert.Equal(t, float64(rangeMs/defaultDSMaxDataPoints), first["intervalMs"])
 }
 
+func TestQueryDatasourceGrafanaURL(t *testing.T) {
+	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(dsQueryResponse))
+	}))
+	t.Cleanup(grafana.Close)
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: grafana.URL})
+	result, err := QueryDatasource.Handler(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+		Name: "query_datasource", Arguments: json.RawMessage(`{"datasourceUid":"prom","queries":[{"refId":"A","expr":"up"}]}`),
+	}})
+	require.NoError(t, err)
+	// tool.27: with no public URL, the configured URL.
+	assert.Equal(t, grafana.URL, result.StructuredContent.(*QueryDatasourceResult).GrafanaURL)
+}
+
 func TestQueryDatasourceKeepsQueryValues(t *testing.T) {
 	_, posted, err := runQueryDatasource(t,
 		`{"datasourceUid":"prom","queries":[{"refId":"A","datasource":{"uid":"prom","type":"prometheus"},"maxDataPoints":50,"intervalMs":7000}]}`,

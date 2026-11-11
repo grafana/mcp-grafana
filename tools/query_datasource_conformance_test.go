@@ -97,7 +97,9 @@ func TestQueryDatasourceConformance(t *testing.T) {
 			require.NoError(t, err)
 			var gotResult map[string]any
 			require.NoError(t, json.Unmarshal(body, &gotResult))
+			// fixtures.8: grafanaUrl is not compared.
 			delete(wantResult, "grafanaUrl")
+			delete(gotResult, "grafanaUrl")
 			assert.Equal(t, wantResult, gotResult)
 		})
 	}
