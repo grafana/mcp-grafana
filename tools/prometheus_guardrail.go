@@ -21,8 +21,9 @@ import (
 
 // promGuardParser parses expressions for the guardrail only. Experimental
 // functions are accepted so they are assessed rather than failing open.
-// Duration expressions stay disabled: their numeric Range is 0 until
-// evaluated, so parsing them would silently read as no window at all.
+// Duration expressions always parse since Prometheus v0.316, but their
+// numeric Range is 0 until evaluated, so promGuardDurationExpr rejects them
+// rather than letting them read as no window at all.
 var promGuardParser = parser.NewParser(parser.Options{EnableExperimentalFunctions: true})
 
 // warnUnknownPromGuardrailModeOnce gates the once-per-process warning for
@@ -84,6 +85,9 @@ func assessPromQuery(expr, queryType string, start, end time.Time, stepSeconds i
 	var extension time.Duration
 	if p.MaxRange > 0 || p.RequireSelectiveLabels {
 		ast, err := promGuardParser.ParseExpr(promGuardSubstituteMacros(expr, window, stepSeconds))
+		if err == nil {
+			err = promGuardDurationExpr(ast)
+		}
 		if err != nil {
 			parseErr = err
 		} else {
@@ -182,6 +186,26 @@ func checkPromSelectors(ast parser.Node) (promGuardViolation, bool) {
 }
 
 var errPromUnscopedSelector = errors.New("unscoped Prometheus selector")
+
+// promGuardDurationExpr reports a range or subquery whose window is a
+// duration expression, which the parser leaves unevaluated.
+func promGuardDurationExpr(ast parser.Node) error {
+	var err error
+	parser.Inspect(ast, func(node parser.Node, _ []parser.Node) error {
+		switch n := node.(type) {
+		case *parser.MatrixSelector:
+			if n.RangeExpr != nil {
+				err = fmt.Errorf("duration expression %s in a range selector", n.RangeExpr)
+			}
+		case *parser.SubqueryExpr:
+			if n.RangeExpr != nil {
+				err = fmt.Errorf("duration expression %s in a subquery range", n.RangeExpr)
+			}
+		}
+		return err
+	})
+	return err
+}
 
 // promAstWindow returns the longest selector window: its own range plus
 // all enclosing subquery ranges. offset shifts rather than widens the window,

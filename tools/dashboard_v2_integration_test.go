@@ -281,6 +281,35 @@ func TestDashboardLegacyFallback(t *testing.T) {
 	})
 }
 
+// TestDashboardV2PatchWithoutCursorSync patches a v2 dashboard that was created
+// without cursorSync. Grafana stores such a dashboard with cursorSync "" and
+// annotations null; the save path's list filling must not make the next
+// patch, here a title-only one, fail validation.
+func TestDashboardV2PatchWithoutCursorSync(t *testing.T) {
+	ctx := newTestContext()
+	const uid = "mcp-v2-no-cursorsync"
+
+	body := minimalV2DashboardJSON(uid, "No cursorSync")
+	delete(body, "tags")
+	_, err := updateDashboard(ctx, UpdateDashboardParams{Dashboard: body, Overwrite: true})
+	require.NoError(t, err)
+
+	_, err = updateDashboard(ctx, UpdateDashboardParams{
+		UID:        uid,
+		Operations: []PatchOperation{{Op: "replace", Path: "$.title", Value: "No cursorSync (patched)"}},
+		Message:    "title-only patch",
+	})
+	require.NoError(t, err, "a title-only patch of a dashboard stored without cursorSync must save")
+
+	res, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
+	require.NoError(t, err)
+	assert.True(t, res.IsV2)
+	spec := res.Dashboard.(map[string]interface{})
+	assert.Equal(t, "No cursorSync (patched)", spec["title"])
+	assert.Equal(t, []interface{}{}, spec["links"], "the omitted links list is stored as []")
+	assert.Equal(t, []interface{}{}, spec["tags"], "the omitted tags list is stored as []")
+}
+
 // TestDashboardV2DescriptionSkeleton saves the v2 skeletons quoted in the
 // update_dashboard description, so they can't drift from what Grafana accepts.
 func TestDashboardV2DescriptionSkeleton(t *testing.T) {

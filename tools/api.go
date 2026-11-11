@@ -207,7 +207,7 @@ func applyJQ(ctx context.Context, code *gojq.Code, input any) (any, error) {
 
 var APIRequest = mcpgrafana.MustTool(
 	"grafana_api_request",
-	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
+	"Make an authenticated HTTP request to the Grafana API. "+
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool.",
 	apiRequest,
@@ -221,7 +221,7 @@ var APIRequest = mcpgrafana.MustTool(
 
 var APIRequestReadOnly = mcpgrafana.MustTool(
 	"grafana_api_request",
-	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
+	"Make an authenticated HTTP request to the Grafana API. "+
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool. "+
 		"Only GET requests are allowed, except POST to read-only query endpoints such as /api/ds/query.",
@@ -236,7 +236,7 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 
 var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
 	"grafana_api_request",
-	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
+	"Make an authenticated HTTP request to the Grafana API. "+
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool. "+
 		"Only GET requests are allowed.",

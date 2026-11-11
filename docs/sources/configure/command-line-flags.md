@@ -33,6 +33,8 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--sse-keepalive`: Interval between ping requests the server sends to each SSE client, so a reverse proxy or load balancer doesn't close an idle event stream and end the session. Set it below the proxy's idle timeout, for example, `30s` behind ingress-nginx's default 60-second `proxy-read-timeout`. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum `1s`. Default: `0` (disabled). Applies only to `--transport sse`.
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
+When `--address` uses port `0`, the operating system allocates a free port and the server atomically writes the bound address to `mcp-grafana-address` in its working directory. The file contains the address followed by a newline and is created with mode `0600`.
+
 ## Configure HTTP transport security
 
 The SSE and streamable-http transports validate `Host` and `Origin` headers on every route on the MCP listener (`/sse`, `/mcp`, and `/healthz` / `/metrics` when they stay on that listener) to block DNS-rebinding attacks. Stdio transport is unaffected. Side listeners started by `--healthz-address` or `--metrics-address` are not wrapped.

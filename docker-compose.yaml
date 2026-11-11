@@ -141,7 +141,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f
+    image: grafana/pyroscope:2.4.3@sha256:bf667534cd403320573063894e3faba20a5a5d1bfb92eddaecfabeb2446c502b
     ports:
       - 4040:4040
 
@@ -248,7 +248,7 @@ services:
       retries: 5
 
   influxdb:
-    image: influxdb:2.9@sha256:a450f6faf9573e6c2e96a0f575885ae8b7387cc87e4de94599e247ebfa3ac417
+    image: influxdb:2.9@sha256:e4572d094ac3272f06528ea904ce6b4cb3bb19be2db3b3b1acbd27ba5c3a73e2
     ports:
       - "8086:8086"
     environment:
@@ -288,7 +288,7 @@ services:
       retries: 5
 
   mysql:
-    image: mysql:26.10@sha256:7b16ec7caa94ca7e92f4c5ec287de69d2e8738db056ceb629022951a6f6d910b
+    image: mysql:26.10@sha256:3819b2b23835c4a73c8b022fafc33c8095c0f81c929a8b7a84613d2fba6c52f5
     environment:
       MYSQL_ROOT_PASSWORD: rootroot
       MYSQL_DATABASE: test

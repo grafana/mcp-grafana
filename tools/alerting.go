@@ -51,7 +51,7 @@ var AlertRulesRead = mcpgrafana.MustTool(
 var AlertRulesWrite = mcpgrafana.MustTool(
 	"alerting_rules_write",
 	alertRulesWriteDescription,
-	manageRulesReadWrite,
+	manageRulesWrite,
 	mcpgrafana.WithTitleAnnotation("Write alert rules"),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(true),

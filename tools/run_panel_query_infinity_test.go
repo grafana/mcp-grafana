@@ -170,8 +170,8 @@ func TestExecuteInfinityPanelQuery_MacrosAndTypePassThrough(t *testing.T) {
 
 	q := payload["queries"].([]interface{})[0].(map[string]interface{})
 	assert.Equal(t, "acme-infinity-datasource", q["datasource"].(map[string]interface{})["type"])
-	// 1h range: $__range = 1h, $__interval = range/100 = 36s
-	assert.Equal(t, "/api/metrics?range=1h&step=36s&step_ms=36000", q["url"])
+	// 1h range: $__range = 1h, $__interval = range/100 = 36s, rounded to 30s
+	assert.Equal(t, "/api/metrics?range=1h&step=30s&step_ms=30000", q["url"])
 	assert.Equal(t, `{"window": "1h"}`, q["url_options"].(map[string]interface{})["data"], "macros are substituted in nested fields too")
 }
 

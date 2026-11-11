@@ -40,6 +40,49 @@ func newTestObservability(t *testing.T) *observability.Observability {
 	return obs
 }
 
+func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile(dynamicAddressFileName, []byte("stale\n"), 0o644))
+	requestedAddress := "localhost:0"
+	listener, err := listenHTTP(requestedAddress)
+	require.NoError(t, err)
+
+	document, err := os.ReadFile(dynamicAddressFileName)
+	require.NoError(t, err)
+	address := strings.TrimSpace(string(document))
+	assert.Equal(t, listener.Addr().String(), address)
+	_, port, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0", port)
+	info, err := os.Stat(dynamicAddressFileName)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", handleHealthz)
+	server := &http.Server{
+		Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+			(httpSecurityConfig{}).policy(address, addressWithBoundPort(requestedAddress, address)),
+		)(mux),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- runHTTPServer(ctx, server, listener, "test", tlsConfig{}) }()
+
+	_, port, err = net.SplitHostPort(address)
+	require.NoError(t, err)
+	requestURL := "http://" + net.JoinHostPort("localhost", port) + "/healthz"
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, requestURL, nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	cancel()
+	require.NoError(t, <-done)
+}
+
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -891,6 +934,18 @@ func TestHTTPSecurityConfigPolicy(t *testing.T) {
 			name:        "unset --allowed-hosts falls back to defaults",
 			address:     "localhost:8000",
 			wantHosts:   []string{"localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			name:        "IPv4 wildcard bind also allows the published address",
+			address:     "0.0.0.0:8000",
+			wantHosts:   []string{"0.0.0.0:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			name:        "IPv6 wildcard bind also allows the published address",
+			address:     "[::]:8000",
+			wantHosts:   []string{"[::]:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
 			wantOrigins: nil,
 		},
 		{

@@ -42,29 +42,12 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 	}
 }
 
-func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) (any, error) {
+func manageRulesWrite(ctx context.Context, args ManageRulesWriteParams) (any, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_rules_write: %w", err)
 	}
 
 	switch args.Operation {
-	case "list":
-		opts, err := args.toGetRulesOpts()
-		if err != nil {
-			return nil, fmt.Errorf("alerting_rules_write: %w", err)
-		}
-		selectors, err := args.parseLabelSelectors()
-		if err != nil {
-			return nil, fmt.Errorf("alerting_rules_write: %w", err)
-		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
-		}
-		return listGrafanaRules(ctx, opts, selectors)
-	case "get":
-		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
-	case "versions":
-		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
 		if args.ManagedBy == "datasource" {
 			return createDatasourceAlertRule(ctx, args)

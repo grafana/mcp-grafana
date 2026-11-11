@@ -120,7 +120,8 @@ func TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement(t *testing.
 	})
 
 	// When the datasource cannot be read and enforcement is active, an
-	// unverified non-Loki override must fail closed rather than proxy.
+	// unverified non-Loki override must fail closed in doDSQuery, which cannot
+	// verify the type either, before /api/ds/query is reached.
 	t.Run("unreadable datasource under enforcement fails closed", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
@@ -149,7 +150,7 @@ func TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement(t *testing.
 			DsType:  "grafana-bigquery-datasource",
 		})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "enforcement is enabled")
+		assert.Contains(t, err.Error(), "could not be verified")
 	})
 
 	t.Run("unreadable datasource under prometheus enforcement fails closed", func(t *testing.T) {

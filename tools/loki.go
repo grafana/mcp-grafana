@@ -93,9 +93,15 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	// fallback_transport.go for the per-mode retry rules).
 	var rt http.RoundTripper
 	if legacyMode {
+		// Both legacy routes are proxy routes, which expect the full Loki path.
 		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
 	} else {
-		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+		// Grafana's Loki /resources handler prepends /loki/api/v1/ to the path
+		// it receives, so the API prefix belongs to the rewritten part:
+		// /proxy/uid/{uid}/loki/api/v1/query_range falls back to
+		// /resources/query_range, not /resources/loki/api/v1/query_range
+		// (which reaches Loki doubled and gets its UI page back).
+		rt = newDatasourceFallbackTransport(transport, primaryBase+lokiAPIPathPrefix, fallbackBase)
 	}
 
 	client := &http.Client{
@@ -116,6 +122,9 @@ const lokiQuerySource = "mcp-grafana"
 
 // lokiQueryTags is sent as the X-Query-Tags header on every Loki proxy request.
 const lokiQueryTags = "Source=" + lokiQuerySource
+
+// lokiAPIPathPrefix is the path prefix of every native Loki API route.
+const lokiAPIPathPrefix = "/loki/api/v1"
 
 // makeRequest makes an HTTP request to the Loki API and returns the response body
 func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params url.Values) ([]byte, error) {
@@ -228,11 +237,12 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
 	}
 
-	start, err := parseStartTime(args.StartRFC3339)
+	startStr, endStr := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	start, err := parseStartTime(startStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	end, err := parseEndTime(args.EndRFC3339)
+	end, err := parseEndTime(endStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -278,11 +288,12 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
 	}
 
-	start, err := parseStartTime(args.StartRFC3339)
+	startStr, endStr := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	start, err := parseStartTime(startStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	end, err := parseEndTime(args.EndRFC3339)
+	end, err := parseEndTime(endStr)
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
@@ -341,12 +352,19 @@ func addTimeRangeParams(params url.Values, startRFC3339, endRFC3339 string) erro
 	return nil
 }
 
+// lokiDefaultLookback is how far back log queries read when no start is given.
+const lokiDefaultLookback = time.Hour
+
 // getDefaultTimeRange returns default start and end times if not provided
-// Returns start time (1 hour ago) and end time (now) in RFC3339 format
+// Returns start time (1 hour before end) and end time (now) in RFC3339 format
 func getDefaultTimeRange(startRFC3339, endRFC3339 string) (string, string) {
 	if startRFC3339 == "" {
-		// Default to 1 hour ago if not specified
-		startRFC3339 = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+		// Count back from end so an end-only range never starts after it.
+		anchor := time.Now()
+		if end, err := parseEndTime(endRFC3339); err == nil && !end.IsZero() {
+			anchor = end
+		}
+		startRFC3339 = anchor.Add(-lokiDefaultLookback).Format(time.RFC3339)
 	}
 	if endRFC3339 == "" {
 		// Default to now if not specified
@@ -363,9 +381,12 @@ type QueryLokiLogsParams struct {
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now')"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (default max: 100\\, configurable by MCP server)."`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
-	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
+	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value. On VictoriaLogs\\, 'instant' returns the newest log lines from the hour before endRfc3339 (default now)."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries."`
+
+	// step overrides StepSeconds for run_panel_query, whose $__auto can be sub-second.
+	step time.Duration
 }
 
 // QueryMetadata provides context about the query results for AI agents
@@ -615,7 +636,13 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	if err := guardLokiQuery(ctx, backend, args.LogQL, args.QueryType, startTime, endTime); err != nil {
+	guardType, guardStart, guardEnd := args.QueryType, startTime, endTime
+	if _, ok := backend.(*victoriaLogsBackend); ok && args.QueryType == "instant" {
+		// VictoriaLogs reads instant as a lookback window, so check that window.
+		guardType = "range"
+		guardStart, guardEnd = vlInstantWindow(startTime, endTime)
+	}
+	if err := guardLokiQuery(ctx, backend, args.LogQL, guardType, guardStart, guardEnd); err != nil {
 		return nil, err
 	}
 
@@ -627,14 +654,18 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		direction = "backward"
 	}
 
+	step := time.Duration(args.StepSeconds) * time.Second
+	if args.step > 0 {
+		step = args.step
+	}
 	result, err := backend.QueryLogs(ctx, lokiQueryParams{
-		Query:       args.LogQL,
-		QueryType:   args.QueryType,
-		Start:       startTime,
-		End:         endTime,
-		Limit:       queryLimit,
-		Direction:   direction,
-		StepSeconds: args.StepSeconds,
+		Query:     args.LogQL,
+		QueryType: args.QueryType,
+		Start:     startTime,
+		End:       endTime,
+		Limit:     queryLimit,
+		Direction: direction,
+		Step:      step,
 	})
 	if err != nil {
 		return nil, err

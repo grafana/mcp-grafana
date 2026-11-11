@@ -266,3 +266,27 @@ func TestNewPrometheusBackend_NoClientTimeout(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, b.httpClient.Timeout)
 }
+
+// Cases ported from Grafana's matchPluginId.test.ts; aliasIDs are not covered.
+func TestMatchPluginID(t *testing.T) {
+	tests := []struct {
+		idToMatch, pluginID string
+		want                bool
+	}{
+		{"test-plugin", "test-plugin", true},
+		{"different-plugin", "test-plugin", false},
+		{"prometheus", "grafana-amazonprometheus-datasource", true},
+		{"prometheus", "grafana-azureprometheus-datasource", true},
+		{"prometheus", "test-plugin", false},
+		{"prometheus", "prometheus", true},
+		{"prometheus", "loki", false},
+		{"grafana-amazonprometheus-datasource", "prometheus", true},
+		{"prometheus", "grafana-prometheus-datasource", false},
+		{"prometheus", "grafana-Amazonprometheus-datasource", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.idToMatch+"/"+tt.pluginID, func(t *testing.T) {
+			assert.Equal(t, tt.want, matchPluginID(tt.idToMatch, tt.pluginID))
+		})
+	}
+}

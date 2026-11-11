@@ -90,6 +90,45 @@ func rbacSnapshotDashboard() map[string]any {
 	return map[string]any{"uid": rbacDashboardUID, "title": "mcp rbac test", "panels": []any{}}
 }
 
+// rbacAlertRule creates an alert rule in a new folder for the tool to delete,
+// returning its UID.
+func rbacAlertRule(t *testing.T, api rbacAPI) map[string]any {
+	folderUID := rbacUnique("mcp-rbac")
+	require.NoError(t, api("POST", "/api/folders", map[string]any{"uid": folderUID, "title": folderUID}, nil))
+	t.Cleanup(func() { rbacDeleteQuietly(t, api, "/api/folders/"+folderUID) })
+
+	uid := rbacUnique("mcp-rbac")
+	require.NoError(t, api("POST", "/api/v1/provisioning/alert-rules", map[string]any{
+		"uid": uid, "title": uid, "folderUID": folderUID, "ruleGroup": "mcp-rbac-test",
+		"condition": "A",
+		"data": []any{map[string]any{
+			"refId": "A", "datasourceUid": "__expr__",
+			"relativeTimeRange": map[string]any{"from": 600, "to": 0},
+			"model":             map[string]any{"type": "math", "expression": "1"},
+		}},
+		"noDataState": "OK", "execErrState": "OK", "for": "1m",
+	}, nil))
+	t.Cleanup(func() { rbacDeleteQuietly(t, api, "/api/v1/provisioning/alert-rules/"+uid) })
+	return map[string]any{"rule_uid": uid}
+}
+
+// rbacSilence creates a silence for the tool to delete, returning its ID.
+func rbacSilence(t *testing.T, api rbacAPI) map[string]any {
+	var created struct {
+		SilenceID string `json:"silenceID"`
+	}
+	now := time.Now()
+	require.NoError(t, api("POST", "/api/alertmanager/grafana/api/v2/silences", map[string]any{
+		"matchers":  []any{map[string]any{"name": "mcp_rbac_test", "value": rbacUnique("mcp-rbac"), "isRegex": false, "isEqual": true}},
+		"startsAt":  now.Format(time.RFC3339),
+		"endsAt":    now.Add(time.Hour).Format(time.RFC3339),
+		"createdBy": "mcp-rbac-test",
+		"comment":   "mcp rbac test",
+	}, &created))
+	t.Cleanup(func() { rbacDeleteQuietly(t, api, "/api/alertmanager/grafana/api/v2/silence/"+created.SilenceID) })
+	return map[string]any{"silence_id": created.SilenceID}
+}
+
 // rbacDeleteQuietly deletes a resource the tool under test may already have
 // deleted, so a failure is only logged.
 func rbacDeleteQuietly(t *testing.T, api rbacAPI, path string) {
@@ -137,9 +176,9 @@ var rbacFixtures = map[string]rbacFixture{
 		},
 	},
 	"alerting_rules_read":     {args: map[string]any{"operation": "list"}},
-	"alerting_rules_write":    {args: map[string]any{"operation": "list"}},
+	"alerting_rules_write":    {args: map[string]any{"operation": "delete"}, setup: rbacAlertRule},
 	"alerting_silences_read":  {args: map[string]any{"operation": "list"}},
-	"alerting_silences_write": {args: map[string]any{"operation": "list"}},
+	"alerting_silences_write": {args: map[string]any{"operation": "delete"}, setup: rbacSilence},
 
 	"get_annotations":     {args: map[string]any{"limit": 1}},
 	"get_annotation_tags": {args: map[string]any{}},

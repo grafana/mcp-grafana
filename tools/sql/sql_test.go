@@ -53,6 +53,17 @@ func TestEnforceSQLLimit(t *testing.T) {
 		{"trailing hash comment", "SELECT * FROM t # c", 100, "SELECT * FROM t # c\nLIMIT 100"},
 		{"trailing slash comment", "SELECT * FROM t // c", 100, "SELECT * FROM t // c\nLIMIT 100"},
 		{"comment on earlier line", "SELECT * -- c\nFROM t", 100, "SELECT * -- c\nFROM t LIMIT 100"},
+		{"limit in line comment", "-- LIMIT 10\nSELECT * FROM t", 100, "-- LIMIT 10\nSELECT * FROM t LIMIT 100"},
+		{"limit in block comment", "SELECT * /* LIMIT 10 */ FROM t", 100, "SELECT * /* LIMIT 10 */ FROM t LIMIT 100"},
+		{"limit in string literal", "SELECT * FROM t WHERE msg = 'LIMIT 5'", 100, "SELECT * FROM t WHERE msg = 'LIMIT 5' LIMIT 100"},
+		{"limit only in CTE", "WITH x AS (SELECT id FROM t LIMIT 3) SELECT * FROM t", 100, "WITH x AS (SELECT id FROM t LIMIT 3) SELECT * FROM t LIMIT 100"},
+		{"subquery limit above max kept", "SELECT count(*) FROM (SELECT id FROM t LIMIT 5000) s", 100, "SELECT count(*) FROM (SELECT id FROM t LIMIT 5000) s LIMIT 100"},
+		{"outer limit capped, inner kept", "SELECT * FROM (SELECT id FROM t LIMIT 5000) s LIMIT 5000", 100, "SELECT * FROM (SELECT id FROM t LIMIT 5000) s LIMIT 1000"},
+		{"limit with offset", "SELECT * FROM t LIMIT 5000 OFFSET 10", 100, "SELECT * FROM t LIMIT 1000 OFFSET 10"},
+		{"escaped quote in string", "SELECT * FROM t WHERE a = 'it''s' LIMIT 50", 100, "SELECT * FROM t WHERE a = 'it''s' LIMIT 50"},
+		{"limit in slash comment", "SELECT * FROM t // LIMIT 10", 100, "SELECT * FROM t // LIMIT 10\nLIMIT 100"},
+		{"limit capped before slash comment", "SELECT * FROM t LIMIT 5000 // LIMIT 1", 100, "SELECT * FROM t LIMIT 1000 // LIMIT 1"},
+		{"every top-level limit capped", "SELECT * FROM t LIMIT 5000 UNION ALL SELECT * FROM u LIMIT 1", 100, "SELECT * FROM t LIMIT 1000 UNION ALL SELECT * FROM u LIMIT 1"},
 	}
 
 	for _, tt := range tests {

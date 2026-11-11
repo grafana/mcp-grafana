@@ -1949,6 +1949,17 @@ func KubernetesClientFromContext(ctx context.Context) *KubernetesClient {
 
 type incidentClientKey struct{}
 
+// newIncidentClient returns an incident client and its transport options.
+// incident-go only sends bearer tokens, so without one AuthRoundTripper handles auth.
+func newIncidentClient(incidentURL, apiKey string) (*incident.Client, []TransportOption) {
+	client := incident.NewClient(incidentURL, apiKey)
+	if apiKey == "" {
+		client.BeforeRequest = nil
+		return client, nil
+	}
+	return client, []TransportOption{WithoutAuth()}
+}
+
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
 // It configures the client using environment variables and applies any custom TLS settings from the context.
 var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
@@ -1964,11 +1975,11 @@ var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) co
 		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
 	}
 	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
 	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
 	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
@@ -1985,14 +1996,14 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	logger := config.LoggerOrDefault()
 	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
 	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
 	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))

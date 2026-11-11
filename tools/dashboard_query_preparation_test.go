@@ -50,8 +50,18 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			multi             bool
 			datasourceType    string
 			targetFields      map[string]interface{}
+			queryOptions      map[string]interface{}
 			requiredNames     []string
 		}{
+			{name: "macro-prefixed variable selection", query: "SELECT '$__interval_env', $__interval", overrides: map[string]string{"__interval_env": "production"}, want: "SELECT 'production', 1m"},
+			{name: "macro-like saved value", query: "SELECT '${choice}', $__interval", current: "$__interval", want: "SELECT '$__interval', 1m"},
+			{name: "SQL datasource min interval macros", query: "SELECT $__interval, $__interval_ms", want: "SELECT 1m, 60000"},
+			{name: "panel max data points and min interval macros", query: "SELECT $__interval, $__interval_ms", queryOptions: map[string]interface{}{"maxDataPoints": float64(1000), "interval": "1s"}, want: "SELECT 5s, 5000"},
+			{name: "panel min interval variable", query: "SELECT $__interval", current: "2m", queryOptions: map[string]interface{}{"interval": "$choice"}, want: "SELECT 2m"},
+			{name: "CloudWatch max data points macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", queryOptions: map[string]interface{}{"maxDataPoints": float64(1000)}, want: "SELECT 5000"},
+			{name: "macro-like override", query: "SELECT '$choice', $__range_s", current: "saved", overrides: map[string]string{"choice": "${__range_s}"}, want: "SELECT '${__range_s}', 3600"},
+			{name: "macro-like multi-value", query: "SELECT * FROM t WHERE w IN ($choice)", current: []interface{}{"$__interval", "$__range"}, multi: true, want: "SELECT * FROM t WHERE w IN ('$__interval','$__range')"},
+			{name: "CloudWatch macro-like value", query: "SELECT $choice, $__interval_ms", current: "$__interval_ms", datasourceType: "cloudwatch", want: "SELECT $__interval_ms, 30000", requiredNames: []string{"choice"}},
 			{name: "multi-value sqlstring", query: "SELECT ${choice:sqlstring}", current: []interface{}{"east", "west"}, want: "SELECT 'east','west'"},
 			{name: "multi-value unformatted", query: "SELECT * FROM t WHERE region IN ($choice)", current: []interface{}{"east", "west"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east','west')"},
 			{name: "multi-value single selection", query: "SELECT * FROM t WHERE region IN (${choice})", current: []interface{}{"east"}, multi: true, want: "SELECT * FROM t WHERE region IN ('east')"},
@@ -79,7 +89,7 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "null", query: "SELECT '${choice}'", want: "SELECT ''"},
 			{name: "null with All label", query: "SELECT '${choice}'", currentText: "All", want: "SELECT ''"},
 			{name: "saved option metadata", query: "SELECT ${choice:sqlstring}", current: "saved", defaultValue: "east", want: "SELECT 'saved'"},
-			{name: "time macros", query: "SELECT $__range_s, $__interval_ms", want: "SELECT 3600, 36000"},
+			{name: "time macros", query: "SELECT $__range_s, $__interval_ms", want: "SELECT 3600, 60000"},
 			{name: "default time range", query: "SELECT $__range_s", want: "SELECT 3600", defaultRange: true},
 			{name: "constant fallback", query: "SELECT ${choice:sqlstring}", kind: "Constant", fallback: "constant", want: "SELECT 'constant'"},
 			{name: "textbox fallback", query: "SELECT ${choice:sqlstring}", kind: "Textbox", fallback: "text", want: "SELECT 'text'"},
@@ -87,6 +97,9 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "All scalar", query: "SELECT ${choice:sqlstring}", current: "$__all", all: true},
 			{name: "text-only All", query: "SELECT ${choice:sqlstring}", currentText: "All", omitCurrentValue: true, all: true},
 			{name: "text-only All override", query: "SELECT ${choice:sqlstring}", currentText: "All", omitCurrentValue: true, overrides: map[string]string{"choice": "east"}, want: "SELECT 'east'"},
+			{name: "no saved value", query: "SELECT ${choice:sqlstring}", omitCurrentValue: true, all: true},
+			{name: "no saved value override", query: "SELECT ${choice:sqlstring}", omitCurrentValue: true, overrides: map[string]string{"choice": "east"}, want: "SELECT 'east'"},
+			{name: "unreferenced no saved value", query: "SELECT 1", omitCurrentValue: true, want: "SELECT 1"},
 			{name: "All array", query: "SELECT ${choice:sqlstring}", current: []interface{}{"$__all"}, all: true},
 			{name: "All with stale array entries", query: "SELECT ${choice:sqlstring}", current: []interface{}{"$__all", "east"}, all: true},
 			{name: "bracketed All", query: "SELECT [[choice:sqlstring]]", current: "$__all", all: true},
@@ -103,8 +116,8 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "InfluxQL macros", query: "SELECT mean(value) FROM cpu GROUP BY time($__interval)", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "influxql"}, want: "SELECT mean(value) FROM cpu GROUP BY time($__interval)"},
 			{name: "Flux macros", query: "from(bucket: \"metrics\") |> aggregateWindow(every: ${__interval}, fn: mean)", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "flux"}, want: "from(bucket: \"metrics\") |> aggregateWindow(every: ${__interval}, fn: mean)"},
 			{name: "InfluxQL macro and variable", query: "SELECT mean(value) FROM $choice GROUP BY time($__interval)", current: "cpu", datasourceType: "influxdb", targetFields: map[string]interface{}{"queryType": "influxql"}, want: "SELECT mean(value) FROM cpu GROUP BY time($__interval)", requiredNames: []string{"choice"}},
-			{name: "CloudWatch macro and variable", query: "SELECT $choice, $__interval_ms", current: "CPUUtilization", datasourceType: "cloudwatch", want: "SELECT CPUUtilization, 36000", requiredNames: []string{"choice"}},
-			{name: "CloudWatch macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", want: "SELECT 36000"},
+			{name: "CloudWatch macro and variable", query: "SELECT $choice, $__interval_ms", current: "CPUUtilization", datasourceType: "cloudwatch", want: "SELECT CPUUtilization, 30000", requiredNames: []string{"choice"}},
+			{name: "CloudWatch macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", want: "SELECT 30000"},
 			{name: "ClickHouse interval macros", query: "SELECT $__interval, $__interval_ms, $__interval_s LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 3s, 3000, $__interval_s LIMIT 100"},
 			{name: "ClickHouse time macros", query: "SELECT $__from, $__to FROM logs WHERE $__timeFilter(ts) LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1704067200000, 1704070800000 FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100"},
 			{name: "ClickHouse macro and variable", query: "SELECT $choice, $__interval FROM logs WHERE $__timeFilter(ts) LIMIT 100", current: "value", datasourceType: "grafana-clickhouse-datasource", want: "SELECT value, 3s FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100", requiredNames: []string{"choice"}},
@@ -156,12 +169,16 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 				if tc.datasource != "" {
 					panelUID = tc.datasource
 				}
+				panel := map[string]interface{}{
+					"id": float64(1), "datasource": map[string]interface{}{"uid": panelUID, "type": datasourceType},
+					"targets": []interface{}{target},
+				}
+				for key, value := range tc.queryOptions {
+					panel[key] = value
+				}
 				db := map[string]interface{}{
 					"templating": map[string]interface{}{"list": []interface{}{variable}},
-					"panels": []interface{}{map[string]interface{}{
-						"id": float64(1), "datasource": map[string]interface{}{"uid": panelUID, "type": datasourceType},
-						"targets": []interface{}{target},
-					}},
+					"panels":     []interface{}{panel},
 				}
 				target["refId"] = "A"
 				target["datasource"] = map[string]interface{}{"uid": panelUID}
@@ -173,7 +190,7 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 								map[string]interface{}{"spec": map[string]interface{}{"refId": "A", "query": map[string]interface{}{
 									"group": datasourceType, "datasource": map[string]interface{}{"name": panelUID}, "spec": target,
 								}}},
-							}}},
+							}, "queryOptions": tc.queryOptions}},
 						}}},
 					}
 				}
@@ -358,4 +375,79 @@ func TestRunPanelQueryAllDatasourceOverride(t *testing.T) {
 			assert.Equal(t, 1, queryCalls, "datasource overrides must not skip All checks in other target fields")
 		})
 	}
+}
+
+func TestPanelRequiredVariablesExcludeOwnedMacros(t *testing.T) {
+	query := "$__interval_s $__timeInterval(ts) $__from $__fromTime $__conditionalAll(x, $job) $__interval_env $__unknown"
+	for _, datasourceType := range []string{"clickhouse", "grafana-clickhouse-datasource"} {
+		variables := findPanelVariablesInQuery(query, datasourceType, nil, nil)
+		var names []string
+		for _, variable := range variables {
+			names = append(names, variable.Name)
+		}
+		assert.ElementsMatch(t, []string{"job", "__interval_env", "__unknown"}, names)
+	}
+	variables := findPanelVariablesInQuery("$__timeInterval", "postgres", nil, nil)
+	require.Len(t, variables, 1)
+	assert.Equal(t, "__timeInterval", variables[0].Name)
+	variables = findPanelVariablesInQuery("$__interval_s", "clickhouse", map[string]VariableInfo{"__interval_s": {Name: "__interval_s"}}, nil)
+	require.Len(t, variables, 1)
+	variables = findPanelVariablesInQuery("$__interval_s", "clickhouse", nil, map[string]string{"__interval_s": "selected"})
+	require.Len(t, variables, 1)
+}
+
+func TestPanelRequiredVariablesExcludeSQLMacros(t *testing.T) {
+	for _, datasourceType := range []string{"postgres", "grafana-postgresql-datasource", "mysql", "mssql"} {
+		queries, err := preparePanelQueries(map[string]interface{}{}, DashboardPanelQueriesParams{
+			Variables: map[string]string{}, Start: "2026-10-30T00:00:00Z", End: "2026-10-30T01:00:00Z",
+		}, []panelQuery{{
+			Query:      "SELECT $__time(ts), $__unixEpochFrom(), $__unixEpochTo() WHERE $__timeFilter(ts) AND x=$job AND y=$__timeFilter_env",
+			Datasource: datasourceInfo{Type: datasourceType},
+		}}, nil)
+		require.NoError(t, err)
+		require.Len(t, queries, 1)
+		assert.Contains(t, queries[0].ProcessedQuery, "$__unixEpochFrom()")
+		assert.Contains(t, queries[0].ProcessedQuery, "$__unixEpochTo()")
+		variables := queries[0].RequiredVariables
+		var names []string
+		for _, variable := range variables {
+			names = append(names, variable.Name)
+		}
+		assert.ElementsMatch(t, []string{"job", "__timeFilter_env"}, names)
+	}
+}
+
+// A datasource read during execution brings its min interval (jsonData.timeInterval).
+func TestRunPanelQueryDatasourceTimeInterval(t *testing.T) {
+	var submitted string
+	db := map[string]interface{}{"panels": []interface{}{map[string]interface{}{
+		"id": float64(1), "datasource": map[string]interface{}{"uid": "old", "type": "postgres"},
+		"targets": []interface{}{map[string]interface{}{"refId": "A", "rawSql": "SELECT $__interval"}},
+	}}}
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/dashboards/uid/test":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"dashboard": db})
+		case "/api/datasources/uid/pg":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"uid": "pg", "type": "grafana-postgresql-datasource",
+				"jsonData": map[string]interface{}{"timeInterval": "2m"}})
+		case "/api/ds/query":
+			var payload map[string]interface{}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			submitted = safeString(safeArray(payload, "queries")[0].(map[string]interface{}), "rawSql")
+			frames := data.Frames{data.NewFrame("", data.NewField("value", nil, []int64{1}))}
+			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": {Frames: frames}}})
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	result, err := runPanelQuery(enforceTestCtx(ts, false), RunPanelQueryParams{DashboardUID: "test", PanelIDs: []int{1},
+		DatasourceUID: "pg", Start: "1704067200000", End: "1704070800000"})
+	require.NoError(t, err)
+	require.Empty(t, result.Errors)
+	assert.Equal(t, "SELECT 2m", submitted)
 }

@@ -210,8 +210,8 @@ func logsQLOrAll(matcher string) string {
 }
 
 // QueryLogs runs a LogsQL query. Range and instant requests both go through
-// /select/logsql/query; instant is implemented by anchoring the time window
-// to the requested point. Metric-style queries (PromQL-compatible result
+// /select/logsql/query; instant reads the lookback window that ends at the
+// requested point. Metric-style queries (PromQL-compatible result
 // types from /stats_query) are not exposed here — callers that want
 // aggregations should phrase them as LogsQL `... | stats by (...)` and use
 // the vector returned by the regular log query.
@@ -222,20 +222,7 @@ func (b *victoriaLogsBackend) QueryLogs(ctx context.Context, p lokiQueryParams) 
 
 	start, end := p.Start, p.End
 	if p.QueryType == "instant" {
-		// Instant ≈ "value at a point in time". VictoriaLogs has no
-		// dedicated instant endpoint, so we collapse the window to the
-		// chosen instant (preferring End, then Start, then now) and let
-		// the limit cap the result.
-		var anchor time.Time
-		switch {
-		case !end.IsZero():
-			anchor = end
-		case !start.IsZero():
-			anchor = start
-		default:
-			anchor = time.Now()
-		}
-		start, end = anchor, anchor
+		start, end = vlInstantWindow(start, end)
 	}
 
 	entries, err := b.queryLogsViaDSQuery(ctx, p.Query, start, end, p.Limit)
@@ -256,6 +243,19 @@ func (b *victoriaLogsBackend) QueryLogs(ctx context.Context, p lokiQueryParams) 
 		Entries:    entries,
 		ResultType: "streams",
 	}, nil
+}
+
+// vlInstantWindow returns the lookback window ending at the anchor (end, else
+// start, else now). End is exclusive, so it sits 1ns past the anchor.
+func vlInstantWindow(start, end time.Time) (time.Time, time.Time) {
+	anchor := end
+	if anchor.IsZero() {
+		anchor = start
+	}
+	if anchor.IsZero() {
+		anchor = time.Now()
+	}
+	return anchor.Add(-lokiDefaultLookback), anchor.Add(time.Nanosecond)
 }
 
 // queryLogsViaDSQuery runs the query through Grafana's /api/ds/query

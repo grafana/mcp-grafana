@@ -24,6 +24,7 @@ type openSearchBackend struct {
 	datasourceUID   string
 	configuredIndex string
 	timeField       string
+	logs            esLogFields
 }
 
 func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSearchBackend, error) {
@@ -56,7 +57,12 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 		datasourceUID:   ds.UID,
 		configuredIndex: configuredIndex,
 		timeField:       timeFieldFromDataSource(ds),
+		logs:            logFieldsFromDataSource(ds),
 	}, nil
+}
+
+func (b *openSearchBackend) logFields() esLogFields {
+	return b.logs
 }
 
 // indexMatchesPattern reports whether the given index is compatible with the
@@ -238,6 +244,11 @@ func framesToDocuments(frames data.Frames, timeField string, keepUnderscored boo
 					doc.Source[key] = val
 				}
 			}
+		}
+		if doc.Timestamp == "" {
+			// The time field holds a number (epoch milliseconds) or is a
+			// nested path.
+			doc.Timestamp = sourceTimestamp(doc.Source, timeField)
 		}
 
 		documents = append(documents, doc)

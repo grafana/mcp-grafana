@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -29,7 +30,10 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
-const defaultServerName = "mcp-grafana"
+const (
+	defaultServerName      = "mcp-grafana"
+	dynamicAddressFileName = "mcp-grafana-address"
+)
 
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
@@ -813,10 +817,17 @@ func withCallerAuth(token string, h http.Handler) http.Handler {
 	return mcpgrafana.RequireBearerToken(token, slog.Default())(h)
 }
 
-func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy {
+func (hsc httpSecurityConfig) policy(addresses ...string) mcpgrafana.HostOriginPolicy {
 	hosts := splitAndTrim(hsc.allowedHosts)
 	if len(hosts) == 0 {
-		hosts = mcpgrafana.DefaultAllowedHosts(address)
+		for _, address := range addresses {
+			candidates := append([]string{strings.ToLower(address)}, mcpgrafana.DefaultAllowedHosts(address)...)
+			for _, host := range candidates {
+				if !slices.Contains(hosts, host) {
+					hosts = append(hosts, host)
+				}
+			}
+		}
 	}
 	return mcpgrafana.HostOriginPolicy{
 		AllowedHosts:   hosts,
@@ -950,17 +961,23 @@ func isBenignStdioClose(err error) bool {
 	return errors.Is(err, mcp.ErrConnectionClosed)
 }
 
-// runHTTPServer starts an *http.Server and blocks until ctx is cancelled or
-// the server returns an error. When tlsCert is non-empty, it uses TLS. On
-// context cancellation it performs a graceful shutdown with a 5-second deadline.
-func runHTTPServer(ctx context.Context, srv *http.Server, transportName, tlsCert, tlsKey string) error {
+// runHTTPServer starts an *http.Server on an already-bound listener and blocks
+// until ctx is cancelled or the server returns an error. On cancellation it
+// performs a graceful shutdown with a 5-second deadline.
+func runHTTPServer(
+	ctx context.Context,
+	srv *http.Server,
+	listener net.Listener,
+	transportName string,
+	tls tlsConfig,
+) error {
 	serverErr := make(chan error, 1)
 	go func() {
 		var err error
-		if tlsCert != "" {
-			err = srv.ListenAndServeTLS(tlsCert, tlsKey)
+		if tls.certFile != "" {
+			err = srv.ServeTLS(listener, tls.certFile, tls.keyFile)
 		} else {
-			err = srv.ListenAndServe()
+			err = srv.Serve(listener)
 		}
 		if err != nil && err != http.ErrServerClosed {
 			serverErr <- err
@@ -977,6 +994,55 @@ func runHTTPServer(ctx context.Context, srv *http.Server, transportName, tlsCert
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+func listenHTTP(address string) (net.Listener, error) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %q: %w", address, err)
+	}
+	if _, port, splitErr := net.SplitHostPort(address); splitErr == nil && port == "0" {
+		if err := writeBoundAddress(dynamicAddressFileName, listener.Addr().String()); err != nil {
+			_ = listener.Close()
+			return nil, err
+		}
+	}
+	return listener, nil
+}
+
+func addressWithBoundPort(address, boundAddress string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return boundAddress
+	}
+	_, port, err := net.SplitHostPort(boundAddress)
+	if err != nil {
+		return boundAddress
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func writeBoundAddress(path, address string) error {
+	if path == "" {
+		return nil
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create address file beside %q: %w", path, err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if _, err := temporary.WriteString(address + "\n"); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write bound address to %q: %w", temporaryPath, err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close bound address file %q: %w", temporaryPath, err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("publish bound address file %q: %w", path, err)
+	}
+	return nil
 }
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -1361,6 +1427,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}
 
+	var listener net.Listener
+	boundAddress := addr
+	if transport == "sse" || transport == "streamable-http" {
+		listener, err = listenHTTP(addr)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = listener.Close() }()
+		boundAddress = listener.Addr().String()
+	}
+
 	disableLocalhostProtection := len(splitAndTrim(hsc.allowedHosts)) > 0
 
 	switch transport {
@@ -1418,16 +1495,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Addr:    addr,
-			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+				hsc.policy(boundAddress, addressWithBoundPort(addr, boundAddress)),
+			)(mux),
 			// Derive HTTP request contexts from the cancellable ctx so that
 			// SIGTERM cancels long-lived SSE streams and Shutdown completes
 			// within its deadline instead of blocking on open connections.
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using SSE transport",
-			"version", mcpgrafana.Version(), "address", addr, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
-		return runHTTPServer(ctx, httpSrv, "SSE", tls.certFile, tls.keyFile)
+			"version", mcpgrafana.Version(), "address", boundAddress, "ssePath", ssePath, "keepAlive", keepAlive, "metrics", obs.MetricsEnabled)
+		return runHTTPServer(ctx, httpSrv, listener, "SSE", tls)
 
 	case "streamable-http":
 		httpFn := mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)
@@ -1455,13 +1533,14 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 
 		httpSrv := &http.Server{
-			Addr:        addr,
-			Handler:     mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+				hsc.policy(boundAddress, addressWithBoundPort(addr, boundAddress)),
+			)(mux),
 			BaseContext: func(_ net.Listener) context.Context { return ctx },
 		}
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
-			"version", mcpgrafana.Version(), "address", addr, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
-		return runHTTPServer(ctx, httpSrv, "StreamableHTTP", tls.certFile, tls.keyFile)
+			"version", mcpgrafana.Version(), "address", boundAddress, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
+		return runHTTPServer(ctx, httpSrv, listener, "StreamableHTTP", tls)
 
 	default:
 		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)

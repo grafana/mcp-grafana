@@ -62,11 +62,26 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 		return newCloudMonitoringBackend(ctx, ds, proj)
 	case "tempo":
 		return nil, fmt.Errorf("datasource %s is of type %q, which is not a supported Prometheus-compatible datasource", uid, ds.Type)
+	case "loki", victoriaLogsDatasourceType:
+		return nil, fmt.Errorf("datasource %s is of type %q, a log datasource, which is not a supported Prometheus-compatible datasource; query it through the Loki tools", uid, ds.Type)
 	default:
 		// For prometheus, thanos, cortex, mimir, VictoriaMetrics and any other
 		// Prometheus-compatible datasource.
 		return newPrometheusBackend(ctx, uid, ds)
 	}
+}
+
+// promFlavorPattern matches Prometheus flavor plugins such as
+// grafana-amazonprometheus-datasource, as Grafana's matchPluginId does.
+var promFlavorPattern = regexp.MustCompile(`^grafana-[0-9a-z]+prometheus-datasource$`)
+
+func isPromFlavor(pluginID string) bool {
+	return pluginID == "prometheus" || promFlavorPattern.MatchString(pluginID)
+}
+
+// matchPluginID ports Grafana's matchPluginId, except for plugin aliasIDs.
+func matchPluginID(idToMatch, pluginID string) bool {
+	return pluginID == idToMatch || (isPromFlavor(idToMatch) && isPromFlavor(pluginID))
 }
 
 // prometheusBackend runs queries through Grafana's /api/ds/query endpoint, so

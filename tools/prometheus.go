@@ -52,6 +52,13 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric metadata: %w", err)
 	}
+	if args.LimitPerMetric > 0 {
+		for name, entries := range metadata {
+			if len(entries) > args.LimitPerMetric {
+				metadata[name] = entries[:args.LimitPerMetric]
+			}
+		}
+	}
 	return metadata, nil
 }
 

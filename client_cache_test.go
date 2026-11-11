@@ -71,6 +71,32 @@ func TestClientCache_IncidentClient(t *testing.T) {
 	assert.Equal(t, 1, i)
 }
 
+func TestExtractIncidentClientCached_KeysOnBasicAuth(t *testing.T) {
+	t.Setenv("GRAFANA_URL", "http://localhost:3000")
+	t.Setenv("GRAFANA_API_KEY", "")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+	t.Setenv("GRAFANA_USERNAME", "")
+	t.Setenv("GRAFANA_PASSWORD", "")
+	cache := NewClientCache(nil)
+	defer cache.Close()
+	extract := extractIncidentClientCached(cache)
+
+	clientFor := func(user string) *incident.Client {
+		req, err := http.NewRequest(http.MethodPost, "http://example.com/mcp", nil)
+		require.NoError(t, err)
+		if user != "" {
+			req.SetBasicAuth(user, "pass")
+		}
+		return IncidentClientFromContext(extract(context.Background(), req))
+	}
+
+	// The client holds basic auth creds, so it must not be shared across users.
+	alice := clientFor("alice")
+	assert.Same(t, alice, clientFor("alice"))
+	assert.NotSame(t, alice, clientFor("bob"))
+	assert.NotSame(t, alice, clientFor(""))
+}
+
 func TestClientCache_ConcurrentAccess(t *testing.T) {
 	cache := NewClientCache(nil)
 	defer cache.Close()
