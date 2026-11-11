@@ -91,10 +91,12 @@ func matchPluginID(idToMatch, pluginID string) bool {
 type prometheusBackend struct {
 	api promv1.API
 
-	httpClient *http.Client
-	baseURL    string
-	dsUID      string
-	dsType     string
+	httpClient       *http.Client
+	baseURL          string
+	dsUID            string
+	dsType           string
+	tsdbBase         string // Authenticated Grafana proxy route, including legacy numeric IDs.
+	tsdbFallbackBase string // Legacy numeric route may fall back to resolved UID on 404.
 }
 
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
@@ -160,14 +162,22 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		dsUID = uid
 	}
 
+	_, tsdbBase := datasourceProxyPaths(dsUID)
+	tsdbFallbackBase := ""
+	if legacyMode {
+		tsdbBase, tsdbFallbackBase = primaryBase, fallbackBase
+	}
+
 	return &prometheusBackend{
 		api: promv1.NewAPI(c),
 		// No client timeout, as on the proxy client: queries are bounded by
 		// ctx and Grafana's own datasource timeout.
-		httpClient: &http.Client{Transport: baseRT, CheckRedirect: refuseRedirect},
-		baseURL:    grafanaURL,
-		dsUID:      dsUID,
-		dsType:     ds.Type,
+		httpClient:       &http.Client{Transport: baseRT, CheckRedirect: refuseRedirect},
+		baseURL:          grafanaURL,
+		dsUID:            dsUID,
+		dsType:           ds.Type,
+		tsdbBase:         tsdbBase,
+		tsdbFallbackBase: tsdbFallbackBase,
 	}, nil
 }
 

@@ -12,13 +12,12 @@ const promGuardrailMeterName = "mcp-grafana"
 
 // promGuardrailMetrics holds the OTel instruments for Prometheus guardrail
 // decisions. The four counters partition every guarded query exactly once.
-// There is no backend attribute: unlike Loki, every Prometheus backend gets
-// the same checks.
+// Cardinality metadata is optional and may be unavailable for a backend.
 type promGuardrailMetrics struct {
 	admitted   metric.Int64Counter // Passed every enabled check
 	wouldBlock metric.Int64Counter // Failed a check in shadow mode; ran anyway
 	blocked    metric.Int64Counter // Failed a check in enforce mode; rejected
-	failOpen   metric.Int64Counter // Expression could not be parsed; admitted
+	failOpen   metric.Int64Counter // Assessment incomplete; admitted
 }
 
 var (
@@ -52,7 +51,7 @@ func newPromGuardrailMetrics(mp metric.MeterProvider) promGuardrailMetrics {
 		metric.WithUnit("{query}"),
 	)
 	failOpen, _ := meter.Int64Counter("mcp.prometheus_guardrail.fail_open",
-		metric.WithDescription("Number of Prometheus queries whose expression the guardrail could not parse and admitted"),
+		metric.WithDescription("Number of Prometheus queries admitted with an incomplete guardrail assessment"),
 		metric.WithUnit("{query}"),
 	)
 

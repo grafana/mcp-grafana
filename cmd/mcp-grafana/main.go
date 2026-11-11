@@ -213,6 +213,9 @@ type grafanaConfig struct {
 	prometheusGuardrailMode                   string
 	prometheusGuardrailMaxRange               time.Duration
 	prometheusGuardrailMaxPoints              int64
+	prometheusGuardrailMaxMetricCardinality   int64
+	prometheusGuardrailCardinalityCacheTTL    time.Duration
+	prometheusGuardrailCardinalityScopeLabels string
 
 	includeArgsInSpans bool
 
@@ -294,6 +297,10 @@ func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.prometheusGuardrailRequireSelectiveLabels, "prometheus-guardrail-require-selective-labels", false, "Require a non-empty positive label constraint beyond the metric name in each PromQL vector selector. Blanket regexes and negative matchers do not provide scope. Independent of range and points limits; only applies when the guardrail is not 'off'. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS when the flag is not set.")
 	flag.DurationVar(&gc.prometheusGuardrailMaxRange, "prometheus-guardrail-max-range", 192*time.Hour, "Maximum effective time range for a single PromQL query: its time range plus the longest range vector or subquery window in the expression. Accepts Go duration strings, e.g. 192h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.prometheusGuardrailMaxPoints, "prometheus-guardrail-max-points", 11000, "Maximum points per series a PromQL range query may request, computed from its time range and step. 0 disables the points check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS environment variable when the flag is not set.")
+
+	flag.Int64Var(&gc.prometheusGuardrailMaxMetricCardinality, "prometheus-guardrail-max-metric-cardinality", 0, "Require an exact scope-label matcher for known metrics above this TSDB series count. 0 disables this best-effort heuristic (default); only active when the guardrail is not 'off'. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY.")
+	flag.DurationVar(&gc.prometheusGuardrailCardinalityCacheTTL, "prometheus-guardrail-cardinality-cache-ttl", 10*time.Minute, "TTL for Prometheus TSDB cardinality snapshots. 0 uses the default 10m. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL.")
+	flag.StringVar(&gc.prometheusGuardrailCardinalityScopeLabels, "prometheus-guardrail-cardinality-scope-labels", "job,instance,namespace,pod,service,cluster", "Comma-separated labels whose non-empty exact matchers satisfy the cardinality policy. Empty uses the default job,instance,namespace,pod,service,cluster. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS.")
 
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
 	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
@@ -395,6 +402,24 @@ func (gc *grafanaConfig) applyPrometheusGuardrailEnv(setFlags map[string]bool) e
 		}
 		gc.prometheusGuardrailRequireSelectiveLabels = b
 	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"); v != "" && !setFlags["prometheus-guardrail-max-metric-cardinality"] {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY %q: %w", v, err)
+		}
+		gc.prometheusGuardrailMaxMetricCardinality = n
+	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"); v != "" && !setFlags["prometheus-guardrail-cardinality-cache-ttl"] {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL %q: %w", v, err)
+		}
+		gc.prometheusGuardrailCardinalityCacheTTL = d
+	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS"); v != "" && !setFlags["prometheus-guardrail-cardinality-scope-labels"] {
+		gc.prometheusGuardrailCardinalityScopeLabels = v
+	}
+
 	return nil
 }
 
@@ -454,7 +479,30 @@ func (gc *grafanaConfig) validatePrometheusGuardrail() error {
 	if gc.prometheusGuardrailMaxPoints < 0 {
 		return fmt.Errorf("invalid Prometheus guardrail max points %d (--prometheus-guardrail-max-points or GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS): must be >= 0 (0 disables the points check)", gc.prometheusGuardrailMaxPoints)
 	}
+	if gc.prometheusGuardrailMaxMetricCardinality < 0 {
+		return fmt.Errorf("invalid Prometheus guardrail max metric cardinality %d (--prometheus-guardrail-max-metric-cardinality or GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY): must be >= 0 (0 disables the check)", gc.prometheusGuardrailMaxMetricCardinality)
+	}
+	if gc.prometheusGuardrailCardinalityCacheTTL < 0 {
+		return fmt.Errorf("invalid Prometheus guardrail cardinality cache TTL %s (--prometheus-guardrail-cardinality-cache-ttl or GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL): must be >= 0 (0 uses 10m)", gc.prometheusGuardrailCardinalityCacheTTL)
+	}
+	if slices.Contains(gc.cardinalityScopeLabels(), "__name__") {
+		return fmt.Errorf("invalid Prometheus guardrail cardinality scope labels (--prometheus-guardrail-cardinality-scope-labels or GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS): __name__ is not a scope label")
+	}
+
 	return nil
+}
+
+// cardinalityScopeLabels returns nil for an empty setting, selecting the
+// library defaults. Trim whitespace and duplicates for predictable matching.
+func (gc *grafanaConfig) cardinalityScopeLabels() []string {
+	var labels []string
+	for _, label := range strings.Split(gc.prometheusGuardrailCardinalityScopeLabels, ",") {
+		label = strings.TrimSpace(label)
+		if label != "" && !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 type toolEntry struct {
@@ -1668,7 +1716,7 @@ func main() {
 		os.Exit(2)
 	}
 	if gc.prometheusGuardrailMode != mcpgrafana.PrometheusGuardrailOff {
-		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints, "require_selective_labels", gc.prometheusGuardrailRequireSelectiveLabels)
+		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints, "require_selective_labels", gc.prometheusGuardrailRequireSelectiveLabels, "max_metric_cardinality", gc.prometheusGuardrailMaxMetricCardinality, "cardinality_cache_ttl", gc.prometheusGuardrailCardinalityCacheTTL, "cardinality_scope_labels", gc.cardinalityScopeLabels())
 	}
 
 	if err := validateMountFlags(transport, *basePath, *endpointPath, *healthzAddress, obs); err != nil {
@@ -1701,6 +1749,9 @@ func main() {
 		PrometheusGuardrailMode:                   gc.prometheusGuardrailMode,
 		PrometheusGuardrailMaxRange:               gc.prometheusGuardrailMaxRange,
 		PrometheusGuardrailMaxPoints:              gc.prometheusGuardrailMaxPoints,
+		PrometheusGuardrailMaxMetricCardinality:   gc.prometheusGuardrailMaxMetricCardinality,
+		PrometheusGuardrailCardinalityCacheTTL:    gc.prometheusGuardrailCardinalityCacheTTL,
+		PrometheusGuardrailCardinalityScopeLabels: gc.cardinalityScopeLabels(),
 		IncludeArgumentsInSpans:                   gc.includeArgsInSpans,
 		Timeout:                                   gc.timeout,
 		SOCKS5ProxyURL:                            socks5Proxy,
