@@ -17,11 +17,16 @@ const pin = Object.fromEntries(
 );
 const peers: Record<string, string> = JSON.parse(read('package.json')).peerDependencies;
 const manifest = JSON.parse(read('renderer.manifest.json'));
-const sha256 = createHash('sha256').update(readFileSync(join(dir, 'renderer.js'))).digest('hex');
+const hash = (name: string) => createHash('sha256').update(readFileSync(join(dir, name))).digest('hex');
+const sha256 = hash('renderer.js');
 
 describe('Renderer copy', () => {
   it('is the bundle of the pin', () => {
     expect(sha256).toBe(pin['sha256 renderer.js']);
+  });
+
+  it('has the icons of the pin (delivery.9)', () => {
+    expect(hash('icons.json')).toBe(pin['sha256 icons.json']);
   });
 
   it('has the manifest of its bundle (delivery.6)', () => {
