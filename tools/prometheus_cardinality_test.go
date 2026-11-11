@@ -41,6 +41,12 @@ func TestPromCardinalityPolicy(t *testing.T) {
 		{"regex metric", `{__name__=~"hot|small"}`, nil, promGuardUnknown, false},
 		{"nameless", `{status="200"}`, nil, promGuardUnknown, false},
 		{"metric matcher", `{__name__="hot"}`, nil, promGuardBlock, true},
+		{"conflicting metric names", `{__name__="hot",__name__="small"}`, nil, promGuardAllow, false},
+		{"conflicting metric names reversed", `{__name__="small",__name__="hot"}`, nil, promGuardAllow, false},
+		{"negated exact metric name", `{__name__="hot",__name__!="hot"}`, nil, promGuardAllow, false},
+		{"metric name excluded by regex", `{__name__="hot",__name__=~"small.*"}`, nil, promGuardAllow, false},
+		{"metric name allowed by regex", `{__name__="hot",__name__=~"h.*"}`, nil, promGuardBlock, true},
+		{"empty selector does not exempt another selector", `{__name__="hot",__name__!="hot"} or hot`, nil, promGuardBlock, true},
 		{"binary per selector", `hot{job="api"} + hot{status="200"}`, nil, promGuardBlock, true},
 		{"unknown does not hide known", `missing + hot`, nil, promGuardBlock, true},
 		{"subquery", `max_over_time(rate(hot[5m])[1h:])`, nil, promGuardBlock, true},
@@ -144,12 +150,25 @@ func TestPromCardinalityCacheCancellationAndBypass(t *testing.T) {
 	}
 	assert.Equal(t, 2, calls)
 	assert.Empty(t, c.entries)
+}
+
+func TestPromCardinalityCacheRecoversAfterSaturation(t *testing.T) {
+	c := newPromCardinalityCache()
+	var key [32]byte
+	ctx := context.Background()
 	// Saturation fails open without starting another request.
 	for range cap(c.slots) {
 		c.slots <- struct{}{}
 	}
-	_, err = c.get(context.Background(), key, time.Minute, true, func(context.Context) (map[string]uint64, error) { t.Fatal("must not fetch"); return nil, nil })
-	require.Error(t, err)
+	_, err := c.get(ctx, key, time.Minute, true, func(context.Context) (map[string]uint64, error) { t.Fatal("must not fetch"); return nil, nil })
+	require.ErrorContains(t, err, "concurrency limit")
+	<-c.slots
+	// The same identity can refresh as soon as a slot is available.
+	stats, err := c.get(ctx, key, time.Minute, true, func(context.Context) (map[string]uint64, error) {
+		return map[string]uint64{"hot": 9}, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(9), stats["hot"])
 }
 
 func TestPromCardinalityCacheIdentity(t *testing.T) {

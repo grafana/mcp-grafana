@@ -65,7 +65,9 @@ func assessPromCardinality(ctx context.Context, expr, queryType string, start, e
 				continue
 			}
 			if m.Name == model.MetricNameLabel {
-				name = m.Value
+				if name == "" {
+					name = m.Value
+				}
 				continue
 			}
 			for _, label := range scope {
@@ -76,9 +78,15 @@ func assessPromCardinality(ctx context.Context, expr, queryType string, start, e
 		}
 		if name == "" {
 			unknown = true
-		} else {
-			names[name] = struct{}{}
+			return nil
 		}
+		// An exact name excluded by any other name matcher selects no series.
+		for _, m := range vs.LabelMatchers {
+			if m.Name == model.MetricNameLabel && !m.Matches(name) {
+				return nil
+			}
+		}
+		names[name] = struct{}{}
 		return nil
 	})
 	if len(names) == 0 {
@@ -176,18 +184,27 @@ func (c *promCardinalityCache) get(ctx context.Context, key [32]byte, ttl time.D
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	if e := c.entries[key]; cacheable && e != nil && (e.expires.IsZero() || time.Now().Before(e.expires)) {
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-e.ready:
+			return e.stats, e.err
+		}
+	}
+	// Local saturation is transient. Reserve a slot before changing the cache
+	// so the next request can retry as soon as capacity is available.
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	default:
+		c.mu.Unlock()
+		return nil, errors.New("TSDB metadata concurrency limit")
+	}
 	var entry *promCardinalityEntry
 	if cacheable {
-		c.mu.Lock()
-		if e, ok := c.entries[key]; ok && (e.expires.IsZero() || time.Now().Before(e.expires)) {
-			c.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-e.ready:
-				return e.stats, e.err
-			}
-		}
 		// Evict the earliest completed entry. Never evict in-flight entries: that
 		// would allow duplicate refreshes for the same identity.
 		if len(c.entries) >= promCardinalityMaxEntries {
@@ -207,17 +224,9 @@ func (c *promCardinalityCache) get(ctx context.Context, key [32]byte, ttl time.D
 		}
 		entry = &promCardinalityEntry{ready: make(chan struct{})}
 		c.entries[key] = entry
-		c.mu.Unlock()
 	}
-	var stats map[string]uint64
-	var err error
-	select {
-	case c.slots <- struct{}{}:
-		stats, err = fetch(ctx)
-		<-c.slots
-	default:
-		err = errors.New("TSDB metadata concurrency limit")
-	}
+	c.mu.Unlock()
+	stats, err := fetch(ctx)
 	if entry != nil {
 		c.mu.Lock()
 		entry.stats, entry.err = stats, err
