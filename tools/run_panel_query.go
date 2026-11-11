@@ -260,13 +260,6 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 			// on.
 			availableDS := getAvailableDatasourceUIDs(ctx, "")
 			return nil, fmt.Errorf("could not resolve datasource '%s' (%v) and no datasourceType was provided. Hint: provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, lookupErr, availableDS)
-		case len(enforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "loki":
-			// The datasource is unreadable, so the caller-supplied type is
-			// unverified. With Loki label-matcher enforcement active, refuse
-			// rather than route a possibly-Loki datasource onto the
-			// /api/ds/query path, which bypasses enforcement. Fails closed,
-			// mirroring the VictoriaLogs guard in lokiBackendForDatasource.
-			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Loki label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Loki via query_loki_logs, or supply an accessible datasource", datasourceUID)
 		case len(prometheusEnforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "prometheus":
 			// The datasource is unreadable, so the caller-supplied type is
 			// unverified. With Prometheus label-matcher enforcement active, refuse

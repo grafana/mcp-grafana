@@ -150,7 +150,9 @@ func TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement(t *testing.
 			DsType:  "grafana-bigquery-datasource",
 		})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "could not be verified")
+		// A failed lookup must still be rejected by the shared /api/ds/query
+		// guard, rather than by an earlier Loki-only routing check.
+		assert.Contains(t, err.Error(), "refusing /api/ds/query for datasource")
 	})
 
 	t.Run("unreadable datasource under prometheus enforcement fails closed", func(t *testing.T) {
@@ -226,4 +228,50 @@ func TestRunSinglePanelQuery_PanelTypeCannotBypassPrometheusEnforcement(t *testi
 	})
 	require.Error(t, err)
 	assert.False(t, dsQueryHit, "an unverified panel type must not bypass enforcement")
+}
+
+func TestRunSinglePanelQuery_UnreadableDatasourceWithBothEnforcements(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dsType  string
+		wantErr string
+	}{
+		{"spoof Loki", "loki", "Prometheus label-matcher enforcement is enabled"},
+		{"spoof BigQuery", "grafana-bigquery-datasource", "Prometheus label-matcher enforcement is enabled"},
+		{"spoof Prometheus", "prometheus", "getting backend"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/datasources/uid/mystery-uid":
+					w.WriteHeader(http.StatusForbidden)
+				case "/api/frontend/settings":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"datasources":{}}`))
+				default:
+					t.Errorf("query must not reach %q for an unreadable datasource", r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}))
+			defer srv.Close()
+
+			ctx := enforceTestCtx(srv, true)
+			gc := mcpgrafana.GrafanaConfigFromContext(ctx)
+			matchers, err := ParseEnforcedMatchers(`cluster="prod"`)
+			require.NoError(t, err)
+			gc.PrometheusEnforcedMatchers = matchers
+			ctx = mcpgrafana.WithGrafanaConfig(ctx, gc)
+
+			_, err = runSinglePanelQuery(ctx, singlePanelQueryParams{
+				DB:      panelWithType("mystery-uid", "loki"),
+				PanelID: 1,
+				Start:   "now-1h",
+				End:     "now",
+				DsUID:   "mystery-uid",
+				DsType:  tc.dsType,
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
 }
