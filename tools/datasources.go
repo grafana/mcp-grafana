@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,8 +65,9 @@ type dataSourceSummary struct {
 
 type ListDatasourcesResult struct {
 	Datasources []dataSourceSummary `json:"datasources"`
-	Total       int                 `json:"total"`   // Total count before pagination
-	HasMore     bool                `json:"hasMore"` // Whether more results exist
+	Total       int                 `json:"total"`          // Total count before pagination
+	HasMore     bool                `json:"hasMore"`        // Whether more results exist
+	Hint        string              `json:"hint,omitempty"` // Optional next step when nothing matched, e.g. where to learn how to set it up
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
@@ -107,11 +109,21 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 
 	hasMore := offset+len(paginated) < total
 
-	return &ListDatasourcesResult{
+	result := &ListDatasourcesResult{
 		Datasources: summarizeDatasources(paginated),
 		Total:       total,
 		HasMore:     hasMore,
-	}, nil
+	}
+	// Only an empty result with no name filter and no paging is a real "not set
+	// up": a name filter or an offset past the end just means nothing matched.
+	if total == 0 && args.Name == "" && offset == 0 {
+		problem := "No datasources are configured"
+		if args.Type != "" {
+			problem = fmt.Sprintf("No %s datasource is configured", args.Type)
+		}
+		result.Hint = interactiveLearningHint(ctx, problem)
+	}
+	return result, nil
 }
 
 type CreateDatasourceParams struct {
@@ -464,18 +476,46 @@ var UpdateDatasource = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions("datasources:read", "datasources:write"),
 )
 
+// datasourceNotFoundError marks a lookup that reached Grafana and found no such
+// datasource, as opposed to a permissions or transport failure. The message is
+// unchanged from before; the type lets callers tell the cases apart.
+type datasourceNotFoundError string
+
+func (e datasourceNotFoundError) Error() string { return string(e) }
+
+// newDatasourceNotFoundError builds a datasourceNotFoundError and, when
+// available, appends the Interactive Learning pointer so a missing datasource
+// comes with a next step.
+func newDatasourceNotFoundError(ctx context.Context, msg string) datasourceNotFoundError {
+	if hint := interactiveLearningHint(ctx, ""); hint != "" {
+		msg += ". " + hint
+	}
+	return datasourceNotFoundError(msg)
+}
+
 // GetDatasourceParams accepts either a UID or Name to look up a datasource.
 type GetDatasourceParams struct {
 	UID  string `json:"uid,omitempty" jsonschema:"description=The UID of the datasource. If provided\\, takes priority over name."`
 	Name string `json:"name,omitempty" jsonschema:"description=The name of the datasource. Used if UID is not provided."`
 }
 
+// withNotFoundHint turns a datasource.ErrNotFound into a datasourceNotFoundError
+// carrying the Interactive Learning pointer; other errors pass through.
+func withNotFoundHint(ctx context.Context, err error) error {
+	if errors.Is(err, datasource.ErrNotFound) {
+		return newDatasourceNotFoundError(ctx, err.Error())
+	}
+	return err
+}
+
 func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataSource, error) {
 	if args.UID != "" {
-		return datasource.ByUID(ctx, args.UID)
+		ds, err := datasource.ByUID(ctx, args.UID)
+		return ds, withNotFoundHint(ctx, err)
 	}
 	if args.Name != "" {
-		return datasource.ByName(ctx, args.Name)
+		ds, err := datasource.ByName(ctx, args.Name)
+		return ds, withNotFoundHint(ctx, err)
 	}
 	return nil, fmt.Errorf("either uid or name must be provided")
 }

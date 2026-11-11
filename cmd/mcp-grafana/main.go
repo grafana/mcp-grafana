@@ -203,10 +203,11 @@ type grafanaConfig struct {
 
 	maxLokiLogLimit int
 
-	lokiGuardrailMode      string
-	lokiGuardrailMaxBytes  int64
-	lokiGuardrailMaxRange  time.Duration
-	lokiGuardrailOnFailure string
+	lokiGuardrailMode               string
+	disableInteractiveLearningHints bool
+	lokiGuardrailMaxBytes           int64
+	lokiGuardrailMaxRange           time.Duration
+	lokiGuardrailOnFailure          string
 
 	prometheusGuardrailRequireSelectiveLabels bool
 	prometheusGuardrailMode                   string
@@ -279,6 +280,8 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
 	flag.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
 	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
+
+	flag.BoolVar(&gc.disableInteractiveLearningHints, "disable-interactive-learning-hints", false, "Stop tool results from pointing users at Grafana Interactive Learning (the My Learning page) when something is not set up or a tool hits a dead end")
 
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 
@@ -1654,6 +1657,7 @@ func main() {
 		AllowGrafanaURLOverride:                   gc.allowURLOverride,
 		AllowCrossOriginRedirects:                 gc.allowCrossOriginRedirects,
 		MaxLokiLogLimit:                           gc.maxLokiLogLimit,
+		DisableInteractiveLearningHints:           gc.disableInteractiveLearningHints,
 		LokiGuardrailMode:                         gc.lokiGuardrailMode,
 		LokiGuardrailMaxBytes:                     gc.lokiGuardrailMaxBytes,
 		LokiGuardrailMaxRange:                     gc.lokiGuardrailMaxRange,
