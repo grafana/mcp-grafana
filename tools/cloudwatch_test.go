@@ -317,30 +317,53 @@ func TestCloudWatchResultFromResponse_MultipleFramesStaySeparate(t *testing.T) {
 	}`, got)
 }
 
-func TestCloudWatchResultFromResponse_SingleFrameKeepsShape(t *testing.T) {
+func TestCloudWatchResultFromResponse_SingleFrameUsesSeries(t *testing.T) {
 	got := cloudWatchResultJSON(t,
 		cloudWatchTestFrame("i-aaa", []int64{1000, 2000}, []float64{10, 20}),
 	)
 
 	assert.JSONEq(t, `{
-		"label": "i-aaa",
-		"timestamps": [1000, 2000],
-		"values": [10, 20],
-		"statistics": {"sum": 30, "min": 10, "max": 20, "avg": 15, "count": 2}
+		"series": [
+			{
+				"label": "i-aaa",
+				"timestamps": [1000, 2000],
+				"values": [10, 20],
+				"statistics": {"sum": 30, "min": 10, "max": 20, "avg": 15, "count": 2}
+			}
+		]
 	}`, got)
 }
 
-func TestCloudWatchResultFromResponse_NoFramesKeepsShape(t *testing.T) {
+func TestCloudWatchResultFromResponse_NoFramesReturnsEmptySeries(t *testing.T) {
 	got := cloudWatchResultJSON(t)
 
 	hints, err := json.Marshal(generateCloudWatchEmptyResultHints())
 	require.NoError(t, err)
-	assert.JSONEq(t, `{
-		"label": "AWS/EC2 - CPUUtilization",
-		"timestamps": [],
-		"values": [],
-		"hints": `+string(hints)+`
-	}`, got)
+	assert.JSONEq(t, `{"series": [], "hints": `+string(hints)+`}`, got)
+}
+
+func TestCloudWatchSeriesLabel(t *testing.T) {
+	const def = "AWS/EC2 - CPUUtilization"
+	named := cloudWatchTestFrame("", []int64{1000}, []float64{1})
+	named.Name = "i-named"
+
+	labeled := cloudWatchTestFrame("", []int64{1000}, []float64{1})
+	labeled.Fields[1].Labels = data.Labels{"InstanceId": "i-labeled"}
+
+	for name, tc := range map[string]struct {
+		frame *data.Frame
+		want  string
+	}{
+		"display name wins": {cloudWatchTestFrame("i-display", []int64{1000}, []float64{1}), "i-display"},
+		"frame name":        {named, "i-named"},
+		"field labels":      {labeled, "InstanceId=i-labeled"},
+		"default":           {cloudWatchTestFrame("", []int64{1000}, []float64{1}), def},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := cloudWatchSeriesLabel(tc.frame, tc.frame.Fields[1], def)
+			assert.Contains(t, got, tc.want)
+		})
+	}
 }
 
 func TestCloudWatchURLEncoding(t *testing.T) {

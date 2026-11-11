@@ -47,12 +47,10 @@ type CloudWatchSeries struct {
 	Statistics map[string]float64 `json:"statistics,omitempty"`
 }
 
-// CloudWatchQueryResult holds a single series inline, or several in Series.
-// Several frames come back when the query becomes a SEARCH expression
-// (a "*" dimension value or accountId "all").
+// CloudWatchQueryResult holds every series the query returned, so the shape
+// doesn't change when a SEARCH expression ("*" or accountId "all") matches several.
 type CloudWatchQueryResult struct {
-	*CloudWatchSeries
-	Series []CloudWatchSeries `json:"series,omitempty"`
+	Series []CloudWatchSeries `json:"series"`
 	Hints  []string           `json:"hints,omitempty"`
 }
 
@@ -212,10 +210,9 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 	return cloudWatchResultFromResponse(resp, fmt.Sprintf("%s - %s", args.Namespace, args.MetricName))
 }
 
-// cloudWatchResultFromResponse returns one series per frame. A single series
-// stays in the top-level fields; several go in Series.
+// cloudWatchResultFromResponse returns one series per frame.
 func cloudWatchResultFromResponse(resp *backend.QueryDataResponse, defaultLabel string) (*CloudWatchQueryResult, error) {
-	var series []CloudWatchSeries
+	series := []CloudWatchSeries{}
 	points := 0
 	for refID, r := range resp.Responses {
 		if r.Error != nil {
@@ -231,19 +228,7 @@ func cloudWatchResultFromResponse(resp *backend.QueryDataResponse, defaultLabel 
 		}
 	}
 
-	result := &CloudWatchQueryResult{}
-	switch len(series) {
-	case 0:
-		result.CloudWatchSeries = &CloudWatchSeries{
-			Label:      defaultLabel,
-			Timestamps: []int64{},
-			Values:     []float64{},
-		}
-	case 1:
-		result.CloudWatchSeries = &series[0]
-	default:
-		result.Series = series
-	}
+	result := &CloudWatchQueryResult{Series: series}
 
 	if points == 0 {
 		result.Hints = generateCloudWatchEmptyResultHints()
@@ -251,10 +236,24 @@ func cloudWatchResultFromResponse(resp *backend.QueryDataResponse, defaultLabel 
 	return result, nil
 }
 
+// cloudWatchSeriesLabel prefers the plugin's display name, then the frame
+// name, then the field labels, so unlabeled series stay distinguishable.
+func cloudWatchSeriesLabel(frame *data.Frame, value *data.Field, defaultLabel string) string {
+	switch {
+	case value.Config != nil && value.Config.DisplayNameFromDS != "":
+		return value.Config.DisplayNameFromDS
+	case frame.Name != "":
+		return frame.Name
+	case len(value.Labels) > 0:
+		return value.Labels.String()
+	}
+	return defaultLabel
+}
+
 // cloudWatchSeriesFromFrame reads one frame. ok is false when the frame has
 // no time or numeric field.
 func cloudWatchSeriesFromFrame(frame *data.Frame, defaultLabel string) (CloudWatchSeries, bool) {
-	s := CloudWatchSeries{Label: defaultLabel}
+	s := CloudWatchSeries{}
 
 	timeColIdx, valueColIdx := -1, -1
 	for i, field := range frame.Fields {
@@ -263,14 +262,12 @@ func cloudWatchSeriesFromFrame(frame *data.Frame, defaultLabel string) (CloudWat
 			timeColIdx = i
 		case field.Type().Numeric():
 			valueColIdx = i
-			if field.Config != nil && field.Config.DisplayNameFromDS != "" {
-				s.Label = field.Config.DisplayNameFromDS
-			}
 		}
 	}
 	if timeColIdx == -1 || valueColIdx == -1 {
 		return s, false
 	}
+	s.Label = cloudWatchSeriesLabel(frame, frame.Fields[valueColIdx], defaultLabel)
 	s.Timestamps = make([]int64, 0, frame.Rows())
 	s.Values = make([]float64, 0, frame.Rows())
 
@@ -357,7 +354,7 @@ Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}
 
 Cross-account monitoring: Use accountId to query metrics from a specific source account (e.g. '123456789012') or 'all' to query all linked accounts. Only applicable when using a CloudWatch monitoring account datasource.
 
-A dimension value of '*' or accountId 'all' can match several series. Each is then returned in 'series' with its own label, values and statistics.`,
+Results are always in 'series', one entry per time series with its own label, values and statistics. A dimension value of '*' or accountId 'all' can match several.`,
 	queryCloudWatch,
 	mcpgrafana.WithTitleAnnotation("Query CloudWatch"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
