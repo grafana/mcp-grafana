@@ -268,9 +268,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Prometheus label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Prometheus via query_prometheus, or supply an accessible datasource", datasourceUID)
 		default:
 			// Unreadable datasource, but the caller supplied a fallback type;
-			// keep it. Under Loki label-matcher enforcement the executor's
-			// query still fails closed in doDSQuery, which cannot verify the
-			// type either.
+			// keep it. Native backends resolve the UID themselves; other
+			// queries go through doDSQuery, which verifies the target UID
+			// under Loki label-matcher enforcement.
 		}
 	}
 

@@ -68,10 +68,9 @@ func enforceTestCtx(server *httptest.Server, enforce bool) context.Context {
 
 // TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement verifies the
 // fix for the run_panel_query enforcement bypass: a caller-supplied
-// datasourceType must not be able to divert a query onto the /api/ds/query
-// proxy path, which does not apply Loki label-matcher enforcement.
+// datasourceType must not allow a query to evade Loki label-matcher enforcement.
 func TestRunSinglePanelQuery_OverrideTypeCannotBypassLokiEnforcement(t *testing.T) {
-	// The real datasource behind override-uid is Loki, even though the caller
+	// The real datasource behind override-uid is Postgres, even though the caller
 	// declares it as a BigQuery datasource to try to reach executeSQLPanelQuery.
 	t.Run("resolved type wins over caller override", func(t *testing.T) {
 		var dsQueryHit bool
