@@ -549,6 +549,14 @@ func isLocalHostPort(hostPort string) bool {
 		host == "127.0.0.1" || host == "::1"
 }
 
+// TimeoutOr returns the --grafana-timeout value, or def when it is unset.
+func (c GrafanaConfig) TimeoutOr(def time.Duration) time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return def
+}
+
 // GrafanaConfigFromContext extracts Grafana configuration from the context.
 // If no config is found, returns a zero-value GrafanaConfig. This function is typically used by internal components to access configuration set earlier in the request lifecycle.
 func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {

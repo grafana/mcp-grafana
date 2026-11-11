@@ -12,6 +12,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewAlertingClient_Timeout(t *testing.T) {
+	for cfg, want := range map[time.Duration]time.Duration{
+		0:                 30 * time.Second,
+		300 * time.Second: 300 * time.Second,
+	} {
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+			URL:     "http://grafana.example",
+			Timeout: cfg,
+		})
+		client, err := newAlertingClientFromContext(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, want, client.httpClient.Timeout)
+	}
+}
+
 func TestNewDSQueryHTTPClient_Timeout(t *testing.T) {
 	for _, tc := range []struct {
 		name string

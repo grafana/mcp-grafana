@@ -78,7 +78,7 @@ func newVictoriaLogsBackend(ctx context.Context, uid string, ds *models.DataSour
 	}
 
 	return &victoriaLogsBackend{
-		httpClient:    &http.Client{Transport: rt, Timeout: dsQueryTimeout(cfg)},
+		httpClient:    &http.Client{Transport: rt, Timeout: cfg.TimeoutOr(defaultDSQueryTimeout)},
 		baseURL:       baseURL,
 		dsQueryClient: dsQueryClient,
 		dsQueryURL:    dsQueryURL,

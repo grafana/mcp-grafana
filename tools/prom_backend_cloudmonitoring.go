@@ -45,7 +45,7 @@ func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource, proje
 
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   dsQueryTimeout(cfg),
+		Timeout:   cfg.TimeoutOr(defaultDSQueryTimeout),
 	}
 
 	return &cloudMonitoringBackend{

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/go-openapi/runtime/client"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
@@ -2995,4 +2996,9 @@ func TestBuildingGrafanaClientMakesNoRequests(t *testing.T) {
 	require.NotNil(t, GrafanaClientFromContext(got))
 
 	assert.Zero(t, atomic.LoadInt32(&calls))
+}
+
+func TestGrafanaConfigTimeoutOr(t *testing.T) {
+	assert.Equal(t, 30*time.Second, GrafanaConfig{}.TimeoutOr(30*time.Second))
+	assert.Equal(t, 5*time.Second, GrafanaConfig{Timeout: 5 * time.Second}.TimeoutOr(30*time.Second))
 }
