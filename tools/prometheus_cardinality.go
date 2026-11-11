@@ -162,7 +162,11 @@ func cachedPromCardinality(ctx context.Context, b *prometheusBackend, cfg mcpgra
 	if ttl <= 0 {
 		ttl = promCardinalityDefaultTTL
 	}
-	return promTSDBCache.get(ctx, promCardinalityKey(b, cfg), ttl, cfg.BaseTransport == nil && cfg.TLSConfig == nil, func(ctx context.Context) (map[string]uint64, error) { return b.fetchCardinality(ctx) })
+	// Server certificate verification settings do not change caller identity.
+	// Client certificates can rotate in place, so their file paths alone are
+	// not a safe identity for sharing cached results.
+	clientCertificate := cfg.TLSConfig != nil && (cfg.TLSConfig.CertFile != "" || cfg.TLSConfig.KeyFile != "")
+	return promTSDBCache.get(ctx, promCardinalityKey(b, cfg), ttl, cfg.BaseTransport == nil && !clientCertificate, func(ctx context.Context) (map[string]uint64, error) { return b.fetchCardinality(ctx) })
 }
 
 func (c *promCardinalityCache) get(ctx context.Context, key [32]byte, ttl time.Duration, cacheable bool, fetch func(context.Context) (map[string]uint64, error)) (map[string]uint64, error) {
