@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +16,7 @@ import (
 	"time"
 
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -266,7 +270,7 @@ func TestLoadDocsIndex_RetriesAfterFailure(t *testing.T) {
 	ResetDocsIndex()
 	t.Cleanup(func() {
 		ResetDocsIndex()
-		loadIndexFn = grafanadocs.LoadIndex
+		loadIndexFn = fetchDocsIndex
 	})
 
 	idx := loadTestIndex(t)
@@ -301,7 +305,7 @@ func TestLoadDocsIndex_IgnoresCallerCancellation(t *testing.T) {
 	ResetDocsIndex()
 	t.Cleanup(func() {
 		ResetDocsIndex()
-		loadIndexFn = grafanadocs.LoadIndex
+		loadIndexFn = fetchDocsIndex
 	})
 
 	idx := loadTestIndex(t)
@@ -325,7 +329,7 @@ func TestLoadDocsIndex_TimesOutDetachedLoad(t *testing.T) {
 	oldTimeout := docsIndexLoadTimeout
 	t.Cleanup(func() {
 		ResetDocsIndex()
-		loadIndexFn = grafanadocs.LoadIndex
+		loadIndexFn = fetchDocsIndex
 		docsIndexLoadTimeout = oldTimeout
 	})
 	docsIndexLoadTimeout = 20 * time.Millisecond
@@ -344,7 +348,7 @@ func TestLoadDocsIndex_CoalescesConcurrentLoads(t *testing.T) {
 	ResetDocsIndex()
 	t.Cleanup(func() {
 		ResetDocsIndex()
-		loadIndexFn = grafanadocs.LoadIndex
+		loadIndexFn = fetchDocsIndex
 	})
 
 	want := loadTestIndex(t)
@@ -388,4 +392,35 @@ func TestLoadDocsIndex_CoalescesConcurrentLoads(t *testing.T) {
 		assert.Same(t, want, got[i])
 	}
 	assert.Equal(t, int32(1), calls.Load(), "concurrent callers must share one in-flight load")
+}
+
+// With a SOCKS5 proxy configured, the docs index must be dialed through the
+// proxy. The proxy points at a closed port, so the fetch has to fail without
+// reaching the directly addressable index server.
+func TestFetchDocsIndex_RoutesThroughProxy(t *testing.T) {
+	// Count TCP connections, not requests: a direct dial fails the TLS
+	// handshake before any handler runs.
+	var directConns atomic.Int32
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(testIndexFixture))
+	}))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			directConns.Add(1)
+		}
+	}
+	ts.StartTLS()
+	t.Cleanup(ts.Close)
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		SOCKS5ProxyURL: "socks5://127.0.0.1:1",
+	})
+	_, err := fetchDocsIndex(ctx, ts.URL)
+	require.Error(t, err)
+	assert.Zero(t, directConns.Load(), "the index request must not bypass the proxy")
+}
+
+func TestFetchDocsIndex_RejectsNonHTTPS(t *testing.T) {
+	_, err := fetchDocsIndex(context.Background(), "http://example.com/llms.txt")
+	require.ErrorContains(t, err, "only https")
 }
