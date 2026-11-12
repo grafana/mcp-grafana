@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -174,8 +175,8 @@ func queryAzureLogAnalytics(ctx context.Context, args AzureLogAnalyticsQueryPara
 	if err := validateAzureMonitorKQL(args.Query); err != nil {
 		return nil, err
 	}
-	if len(args.Resources) == 0 {
-		return nil, fmt.Errorf("resources is required: pass at least one Log Analytics workspace or resource ID")
+	if len(args.Resources) == 0 || slices.ContainsFunc(args.Resources, func(r string) bool { return strings.TrimSpace(r) == "" }) {
+		return nil, fmt.Errorf("resources is required: pass at least one Log Analytics workspace or resource ID, with no empty entries")
 	}
 	from, to, err := parseAzureLogAnalyticsTimeRange(args.Start, args.End)
 	if err != nil {

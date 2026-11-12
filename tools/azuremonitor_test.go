@@ -84,6 +84,10 @@ func TestAzureMonitorValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resources is required")
 
+	_, err = queryAzureLogAnalytics(ctx, AzureLogAnalyticsQueryParams{DatasourceUID: "u", Query: "T", Resources: []string{"/r", " "}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no empty entries")
+
 	_, err = queryAzureLogAnalytics(ctx, AzureLogAnalyticsQueryParams{DatasourceUID: "u", Query: "T", Resources: []string{"/r"}, Start: "now", End: "now-1h"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "end time must be after start time")
@@ -149,7 +153,7 @@ func newAzureMonitorMockGrafana(t *testing.T, dsType string, handler http.Handle
 func newAzureMonitorQueryMock(t *testing.T, rows int, gotBody *map[string]interface{}) context.Context {
 	t.Helper()
 	return newAzureMonitorMockGrafana(t, AzureMonitorDatasourceType, func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(gotBody))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(gotBody))
 		frames := data.Frames{}
 		if rows > 0 {
 			frames = append(frames, newAzureMonitorTestFrame(rows))
