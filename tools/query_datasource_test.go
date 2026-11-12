@@ -113,6 +113,7 @@ func TestQueryDatasourceRejectsBadArguments(t *testing.T) {
 		"bad maxPoints":   {`{"datasourceUid":"prom","queries":[{"refId":"A","maxDataPoints":0}]}`, "maxDataPoints"},
 		"reversed range":  {`{"datasourceUid":"prom","from":"now","to":"now-1h","queries":[{"refId":"A"}]}`, "before"},
 		"bad time":        {`{"datasourceUid":"prom","from":"yesterday-ish","queries":[{"refId":"A"}]}`, "from"},
+		"empty title":     {`{"datasourceUid":"prom","title":"","queries":[{"refId":"A"}]}`, "white space"},
 		"blank title":     {`{"datasourceUid":"prom","title":" \t","queries":[{"refId":"A"}]}`, "white space"},
 		"long title":      {`{"datasourceUid":"prom","title":"` + strings.Repeat("é", 101) + `","queries":[{"refId":"A"}]}`, "at most 100"},
 		"bom title":       {`{"datasourceUid":"prom","title":"\ufeff\u3000","queries":[{"refId":"A"}]}`, "white space"},

@@ -59,11 +59,12 @@ type QueryDatasourceParams struct {
 	To            dsTime           `json:"to,omitempty" jsonschema:"description=End of the time range\\, in a format that /api/ds/query accepts\\, for example now or epoch milliseconds. Defaults to now."`
 	Type          dsChartType      `json:"type,omitempty"`
 	Unit          string           `json:"unit,omitempty" jsonschema:"minLength=1,description=Optional Grafana unit ID for all values\\, for example bytes\\, percent or reqps."`
-	Title         dsTitle          `json:"title,omitempty" jsonschema:"description=Optional title of the chart\\, for example HTTP requests by handler. The chart shows it as a panel title."`
+	Title         *dsTitle         `json:"title,omitempty" jsonschema:"description=Optional title of the chart\\, for example HTTP requests by handler. The chart shows it as a panel title."`
 }
 
 // dsTitle is the title of the chart (tool.31). The schema is that of the contract: some text that is not white space,
-// of at most maxTitleChars characters. The field tag gives the description.
+// of at most maxTitleChars characters. The field tag gives the description. The field is a pointer, so an empty title
+// is not taken for no title.
 type dsTitle string
 
 func (dsTitle) JSONSchema() *jsonschema.Schema {
@@ -72,17 +73,25 @@ func (dsTitle) JSONSchema() *jsonschema.Schema {
 }
 
 // validate checks the schema of the title (tool.4). The length is in code points, as in JSON Schema.
-func (t dsTitle) validate() error {
-	if t == "" {
+func (t *dsTitle) validate() error {
+	if t == nil {
 		return nil
 	}
-	if !strings.ContainsFunc(string(t), func(r rune) bool { return !isECMAScriptSpace(r) }) {
-		return fmt.Errorf("title must not be only white space")
+	if !strings.ContainsFunc(string(*t), func(r rune) bool { return !isECMAScriptSpace(r) }) {
+		return fmt.Errorf("title must have a character that is not white space")
 	}
-	if utf8.RuneCountInString(string(t)) > maxDSTitleChars {
+	if utf8.RuneCountInString(string(*t)) > maxDSTitleChars {
 		return fmt.Errorf("title must be at most %d characters", maxDSTitleChars)
 	}
 	return nil
+}
+
+// text is the title, or "" with no title.
+func (t *dsTitle) text() string {
+	if t == nil {
+		return ""
+	}
+	return string(*t)
 }
 
 // isECMAScriptSpace reports whether \s of an ECMAScript regular expression, the dialect of JSON Schema, matches r.
@@ -152,8 +161,8 @@ type dsFieldConfig struct {
 
 // dsPanelOf makes the panel of a chart: the panel ID and the options of its row, and the unit and the title of the
 // arguments (tool.22, tool.31).
-func dsPanelOf(chart vizChart, unit string, title dsTitle) dsPanel {
-	panel := dsPanel{Type: chart.Panel, Title: string(title), Options: maps.Clone(chart.Options)}
+func dsPanelOf(chart vizChart, unit, title string) dsPanel {
+	panel := dsPanel{Type: chart.Panel, Title: title, Options: maps.Clone(chart.Options)}
 	if unit != "" {
 		panel.FieldConfig = &dsFieldConfig{}
 		panel.FieldConfig.Defaults.Unit = unit
@@ -230,13 +239,13 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 		return nil, fmt.Errorf("the data source %s returned no results", args.DatasourceUID)
 	}
 
-	chart, alternatives, mismatch := chooseDSChart(results, args.Type, args.Unit, args.Title)
+	chart, alternatives, mismatch := chooseDSChart(results, args.Type, args.Unit, args.Title.text())
 	if mismatch != "" {
 		return dsToolError("type-mismatch", mismatch), nil
 	}
 	result := &QueryDatasourceResult{
 		Chart:        chart.Name,
-		Panel:        dsPanelOf(*chart, args.Unit, args.Title),
+		Panel:        dsPanelOf(*chart, args.Unit, args.Title.text()),
 		Alternatives: alternatives,
 		Data: dsData{
 			Range:      dsRange{From: from.UnixMilli(), To: to.UnixMilli()},
@@ -263,7 +272,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 // chooseDSChart gives the chart of the type, or the chart of the pick, and the other charts that fit the frames
 // (tool.18 to tool.23). If the model gave a type and the frames have rows, the frames must fit it (tool.20). If they
 // do not, the message of type-mismatch is the third value.
-func chooseDSChart(results map[string]vizResult, chartType dsChartType, unit string, title dsTitle) (*vizChart, []dsAlternative, string) {
+func chooseDSChart(results map[string]vizResult, chartType dsChartType, unit, title string) (*vizChart, []dsAlternative, string) {
 	summary := vizSummary(results)
 	picked := vizPick(summary)
 	chart := picked
