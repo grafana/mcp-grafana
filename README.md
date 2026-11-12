@@ -129,6 +129,13 @@ BigQuery queries require qualified table references such as `` `my-project.my_da
 - **List Cloud Logging buckets and views:** Discover log buckets and log views to scope a query.
 - **Query Cloud Logging:** Run Cloud Logging query language filters (e.g. `resource.type="k8s_container" AND severity>=ERROR`) with time range and limit; returns entries newest-first with severity, body, labels, and trace ID. GCP authentication is handled by the datasource configuration.
 
+### Azure Monitor Querying
+
+> **Note:** Azure Monitor tools are **disabled by default**. To enable them, add `azuremonitor` to your `--enabled-tools` flag. They query through an Azure Monitor datasource (`grafana-azure-monitor-datasource`); Azure authentication is handled by the datasource configuration.
+
+- **Query Azure Log Analytics:** Run KQL against one or more Log Analytics workspaces or resources with time range and limit; returns columns and rows.
+- **Query Azure Resource Graph:** Run Resource Graph KQL to inventory Azure resources and their current state across subscriptions.
+
 ### Graphite Querying
 
 > **Note:** Graphite tools are **disabled by default**. To enable them, add `graphite` to your `--enabled-tools` flag.
@@ -374,6 +381,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_cloud_logging_buckets`        | Cloud Logging*            | List log buckets in a GCP project                                                                                                                             | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloud_logging_views`          | Cloud Logging*            | List log views in a log bucket                                                                                                                                | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `query_cloud_logging`               | Cloud Logging*            | Query logs with the Cloud Logging query language                                                                                                              | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
+| `query_azure_log_analytics`         | Azure Monitor*            | Query Azure Log Analytics workspaces with KQL                                                                                                                 | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
+| `query_azure_resource_graph`        | Azure Monitor*            | Query Azure Resource Graph with KQL                                                                                                                           | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `query_elasticsearch`               | Elasticsearch/OpenSearch* | Query Elasticsearch or OpenSearch using Lucene syntax or Query DSL                                                                                            | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:datasource-uid`                              |
 | `query_quickwit`                    | Quickwit*                 | Query Quickwit using Lucene syntax or Query DSL                                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:quickwit-uid`                                |
 | `alerting_rules_read`               | Alerting                  | List and inspect alert rules (list, get, versions)                                                                                                            | `alert.rules.external:read`, `alert.rules:read`, `datasources:read`, `folders:read`                                                                                                                                                                                                 | `folders:*` or `folders:uid:alerts-folder`                    |
@@ -518,7 +527,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
@@ -558,6 +567,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-snapshot`: Disable snapshot tools
 - `--disable-cloudwatch`: Disable CloudWatch tools
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools
+- `--disable-azuremonitor`: Disable Azure Monitor tools
 - `--disable-examples`: Disable query examples tools
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools
@@ -678,13 +688,17 @@ When `--disable-query` is enabled, the following tools are not registered:
 **Google Cloud Logging Tools:**
 - `query_cloud_logging`
 
+**Azure Monitor Tools:**
+- `query_azure_log_analytics`
+- `query_azure_resource_graph`
+
 **Pyroscope Tools:**
 - `query_pyroscope`
 
 **Run Panel Query Tools:**
 - `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, and `azuremonitor` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
 
 Note that `--disable-query` gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but does not police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
