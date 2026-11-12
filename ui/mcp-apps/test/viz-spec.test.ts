@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import { buildVizSpec, parseVizArgs, parseVizResult } from '../app/vizSpec';
 
-// The App test of the viz contract (fixtures.9). The sets are copies of grafana/viz-contract/fixtures at the commit in
-// tools/viz_contract/CONTRACT.
+// The App test of the viz contract (fixtures.9). The sets come from @grafana/viz-contract on npm, at the version of the
+// sync-viz-contract task in mise.toml.
 const root = join(__dirname, 'viz-contract');
 const read = (set: string, file: string) => JSON.parse(readFileSync(join(root, set, file), 'utf8'));
 

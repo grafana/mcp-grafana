@@ -14,7 +14,7 @@
       "format": "time_series"
     }
   ],
-  "from": "now-24h",
+  "from": "now-15m",
   "to": "now",
   "unit": "reqps"
 }

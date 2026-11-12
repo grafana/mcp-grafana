@@ -57,7 +57,7 @@ done
 """
 
 [tasks.sync-viz-contract]
-description = "Copy the registry and the Source fixtures of @grafana/viz-contract from npm into tools/. They are committed for `go:embed` and the conformance test"
+description = "Copy the registry and the Source and App fixtures of @grafana/viz-contract from npm. They are committed for `go:embed` and the conformance tests"
 env = { VIZ_CONTRACT_VERSION = "1.3.0" }
 run = """
 #!/usr/bin/env bash
@@ -81,6 +81,15 @@ for dir in "$pkg"/fixtures/*/; do
   for f in args meta request response result; do
     [ -f "$dir/$f.json" ] && cp "$dir/$f.json" "$out/$name/"
   done
+done
+# The App sets are the ones with arguments, a result and a viz spec (fixtures.9).
+app=ui/mcp-apps/test/viz-contract
+rm -rf "$app"
+for dir in "$pkg"/fixtures/*/; do
+  [ -f "$dir/args.json" ] && [ -f "$dir/result.json" ] && [ -f "$dir/spec.json" ] || continue
+  name=$(basename "$dir")
+  mkdir -p "$app/$name"
+  cp "$dir/args.json" "$dir/result.json" "$dir/spec.json" "$app/$name/"
 done
 echo "Synced @grafana/viz-contract@$VIZ_CONTRACT_VERSION"
 """
