@@ -1435,6 +1435,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// The other half of us.Flags: flag.Visit sees only flags, and container
 	// deployments configure almost entirely by environment variable.
 	us.EnvSet = usagestats.EnvSet(os.Getenv)
+	us.HTTPTransport = gc.ProxyOnlyTransport()
 	usage := usagestats.New(us)
 	usage.Disclose()
 

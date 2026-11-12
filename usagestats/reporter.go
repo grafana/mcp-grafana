@@ -114,6 +114,10 @@ type Config struct {
 	// written to.
 	LogOutput io.Writer
 
+	// HTTPTransport is used to POST reports, e.g. to honour a SOCKS5 proxy.
+	// Nil means http.DefaultTransport.
+	HTTPTransport http.RoundTripper
+
 	// HTTPClient overrides the client used to POST reports. Tests only.
 	HTTPClient *http.Client
 }
@@ -196,7 +200,7 @@ func New(cfg Config) *Reporter {
 		r.cfg.Logger = slog.Default()
 	}
 	if r.client == nil {
-		r.client = &http.Client{Timeout: sendTimeout}
+		r.client = &http.Client{Transport: cfg.HTTPTransport, Timeout: sendTimeout}
 	}
 	if r.logOutput == nil {
 		r.logOutput = os.Stderr

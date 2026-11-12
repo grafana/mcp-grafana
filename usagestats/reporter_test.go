@@ -716,3 +716,9 @@ func TestConcurrentRecordingIsRaceFree(t *testing.T) {
 	}
 	assert.Equal(t, int64(400), total, "no call may be lost or double-counted across flushes")
 }
+
+func TestNewUsesHTTPTransport(t *testing.T) {
+	ct := &countingTransport{}
+	r := New(Config{HTTPTransport: ct})
+	assert.Same(t, ct, r.client.Transport)
+}
