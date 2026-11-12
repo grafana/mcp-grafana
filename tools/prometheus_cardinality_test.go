@@ -162,6 +162,8 @@ func TestPromCardinalityCacheRecoversAfterSaturation(t *testing.T) {
 	}
 	_, err := c.get(ctx, key, time.Minute, true, func(context.Context) (map[string]uint64, error) { t.Fatal("must not fetch"); return nil, nil })
 	require.ErrorContains(t, err, "concurrency limit")
+	require.ErrorIs(t, err, errPromCardinalityFetchSlotsSaturated)
+	assert.Empty(t, c.entries, "local saturation must not be cached")
 	<-c.slots
 	// The same identity can refresh as soon as a slot is available.
 	stats, err := c.get(ctx, key, time.Minute, true, func(context.Context) (map[string]uint64, error) {

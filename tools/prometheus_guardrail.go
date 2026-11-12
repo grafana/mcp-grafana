@@ -66,10 +66,11 @@ type promGuardViolation struct {
 }
 
 type promGuardDecision struct {
-	Verdict       promGuardVerdict
-	Violations    []promGuardViolation // Block only; selector, then range, then points
-	UnknownReason promGuardReason      // Empty means unparseable.
-	ParseErr      error                // Unknown only
+	Verdict                  promGuardVerdict
+	Violations               []promGuardViolation         // Block only; selector, then range, then points
+	UnknownReason            promGuardReason              // Empty means unparseable.
+	ParseErr                 error                        // Unknown only
+	CardinalityFailOpenCause promCardinalityFailOpenCause // Cardinality unknown only
 }
 
 // assessPromQuery checks a PromQL query against p. queryType is "range" or
@@ -350,6 +351,9 @@ func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, en
 			reason = promGuardReasonUnparseable
 		}
 		metrics.recordFailOpen(ctx, reason)
+		if reason == promGuardReasonCardinalityUnknown {
+			metrics.recordCardinalityFailOpen(ctx, d.CardinalityFailOpenCause)
+		}
 		return nil
 
 	default: // promGuardBlock

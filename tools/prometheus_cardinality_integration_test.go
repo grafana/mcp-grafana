@@ -68,9 +68,10 @@ func cardinalityHTTPContext(t *testing.T, ctx context.Context, status int, body 
 func TestPrometheusCardinalityHTTPDecisions(t *testing.T) {
 	tests := []struct {
 		name, mode, expr, body, counter, reason string
+		cause                                   string
 		status                                  int
 		wantStats, wantQuery                    bool
-		selective, disabled                     bool
+		selective, disabled, saturated          bool
 	}{
 		{name: "enforce before query", mode: "enforce", expr: `http_requests_total{status="200"}`, counter: "blocked", reason: "cardinality", wantStats: true},
 		{name: "shadow executes", mode: "shadow", expr: `http_requests_total{status="200"}`, counter: "would_block", reason: "cardinality", wantStats: true, wantQuery: true},
@@ -78,14 +79,23 @@ func TestPrometheusCardinalityHTTPDecisions(t *testing.T) {
 		{name: "threshold disabled", mode: "enforce", expr: `http_requests_total`, disabled: true, counter: "admitted", wantQuery: true},
 		{name: "exact namespace exempts", mode: "enforce", expr: `http_requests_total{namespace="production"}`, counter: "admitted", wantQuery: true},
 		{name: "regex scope does not exempt", mode: "enforce", expr: `http_requests_total{namespace=~"production|staging"}`, counter: "blocked", reason: "cardinality", wantStats: true},
-		{name: "missing top metric unknown", mode: "enforce", expr: `other_metric`, counter: "fail_open", reason: "cardinality_unknown", wantStats: true, wantQuery: true},
-		{name: "regex metric unknown", mode: "enforce", expr: `{__name__=~"http_requests_.*"}`, counter: "fail_open", reason: "cardinality_unknown", wantQuery: true},
-		{name: "metadata timeout allows query", mode: "enforce", expr: `http_requests_total`, status: -1, counter: "fail_open", reason: "cardinality_unknown", wantStats: true, wantQuery: true},
-		{name: "unsupported endpoint", mode: "enforce", expr: `http_requests_total`, status: 404, counter: "fail_open", reason: "cardinality_unknown", wantStats: true, wantQuery: true},
-		{name: "unauthorized metadata", mode: "enforce", expr: `http_requests_total`, status: 403, counter: "fail_open", reason: "cardinality_unknown", wantStats: true, wantQuery: true},
-		{name: "malformed metadata", mode: "enforce", expr: `http_requests_total`, body: `{`, counter: "fail_open", reason: "cardinality_unknown", wantStats: true, wantQuery: true},
-		{name: "missing stats field", mode: "enforce", expr: `http_requests_total`, body: `{"status":"success","data":{}}`, counter: "fail_open", reason: "cardinality_unknown", wantStats: true, wantQuery: true},
-		{name: "error envelope", mode: "enforce", expr: `http_requests_total`, body: `{"status":"error","data":{"seriesCountByMetricName":[]}}`, counter: "fail_open", reason: "cardinality_unknown", wantStats: true, wantQuery: true},
+		{name: "missing top metric unknown", mode: "enforce", expr: `other_metric`, counter: "fail_open", reason: "cardinality_unknown", cause: "not_in_top_n", wantStats: true, wantQuery: true},
+		{name: "regex metric unknown", mode: "enforce", expr: `{__name__=~"http_requests_.*"}`, counter: "fail_open", reason: "cardinality_unknown", cause: "unresolved_metric_name", wantQuery: true},
+		{name: "multiple missing names count once in shadow", mode: "shadow", expr: `other_metric or another_metric`, counter: "fail_open", reason: "cardinality_unknown", cause: "not_in_top_n", wantStats: true, wantQuery: true},
+		{name: "nameless metric unknown", mode: "enforce", expr: `{status="200"}`, counter: "fail_open", reason: "cardinality_unknown", cause: "unresolved_metric_name", wantQuery: true},
+		{name: "fetch slots saturated", mode: "enforce", expr: `http_requests_total`, saturated: true, counter: "fail_open", reason: "cardinality_unknown", cause: "fetch_slots_saturated", wantQuery: true},
+		{name: "saturation precedes unresolved", mode: "enforce", expr: `http_requests_total or {__name__=~"http_requests_.*"}`, saturated: true, counter: "fail_open", reason: "cardinality_unknown", cause: "fetch_slots_saturated", wantQuery: true},
+		{name: "missing and unresolved", mode: "enforce", expr: `other_metric or {__name__=~"http_requests_.*"}`, counter: "fail_open", reason: "cardinality_unknown", cause: "unresolved_metric_name", wantStats: true, wantQuery: true},
+		{name: "unresolved and missing", mode: "enforce", expr: `{__name__=~"http_requests_.*"} or other_metric`, counter: "fail_open", reason: "cardinality_unknown", cause: "unresolved_metric_name", wantStats: true, wantQuery: true},
+		{name: "known violation and unknown enforce", mode: "enforce", expr: `http_requests_total or other_metric or {__name__=~"http_requests_.*"}`, counter: "blocked", reason: "cardinality", wantStats: true},
+		{name: "known violation and unknown shadow", mode: "shadow", expr: `http_requests_total or other_metric or {__name__=~"http_requests_.*"}`, counter: "would_block", reason: "cardinality", wantStats: true, wantQuery: true},
+		{name: "metadata timeout allows query", mode: "enforce", expr: `http_requests_total`, status: -1, counter: "fail_open", reason: "cardinality_unknown", cause: "metadata_unavailable", wantStats: true, wantQuery: true},
+		{name: "unsupported endpoint", mode: "enforce", expr: `http_requests_total`, status: 404, counter: "fail_open", reason: "cardinality_unknown", cause: "metadata_unavailable", wantStats: true, wantQuery: true},
+		{name: "metadata failure precedes unresolved", mode: "enforce", expr: `{__name__=~"http_requests_.*"} or http_requests_total`, status: 404, counter: "fail_open", reason: "cardinality_unknown", cause: "metadata_unavailable", wantStats: true, wantQuery: true},
+		{name: "unauthorized metadata", mode: "enforce", expr: `http_requests_total`, status: 403, counter: "fail_open", reason: "cardinality_unknown", cause: "metadata_unavailable", wantStats: true, wantQuery: true},
+		{name: "malformed metadata", mode: "enforce", expr: `http_requests_total`, body: `{`, counter: "fail_open", reason: "cardinality_unknown", cause: "metadata_unavailable", wantStats: true, wantQuery: true},
+		{name: "missing stats field", mode: "enforce", expr: `http_requests_total`, body: `{"status":"success","data":{}}`, counter: "fail_open", reason: "cardinality_unknown", cause: "metadata_unavailable", wantStats: true, wantQuery: true},
+		{name: "error envelope", mode: "enforce", expr: `http_requests_total`, body: `{"status":"error","data":{"seriesCountByMetricName":[]}}`, counter: "fail_open", reason: "cardinality_unknown", cause: "metadata_unavailable", wantStats: true, wantQuery: true},
 		{name: "threshold inclusive", mode: "enforce", expr: `http_requests_total`, body: `{"status":"success","data":{"seriesCountByMetricName":[{"name":"http_requests_total","value":100000}]}}`, counter: "admitted", wantStats: true, wantQuery: true},
 		{name: "static selector wins", mode: "enforce", expr: `http_requests_total`, selective: true, counter: "blocked", reason: "selector"},
 		{name: "shadow static skips metadata", mode: "shadow", expr: `http_requests_total`, selective: true, counter: "would_block", reason: "selector", wantQuery: true},
@@ -109,6 +119,14 @@ func TestPrometheusCardinalityHTTPDecisions(t *testing.T) {
 				cfg.PrometheusGuardrailMaxMetricCardinality = 0
 			}
 			ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
+			if tc.saturated {
+				original := promTSDBCache
+				promTSDBCache = newPromCardinalityCache()
+				t.Cleanup(func() { promTSDBCache = original })
+				for range cap(promTSDBCache.slots) {
+					promTSDBCache.slots <- struct{}{}
+				}
+			}
 			_, err := queryPrometheus(ctx, QueryPrometheusParams{DatasourceUID: "prometheus", Expr: tc.expr, QueryType: "instant", EndTime: "2026-11-11T00:00:00Z"})
 			if tc.counter == "blocked" {
 				require.ErrorContains(t, err, "Prometheus query guardrail")
@@ -138,7 +156,25 @@ func TestPrometheusCardinalityHTTPDecisions(t *testing.T) {
 				if tc.reason != "" {
 					attrs = "reason=" + tc.reason
 				}
-				assert.Equal(t, map[string]map[string]int64{"mcp.prometheus_guardrail." + tc.counter: {attrs: 1}}, promGuardCounts(t, reader))
+				want := map[string]map[string]int64{"mcp.prometheus_guardrail." + tc.counter: {attrs: 1}}
+				if tc.cause != "" {
+					want["mcp.prometheus_guardrail.cardinality_fail_open"] = map[string]int64{"cause=" + tc.cause: 1}
+				}
+				assert.Equal(t, want, promGuardCounts(t, reader))
+			}
+			t.Logf("decision=%s reason=%s TSDB_HTTP=%d query_HTTP=%d counters=%v", tc.counter, tc.reason, stats.Load(), queries.Load(), promGuardCounts(t, reader))
+			if tc.saturated {
+				<-promTSDBCache.slots
+				_, err = queryPrometheus(ctx, QueryPrometheusParams{DatasourceUID: "prometheus", Expr: tc.expr, QueryType: "instant", EndTime: "2026-11-11T00:00:00Z"})
+				require.ErrorContains(t, err, "Prometheus query guardrail")
+				assert.EqualValues(t, 1, stats.Load())
+				assert.EqualValues(t, 1, queries.Load())
+				assert.Equal(t, map[string]map[string]int64{
+					"mcp.prometheus_guardrail.fail_open":             {"reason=cardinality_unknown": 1},
+					"mcp.prometheus_guardrail.blocked":               {"reason=cardinality": 1},
+					"mcp.prometheus_guardrail.cardinality_fail_open": {"cause=fetch_slots_saturated": 1},
+				}, promGuardCounts(t, reader))
+				t.Logf("after releasing slot: decision=blocked reason=cardinality cumulative_TSDB_HTTP=%d cumulative_query_HTTP=%d counters=%v", stats.Load(), queries.Load(), promGuardCounts(t, reader))
 			}
 		})
 	}
@@ -197,7 +233,10 @@ func TestPrometheusCardinalityHTTPFailureCache(t *testing.T) {
 	assert.EqualValues(t, 2, lookups.Load(), "query authorization still resolves the datasource")
 	assert.EqualValues(t, 1, stats.Load(), "unsupported metadata must not retry on every query")
 	assert.EqualValues(t, 2, queries.Load())
-	assert.Equal(t, map[string]map[string]int64{"mcp.prometheus_guardrail.fail_open": {"reason=cardinality_unknown": 2}}, promGuardCounts(t, reader))
+	assert.Equal(t, map[string]map[string]int64{
+		"mcp.prometheus_guardrail.fail_open":             {"reason=cardinality_unknown": 2},
+		"mcp.prometheus_guardrail.cardinality_fail_open": {"cause=metadata_unavailable": 2},
+	}, promGuardCounts(t, reader))
 }
 
 func TestPrometheusCardinalityResolvedProxyRoutes(t *testing.T) {
@@ -205,14 +244,17 @@ func TestPrometheusCardinalityResolvedProxyRoutes(t *testing.T) {
 		name          string
 		legacy        bool
 		numericStatus int
+		uidStatus     int
 		wantPaths     []string
 	}{
 		{name: "modern resolved UID", wantPaths: []string{"/api/datasources/proxy/uid/prometheus/api/v1/status/tsdb"}},
 		{name: "legacy numeric", legacy: true, wantPaths: []string{"/api/datasources/proxy/1/api/v1/status/tsdb"}},
 		{name: "legacy 404 fallback", legacy: true, numericStatus: 404, wantPaths: []string{"/api/datasources/proxy/1/api/v1/status/tsdb", "/api/datasources/proxy/uid/prometheus/api/v1/status/tsdb"}},
+		{name: "legacy 404 fallback unavailable", legacy: true, numericStatus: 404, uidStatus: 404, wantPaths: []string{"/api/datasources/proxy/1/api/v1/status/tsdb", "/api/datasources/proxy/uid/prometheus/api/v1/status/tsdb"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := make(chan string, 4)
+			var queries atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
@@ -235,7 +277,14 @@ func TestPrometheusCardinalityResolvedProxyRoutes(t *testing.T) {
 					_, _ = w.Write([]byte(cardinalityHighJSON))
 				case "/api/datasources/proxy/uid/prometheus/api/v1/status/tsdb":
 					paths <- r.URL.Path
+					if tc.uidStatus != 0 {
+						w.WriteHeader(tc.uidStatus)
+						return
+					}
 					_, _ = w.Write([]byte(cardinalityHighJSON))
+				case "/api/ds/query":
+					queries.Add(1)
+					_, _ = w.Write([]byte(`{"results":{"A":{"frames":[]}}}`))
 				default:
 					t.Errorf("unexpected request %s", r.URL.Path)
 					w.WriteHeader(500)
@@ -243,18 +292,35 @@ func TestPrometheusCardinalityResolvedProxyRoutes(t *testing.T) {
 			}))
 			defer server.Close()
 			ctx := mockDatasourcesCtx(server)
+			reader := sdkmetric.NewManualReader()
+			metricsCtx := newPromGuardMetricsContext(t, reader, "enforce", 0, 0)
 			cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+			cfg.MeterProvider = mcpgrafana.GrafanaConfigFromContext(metricsCtx).MeterProvider
 			cfg.PrometheusGuardrailMode = "enforce"
 			cfg.PrometheusGuardrailMaxMetricCardinality = 100000
 			ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
 			_, err := queryPrometheus(ctx, QueryPrometheusParams{DatasourceUID: "Prometheus", Expr: "http_requests_total", QueryType: "instant", EndTime: "2026-11-11T00:00:00Z"})
-			require.ErrorContains(t, err, "100001 series")
+			counter, reason := "blocked", "cardinality"
+			if tc.uidStatus != 0 {
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, queries.Load())
+				counter, reason = "fail_open", "cardinality_unknown"
+			} else {
+				require.ErrorContains(t, err, "100001 series")
+				assert.Zero(t, queries.Load())
+			}
 			close(paths)
 			var got []string
 			for path := range paths {
 				got = append(got, path)
 			}
 			assert.Equal(t, tc.wantPaths, got)
+			want := map[string]map[string]int64{"mcp.prometheus_guardrail." + counter: {"reason=" + reason: 1}}
+			if tc.uidStatus != 0 {
+				want["mcp.prometheus_guardrail.cardinality_fail_open"] = map[string]int64{"cause=metadata_unavailable": 1}
+			}
+			assert.Equal(t, want, promGuardCounts(t, reader))
+			t.Logf("decision=%s reason=%s TSDB_HTTP=%d query_HTTP=%d counters=%v", counter, reason, len(got), queries.Load(), promGuardCounts(t, reader))
 		})
 	}
 }
@@ -375,5 +441,8 @@ func TestPrometheusCardinalityBackendLookupFailureIsNotRetried(t *testing.T) {
 	_, err := queryPrometheus(ctx, QueryPrometheusParams{DatasourceUID: "missing", Expr: "http_requests_total", QueryType: "instant", EndTime: "2026-11-11T00:00:00Z"})
 	require.ErrorContains(t, err, "not found")
 	assert.EqualValues(t, 1, lookups.Load())
-	assert.Equal(t, map[string]map[string]int64{"mcp.prometheus_guardrail.fail_open": {"reason=cardinality_unknown": 1}}, promGuardCounts(t, reader))
+	assert.Equal(t, map[string]map[string]int64{
+		"mcp.prometheus_guardrail.fail_open":             {"reason=cardinality_unknown": 1},
+		"mcp.prometheus_guardrail.cardinality_fail_open": {"cause=metadata_unavailable": 1},
+	}, promGuardCounts(t, reader))
 }
