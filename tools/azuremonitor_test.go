@@ -93,6 +93,20 @@ func TestAzureMonitorValidation(t *testing.T) {
 	assert.Contains(t, err.Error(), "query is required")
 }
 
+func TestValidateAzureMonitorKQL(t *testing.T) {
+	require.NoError(t, validateAzureMonitorKQL("AppRequests | summarize count() by bin(TimeGenerated, 5m)"))
+	require.NoError(t, validateAzureMonitorKQL("AppTraces | where Message has 'renderer'"))
+
+	err := validateAzureMonitorKQL("AppRequests | summarize count() by bin(TimeGenerated, 5m) | render timechart")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "render operator is not supported")
+	assert.Error(t, validateAzureMonitorKQL("T\n|RENDER piechart"))
+
+	_, err = queryAzureResourceGraph(context.Background(), AzureResourceGraphQueryParams{DatasourceUID: "u", Query: "resources | summarize count() by type | render barchart"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "render")
+}
+
 func newAzureMonitorTestFrame(rows int) *data.Frame {
 	names := make([]string, rows)
 	counts := make([]int64, rows)

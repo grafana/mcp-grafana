@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,6 +49,20 @@ func normalizeAzureMonitorLimit(limit, maxLimit int) int {
 		return maxLimit
 	}
 	return limit
+}
+
+// render must be the last operator, so the appended take would break it.
+var kqlRenderOperator = regexp.MustCompile(`(?i)\|\s*render\b`)
+
+// validateAzureMonitorKQL rejects queries the tool can't run as given.
+func validateAzureMonitorKQL(query string) error {
+	if strings.TrimSpace(query) == "" {
+		return fmt.Errorf("query is required")
+	}
+	if kqlRenderOperator.MatchString(query) {
+		return fmt.Errorf("the render operator is not supported: remove the '| render ...' clause, the tool returns rows")
+	}
+	return nil
 }
 
 // kqlWithTake caps the rows a KQL query returns. The take goes on its own line so a trailing // comment can't swallow it.
@@ -98,7 +113,7 @@ func runAzureMonitorQuery(ctx context.Context, datasourceUID string, query map[s
 // AzureLogAnalyticsQueryParams defines the parameters for query_azure_log_analytics.
 type AzureLogAnalyticsQueryParams struct {
 	DatasourceUID string   `json:"datasourceUid" jsonschema:"required,description=The UID of the Azure Monitor datasource (type grafana-azure-monitor-datasource)."`
-	Query         string   `json:"query" jsonschema:"required,description=KQL query\\, e.g. ContainerAppConsoleLogs_CL | where Log_s contains \"error\" | project TimeGenerated\\, ContainerAppName_s\\, Log_s. Do NOT add a time filter: start/end are applied automatically. Do NOT add take/limit: the tool appends one from 'limit'."`
+	Query         string   `json:"query" jsonschema:"required,description=KQL query\\, e.g. ContainerAppConsoleLogs_CL | where Log_s contains \"error\" | project TimeGenerated\\, ContainerAppName_s\\, Log_s. Do NOT add a time filter: start/end are applied automatically. Do NOT add take/limit (the tool appends one from 'limit') or render."`
 	Resources     []string `json:"resources" jsonschema:"required,description=Azure resource IDs to query: Log Analytics workspaces (/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.OperationalInsights/workspaces/<name>) or resources with diagnostic logs. Several workspaces are queried together."`
 	Start         string   `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string   `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
@@ -156,8 +171,8 @@ func parseAzureLogAnalyticsTimeRange(start, end string) (time.Time, time.Time, e
 }
 
 func queryAzureLogAnalytics(ctx context.Context, args AzureLogAnalyticsQueryParams) (*AzureMonitorQueryResult, error) {
-	if strings.TrimSpace(args.Query) == "" {
-		return nil, fmt.Errorf("query is required")
+	if err := validateAzureMonitorKQL(args.Query); err != nil {
+		return nil, err
 	}
 	if len(args.Resources) == 0 {
 		return nil, fmt.Errorf("resources is required: pass at least one Log Analytics workspace or resource ID")
@@ -207,7 +222,7 @@ Query examples:
 // AzureResourceGraphQueryParams defines the parameters for query_azure_resource_graph.
 type AzureResourceGraphQueryParams struct {
 	DatasourceUID string   `json:"datasourceUid" jsonschema:"required,description=The UID of the Azure Monitor datasource (type grafana-azure-monitor-datasource)."`
-	Query         string   `json:"query" jsonschema:"required,description=Resource Graph KQL query\\, e.g. resources | where type == \"microsoft.app/containerapps\" | project name\\, resourceGroup\\, properties.runningStatus. Do NOT add take/limit: the tool appends one from 'limit'."`
+	Query         string   `json:"query" jsonschema:"required,description=Resource Graph KQL query\\, e.g. resources | where type == \"microsoft.app/containerapps\" | project name\\, resourceGroup\\, properties.runningStatus. Do NOT add take/limit (the tool appends one from 'limit') or render."`
 	Subscriptions []string `json:"subscriptions,omitempty" jsonschema:"description=Subscription IDs to query. Omit to query every subscription the datasource's credentials can read."`
 	Limit         int      `json:"limit,omitempty" jsonschema:"description=Maximum number of rows to return. Default: 100\\, max: 999."`
 }
@@ -232,8 +247,8 @@ func buildAzureResourceGraphQuery(args AzureResourceGraphQueryParams, limit int)
 }
 
 func queryAzureResourceGraph(ctx context.Context, args AzureResourceGraphQueryParams) (*AzureMonitorQueryResult, error) {
-	if strings.TrimSpace(args.Query) == "" {
-		return nil, fmt.Errorf("query is required")
+	if err := validateAzureMonitorKQL(args.Query); err != nil {
+		return nil, err
 	}
 
 	limit := normalizeAzureMonitorLimit(args.Limit, MaxAzureResourceGraphLimit)
