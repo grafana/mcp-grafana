@@ -1457,6 +1457,8 @@ var safeQueryToolNames = []string{
 	"query_cloudwatch",
 	"query_cloudwatch_logs",
 	"query_cloud_logging",
+	"query_azure_log_analytics",
+	"query_azure_resource_graph",
 	"query_pyroscope",
 	"run_panel_query",
 }
