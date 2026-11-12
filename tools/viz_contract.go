@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-// The chart registry of the viz contract (grafana/viz-contract, commit bb6adf3): registry/chart-types.json and
+// The chart registry of the viz contract (@grafana/viz-contract on npm, at the version of the sync-viz-contract task in
+// mise.toml; run it to update): registry/chart-types.json and
 // registry/pick.json. The Source reads them and no other part does (tool.18). The summary of the frames and the
 // matcher follow the condition rule language of schemas/registry.schema.json.
 

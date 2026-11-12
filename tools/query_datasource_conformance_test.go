@@ -19,8 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The Source test of the viz contract (fixtures.8). The sets are copies of grafana/viz-contract/fixtures at the
-// commit bb6adf3 (see viz_contract.go).
+// The Source test of the viz contract (fixtures.8). The sets come from @grafana/viz-contract on npm, at the version of
+// the sync-viz-contract task in mise.toml.
 
 func readFixtureJSON(t *testing.T, dir, name string, into any) bool {
 	t.Helper()
