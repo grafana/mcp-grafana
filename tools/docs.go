@@ -47,8 +47,13 @@ var (
 // maxDocsIndexBytes matches grafanadocs' own cap on the index size.
 const maxDocsIndexBytes = 10 * 1024 * 1024
 
+// docsUserAgent mirrors grafanadocs.LoadIndex (mcp-doc-server pkg/grafanadocs/index.go),
+// which does not export it.
+const docsUserAgent = "mcp-doc-server/0.1"
+
 // fetchDocsIndex does what grafanadocs.LoadIndex does, but through the
 // SOCKS5 proxy when one is configured. LoadIndex uses its own http.Client.
+// TODO: drop fetchDocsIndex once mcp-doc-server's LoadIndex accepts an *http.Client.
 func fetchDocsIndex(ctx context.Context, rawURL string) (*grafanadocs.Index, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -61,6 +66,7 @@ func fetchDocsIndex(ctx context.Context, rawURL string) (*grafanadocs.Index, err
 	if err != nil {
 		return nil, fmt.Errorf("build docs index request: %w", err)
 	}
+	req.Header.Set("User-Agent", docsUserAgent)
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	resp, err := (&http.Client{Transport: cfg.ProxyOnlyTransport()}).Do(req)
 	if err != nil {

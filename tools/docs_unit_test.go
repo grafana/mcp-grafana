@@ -420,6 +420,25 @@ func TestFetchDocsIndex_RoutesThroughProxy(t *testing.T) {
 	assert.Zero(t, directConns.Load(), "the index request must not bypass the proxy")
 }
 
+// fetchDocsIndex must send the same User-Agent as grafanadocs.LoadIndex.
+func TestFetchDocsIndex_SendsUserAgent(t *testing.T) {
+	var gotUA string
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		_, _ = w.Write([]byte(testIndexFixture))
+	}))
+	t.Cleanup(ts.Close)
+
+	// No proxy configured, so fetchDocsIndex uses http.DefaultTransport.
+	orig := http.DefaultTransport
+	http.DefaultTransport = ts.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	_, err := fetchDocsIndex(context.Background(), ts.URL)
+	require.NoError(t, err)
+	assert.Equal(t, docsUserAgent, gotUA)
+}
+
 func TestFetchDocsIndex_RejectsNonHTTPS(t *testing.T) {
 	_, err := fetchDocsIndex(context.Background(), "http://example.com/llms.txt")
 	require.ErrorContains(t, err, "only https")
