@@ -112,7 +112,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `cloudlogging`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `cloudlogging`, `examples`, `sql`, `influxdb`, `quickwit`, `runpanelquery`, and `dsquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -120,7 +120,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-prometheus`: Disable Prometheus tools.
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
-- `--enable-query`: Keep the raw-SQL query tools registered under `--disable-write` (refer to the following section).
+- `--enable-query`: Keep the raw-SQL query tools, and `query_datasource` (a source of `render_grafana_app`), available under `--disable-write` (refer to the following section).
 - `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, `generate_deeplink`, or the alerting write tools `alerting_rules_write`, `alerting_routing_write`, and `alerting_silences_write`. Has no effect on a tool whose whole category is disabled.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
@@ -141,6 +141,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-examples`: Disable query examples tools.
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
+- `--disable-dsquery`: Disable the `query_datasource` source of `render_grafana_app`.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-tempo`: Disable Tempo tracing tools.
 - `--disable-provisioning`: Disable provisioning tools.
@@ -162,6 +163,9 @@ The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrai
 - `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
 - `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query: its own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, with nested subquery ranges added up. Defaults to `192h`. Takes a Go duration, so write `192h`, not `8d`. `0` disables the range check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
 - `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1`. Defaults to `11000`; `0` disables the points check. Falls back to `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
+- `--prometheus-guardrail-max-metric-cardinality`: Opt-in TSDB scope policy. Default: `0` (disabled). An exact metric name reported above this series-count threshold requires a non-empty exact matcher on a configured scope label. Only active when the mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY`.
+- `--prometheus-guardrail-cardinality-cache-ttl`: Lifetime of cached TSDB snapshots. Default: `10m`; `0` also uses `10m`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL`.
+- `--prometheus-guardrail-cardinality-scope-labels`: Comma-separated labels whose non-empty exact matchers satisfy the cardinality policy. Default: `job,instance,namespace,pod,service,cluster`; empty uses these defaults. `__name__` is not allowed. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS`. Explicit CLI settings override the corresponding environment variables.
 
 The points check budgets the requested resolution, not the number of series, samples, or subquery evaluations. The range check ignores `offset` and `@`. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured. An expression the guardrail still cannot parse, such as one with a dashboard variable like `$window`, is checked against its time range and step only. Decisions are exported as `mcp_prometheus_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, and `_fail_open_total`. See [Observability](../../developer/observability-metrics-and-tracing/#prometheus-guardrail-metrics).
 
@@ -192,6 +196,25 @@ This is a static heuristic, not a query-cost or cardinality bound and not an exh
 
 The check applies to instant and range queries, including selectors inside range vectors and subqueries, across all three guarded tool paths. If parsing fails, selector and expression-window checks are unavailable; request time range and points are still checked. If neither blocks, the query fails open with `reason="unparseable"`.
 
+#### Prometheus cardinality policy
+
+Enable `--prometheus-guardrail-mode=shadow --prometheus-guardrail-max-metric-cardinality=100000` to observe the policy before enforcing it. It uses the top 10 metric counts from Prometheus' `/api/v1/status/tsdb`, fetched through Grafana with the request's authentication. This endpoint describes the current TSDB head, not the selected series for the query or all historical data. The check is independent of the static selector, range and points policies.
+
+A selector naming a metric whose reported count exceeds the threshold needs a non-empty **exact** matcher on one of the configured scope labels. The default scope labels are `job`, `instance`, `namespace`, `pod`, `service`, and `cluster`; customize them for your deployment. Each selector is checked independently, including inside functions, range vectors, subqueries and binary operands. Selectors with contradictory metric-name matchers select no series and skip the cardinality check.
+
+For a known `http_requests_total` count of 200,000 and a threshold of 100,000:
+
+| Selector | Cardinality policy |
+|----------|--------------------|
+| `http_requests_total{status="200"}` | Block: `status` is not a configured scope label |
+| `http_requests_total{status="200",namespace="payments"}` | Allow: an exact scope matcher is present |
+| `http_requests_total{namespace=~"payments.*"}` | Block: regex scope is not accepted by this policy |
+| `http_requests_total{namespace!=""}` | Block: negative and existence matchers are insufficient |
+
+This is a scope heuristic, not a series-count limit: `namespace="payments"` or `job="api"` can still match many series. The guardrail does not claim that the narrowed query is cheap and does not rewrite it automatically. A metric missing from the top 10, or one that cannot be identified by an exact metric-name matcher, is unknown rather than proven safe. Unsupported backends, unavailable metadata and malformed responses fail open for this policy; existing static checks still apply. Cloud Monitoring does not expose this Prometheus endpoint.
+
+Metadata uses a cache of at most 256 entries, isolated by the request's Grafana target and authentication/tenant context. Concurrent refreshes are coalesced, with at most 8 fetches running at once. Failed fetches are cached for the smaller of the configured TTL and 30 seconds. A cache miss while all fetch slots are busy fails open. A later query can retry as soon as a slot is available. Fetches have a 2-second timeout and a 1 MiB response limit. Custom `BaseTransport` and TLS client-certificate configurations bypass the shared cache because their caller identity can change independently. Server-only TLS settings (a custom CA or skipping server-certificate verification) retain caching. A client timeout does not guarantee that the backend stops computing statistics. `off` mode or a zero cardinality threshold adds no TSDB requests. Selectors already carrying an exact scope matcher need no metadata lookup; queries with a static violation also skip metadata, including in shadow mode. Start in `shadow` mode: it records `reason="cardinality"` for would-be blocks, but still executes the query. Enforce mode rejects with guidance to add a real scope matcher. Unknown assessments use `reason="cardinality_unknown"` on the fail-open counter.
+
 ## Run without query execution
 
 `--disable-query` removes every tool that executes a query against a datasource, and leaves the metadata and discovery tools in place.
@@ -217,9 +240,9 @@ The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/qu
 
 ### Query execution and read-only mode
 
-The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. Read-only mode removes them along with the other write tools.
+The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. So does `query_datasource`, a source of `render_grafana_app` for the `dsquery` category, which is off by default. Read-only mode removes them along with the other write tools.
 
-`--enable-query` puts them back. Use it when the datasource credentials are known to be read-only and you want query execution in an otherwise read-only server. It doesn't re-enable any other write tool, and it has no effect alongside `--disable-query`, which always wins.
+`--enable-query` puts them back. For `query_datasource`, `--enable-write-tools=query_datasource` also works. Use it when the datasource credentials are known to be read-only and you want query execution in an otherwise read-only server. It doesn't re-enable any other write tool, and it has no effect alongside `--disable-query`, which always wins.
 
 | Flags | Safe query tools | Raw-SQL query tools |
 | --- | --- | --- |
@@ -237,7 +260,7 @@ The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query 
 Enforcement applies only to the Prometheus query tools. Other tools can reach Prometheus metric data through paths that never touch the enforced backend, so you must also disable them for the restriction to hold:
 
 - `--disable-api`: `grafana_api_request` can query the Prometheus datasource proxy directly (full bypass).
-- `--disable-rendering`: `get_panel_image` renders Prometheus panels server-side, producing images with unrestricted metric data.
+- `--disable-rendering`: `get_panel_image` can render unrestricted metric data. `render_grafana_app` can also use `query_datasource` to submit Prometheus queries without these matchers. `--disable-dsquery` closes the latter path only.
 - `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Prometheus server-side across all series. It is only registered when write tools are enabled, so `--disable-write` closes it too.
 
 The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Prometheus datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Dashboard snapshots (`--disable-snapshot`) can embed panel data captured outside enforcement.

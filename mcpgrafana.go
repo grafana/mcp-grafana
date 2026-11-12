@@ -413,6 +413,23 @@ type GrafanaConfig struct {
 	// (see --disable-api); otherwise a query can bypass the Prometheus tools entirely.
 	PrometheusEnforcedMatchers []*labels.Matcher
 
+	// PrometheusGuardrailMaxMetricCardinality enables a best-effort TSDB
+	// cardinality policy when positive and the guardrail mode is not off.
+	// An exact metric name reported above this threshold must have a non-empty
+	// exact matcher on a CardinalityScopeLabels label. This is a scope heuristic,
+	// not a bound on matched series or query cost. Zero disables the check.
+	PrometheusGuardrailMaxMetricCardinality int64
+
+	// PrometheusGuardrailCardinalityCacheTTL controls the lifetime of cached
+	// TSDB snapshots. Zero uses 10 minutes. Metadata failures fail open.
+	PrometheusGuardrailCardinalityCacheTTL time.Duration
+
+	// PrometheusGuardrailCardinalityScopeLabels names labels whose non-empty
+	// exact matchers satisfy the cardinality policy. Nil or empty uses job,
+	// instance, namespace, pod, service and cluster. Regex and negative matchers
+	// do not satisfy this policy; __name__ is never a scope label.
+	PrometheusGuardrailCardinalityScopeLabels []string
+
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server
 	// issues (query, stats, patterns, and label enumeration). It lets an

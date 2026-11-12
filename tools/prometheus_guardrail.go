@@ -41,10 +41,12 @@ type promGuardPolicy struct {
 type promGuardReason string
 
 const (
-	promGuardReasonRange       promGuardReason = "range"
-	promGuardReasonPoints      promGuardReason = "points"
-	promGuardReasonSelector    promGuardReason = "selector"
-	promGuardReasonUnparseable promGuardReason = "unparseable"
+	promGuardReasonCardinality        promGuardReason = "cardinality"
+	promGuardReasonCardinalityUnknown promGuardReason = "cardinality_unknown"
+	promGuardReasonRange              promGuardReason = "range"
+	promGuardReasonPoints             promGuardReason = "points"
+	promGuardReasonSelector           promGuardReason = "selector"
+	promGuardReasonUnparseable        promGuardReason = "unparseable"
 )
 
 type promGuardVerdict int
@@ -64,9 +66,10 @@ type promGuardViolation struct {
 }
 
 type promGuardDecision struct {
-	Verdict    promGuardVerdict
-	Violations []promGuardViolation // Block only; selector, then range, then points
-	ParseErr   error                // Unknown only
+	Verdict       promGuardVerdict
+	Violations    []promGuardViolation // Block only; selector, then range, then points
+	UnknownReason promGuardReason      // Empty means unparseable.
+	ParseErr      error                // Unknown only
 }
 
 // assessPromQuery checks a PromQL query against p. queryType is "range" or
@@ -296,7 +299,7 @@ func promGuardGuidance(d promGuardDecision) string {
 // query reaches the datasource. In shadow mode a blocked query is logged and
 // runs anyway; in enforce mode the guidance is returned as an error, which
 // ConvertTool surfaces as a tool result with isError=true.
-func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, end time.Time, stepSeconds int) error {
+func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, end time.Time, stepSeconds int, cardinality ...func() promGuardDecision) error {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
 	mode := config.PrometheusGuardrailMode
 	if mode == "" || mode == mcpgrafana.PrometheusGuardrailOff {
@@ -323,6 +326,11 @@ func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, en
 		MaxPoints:              config.PrometheusGuardrailMaxPoints,
 	}
 	d := assessPromQuery(expr, queryType, start, end, stepSeconds, policy)
+	// Static violations take precedence and avoid an unnecessary metadata call,
+	// including in shadow mode. Emit exactly one final decision per query.
+	if d.Verdict == promGuardAllow && config.PrometheusGuardrailMaxMetricCardinality > 0 && len(cardinality) > 0 {
+		d = cardinality[0]()
+	}
 
 	metrics := promGuardrailInstrumentsFor(config.MeterProviderOrDefault())
 	logger := config.LoggerOrDefault()
@@ -336,8 +344,12 @@ func guardPrometheusQuery(ctx context.Context, expr, queryType string, start, en
 		// Dashboard variables such as $window are the usual cause, and a real
 		// syntax error comes back from the datasource anyway, so this is not
 		// worth a warning per query; the fail_open counter tracks the rate.
-		logger.DebugContext(ctx, "prometheus guardrail could not parse the expression; selector and expression-window checks unavailable; checked request time range and points (fail-open)", "error", d.ParseErr, "expr", expr)
-		metrics.recordFailOpen(ctx, promGuardReasonUnparseable)
+		logger.DebugContext(ctx, "prometheus guardrail assessment incomplete (fail-open)", "error", d.ParseErr, "expr", expr)
+		reason := d.UnknownReason
+		if reason == "" {
+			reason = promGuardReasonUnparseable
+		}
+		metrics.recordFailOpen(ctx, reason)
 		return nil
 
 	default: // promGuardBlock

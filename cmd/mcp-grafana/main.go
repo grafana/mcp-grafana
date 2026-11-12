@@ -105,6 +105,7 @@ var categoryDescription = map[string]string{
 	"sql":           "SQL: Query supported SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery) via Grafana with macro substitution, schema discovery, and variable support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
 	"graphite":      "Graphite: Query Graphite datasources for metrics.",
+	"dsquery":       "Data source queries: Chart the queries of any data source with render_grafana_app (query_datasource).",
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
@@ -182,7 +183,7 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, admin,
 	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
-	snapshot, examples, sql, graphite,
+	snapshot, examples, sql, graphite, dsquery,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
 }
@@ -212,6 +213,9 @@ type grafanaConfig struct {
 	prometheusGuardrailMode                   string
 	prometheusGuardrailMaxRange               time.Duration
 	prometheusGuardrailMaxPoints              int64
+	prometheusGuardrailMaxMetricCardinality   int64
+	prometheusGuardrailCardinalityCacheTTL    time.Duration
+	prometheusGuardrailCardinalityScopeLabels string
 
 	includeArgsInSpans bool
 
@@ -248,7 +252,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.tempo, "disable-proxied", false, "Deprecated: use --disable-tempo instead")
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
-	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
+	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write, and keep query_datasource, a source of render_grafana_app, available. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. For the raw-SQL tools it is equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
 	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
@@ -262,6 +266,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.sql, "disable-athena", false, "Deprecated: use --disable-sql instead")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
+	flag.BoolVar(&dt.dsquery, "disable-dsquery", false, "Disable the query_datasource source of render_grafana_app")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
@@ -294,6 +299,10 @@ func (gc *grafanaConfig) addFlags() {
 	flag.DurationVar(&gc.prometheusGuardrailMaxRange, "prometheus-guardrail-max-range", 192*time.Hour, "Maximum effective time range for a single PromQL query: its time range plus the longest range vector or subquery window in the expression. Accepts Go duration strings, e.g. 192h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
 	flag.Int64Var(&gc.prometheusGuardrailMaxPoints, "prometheus-guardrail-max-points", 11000, "Maximum points per series a PromQL range query may request, computed from its time range and step. 0 disables the points check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS environment variable when the flag is not set.")
 	flag.StringVar(&gc.prometheusEnforcedMatchers, "prometheus-enforced-matchers", "", "PromQL label matchers AND-ed into every native-Prometheus query to restrict readable series (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
+
+	flag.Int64Var(&gc.prometheusGuardrailMaxMetricCardinality, "prometheus-guardrail-max-metric-cardinality", 0, "Require an exact scope-label matcher for known metrics above this TSDB series count. 0 disables this best-effort heuristic (default); only active when the guardrail is not 'off'. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY.")
+	flag.DurationVar(&gc.prometheusGuardrailCardinalityCacheTTL, "prometheus-guardrail-cardinality-cache-ttl", 10*time.Minute, "TTL for Prometheus TSDB cardinality snapshots. 0 uses the default 10m. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL.")
+	flag.StringVar(&gc.prometheusGuardrailCardinalityScopeLabels, "prometheus-guardrail-cardinality-scope-labels", "job,instance,namespace,pod,service,cluster", "Comma-separated labels whose non-empty exact matchers satisfy the cardinality policy. Empty uses the default job,instance,namespace,pod,service,cluster. Falls back to GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS.")
 
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
 	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
@@ -395,6 +404,24 @@ func (gc *grafanaConfig) applyPrometheusGuardrailEnv(setFlags map[string]bool) e
 		}
 		gc.prometheusGuardrailRequireSelectiveLabels = b
 	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"); v != "" && !setFlags["prometheus-guardrail-max-metric-cardinality"] {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY %q: %w", v, err)
+		}
+		gc.prometheusGuardrailMaxMetricCardinality = n
+	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"); v != "" && !setFlags["prometheus-guardrail-cardinality-cache-ttl"] {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL %q: %w", v, err)
+		}
+		gc.prometheusGuardrailCardinalityCacheTTL = d
+	}
+	if v := os.Getenv("GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS"); v != "" && !setFlags["prometheus-guardrail-cardinality-scope-labels"] {
+		gc.prometheusGuardrailCardinalityScopeLabels = v
+	}
+
 	return nil
 }
 
@@ -454,7 +481,30 @@ func (gc *grafanaConfig) validatePrometheusGuardrail() error {
 	if gc.prometheusGuardrailMaxPoints < 0 {
 		return fmt.Errorf("invalid Prometheus guardrail max points %d (--prometheus-guardrail-max-points or GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS): must be >= 0 (0 disables the points check)", gc.prometheusGuardrailMaxPoints)
 	}
+	if gc.prometheusGuardrailMaxMetricCardinality < 0 {
+		return fmt.Errorf("invalid Prometheus guardrail max metric cardinality %d (--prometheus-guardrail-max-metric-cardinality or GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY): must be >= 0 (0 disables the check)", gc.prometheusGuardrailMaxMetricCardinality)
+	}
+	if gc.prometheusGuardrailCardinalityCacheTTL < 0 {
+		return fmt.Errorf("invalid Prometheus guardrail cardinality cache TTL %s (--prometheus-guardrail-cardinality-cache-ttl or GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL): must be >= 0 (0 uses 10m)", gc.prometheusGuardrailCardinalityCacheTTL)
+	}
+	if slices.Contains(gc.cardinalityScopeLabels(), "__name__") {
+		return fmt.Errorf("invalid Prometheus guardrail cardinality scope labels (--prometheus-guardrail-cardinality-scope-labels or GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS): __name__ is not a scope label")
+	}
+
 	return nil
+}
+
+// cardinalityScopeLabels returns nil for an empty setting, selecting the
+// library defaults. Trim whitespace and duplicates for predictable matching.
+func (gc *grafanaConfig) cardinalityScopeLabels() []string {
+	var labels []string
+	for _, label := range strings.Split(gc.prometheusGuardrailCardinalityScopeLabels, ",") {
+		label = strings.TrimSpace(label)
+		if label != "" && !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 type toolEntry struct {
@@ -495,6 +545,8 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddSQLTools(s, dt.queryToolsEnabled("sql")) }, dt.sql, "sql"},
 		{func(s *mcp.Server) { tools.AddRunPanelQueryTools(s, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
 		{func(s *mcp.Server) { tools.AddGraphiteTools(s, enableQueryTools) }, dt.graphite, "graphite"},
+		// query_datasource is a source of render_grafana_app and registers no tool of its own (appSources).
+		{func(*mcp.Server) {}, dt.dsquery, "dsquery"},
 		{func(s *mcp.Server) { tools.AddPluginTools(s, enableWriteTools) }, dt.plugin, "plugin"},
 		{func(s *mcp.Server) { tools.AddAPITools(s, enableWriteTools, dt.mutatingQueryToolsEnabled()) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
@@ -504,6 +556,13 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddDocsTools, dt.docs, "docs"},
 		{tools.AddUserTools, dt.user, "user"},
 	}
+}
+
+// dsquerySourceEnabled reports whether query_datasource can be a source. It passes the queries unfiltered, so
+// --disable-write hides it, unless --enable-query or --enable-write-tools=query_datasource says that the
+// credentials are read-only (viz-contract tool.2).
+func (dt *disabledTools) dsquerySourceEnabled() bool {
+	return !dt.query && (dt.writeToolEnabled(tools.QueryDatasource.Tool.Name) || dt.enableQuery)
 }
 
 func (dt *disabledTools) appSources() []mcpgrafana.Tool {
@@ -517,6 +576,9 @@ func (dt *disabledTools) appSources() []mcpgrafana.Tool {
 	}
 	if isCategoryEnabled(enabled, dt.tempo, "tempo") {
 		sources = append(sources, tools.GetTempoTraceTool)
+	}
+	if isCategoryEnabled(enabled, dt.dsquery, "dsquery") && dt.dsquerySourceEnabled() {
+		sources = append(sources, tools.QueryDatasource)
 	}
 	return sources
 }
@@ -574,6 +636,10 @@ func (dt *disabledTools) categoryRegistersTools(e toolEntry, enabledTools []stri
 	}
 	// AddAssistantTools registers nothing when write tools are disabled.
 	if e.category == "assistant" && dt.write {
+		return false
+	}
+	// query_datasource is a source of render_grafana_app, so it is as visible as that source and that tool.
+	if e.category == "dsquery" && (!dt.dsquerySourceEnabled() || !isCategoryEnabled(enabledTools, dt.rendering, "rendering")) {
 		return false
 	}
 	// A category whose every tool executes a query registers nothing once
@@ -871,6 +937,12 @@ func warnPrometheusEnforcementBypasses(dt disabledTools) {
 			slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
 				"disable_with", b.flag, "reason", b.reason)
 		}
+	}
+	if isCategoryEnabled(enabledTools, dt.rendering, "rendering") &&
+		isCategoryEnabled(enabledTools, dt.dsquery, "dsquery") && dt.dsquerySourceEnabled() {
+		slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
+			"disable_with", "--disable-dsquery",
+			"reason", "render_grafana_app can use query_datasource to send unfiltered Prometheus queries")
 	}
 	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
 		slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
@@ -1401,6 +1473,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// The other half of us.Flags: flag.Visit sees only flags, and container
 	// deployments configure almost entirely by environment variable.
 	us.EnvSet = usagestats.EnvSet(os.Getenv)
+	us.HTTPTransport = gc.ProxyOnlyTransport()
 	usage := usagestats.New(us)
 	usage.Disclose()
 
@@ -1682,7 +1755,7 @@ func main() {
 		os.Exit(2)
 	}
 	if gc.prometheusGuardrailMode != mcpgrafana.PrometheusGuardrailOff {
-		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints, "require_selective_labels", gc.prometheusGuardrailRequireSelectiveLabels)
+		slog.Info("Prometheus guardrail enabled", "mode", gc.prometheusGuardrailMode, "max_range", gc.prometheusGuardrailMaxRange, "max_points", gc.prometheusGuardrailMaxPoints, "require_selective_labels", gc.prometheusGuardrailRequireSelectiveLabels, "max_metric_cardinality", gc.prometheusGuardrailMaxMetricCardinality, "cardinality_cache_ttl", gc.prometheusGuardrailCardinalityCacheTTL, "cardinality_scope_labels", gc.cardinalityScopeLabels())
 	}
 
 	if err := validateMountFlags(transport, *basePath, *endpointPath, *healthzAddress, obs); err != nil {
@@ -1715,6 +1788,9 @@ func main() {
 		PrometheusGuardrailMode:                   gc.prometheusGuardrailMode,
 		PrometheusGuardrailMaxRange:               gc.prometheusGuardrailMaxRange,
 		PrometheusGuardrailMaxPoints:              gc.prometheusGuardrailMaxPoints,
+		PrometheusGuardrailMaxMetricCardinality:   gc.prometheusGuardrailMaxMetricCardinality,
+		PrometheusGuardrailCardinalityCacheTTL:    gc.prometheusGuardrailCardinalityCacheTTL,
+		PrometheusGuardrailCardinalityScopeLabels: gc.cardinalityScopeLabels(),
 		IncludeArgumentsInSpans:                   gc.includeArgsInSpans,
 		Timeout:                                   gc.timeout,
 		SOCKS5ProxyURL:                            socks5Proxy,

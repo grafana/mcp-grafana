@@ -3,6 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -29,8 +32,8 @@ var (
 	docsIndex       *grafanadocs.Index
 	docsIndexFlight singleflight.Group
 
-	// loadIndexFn is grafanadocs.LoadIndex in production; tests stub it.
-	loadIndexFn = grafanadocs.LoadIndex
+	// loadIndexFn is fetchDocsIndex in production; tests stub it.
+	loadIndexFn = fetchDocsIndex
 
 	// fetchDocFn is grafanadocs.FetchDoc in production; tests stub it.
 	fetchDocFn = grafanadocs.FetchDoc
@@ -40,6 +43,41 @@ var (
 	// timeout. Overridable in tests.
 	docsIndexLoadTimeout = 60 * time.Second
 )
+
+// maxDocsIndexBytes matches grafanadocs' own cap on the index size.
+const maxDocsIndexBytes = 10 * 1024 * 1024
+
+// docsUserAgent mirrors grafanadocs.LoadIndex (mcp-doc-server pkg/grafanadocs/index.go),
+// which does not export it.
+const docsUserAgent = "mcp-doc-server/0.1"
+
+// fetchDocsIndex does what grafanadocs.LoadIndex does, but through the
+// SOCKS5 proxy when one is configured. LoadIndex uses its own http.Client.
+// TODO: drop fetchDocsIndex once mcp-doc-server's LoadIndex accepts an *http.Client.
+func fetchDocsIndex(ctx context.Context, rawURL string) (*grafanadocs.Index, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid docs index URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("rejected docs index URL scheme %q (only https allowed)", u.Scheme)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build docs index request: %w", err)
+	}
+	req.Header.Set("User-Agent", docsUserAgent)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	resp, err := (&http.Client{Transport: cfg.ProxyOnlyTransport()}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch docs index: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("docs index returned %d", resp.StatusCode)
+	}
+	return grafanadocs.LoadIndexFromReader(io.LimitReader(resp.Body, maxDocsIndexBytes))
+}
 
 // loadDocsIndex lazily loads the documentation index on first successful use.
 // Failures are not cached: a cancelled or timed-out first request must not

@@ -73,7 +73,7 @@ func TestCloudWatchIntegration_QueryMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	// May or may not have data depending on LocalStack timing
-	assert.NotNil(t, result.Timestamps)
+	assert.NotNil(t, result.Series)
 }
 
 func TestCloudWatchIntegration_QueryEmptyResult(t *testing.T) {
@@ -92,7 +92,7 @@ func TestCloudWatchIntegration_QueryEmptyResult(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	// Empty result should have hints
-	if len(result.Values) == 0 {
+	if len(result.Series) == 0 {
 		assert.NotEmpty(t, result.Hints, "Empty result should have hints")
 	}
 }

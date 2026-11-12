@@ -518,7 +518,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudlogging`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
@@ -527,6 +527,9 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
 - `--prometheus-guardrail-max-range`: Maximum effective time range for a single PromQL query - default: `192h`. The effective range is the query's own time range (zero for instant queries) plus the longest range-vector or subquery window in the expression, where nested subquery ranges add up, so `max_over_time(rate(x[5m])[30d:1m])` reads 30d5m. Accepts Go duration strings, so write `192h`, not `8d`. `0` disables the range check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE`.
 - `--prometheus-guardrail-max-points`: Maximum points per series a range query may request, `floor(range / step) + 1` - default: `11000`, Prometheus' own per-series limit. The guidance names the smallest `stepSeconds` that fits. `0` disables the points check. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS`.
+- `--prometheus-guardrail-max-metric-cardinality`: Opt-in TSDB scope policy. Default: `0` (disabled). An exact metric name reported above this series-count threshold requires a non-empty exact matcher on a configured scope label. Only active when the mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY`.
+- `--prometheus-guardrail-cardinality-cache-ttl`: Lifetime of cached TSDB snapshots. Default: `10m`; `0` also uses `10m`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL`.
+- `--prometheus-guardrail-cardinality-scope-labels`: Comma-separated labels whose non-empty exact matchers satisfy the cardinality policy. Default: `job,instance,namespace,pod,service,cluster`; empty uses these defaults. `__name__` is not allowed. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_SCOPE_LABELS`. Explicit CLI settings override the corresponding environment variables.
 
   Limits of the Prometheus guardrail: the points check budgets the requested resolution, not the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step. `offset` and `@` modifiers are ignored. Grafana macros such as `$__rate_interval` and `$__range` are filled in before the expression is measured, with the values Grafana uses (`$__rate_interval` is four times the step). Expressions the guardrail still cannot parse (for example ones with dashboard variables such as `$window`, or syntax only another dialect accepts) are checked against the query's own time range and step only, and run otherwise. `run_panel_query` has no step parameter, so it widens its 1-minute step for long ranges to stay within 11000 points, as Grafana does, or within a lower `--prometheus-guardrail-max-points` in `enforce` mode.
 - `--prometheus-enforced-matchers`: PromQL label matchers AND-ed into every native-Prometheus query to restrict which series can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Prometheus query enforcement](#prometheus-query-enforcement).
@@ -539,7 +542,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
-- `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`. Equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
+- `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`, and keep `query_datasource`, a source of `render_grafana_app`, available. For the raw-SQL tools it is equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
 - `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
@@ -560,6 +563,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
+- `--disable-dsquery`: Disable the `query_datasource` source of `render_grafana_app`
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
@@ -1347,9 +1351,9 @@ When the Prometheus guardrail (`--prometheus-guardrail-mode`) is enabled, four c
 | `mcp_prometheus_guardrail_admitted_total` | Counter | Queries that passed every enabled check |
 | `mcp_prometheus_guardrail_would_block_total` | Counter | Queries that failed a check in `shadow` mode and ran anyway (labels: `reason`) |
 | `mcp_prometheus_guardrail_blocked_total` | Counter | Queries rejected in `enforce` mode (labels: `reason`) |
-| `mcp_prometheus_guardrail_fail_open_total` | Counter | Queries whose expression the guardrail could not parse and admitted (labels: `reason`) |
+| `mcp_prometheus_guardrail_fail_open_total` | Counter | Queries admitted with an unavailable enabled assessment (labels: `reason`) |
 
-`reason` is `range` or `points` on `would_block` and `blocked`, counted once under the first check that failed (`range`, then `points`), and `unparseable` on `fail_open`. There is no `backend` label: every Prometheus-compatible backend gets the same checks.
+`reason` is `selector`, `range`, `points`, or `cardinality` on `would_block` and `blocked`, counted once under the first check that failed in that order. `fail_open` uses `unparseable` or `cardinality_unknown`. The optional [cardinality policy](docs/sources/configure/command-line-flags.md#prometheus-cardinality-policy) uses cached top-N TSDB statistics to require explicit scope on known high-cardinality metrics; it does not estimate the selected series or prove that missing metrics are safe. Unsupported TSDB endpoints fail open for this policy. There is no `backend` label.
 
 Library embedders should set `GrafanaConfig.MeterProvider` (the metrics counterpart of `GrafanaConfig.Logger`): the guardrail runs inside a tool handler, so it has no constructor option, and a process that installs a noop global `MeterProvider` would otherwise drop every recording.
 
@@ -1444,18 +1448,18 @@ docker run --rm -p 8000:8000 \
 
 ## Prometheus query enforcement
 
-`--prometheus-enforced-matchers` lets an operator restrict which Prometheus series the
-server can ever read, by AND-ing a fixed set of PromQL label matchers into every
-vector selector in each native-Prometheus query the server issues. This is useful when a
+`--prometheus-enforced-matchers` lets an operator restrict which Prometheus series
+native Prometheus tools can read, by AND-ing a fixed set of PromQL label matchers into
+every vector selector in each native-Prometheus query the server issues. This is useful when a
 datasource contains series that must not be exposed (e.g. metrics with sensitive tenant
 or customer labels) but you cannot restrict access at the Prometheus layer.
 
 ```bash
 # Only ever read prod/staging environments (allowlist)
-./mcp-grafana --prometheus-enforced-matchers 'environment=~"prod|staging"' --disable-api
+./mcp-grafana --prometheus-enforced-matchers 'environment=~"prod|staging"' --disable-api --disable-rendering --disable-assistant
 
 # Never read the vault or payments namespaces (exclusion)
-./mcp-grafana --prometheus-enforced-matchers 'namespace!~"vault|payments"' --disable-api
+./mcp-grafana --prometheus-enforced-matchers 'namespace!~"vault|payments"' --disable-api --disable-rendering --disable-assistant
 ```
 
 How it works:
@@ -1473,6 +1477,15 @@ How it works:
   APIs cannot apply the full Prometheus matcher policy.
 - It **fails closed**: any query that cannot be parsed is rejected rather than
   sent unfiltered.
+
+> [!IMPORTANT]
+> Other enabled tools can bypass these matchers. Disable `grafana_api_request`
+> with `--disable-api`, rendering tools with `--disable-rendering`, and Grafana
+> Assistant with `--disable-assistant` (or `--disable-write`). In particular,
+> `render_grafana_app` can send unfiltered Prometheus queries through its
+> `query_datasource` source. `--disable-dsquery` closes that source, but does not
+> disable server-side panel rendering. Existing dashboard snapshots can also
+> contain unrestricted data; use `--disable-snapshot` when that matters.
 
 ## Loki query enforcement
 
