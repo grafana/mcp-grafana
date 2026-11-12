@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -25,6 +26,7 @@ const (
 	defaultDSTo            = "now"
 	defaultDSMaxDataPoints = 1000
 	maxDSResultBytes       = 1 << 20
+	maxDSTitleChars        = 100 // maxTitleChars of registry/constants.json
 )
 
 // dsTime is a time of /api/ds/query: a string, or an integer of epoch milliseconds (tool.6).
@@ -55,6 +57,7 @@ type QueryDatasourceParams struct {
 	To            dsTime           `json:"to,omitempty" jsonschema:"description=End of the time range\\, in a format that /api/ds/query accepts\\, for example now or epoch milliseconds. Defaults to now."`
 	Type          dsChartType      `json:"type,omitempty"`
 	Unit          string           `json:"unit,omitempty" jsonschema:"minLength=1,description=Optional Grafana unit ID for all values\\, for example bytes\\, percent or reqps."`
+	Title         string           `json:"title,omitempty" jsonschema:"maxLength=100,description=Optional title of the chart\\, for example HTTP requests by handler. The chart shows it as a panel title."`
 }
 
 // dsChartType is a chart of chart-types.json (tool.7). With no type, the Source picks the chart.
@@ -106,6 +109,7 @@ func failedQueryNotes(results json.RawMessage) []string {
 
 type dsPanel struct {
 	Type        string         `json:"type"`
+	Title       string         `json:"title,omitempty"`
 	Options     map[string]any `json:"options"`
 	FieldConfig *dsFieldConfig `json:"fieldConfig,omitempty"`
 }
@@ -116,9 +120,10 @@ type dsFieldConfig struct {
 	} `json:"defaults"`
 }
 
-// dsPanelOf makes the panel of a chart: the panel ID and the options of its row, and the unit of the arguments (tool.22).
-func dsPanelOf(chart vizChart, unit string) dsPanel {
-	panel := dsPanel{Type: chart.Panel, Options: maps.Clone(chart.Options)}
+// dsPanelOf makes the panel of a chart: the panel ID and the options of its row, and the unit and the title of the
+// arguments (tool.22, tool.31).
+func dsPanelOf(chart vizChart, unit, title string) dsPanel {
+	panel := dsPanel{Type: chart.Panel, Title: title, Options: maps.Clone(chart.Options)}
 	if unit != "" {
 		panel.FieldConfig = &dsFieldConfig{}
 		panel.FieldConfig.Defaults.Unit = unit
@@ -151,6 +156,12 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	}
 	if args.Type != "" && vizChartByName(vizCharts, string(args.Type)) == nil {
 		return nil, fmt.Errorf("type must be one of: %s", strings.Join(vizChartNames(), ", "))
+	}
+	if args.Title != "" && strings.TrimSpace(args.Title) == "" {
+		return nil, fmt.Errorf("title must not be only white space")
+	}
+	if utf8.RuneCountInString(args.Title) > maxDSTitleChars {
+		return nil, fmt.Errorf("title must be at most %d characters", maxDSTitleChars)
 	}
 	from, to, err := resolveDSRange(args.From, args.To, dsNow())
 	if err != nil {
@@ -185,7 +196,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 		return nil, fmt.Errorf("the data source %s returned no results", args.DatasourceUID)
 	}
 
-	chart, alternatives, mismatch, err := chooseDSChart(envelope.Results, args.Type, args.Unit)
+	chart, alternatives, mismatch, err := chooseDSChart(envelope.Results, args.Type, args.Unit, args.Title)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +205,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	}
 	result := &QueryDatasourceResult{
 		Chart:        chart.Name,
-		Panel:        dsPanelOf(*chart, args.Unit),
+		Panel:        dsPanelOf(*chart, args.Unit, args.Title),
 		Alternatives: alternatives,
 		Data: dsData{
 			Range:      dsRange{From: from.UnixMilli(), To: to.UnixMilli()},
@@ -219,7 +230,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 // chooseDSChart gives the chart of the type, or the chart of the pick, and the other charts that fit the frames
 // (tool.18 to tool.23). If the model gave a type and the frames have rows, the frames must fit it (tool.20). If they
 // do not, the message of type-mismatch is the third value.
-func chooseDSChart(rawResults json.RawMessage, chartType dsChartType, unit string) (*vizChart, []dsAlternative, string, error) {
+func chooseDSChart(rawResults json.RawMessage, chartType dsChartType, unit, title string) (*vizChart, []dsAlternative, string, error) {
 	var results map[string]vizResult
 	if err := json.Unmarshal(rawResults, &results); err != nil {
 		return nil, nil, "", fmt.Errorf("reading the frames: %w", err)
@@ -245,7 +256,7 @@ func chooseDSChart(rawResults json.RawMessage, chartType dsChartType, unit strin
 	alternatives := []dsAlternative{}
 	for _, c := range vizCharts {
 		if c.Name != chart.Name && vizFits(summary, c) {
-			alternatives = append(alternatives, dsAlternative{Chart: c.Name, Panel: dsPanelOf(c, unit)})
+			alternatives = append(alternatives, dsAlternative{Chart: c.Name, Panel: dsPanelOf(c, unit, title)})
 		}
 	}
 	return chart, alternatives, "", nil

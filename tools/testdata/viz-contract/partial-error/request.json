@@ -1,5 +1,5 @@
 {
-  "from": "now-24h",
+  "from": "now-15m",
   "to": "now",
   "queries": [
     {
@@ -11,7 +11,7 @@
         "uid": "lgtm-prometheus"
       },
       "maxDataPoints": 1000,
-      "intervalMs": 86400
+      "intervalMs": 900
     },
     {
       "refId": "B",
@@ -22,7 +22,7 @@
         "uid": "lgtm-prometheus"
       },
       "maxDataPoints": 1000,
-      "intervalMs": 86400
+      "intervalMs": 900
     }
   ]
 }

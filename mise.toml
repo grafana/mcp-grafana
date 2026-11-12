@@ -58,7 +58,7 @@ done
 
 [tasks.sync-viz-contract]
 description = "Copy the registry and the Source fixtures of @grafana/viz-contract from npm into tools/. They are committed for `go:embed` and the conformance test"
-env = { VIZ_CONTRACT_VERSION = "1.1.0" }
+env = { VIZ_CONTRACT_VERSION = "1.3.0" }
 run = """
 #!/usr/bin/env bash
 set -euo pipefail

@@ -1,5 +1,5 @@
 {
-  "from": "1790349877294",
+  "from": "1790352577294",
   "to": "1790353477294",
   "queries": [
     {
@@ -11,7 +11,7 @@
         "uid": "lgtm-prometheus"
       },
       "maxDataPoints": 1000,
-      "intervalMs": 3600
+      "intervalMs": 900
     }
   ]
 }
