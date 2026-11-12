@@ -1,0 +1,446 @@
+{
+  "chart": "timeseries",
+  "panel": {
+    "type": "grafana-echartscartesian-panel",
+    "options": {
+      "seriesType": "line"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "reqps"
+      }
+    }
+  },
+  "alternatives": [
+    {
+      "chart": "barchart",
+      "panel": {
+        "type": "grafana-echartscartesian-panel",
+        "options": {
+          "seriesType": "bar"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "histogram",
+      "panel": {
+        "type": "grafana-echartscartesian-panel",
+        "options": {
+          "histogram": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "piechart",
+      "panel": {
+        "type": "grafana-echartsparttowhole-panel",
+        "options": {
+          "seriesType": "pie"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "funnel",
+      "panel": {
+        "type": "grafana-echartsparttowhole-panel",
+        "options": {
+          "seriesType": "funnel"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "heatmap",
+      "panel": {
+        "type": "grafana-echartsheatmap-panel",
+        "options": {},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "state-timeline",
+      "panel": {
+        "type": "grafana-echartsstatetimeline-panel",
+        "options": {},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "status-history",
+      "panel": {
+        "type": "grafana-echartsstatushistory-panel",
+        "options": {},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "streamgraph",
+      "panel": {
+        "type": "grafana-echartsstream-panel",
+        "options": {
+          "streamChartType": "river"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    },
+    {
+      "chart": "bubble",
+      "panel": {
+        "type": "grafana-echartsstream-panel",
+        "options": {
+          "streamChartType": "bubble"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      }
+    }
+  ],
+  "data": {
+    "range": {
+      "from": 1790352577294,
+      "to": 1790353477294
+    },
+    "capturedAt": 1790353477806,
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": [
+          {
+            "schema": {
+              "refId": "A",
+              "meta": {
+                "type": "timeseries-multi",
+                "typeVersion": [
+                  0,
+                  1
+                ]
+              },
+              "fields": [
+                {
+                  "name": "Time",
+                  "type": "time",
+                  "typeInfo": {
+                    "frame": "time.Time"
+                  }
+                },
+                {
+                  "name": "Value",
+                  "type": "number",
+                  "typeInfo": {
+                    "frame": "float64"
+                  },
+                  "labels": {
+                    "handler": "<img src=x onerror=alert(1)>"
+                  },
+                  "config": {
+                    "displayNameFromDS": "<img src=x onerror=alert(1)>"
+                  }
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1790352577294,
+                  1790352637294,
+                  1790352697294,
+                  1790352757294,
+                  1790352817294,
+                  1790352877294,
+                  1790352937294,
+                  1790352997294,
+                  1790353057294,
+                  1790353117294,
+                  1790353177294,
+                  1790353237294,
+                  1790353297294,
+                  1790353357294,
+                  1790353417294,
+                  1790353477294
+                ],
+                [
+                  8,
+                  8.08,
+                  8.37,
+                  8.84,
+                  9.44,
+                  10.1,
+                  10.75,
+                  11.31,
+                  11.73,
+                  11.97,
+                  11.98,
+                  11.77,
+                  11.38,
+                  10.82,
+                  10.18,
+                  9.52
+                ]
+              ]
+            }
+          },
+          {
+            "schema": {
+              "refId": "A",
+              "meta": {
+                "type": "timeseries-multi",
+                "typeVersion": [
+                  0,
+                  1
+                ]
+              },
+              "fields": [
+                {
+                  "name": "Time",
+                  "type": "time",
+                  "typeInfo": {
+                    "frame": "time.Time"
+                  }
+                },
+                {
+                  "name": "Value",
+                  "type": "number",
+                  "typeInfo": {
+                    "frame": "float64"
+                  },
+                  "labels": {
+                    "handler": "</script><script>alert(2)</script>"
+                  },
+                  "config": {
+                    "displayNameFromDS": "</script><script>alert(2)</script>"
+                  }
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1790352577294,
+                  1790352637294,
+                  1790352697294,
+                  1790352757294,
+                  1790352817294,
+                  1790352877294,
+                  1790352937294,
+                  1790352997294,
+                  1790353057294,
+                  1790353117294,
+                  1790353177294,
+                  1790353237294,
+                  1790353297294,
+                  1790353357294,
+                  1790353417294,
+                  1790353477294
+                ],
+                [
+                  11.84,
+                  12.44,
+                  13.1,
+                  13.75,
+                  14.31,
+                  14.73,
+                  14.97,
+                  14.98,
+                  14.77,
+                  14.38,
+                  13.82,
+                  13.18,
+                  12.52,
+                  11.91,
+                  11.42,
+                  11.11
+                ]
+              ]
+            }
+          },
+          {
+            "schema": {
+              "refId": "A",
+              "meta": {
+                "type": "timeseries-multi",
+                "typeVersion": [
+                  0,
+                  1
+                ]
+              },
+              "fields": [
+                {
+                  "name": "Time",
+                  "type": "time",
+                  "typeInfo": {
+                    "frame": "time.Time"
+                  }
+                },
+                {
+                  "name": "Value",
+                  "type": "number",
+                  "typeInfo": {
+                    "frame": "float64"
+                  },
+                  "labels": {
+                    "handler": "{{constructor.constructor(\"alert(3)\")()}}"
+                  },
+                  "config": {
+                    "displayNameFromDS": "{{constructor.constructor(\"alert(3)\")()}}"
+                  }
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1790352577294,
+                  1790352637294,
+                  1790352697294,
+                  1790352757294,
+                  1790352817294,
+                  1790352877294,
+                  1790352937294,
+                  1790352997294,
+                  1790353057294,
+                  1790353117294,
+                  1790353177294,
+                  1790353237294,
+                  1790353297294,
+                  1790353357294,
+                  1790353417294,
+                  1790353477294
+                ],
+                [
+                  16.75,
+                  17.31,
+                  17.73,
+                  17.97,
+                  17.98,
+                  17.77,
+                  17.38,
+                  16.82,
+                  16.18,
+                  15.52,
+                  14.91,
+                  14.42,
+                  14.11,
+                  14,
+                  14.11,
+                  14.43
+                ]
+              ]
+            }
+          },
+          {
+            "schema": {
+              "refId": "A",
+              "meta": {
+                "type": "timeseries-multi",
+                "typeVersion": [
+                  0,
+                  1
+                ]
+              },
+              "fields": [
+                {
+                  "name": "Time",
+                  "type": "time",
+                  "typeInfo": {
+                    "frame": "time.Time"
+                  }
+                },
+                {
+                  "name": "Value",
+                  "type": "number",
+                  "typeInfo": {
+                    "frame": "float64"
+                  },
+                  "labels": {
+                    "handler": "\"><svg onload=alert(4)>"
+                  },
+                  "config": {
+                    "displayNameFromDS": "\"><svg onload=alert(4)>"
+                  }
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1790352577294,
+                  1790352637294,
+                  1790352697294,
+                  1790352757294,
+                  1790352817294,
+                  1790352877294,
+                  1790352937294,
+                  1790352997294,
+                  1790353057294,
+                  1790353117294,
+                  1790353177294,
+                  1790353237294,
+                  1790353297294,
+                  1790353357294,
+                  1790353417294,
+                  1790353477294
+                ],
+                [
+                  20.97,
+                  20.98,
+                  20.77,
+                  20.38,
+                  19.82,
+                  19.18,
+                  18.52,
+                  17.91,
+                  17.42,
+                  17.11,
+                  17,
+                  17.11,
+                  17.43,
+                  17.93,
+                  18.54,
+                  19.2
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

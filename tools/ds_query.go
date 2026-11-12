@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"strconv"
@@ -243,36 +242,12 @@ func doDSQuery(ctx context.Context, client *http.Client, baseURL string, payload
 
 // doDSQueryWithLimit is like doDSQuery but allows overriding the response size limit.
 func doDSQueryWithLimit(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}, responseLimit int64) (*backend.QueryDataResponse, error) {
-	payload, err := enforceLokiDSQuery(ctx, payload)
+	status, body, err := doDSQueryRaw(ctx, client, baseURL, payload, responseLimit)
 	if err != nil {
 		return nil, err
 	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("query returned status %d: %s", resp.StatusCode, string(errBody))
-	}
-
-	body, err := readResponseBody(resp.Body, responseLimit)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
+	if status != http.StatusOK {
+		return nil, dsQueryStatusError(status, body)
 	}
 
 	var queryResp backend.QueryDataResponse
@@ -281,6 +256,44 @@ func doDSQueryWithLimit(ctx context.Context, client *http.Client, baseURL string
 	}
 
 	return &queryResp, nil
+}
+
+// doDSQueryRaw posts a payload to /api/ds/query and returns the status and the body of the response as it came, for a
+// caller that must not change it. Grafana answers a failed query with a status other than 200 and the results of each
+// query, so the body is read for each status. The request and the size limit are those of doDSQuery.
+func doDSQueryRaw(ctx context.Context, client *http.Client, baseURL string, payload map[string]interface{}, responseLimit int64) (int, []byte, error) {
+	payload, err := enforceLokiDSQuery(ctx, payload)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return 0, nil, fmt.Errorf("marshaling query payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return 0, nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := readResponseBody(resp.Body, responseLimit)
+	if err != nil {
+		return resp.StatusCode, nil, fmt.Errorf("reading response body: %w", err)
+	}
+	return resp.StatusCode, body, nil
+}
+
+// dsQueryStatusError is the error of a response with a status other than 200, with the start of its body.
+func dsQueryStatusError(status int, body []byte) error {
+	return fmt.Errorf("query returned status %d: %s", status, body[:min(len(body), 1024)])
 }
 
 func trimTrailingSlash(s string) string {

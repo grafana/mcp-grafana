@@ -1,0 +1,61 @@
+{
+  "status": 200,
+  "body": {
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": [
+          {
+            "schema": {
+              "meta": {
+                "type": "timeseries-long"
+              },
+              "fields": [
+                {
+                  "name": "time",
+                  "type": "time"
+                },
+                {
+                  "name": "host",
+                  "type": "string"
+                },
+                {
+                  "name": "value",
+                  "type": "number"
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1700000000000,
+                  1700000060000,
+                  1700000120000,
+                  1700000000000,
+                  1700000060000,
+                  1700000120000
+                ],
+                [
+                  "a",
+                  "a",
+                  "a",
+                  "b",
+                  "b",
+                  "b"
+                ],
+                [
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

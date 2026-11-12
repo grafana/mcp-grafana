@@ -1,0 +1,17 @@
+{
+  "from": "1790352577294",
+  "to": "1790353477294",
+  "queries": [
+    {
+      "refId": "A",
+      "expr": "sum by (handler) (rate(grafana_http_request_duration_seconds_count[5m]))",
+      "legendFormat": "{{handler}}",
+      "format": "time_series",
+      "datasource": {
+        "uid": "lgtm-prometheus"
+      },
+      "maxDataPoints": 1000,
+      "intervalMs": 900
+    }
+  ]
+}

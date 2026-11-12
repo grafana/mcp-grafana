@@ -1,0 +1,46 @@
+{
+  "pickVersion": 1,
+  "rules": [
+    {
+      "id": "node-graph",
+      "reason": "A frame has the preferred visualization type nodeGraph.",
+      "when": { "hasPreferredVisualisationType.nodeGraph": true },
+      "chart": "nodeGraph"
+    },
+    {
+      "id": "heatmap-cells",
+      "reason": "A frame has the data frame type heatmap-cells.",
+      "when": { "hasDataFrameType.heatmap-cells": true },
+      "chart": "heatmap"
+    },
+    {
+      "id": "time-series",
+      "reason": "The frames have a time field with more than one instant and a number field.",
+      "when": { "hasFieldType.time": true, "hasFieldType.number": true, "isInstant": false },
+      "chart": "timeseries"
+    },
+    {
+      "id": "few-parts",
+      "reason": "The frames have one string field, one number field and 2 to 10 rows.",
+      "when": {
+        "hasFieldType.time": false,
+        "fieldCountByType.string": 1,
+        "fieldCountByType.number": 1,
+        "rowCountTotal": { "min": 2, "max": 10 }
+      },
+      "chart": "piechart"
+    },
+    {
+      "id": "categories",
+      "reason": "The frames have a string field and a number field, and no time field.",
+      "when": { "hasFieldType.time": false, "hasFieldType.string": true, "hasFieldType.number": true },
+      "chart": "barchart"
+    },
+    {
+      "id": "default",
+      "reason": "No other rule matches.",
+      "when": {},
+      "chart": "barchart"
+    }
+  ]
+}

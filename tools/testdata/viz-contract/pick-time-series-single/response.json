@@ -1,0 +1,40 @@
+{
+  "status": 200,
+  "body": {
+    "results": {
+      "A": {
+        "status": 200,
+        "frames": [
+          {
+            "schema": {
+              "fields": [
+                {
+                  "name": "time",
+                  "type": "time"
+                },
+                {
+                  "name": "value",
+                  "type": "number"
+                }
+              ]
+            },
+            "data": {
+              "values": [
+                [
+                  1700000000000,
+                  1700000060000,
+                  1700000120000
+                ],
+                [
+                  1,
+                  2,
+                  3
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
