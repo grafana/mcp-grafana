@@ -392,8 +392,8 @@ func TestLokiFramesToResult_Metrics(t *testing.T) {
 }
 
 // callQueryLokiLogs runs the query_loki_logs tool against a Grafana stub
-// that answers /api/ds/query with frame.
-func callQueryLokiLogs(t *testing.T, frame *data.Frame, args string) *mcp.CallToolResult {
+// that answers /api/ds/query with frames.
+func callQueryLokiLogs(t *testing.T, args string, frames ...*data.Frame) *mcp.CallToolResult {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -402,7 +402,7 @@ func callQueryLokiLogs(t *testing.T, frame *data.Frame, args string) *mcp.CallTo
 			_, _ = io.WriteString(w, `{"uid":"loki","type":"loki"}`)
 		case "/api/ds/query":
 			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{
-				"A": backend.DataResponse{Frames: data.Frames{frame}},
+				"A": backend.DataResponse{Frames: frames},
 			}})
 		default:
 			http.NotFound(w, r)
@@ -457,8 +457,8 @@ func TestQueryLokiLogsStructuredContentStreams(t *testing.T) {
 		],` + metadata + `}`},
 	} {
 		t.Run(tc.format, func(t *testing.T) {
-			result := callQueryLokiLogs(t, frame, `{"datasourceUid":"loki","logql":"{app=~\".+\"}","format":"`+tc.format+`",
-				"startRfc3339":"1970-01-01T00:00:00Z","endRfc3339":"1970-01-01T00:00:05Z"}`)
+			result := callQueryLokiLogs(t, `{"datasourceUid":"loki","logql":"{app=~\".+\"}","format":"`+tc.format+`",
+				"startRfc3339":"1970-01-01T00:00:00Z","endRfc3339":"1970-01-01T00:00:05Z"}`, frame)
 			require.Len(t, result.Content, 1)
 			assert.JSONEq(t, tc.text, result.Content[0].(*mcp.TextContent).Text)
 
@@ -500,7 +500,7 @@ func TestQueryLokiLogsStructuredContentMetrics(t *testing.T) {
 		},
 	} {
 		t.Run(tc.queryType, func(t *testing.T) {
-			result := callQueryLokiLogs(t, frame, fmt.Sprintf(args, tc.queryType))
+			result := callQueryLokiLogs(t, fmt.Sprintf(args, tc.queryType), frame)
 			require.Len(t, result.Content, 1)
 			assert.JSONEq(t, tc.text, result.Content[0].(*mcp.TextContent).Text)
 
@@ -508,6 +508,48 @@ func TestQueryLokiLogsStructuredContentMetrics(t *testing.T) {
 			require.NoError(t, err)
 			assert.JSONEq(t, tc.native, string(structured))
 		})
+	}
+}
+
+func TestQueryLokiLogsStructuredContentEmpty(t *testing.T) {
+	args := `{"datasourceUid":"loki","logql":%q,"queryType":"%s",
+		"startRfc3339":"1970-01-01T00:00:00Z","endRfc3339":"1970-01-01T00:00:05Z"}`
+	for _, tc := range []struct {
+		name, logql, queryType, resultType string
+	}{
+		{name: "log range", logql: `{app="a"} |= "x"`, queryType: "range", resultType: "streams"},
+		{name: "log instant", logql: `{app="a"}`, queryType: "instant", resultType: "streams"},
+		{name: "metric range", logql: `count_over_time({app="a"}[1m])`, queryType: "range", resultType: "matrix"},
+		{name: "metric instant", logql: `count_over_time({app="a"}[1m])`, queryType: "instant", resultType: "vector"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := callQueryLokiLogs(t, fmt.Sprintf(args, tc.logql, tc.queryType))
+
+			var text QueryLokiLogsResult
+			require.NoError(t, json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &text))
+			assert.Empty(t, text.Data)
+
+			structured, err := json.Marshal(result.StructuredContent)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"status":"success","data":{"resultType":"`+tc.resultType+`","result":[]}}`, string(structured))
+		})
+	}
+}
+
+func TestIsLogQLLogQuery(t *testing.T) {
+	for logql, want := range map[string]bool{
+		`{app="a"}`:                              true,
+		` ({app="a"} |= "x")`:                    true,
+		"# note\n{app=\"a\"}":                    true,
+		`/* note */ {app="a"}`:                   true,
+		`count_over_time({app="a"}[1m])`:         false,
+		`(sum(rate({app="a"}[1m])))`:             false,
+		`sum by (app) (rate({app="a"}[1m])) > 1`: false,
+		`vector(0)`:                              false,
+		"# {app=\"a\"}\nvector(0)":               false,
+		`/* {app="a"}`:                           false,
+	} {
+		assert.Equal(t, want, isLogQLLogQuery(logql), logql)
 	}
 }
 
