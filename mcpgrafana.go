@@ -403,6 +403,16 @@ type GrafanaConfig struct {
 	// step. Zero disables the points check.
 	PrometheusGuardrailMaxPoints int64
 
+	// PrometheusEnforcedMatchers, when non-empty, is a set of label matchers that are
+	// AND-ed into every vector selector of every native-Prometheus query the server
+	// issues (query, histogram percentiles, and run_panel_query Prometheus targets).
+	// It lets an operator restrict which metric series the MCP can ever read (e.g.
+	// `namespace!~"vault|payments"` to exclude series that may contain sensitive labels).
+	// Parsed once at startup; an empty slice disables enforcement.
+	// NOTE: this is only effective if raw datasource-proxy access is disabled
+	// (see --disable-api); otherwise a query can bypass the Prometheus tools entirely.
+	PrometheusEnforcedMatchers []*labels.Matcher
+
 	// PrometheusGuardrailMaxMetricCardinality enables a best-effort TSDB
 	// cardinality policy when positive and the guardrail mode is not off.
 	// An exact metric name reported above this threshold must have a non-empty

@@ -185,11 +185,20 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		return nil, nil, err
 	}
 
+	window := time.Duration(0)
+	if !startTime.IsZero() && !endTime.IsZero() && endTime.After(startTime) {
+		window = endTime.Sub(startTime)
+	}
+	expr, err := enforcePromQL(ctx, args.Expr, window, args.StepSeconds)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	if err := loadBackend(); err != nil {
 		return nil, nil, fmt.Errorf("getting backend: %w", err)
 	}
 
-	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
+	return backend.Query(ctx, expr, queryType, startTime, endTime, args.StepSeconds)
 }
 
 // queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.

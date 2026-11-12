@@ -252,6 +252,20 @@ The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query 
 | `--disable-query` | Not registered | Not registered |
 | `--disable-query --enable-query` | Not registered | Not registered |
 
+## Restrict which Prometheus series can be read
+
+- `--prometheus-enforced-matchers`: PromQL label matchers AND-ed into every native-Prometheus query to restrict which series can be read (e.g. `environment=~"prod|staging"`). Unparseable queries are rejected.
+
+{{< admonition type="warning" >}}
+Enforcement applies only to the Prometheus query tools. Other tools can reach Prometheus metric data through paths that never touch the enforced backend, so you must also disable them for the restriction to hold:
+
+- `--disable-api`: `grafana_api_request` can query the Prometheus datasource proxy directly (full bypass).
+- `--disable-rendering`: `get_panel_image` can render unrestricted metric data. `render_grafana_app` can also use `query_datasource` to submit Prometheus queries without these matchers. `--disable-dsquery` closes the latter path only.
+- `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Prometheus server-side across all series. It is only registered when write tools are enabled, so `--disable-write` closes it too.
+
+The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Prometheus datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Dashboard snapshots (`--disable-snapshot`) can embed panel data captured outside enforcement.
+{{< /admonition >}}
+
 ## Restrict which Loki streams can be read
 
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Unparseable queries are rejected; VictoriaLogs datasources are refused while set.

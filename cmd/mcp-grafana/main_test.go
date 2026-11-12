@@ -861,6 +861,76 @@ func TestValidatePrometheusGuardrail(t *testing.T) {
 	}
 }
 
+func TestWarnPrometheusEnforcementBypasses(t *testing.T) {
+	t.Run("all bypass tools enabled logs warnings", func(t *testing.T) {
+		var buf bytes.Buffer
+		orig := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(orig)
+
+		dt := disabledTools{
+			enabledTools: "prometheus,api,rendering,assistant,snapshot",
+		}
+		warnPrometheusEnforcementBypasses(dt)
+		out := buf.String()
+		assert.Contains(t, out, "--disable-api")
+		assert.Contains(t, out, "--disable-rendering")
+		assert.Contains(t, out, "--disable-assistant")
+		assert.Contains(t, out, "--disable-snapshot")
+	})
+
+	t.Run("disabled bypass tools logs no warnings", func(t *testing.T) {
+		var buf bytes.Buffer
+		orig := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(orig)
+
+		dt := disabledTools{
+			enabledTools: "prometheus",
+			api:          true,
+			rendering:    true,
+			assistant:    true,
+			snapshot:     true,
+		}
+		warnPrometheusEnforcementBypasses(dt)
+		out := buf.String()
+		assert.NotContains(t, out, "--disable-api")
+		assert.NotContains(t, out, "--disable-rendering")
+		assert.NotContains(t, out, "--disable-assistant")
+		assert.NotContains(t, out, "--disable-snapshot")
+	})
+}
+
+func TestWarnPrometheusEnforcementDatasourceApp(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dt   disabledTools
+		want bool
+	}{
+		{name: "source enabled", dt: disabledTools{enabledTools: "rendering,dsquery"}, want: true},
+		{name: "datasource source disabled", dt: disabledTools{enabledTools: "rendering,dsquery", dsquery: true}},
+		{name: "rendering disabled", dt: disabledTools{enabledTools: "rendering,dsquery", rendering: true}},
+		{name: "write disabled", dt: disabledTools{enabledTools: "rendering,dsquery", write: true}},
+		{name: "write disabled with query override", dt: disabledTools{enabledTools: "rendering,dsquery", write: true, enableQuery: true}, want: true},
+		{name: "query disabled", dt: disabledTools{enabledTools: "rendering,dsquery", query: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			orig := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+			defer slog.SetDefault(orig)
+
+			warnPrometheusEnforcementBypasses(tc.dt)
+			if tc.want {
+				assert.Contains(t, buf.String(), "--disable-dsquery")
+				assert.Contains(t, buf.String(), "query_datasource")
+			} else {
+				assert.NotContains(t, buf.String(), "--disable-dsquery")
+			}
+		})
+	}
+}
+
 func TestApplyDashboardSchemaEnv(t *testing.T) {
 	tests := []struct {
 		name    string

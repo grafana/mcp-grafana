@@ -233,14 +233,14 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 
 	var datasourceJSONData interface{}
 	// Resolve the datasource type authoritatively from its UID whenever the
-	// caller overrode the datasource, or when we don't yet have a type. The
+	// caller overrode the datasource, when we don't yet have a type, or when
+	// Prometheus enforcement requires verifying the panel's declared type. The
 	// datasource's real type — not a caller-supplied one — decides which
 	// executor runs, because the executors build different queries. Loki
 	// label-matcher enforcement does not depend on this routing: doDSQuery
 	// resolves every target from its UID and enforces or refuses it there. A
-	// type declared in the panel JSON (no override) is trusted as-is: it comes
-	// from the dashboard, not the caller.
-	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "") {
+	// type declared in panel JSON is trusted only without Prometheus enforcement.
+	if datasourceUID != "" && (params.DsUID != "" || datasourceType == "" || len(prometheusEnforcedMatchers(ctx)) > 0) {
 		ds, lookupErr := datasource.ByUID(ctx, datasourceUID)
 		if lookupErr != nil && params.DsUID == "" {
 			// Dashboards saved before schema version 33 reference a
@@ -260,11 +260,17 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 			// on.
 			availableDS := getAvailableDatasourceUIDs(ctx, "")
 			return nil, fmt.Errorf("could not resolve datasource '%s' (%v) and no datasourceType was provided. Hint: provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, lookupErr, availableDS)
+		case len(prometheusEnforcedMatchers(ctx)) > 0 && normalizeDatasourceType(datasourceType) != "prometheus":
+			// The datasource is unreadable, so the caller-supplied type is
+			// unverified. With Prometheus label-matcher enforcement active, refuse
+			// rather than route a possibly-Prometheus datasource onto the
+			// /api/ds/query path, which bypasses enforcement.
+			return nil, fmt.Errorf("refusing to run panel query for datasource '%s': Prometheus label-matcher enforcement is enabled and the datasource type could not be verified because the datasource is not readable; query Prometheus via query_prometheus, or supply an accessible datasource", datasourceUID)
 		default:
 			// Unreadable datasource, but the caller supplied a fallback type;
-			// keep it. Under Loki label-matcher enforcement the executor's
-			// query still fails closed in doDSQuery, which cannot verify the
-			// type either.
+			// keep it. Native backends resolve the UID themselves; other
+			// queries go through doDSQuery, which verifies the target UID
+			// under Loki label-matcher enforcement.
 		}
 	}
 
