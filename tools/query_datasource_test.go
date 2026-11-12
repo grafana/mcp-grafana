@@ -296,3 +296,55 @@ func TestQueryDatasourceTypeMismatchWhenNoChartFits(t *testing.T) {
 		"type-mismatch: sankey needs source, target and value fields. Charts that fit: barchart.",
 		result.Content[0].(*mcp.TextContent).Text)
 }
+
+func runQueryDatasourceStatus(t *testing.T, status int, response string) (*mcp.CallToolResult, error) {
+	t.Helper()
+	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(response))
+	}))
+	t.Cleanup(grafana.Close)
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: grafana.URL})
+	return QueryDatasource.Handler(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+		Name: "query_datasource", Arguments: json.RawMessage(`{"datasourceUid":"prom","queries":[{"refId":"A"},{"refId":"B"}]}`),
+	}})
+}
+
+// Grafana answers a failed query with 400 and the results of each query: a partial result (tool.16, tool.29).
+func TestQueryDatasourcePartialFailure(t *testing.T) {
+	result, err := runQueryDatasourceStatus(t, http.StatusBadRequest, `{"results":{`+
+		`"A":{"status":200,"frames":[{"schema":{"fields":[{"name":"Time","type":"time"},{"name":"Value","type":"number"}]},"data":{"values":[[1,2],[3,4]]}}]},`+
+		`"B":{"status":400,"error":"parse error","frames":[{"schema":{},"data":{"values":[]}}]}}}`)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	content := result.StructuredContent.(*QueryDatasourceResult)
+	assert.Equal(t, "timeseries", content.Chart)
+	assert.Equal(t, []string{"Query B failed: parse error"}, content.AppNotes())
+}
+
+func TestQueryDatasourceStatusWithoutResults(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status   int
+		response string
+	}{
+		"not found":     {http.StatusNotFound, `{"message":"Data source not found"}`},
+		"no entries":    {http.StatusBadRequest, `{"results":{}}`},
+		"not JSON":      {http.StatusInternalServerError, `<html>bad gateway</html>`},
+		"empty body":    {http.StatusBadGateway, ``},
+		"no results ok": {http.StatusOK, `{}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := runQueryDatasourceStatus(t, tc.status, tc.response)
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			assert.Nil(t, result.StructuredContent)
+			message := result.Content[0].(*mcp.TextContent).Text
+			if tc.status != http.StatusOK {
+				assert.Contains(t, message, fmt.Sprintf("query returned status %d: %s", tc.status, tc.response))
+			} else {
+				assert.Contains(t, message, "returned no results")
+			}
+		})
+	}
+}

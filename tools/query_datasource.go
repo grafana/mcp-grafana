@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -204,7 +205,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	// The raw body, so that data.results is the results object of the response with no change (tool.15). The
 	// results are in the structured content as they came, and Grafana writes compact JSON, so a body past the budget
 	// gives a result past it: stop reading there (tool.24).
-	raw, err := doDSQueryRaw(ctx, client, baseURL, map[string]any{
+	status, raw, err := doDSQueryRaw(ctx, client, baseURL, map[string]any{
 		"queries": queries,
 		"from":    string(cmp.Or(args.From, defaultDSFrom)),
 		"to":      string(cmp.Or(args.To, defaultDSTo)),
@@ -216,15 +217,14 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 		return nil, fmt.Errorf("querying data source %s: %w", args.DatasourceUID, err)
 	}
 	capturedAt := dsNow().UnixMilli()
-	var envelope struct {
-		Results json.RawMessage `json:"results"`
+	results, rawResults, decodeErr := decodeDSResults(raw)
+	// tool.16: a status other than 200 with results is a partial result, and the failed queries become notes
+	// (tool.29). Without results, it is an error.
+	if status != http.StatusOK && (decodeErr != nil || len(results) == 0) {
+		return nil, fmt.Errorf("querying data source %s: %w", args.DatasourceUID, dsQueryStatusError(status, raw))
 	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, fmt.Errorf("reading the response of data source %s: %w", args.DatasourceUID, err)
-	}
-	var results map[string]vizResult
-	if err := json.Unmarshal(envelope.Results, &results); err != nil {
-		return nil, fmt.Errorf("reading the frames of data source %s: %w", args.DatasourceUID, err)
+	if decodeErr != nil {
+		return nil, fmt.Errorf("reading the response of data source %s: %w", args.DatasourceUID, decodeErr)
 	}
 	if len(results) == 0 {
 		return nil, fmt.Errorf("the data source %s returned no results", args.DatasourceUID)
@@ -241,7 +241,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 		Data: dsData{
 			Range:      dsRange{From: from.UnixMilli(), To: to.UnixMilli()},
 			CapturedAt: capturedAt,
-			Results:    envelope.Results,
+			Results:    rawResults,
 		},
 		notes: failedQueryNotes(results),
 	}
@@ -289,6 +289,25 @@ func chooseDSChart(results map[string]vizResult, chartType dsChartType, unit str
 		}
 	}
 	return chart, alternatives, ""
+}
+
+// decodeDSResults gives the entries of the results object of a response, for the summary and the notes, and the
+// results object as it came, for data.results (tool.15).
+func decodeDSResults(body []byte) (map[string]vizResult, json.RawMessage, error) {
+	var envelope struct {
+		Results json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, nil, err
+	}
+	if len(envelope.Results) == 0 {
+		return nil, nil, nil
+	}
+	var results map[string]vizResult
+	if err := json.Unmarshal(envelope.Results, &results); err != nil {
+		return nil, nil, fmt.Errorf("reading the frames: %w", err)
+	}
+	return results, envelope.Results, nil
 }
 
 // dsResultSize is the size of the JSON of the result: the result with null results, plus the results.

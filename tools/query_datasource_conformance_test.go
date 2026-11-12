@@ -80,12 +80,8 @@ func TestQueryDatasourceConformance(t *testing.T) {
 				Name: "query_datasource", Arguments: args,
 			}})
 
-			if response.Status != http.StatusOK {
-				// tool.16: one tool error for the whole call is also correct.
-				if err != nil || got.IsError {
-					return
-				}
-			}
+			// tool.16 allows one tool error for the whole call too, but this Source gives partial results, so a set with
+			// a status other than 200 must match its result.
 			require.NoError(t, err)
 			if hasRequest {
 				assert.Equal(t, wantRequest, posted, "the request body")
