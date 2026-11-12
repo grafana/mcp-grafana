@@ -154,3 +154,33 @@ func TestAppAppendsSourceNotes(t *testing.T) {
 	}
 	assert.Equal(t, strings.Join(want, "\n"), view.Content[0].(*mcp.TextContent).Text)
 }
+
+func TestAppRefusesClientWithoutApps(t *testing.T) {
+	ran := false
+	source := mcpgrafana.MustTool("counted_source", "Test source.",
+		func(context.Context, struct{}) (*mcp.CallToolResult, error) {
+			ran = true
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "{}"}}, StructuredContent: struct{}{}}, nil
+		})
+	c := clientSession(t, t.Context(), &mcp.ClientCapabilities{}, source)
+
+	view, err := c.CallTool(t.Context(), &mcp.CallToolParams{Name: "render_grafana_app", Arguments: map[string]any{
+		"toolName": "counted_source", "arguments": map[string]any{},
+	}})
+	require.NoError(t, err)
+	assert.True(t, view.IsError)
+	assert.Nil(t, view.StructuredContent)
+	assert.Contains(t, view.Content[0].(*mcp.TextContent).Text, "does not display MCP Apps")
+	assert.False(t, ran, "the source must not run")
+}
+
+func TestAppKeepsViewWhenCapabilitiesAreUnknown(t *testing.T) {
+	// A stateless request of an older protocol has no client capabilities.
+	want := &mcp.CallToolResult{}
+	handler := requireAppHost(func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return want, nil
+	})
+	got, err := handler(t.Context(), &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "render_grafana_app"}})
+	require.NoError(t, err)
+	assert.Same(t, want, got)
+}

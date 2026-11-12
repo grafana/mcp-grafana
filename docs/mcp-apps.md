@@ -28,7 +28,7 @@ Add other categories to the comma-separated list as needed. `--disable-query` re
 
 Source queries preserve their JSON text output and add viewer data when the response can be converted. The trace viewer is built from the trace frame Grafana’s Tempo datasource returns. Normalized viewer data is limited to 1 MiB. Source queries retain their text output for oversized or partial responses, subject to existing response-size limits.
 
-The App tool returns viewer data in `structuredContent` and a short display confirmation in `content`. When viewer data is unavailable, it returns a tool error directing callers to the source query. Hosts that need text output can call the source query directly.
+The App tool returns viewer data in `structuredContent` and a short display confirmation in `content`. When viewer data is unavailable, it returns a tool error directing callers to the source query. Hosts that need text output can call the source query directly. A client whose capabilities do not list the MCP Apps extension (`io.modelcontextprotocol/ui`) gets a tool error before the query runs, so viewer data never reaches the model as a tool result. A request with no client capabilities, such as a stateless HTTP request of an older protocol, keeps the view.
 
 Tools use the configured Grafana connection and caller identity. Credentials
 stay on the server. Apps are self-contained HTML with no external connection or

@@ -135,5 +135,23 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 		mcpgrafana.WithOpenWorldHintAnnotation(false),
 		mcpgrafana.RequiresPermissions(permissions...),
 	)
+	tool.Handler = requireAppHost(tool.Handler)
 	tool.Register(s)
+}
+
+// appsExtensionID is the client capability of MCP Apps (EXTENSION_ID of ext-apps).
+const appsExtensionID = "io.modelcontextprotocol/ui"
+
+// requireAppHost refuses a call from a client that cannot show the App, before the query runs, so the view data
+// does not reach the model as the tool result. Unknown capabilities, as in a stateless request of an older
+// protocol, keep the view.
+func requireAppHost(next mcp.ToolHandler) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if caps := req.ClientCapabilities(); caps != nil {
+			if _, ok := caps.Extensions[appsExtensionID]; !ok {
+				return mcpgrafana.NewToolResultError("this client does not display MCP Apps, so render_grafana_app cannot show a view; call a query tool directly for the data"), nil
+			}
+		}
+		return next(ctx, req)
+	}
 }
