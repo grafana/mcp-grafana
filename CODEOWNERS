@@ -5,8 +5,6 @@
 /tools/app_*_test.go                   @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /tools/query_datasource*.go            @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /tools/viz_contract*.go                @grafana/grafana-assistant-loop @grafana/dataviz-squad
-/tools/viz_contract/                   @grafana/grafana-assistant-loop @grafana/dataviz-squad
-/tools/testdata/viz-contract/          @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /scripts/sync-viz-*.sh                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/renderer/                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/VizApplication.tsx    @grafana/grafana-assistant-loop @grafana/dataviz-squad

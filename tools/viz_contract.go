@@ -2,24 +2,19 @@ package tools
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strconv"
 	"strings"
+
+	vizcontract "github.com/grafana/viz-contract"
 )
 
-// The chart registry of the viz contract (@grafana/viz-contract on npm, at the version of the sync-viz-contract task in
-// mise.toml; run it to update): registry/chart-types.json and
-// registry/pick.json. The Source reads them and no other part does (tool.18). The summary of the frames and the
-// matcher follow the condition rule language of schemas/registry.schema.json.
-
-//go:embed viz_contract/chart-types.json
-var chartTypesJSON []byte
-
-//go:embed viz_contract/pick.json
-var pickJSON []byte
+// The chart registry of the viz contract (github.com/grafana/viz-contract, at the version in go.mod):
+// registry/chart-types.json and registry/pick.json. The Source reads them and no other part does (tool.18). The summary
+// of the frames and the matcher follow the condition rule language of schemas/registry.schema.json.
 
 type vizChart struct {
 	Name        string           `json:"name"`
@@ -45,12 +40,8 @@ func mustLoadVizRegistry() ([]vizChart, []vizPickRule) {
 	var pick struct {
 		Rules []vizPickRule `json:"rules"`
 	}
-	if err := json.Unmarshal(chartTypesJSON, &charts); err != nil {
-		panic(fmt.Sprintf("chart-types.json: %v", err))
-	}
-	if err := json.Unmarshal(pickJSON, &pick); err != nil {
-		panic(fmt.Sprintf("pick.json: %v", err))
-	}
+	mustReadVizRegistry("chart-types.json", &charts)
+	mustReadVizRegistry("pick.json", &pick)
 	for _, rule := range pick.Rules {
 		if vizChartByName(charts.Charts, rule.Chart) == nil {
 			panic(fmt.Sprintf("pick.json: rule %s has the unknown chart %s", rule.ID, rule.Chart))
@@ -60,6 +51,16 @@ func mustLoadVizRegistry() ([]vizChart, []vizPickRule) {
 		panic("pick.json: the last rule must have an empty condition")
 	}
 	return charts.Charts, pick.Rules
+}
+
+func mustReadVizRegistry(name string, into any) {
+	data, err := fs.ReadFile(vizcontract.Registry(), name)
+	if err == nil {
+		err = json.Unmarshal(data, into)
+	}
+	if err != nil {
+		panic(fmt.Sprintf("%s: %v", name, err))
+	}
 }
 
 func vizChartByName(charts []vizChart, name string) *vizChart {

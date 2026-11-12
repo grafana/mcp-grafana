@@ -76,31 +76,6 @@ jobs:
       - name: Run unit tests
         run: mise run test-unit
 
-  # Fails if tools/viz_contract or tools/testdata/viz-contract differ from the
-  # pinned @grafana/viz-contract on npm.
-  viz-contract:
-    name: Verify viz-contract copy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
-
-      - name: Set up mise
-        uses: ./.github/actions/setup-mise
-
-      - name: Sync from npm
-        run: mise run sync-viz-contract
-
-      - name: Fail if the copy drifted from the package
-        run: |
-          if [ -n "$(git status --porcelain -- tools/viz_contract tools/testdata/viz-contract)" ]; then
-            git status --short -- tools/viz_contract tools/testdata/viz-contract
-            echo "::error::The viz-contract copy differs from npm. Run 'mise run sync-viz-contract' locally and commit."
-            exit 1
-          fi
-
   # Catches forgotten `mise run build-ui` runs: rebuilds ui/*/dist from source
   # and fails if it differs from what's checked in.
   build-ui:

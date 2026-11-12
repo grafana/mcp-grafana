@@ -4,10 +4,10 @@ package tools
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"io/fs"
 	"testing"
 
+	vizcontract "github.com/grafana/viz-contract"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +63,7 @@ func TestIsInstant(t *testing.T) {
 
 // The Go constants are those of registry/constants.json of the pinned contract.
 func TestVizContractConstants(t *testing.T) {
-	data, err := os.ReadFile("viz_contract/constants.json")
+	data, err := fs.ReadFile(vizcontract.Registry(), "constants.json")
 	require.NoError(t, err)
 	var constants map[string]struct{ Value any }
 	require.NoError(t, json.Unmarshal(data, &constants))
@@ -97,19 +97,15 @@ func TestVizContractRegistryIsConsistent(t *testing.T) {
 
 // fixtures.6: each rule of pick.json is the first match of at least one fixture set.
 func TestVizContractEachPickRuleHasAFixture(t *testing.T) {
-	dirs, err := filepath.Glob("testdata/viz-contract/*")
-	require.NoError(t, err)
 	hit := map[string]bool{}
-	for _, dir := range dirs {
+	for _, dir := range vizSourceFixtures(t) {
 		var response struct {
 			Status int `json:"status"`
 			Body   struct {
 				Results map[string]vizResult `json:"results"`
 			} `json:"body"`
 		}
-		data, err := os.ReadFile(filepath.Join(dir, "response.json"))
-		require.NoError(t, err)
-		require.NoError(t, json.Unmarshal(data, &response))
+		readFixtureJSON(t, dir, "response.json", &response)
 		if response.Status != 200 {
 			continue
 		}

@@ -17,6 +17,7 @@ require (
 	github.com/grafana/mcp-grafana/lokiguard v0.1.0
 	github.com/grafana/pyroscope/api v1.6.0
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853
+	github.com/grafana/viz-contract v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.20
