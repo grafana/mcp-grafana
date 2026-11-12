@@ -671,6 +671,23 @@ func newLokiNativeResponse(resultType string, entries []LogEntry) (*lokiNativeRe
 	return &lokiNativeResponse{Status: "success", Data: lokiNativeData{ResultType: resultType, Result: result}}, nil
 }
 
+// isLogQLLogQuery reports whether logql is a log query. In LogQL grammar only a
+// log query starts with a stream selector, after comments and parentheses.
+func isLogQLLogQuery(logql string) bool {
+	s := logql
+	for {
+		s = strings.TrimLeft(s, " \t\r\n(")
+		switch {
+		case strings.HasPrefix(s, "#"), strings.HasPrefix(s, "//"):
+			_, s, _ = strings.Cut(s, "\n")
+		case strings.HasPrefix(s, "/*"):
+			_, s, _ = strings.Cut(s[2:], "*/")
+		default:
+			return strings.HasPrefix(s, "{")
+		}
+	}
+}
+
 // lokiNativeTime turns a "seconds.millis" sample timestamp into the JSON number Loki emits.
 func lokiNativeTime(ts string) (json.Number, error) {
 	f, err := strconv.ParseFloat(ts, 64)
@@ -798,7 +815,12 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		}
 	}
 
-	if out.native, err = newLokiNativeResponse(result.ResultType, entries); err != nil {
+	nativeType := result.ResultType
+	if len(entries) == 0 && isLogQLLogQuery(args.LogQL) {
+		// No log frame came back, so the frames path guessed matrix or vector.
+		nativeType = "streams"
+	}
+	if out.native, err = newLokiNativeResponse(nativeType, entries); err != nil {
 		return nil, err
 	}
 
