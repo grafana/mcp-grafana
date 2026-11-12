@@ -1,10 +1,9 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createAppHostState } from '../app/appHostState';
 import { vectorSingleUnbounded } from './metricsFixtures';
+import { readVizFixture } from './vizFixtures';
 
 type Handlers = {
   ontoolinput?: (params: unknown) => void;
@@ -12,8 +11,7 @@ type Handlers = {
   onhostcontextchanged?: (context: unknown) => void;
 };
 
-const fixture = (file: string) =>
-  JSON.parse(readFileSync(join(__dirname, 'viz-contract', 'prometheus-line', file), 'utf8'));
+const fixture = (file: string) => readVizFixture('prometheus-line', file);
 
 function host() {
   const app = { connect: () => Promise.resolve(), getHostContext: () => undefined } as unknown as App & Handlers;

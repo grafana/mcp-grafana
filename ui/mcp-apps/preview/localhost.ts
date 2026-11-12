@@ -13,8 +13,8 @@
 import { AppBridge } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { PostMessageTransport } from '@modelcontextprotocol/ext-apps';
 
-import vizArgs from '../test/viz-contract/prometheus-line/args.json';
-import vizResult from '../test/viz-contract/prometheus-line/result.json';
+import vizArgs from '@grafana/viz-contract/fixtures/prometheus-line/args.json';
+import vizResult from '@grafana/viz-contract/fixtures/prometheus-line/result.json';
 
 const log: string[] = [];
 (window as unknown as { __hostLog: string[] }).__hostLog = log;

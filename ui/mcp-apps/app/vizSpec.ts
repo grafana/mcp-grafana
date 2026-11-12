@@ -10,6 +10,7 @@ export type VizArgs = {
 
 export type VizPanel = {
   type: string;
+  title?: string;
   options: Record<string, unknown>;
   fieldConfig?: Record<string, unknown>;
 };
@@ -62,12 +63,15 @@ export function buildVizSpec(
   host: { theme?: McpAppColorMode; timeZone?: string } = {},
   chart?: string,
 ): VizSpec {
-  const { type, options, fieldConfig } = result.alternatives.find((a) => a.chart === chart)?.panel ?? result.panel;
+  const { type, title, options, fieldConfig } =
+    result.alternatives.find((a) => a.chart === chart)?.panel ?? result.panel;
   return {
     specVersion: SPEC_VERSION,
     panel: {
       // spec.2: a copy of the panel of the result, or of the alternative that the user picked.
       type,
+      // spec.15: the title of the panel, if it has one.
+      ...(title ? { title } : {}),
       options,
       ...(fieldConfig ? { fieldConfig } : {}),
       // spec.3: the data source and the queries of the arguments.
