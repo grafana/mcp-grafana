@@ -305,12 +305,21 @@ func vizFits(summary map[string]any, chart vizChart) bool {
 	return slices.ContainsFunc(chart.Fits, func(c map[string]any) bool { return vizMatches(summary, c) })
 }
 
-// vizPick gives the first chart whose rule matches the summary (tool.18). The last rule has an empty condition.
-func vizPick(summary map[string]any) *vizChart {
-	for _, rule := range vizPickRules {
-		if vizMatches(summary, rule.When) {
-			return vizChartByName(vizCharts, rule.Chart)
+// vizMatchingRule gives the first rule that matches the summary (tool.18). The last rule has an empty condition, so
+// one always matches (mustLoadVizRegistry checks it).
+func vizMatchingRule(summary map[string]any) *vizPickRule {
+	for i := range vizPickRules {
+		if vizMatches(summary, vizPickRules[i].When) {
+			return &vizPickRules[i]
 		}
+	}
+	return nil
+}
+
+// vizPick gives the chart of the first rule that matches the summary.
+func vizPick(summary map[string]any) *vizChart {
+	if rule := vizMatchingRule(summary); rule != nil {
+		return vizChartByName(vizCharts, rule.Chart)
 	}
 	return nil
 }

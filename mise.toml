@@ -69,7 +69,7 @@ tar -xzf "$tmp"/grafana-viz-contract-*.tgz -C "$tmp"
 pkg="$tmp/package"
 
 # constants.json is not embedded: a test checks the Go constants against it.
-cp "$pkg/registry/chart-types.json" "$pkg/registry/pick.json" "$pkg/registry/constants.json" tools/viz_contract/
+cp "$pkg/registry/chart-types.json" "$pkg/registry/pick.json" "$pkg/registry/constants.json" "$pkg/LICENSE" tools/viz_contract/
 
 # The Source sets are the ones with a response.json. spec.json and state.json are for the App and the Renderer.
 out=tools/testdata/viz-contract

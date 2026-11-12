@@ -5,6 +5,7 @@ package tools
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,5 +79,45 @@ func TestVizContractConstants(t *testing.T) {
 		c, ok := constants[name]
 		require.True(t, ok, name)
 		assert.Equal(t, c.Value, got, name)
+	}
+}
+
+func TestVizContractRegistryIsConsistent(t *testing.T) {
+	names := map[string]bool{}
+	for _, c := range vizCharts {
+		assert.False(t, names[c.Name], "chart %s is twice in chart-types.json", c.Name)
+		names[c.Name] = true
+		assert.NotEmpty(t, c.Fits, "chart %s has no fits", c.Name)
+		assert.NotNil(t, c.Options, "chart %s has no options", c.Name)
+	}
+	for _, rule := range vizPickRules {
+		assert.True(t, names[rule.Chart], "rule %s has the unknown chart %s", rule.ID, rule.Chart)
+	}
+}
+
+// fixtures.6: each rule of pick.json is the first match of at least one fixture set.
+func TestVizContractEachPickRuleHasAFixture(t *testing.T) {
+	dirs, err := filepath.Glob("testdata/viz-contract/*")
+	require.NoError(t, err)
+	hit := map[string]bool{}
+	for _, dir := range dirs {
+		var response struct {
+			Status int `json:"status"`
+			Body   struct {
+				Results map[string]vizResult `json:"results"`
+			} `json:"body"`
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "response.json"))
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(data, &response))
+		if response.Status != 200 {
+			continue
+		}
+		if rule := vizMatchingRule(vizSummary(response.Body.Results)); rule != nil {
+			hit[rule.ID] = true
+		}
+	}
+	for _, rule := range vizPickRules {
+		assert.True(t, hit[rule.ID], "no fixture set reaches the rule %s", rule.ID)
 	}
 }
