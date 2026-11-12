@@ -1,0 +1,56 @@
+name: MCP Bundle
+
+on:
+  pull_request:
+    paths:
+      - "mcpb/**"
+      - "scripts/build-mcpb.mjs"
+      - ".goreleaser.yaml"
+      - ".github/workflows/mcpb.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build MCP Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Tags, so the snapshot version reads 1.2.3-SNAPSHOT-<commit> rather
+          # than 0.0.0-SNAPSHOT-<commit>.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
+        with:
+          # Caching a build that feeds a release artifact is a cache-poisoning
+          # risk, as in the release workflow.
+          cache: false
+
+      # Only the binaries the bundle needs, including the universal macOS build.
+      # Pin the version to the latest v* tag: goreleaser otherwise picks module
+      # tags like lokiguard/v0.1.0, and the slash puts the bundle under a subdir.
+      - name: Build binaries
+        run: |
+          GORELEASER_CURRENT_TAG=$(git describe --tags --abbrev=0 --match 'v*')
+          export GORELEASER_CURRENT_TAG
+          goreleaser build --snapshot --clean --id mcpb
+
+      # Packing is the check: it validates the manifest, asserts the macOS binary
+      # carries both architectures, and fails if the server reports no tools.
+      - name: Pack bundle
+        run: node scripts/build-mcpb.mjs
+
+      # So the bundle can be installed and tried on a real machine before a
+      # release ships it. Snapshot builds are labelled -SNAPSHOT-<commit>.
+      - name: Upload bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mcp-grafana-mcpb
+          path: dist/*.mcpb
+          retention-days: 7
+          if-no-files-found: error

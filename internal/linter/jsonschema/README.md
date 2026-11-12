@@ -20,12 +20,16 @@ type Example struct {
 }
 ```
 
+## Stray escapes outside struct tags
+
+The escape only means something inside a `jsonschema` struct tag. In an ordinary string literal, such as a tool description passed to `MustTool`, `\\,` produces a literal backslash that is sent to the model verbatim, which wastes tokens and adds noise. The linter also reports string literals outside struct tags (in non-test files) whose value contains `\,`; use a plain comma there instead. These are not auto-fixed.
+
 ## Usage
 
 You can use this linter by running:
 
 ```shell
-make lint-jsonschema
+mise run lint-jsonschema
 ```
 
 or directly:
@@ -39,7 +43,7 @@ go run ./cmd/linters/jsonschema --path .
 The linter can automatically fix unescaped commas in jsonschema descriptions by running:
 
 ```shell
-make lint-jsonschema-fix
+mise run lint-jsonschema-fix
 ```
 
 or directly:
@@ -58,4 +62,4 @@ This will scan the codebase for unescaped commas and automatically escape them, 
 
 ## Integration
 
-This linter is integrated into the default `make lint` command, ensuring all PRs are checked for this issue.
+This linter is integrated into the default `mise run lint` command, ensuring all PRs are checked for this issue.

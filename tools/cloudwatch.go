@@ -12,9 +12,9 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -27,11 +27,11 @@ const (
 
 // CloudWatchQueryParams defines the parameters for querying CloudWatch
 type CloudWatchQueryParams struct {
-	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource to query. Use list_datasources to find available UIDs."`
+	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource to query."`
 	Namespace     string            `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS\\, AWS/EC2\\, AWS/RDS\\, AWS/Lambda)"`
 	MetricName    string            `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization\\, MemoryUtilization\\, Invocations)"`
 	Dimensions    map[string]string `json:"dimensions,omitempty" jsonschema:"description=Dimensions as key-value pairs (e.g. {\"ClusterName\": \"my-cluster\"})"`
-	Statistic     string            `json:"statistic,omitempty" jsonschema:"enum=Average,enum=Sum,enum=Maximum,enum=Minimum,enum=SampleCount,description=Statistic type: Average\\, Sum\\, Maximum\\, Minimum\\, SampleCount. Default: Average"`
+	Statistic     string            `json:"statistic,omitempty" jsonschema:"description=Statistic type: Average\\, Sum\\, Maximum\\, Minimum\\, SampleCount\\, or a percentile such as p50\\, p95 or p99.9. Default: Average"`
 	Period        int               `json:"period,omitempty" jsonschema:"description=Period in seconds (default: 300)"`
 	Start         string            `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string            `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
@@ -39,13 +39,19 @@ type CloudWatchQueryParams struct {
 	AccountId     string            `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to query metrics from a specific source account\\, or 'all' to query all accounts the monitoring account is permitted to query. Only relevant when using a CloudWatch monitoring account datasource."`
 }
 
-// CloudWatchQueryResult represents the result of a CloudWatch query
-type CloudWatchQueryResult struct {
+// CloudWatchSeries is one time series returned by a CloudWatch query.
+type CloudWatchSeries struct {
 	Label      string             `json:"label"`
 	Timestamps []int64            `json:"timestamps"`
 	Values     []float64          `json:"values"`
 	Statistics map[string]float64 `json:"statistics,omitempty"`
-	Hints      []string           `json:"hints,omitempty"`
+}
+
+// CloudWatchQueryResult holds every series the query returned, so the shape
+// doesn't change when a SEARCH expression ("*" or accountId "all") matches several.
+type CloudWatchQueryResult struct {
+	Series []CloudWatchSeries `json:"series"`
+	Hints  []string           `json:"hints,omitempty"`
 }
 
 // cloudWatchClient handles communication with Grafana's CloudWatch datasource
@@ -57,7 +63,7 @@ type cloudWatchClient struct {
 // newCloudWatchClient creates a new CloudWatch client for the given datasource
 func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, error) {
 	// Verify the datasource exists and is a CloudWatch datasource
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +139,36 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 	return doDSQuery(ctx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
 }
 
+// fetchResource GETs a CloudWatch datasource resource endpoint (e.g.
+// "namespaces" or "log-groups") and returns the raw response body.
+func (c *cloudWatchClient) fetchResource(ctx context.Context, uid, resource string, params url.Values) ([]byte, error) {
+	resourceURL := c.baseURL + "/api/datasources/uid/" + uid + "/resources/" + resource
+	if len(params) > 0 {
+		resourceURL += "?" + params.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("CloudWatch %s returned status %d: %s", resource, resp.StatusCode, string(bodyBytes))
+	}
+
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+	return bodyBytes, nil
+}
+
 // queryCloudWatch executes a CloudWatch query via Grafana
 func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWatchQueryResult, error) {
 	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
@@ -171,121 +207,126 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 		return nil, err
 	}
 
-	// Process response
-	result := &CloudWatchQueryResult{
-		Label:      fmt.Sprintf("%s - %s", args.Namespace, args.MetricName),
-		Timestamps: []int64{},
-		Values:     []float64{},
-		Statistics: make(map[string]float64),
-	}
+	return cloudWatchResultFromResponse(resp, fmt.Sprintf("%s - %s", args.Namespace, args.MetricName))
+}
 
-	// Check for errors in the response
+// cloudWatchResultFromResponse returns one series per frame.
+func cloudWatchResultFromResponse(resp *backend.QueryDataResponse, defaultLabel string) (*CloudWatchQueryResult, error) {
+	series := []CloudWatchSeries{}
+	points := 0
 	for refID, r := range resp.Responses {
 		if r.Error != nil {
 			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error.Error())
 		}
-
-		// Process frames - accumulate statistics across all frames
-		var sum, min, max float64
-		var count int64
-		first := true
-
 		for _, frame := range r.Frames {
-			// Find time and value columns
-			var timeColIdx, valueColIdx = -1, -1
-			for i, field := range frame.Fields {
-				switch {
-				case field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime:
-					timeColIdx = i
-				case field.Type().Numeric():
-					valueColIdx = i
-					// Update label if available from field config
-					if field.Config != nil && field.Config.DisplayNameFromDS != "" {
-						result.Label = field.Config.DisplayNameFromDS
-					}
-				}
-			}
-
-			if timeColIdx == -1 || valueColIdx == -1 {
+			s, ok := cloudWatchSeriesFromFrame(frame, defaultLabel)
+			if !ok {
 				continue
 			}
-
-			// Extract data
-			rowCount := frame.Rows()
-			for i := 0; i < rowCount; i++ {
-				// Parse timestamp (can be float64 or int64 from JSON)
-				var ts int64
-				switch v := frame.At(timeColIdx, i).(type) {
-				case float64:
-					ts = int64(v)
-				case int64:
-					ts = v
-				case time.Time:
-					ts = v.UnixMilli()
-				case *time.Time:
-					if v == nil {
-						continue
-					}
-					ts = v.UnixMilli()
-				default:
-					continue
-				}
-
-				// Parse value
-				var val float64
-				switch v := frame.At(valueColIdx, i).(type) {
-				case float64:
-					val = v
-				case int64:
-					val = float64(v)
-				case *float64:
-					if v == nil {
-						continue
-					}
-					val = *v
-				case nil:
-					continue
-				default:
-					continue
-				}
-
-				result.Timestamps = append(result.Timestamps, ts)
-				result.Values = append(result.Values, val)
-
-				// Calculate statistics
-				sum += val
-				count++
-				if first {
-					min = val
-					max = val
-					first = false
-				} else {
-					if val < min {
-						min = val
-					}
-					if val > max {
-						max = val
-					}
-				}
-			}
-		}
-
-		// Add computed statistics across all frames
-		if count > 0 {
-			result.Statistics["sum"] = sum
-			result.Statistics["min"] = min
-			result.Statistics["max"] = max
-			result.Statistics["avg"] = sum / float64(count)
-			result.Statistics["count"] = float64(count)
+			points += len(s.Values)
+			series = append(series, s)
 		}
 	}
 
-	// Add hints if no data was found
-	if len(result.Values) == 0 {
+	result := &CloudWatchQueryResult{Series: series}
+
+	if points == 0 {
 		result.Hints = generateCloudWatchEmptyResultHints()
 	}
-
 	return result, nil
+}
+
+// cloudWatchSeriesLabel prefers the plugin's display name, then the frame
+// name, then the field labels, so unlabeled series stay distinguishable.
+func cloudWatchSeriesLabel(frame *data.Frame, value *data.Field, defaultLabel string) string {
+	switch {
+	case value.Config != nil && value.Config.DisplayNameFromDS != "":
+		return value.Config.DisplayNameFromDS
+	case frame.Name != "":
+		return frame.Name
+	case len(value.Labels) > 0:
+		return value.Labels.String()
+	}
+	return defaultLabel
+}
+
+// cloudWatchSeriesFromFrame reads one frame. ok is false when the frame has
+// no time or numeric field.
+func cloudWatchSeriesFromFrame(frame *data.Frame, defaultLabel string) (CloudWatchSeries, bool) {
+	s := CloudWatchSeries{}
+
+	timeColIdx, valueColIdx := -1, -1
+	for i, field := range frame.Fields {
+		switch {
+		case field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime:
+			timeColIdx = i
+		case field.Type().Numeric():
+			valueColIdx = i
+		}
+	}
+	if timeColIdx == -1 || valueColIdx == -1 {
+		return s, false
+	}
+	s.Label = cloudWatchSeriesLabel(frame, frame.Fields[valueColIdx], defaultLabel)
+	s.Timestamps = make([]int64, 0, frame.Rows())
+	s.Values = make([]float64, 0, frame.Rows())
+
+	var sum, min, max float64
+	for i := 0; i < frame.Rows(); i++ {
+		// Timestamps can be float64 or int64 from JSON.
+		var ts int64
+		switch v := frame.At(timeColIdx, i).(type) {
+		case float64:
+			ts = int64(v)
+		case int64:
+			ts = v
+		case time.Time:
+			ts = v.UnixMilli()
+		case *time.Time:
+			if v == nil {
+				continue
+			}
+			ts = v.UnixMilli()
+		default:
+			continue
+		}
+
+		var val float64
+		switch v := frame.At(valueColIdx, i).(type) {
+		case float64:
+			val = v
+		case int64:
+			val = float64(v)
+		case *float64:
+			if v == nil {
+				continue
+			}
+			val = *v
+		default:
+			continue
+		}
+
+		if len(s.Values) == 0 || val < min {
+			min = val
+		}
+		if len(s.Values) == 0 || val > max {
+			max = val
+		}
+		sum += val
+		s.Timestamps = append(s.Timestamps, ts)
+		s.Values = append(s.Values, val)
+	}
+
+	if n := len(s.Values); n > 0 {
+		s.Statistics = map[string]float64{
+			"sum":   sum,
+			"min":   min,
+			"max":   max,
+			"avg":   sum / float64(n),
+			"count": float64(n),
+		}
+	}
+	return s, true
 }
 
 // generateCloudWatchEmptyResultHints generates helpful hints when a CloudWatch query returns no data
@@ -294,7 +335,7 @@ func generateCloudWatchEmptyResultHints() []string {
 		"No data found. Possible reasons:",
 		"- Namespace may not exist - use list_cloudwatch_namespaces to discover available namespaces",
 		"- Metric name may be incorrect - use list_cloudwatch_metrics to find valid metrics",
-		"- Dimensions may not match - use list_cloudwatch_dimensions to check valid dimension keys",
+		"- Dimensions may not match - use list_cloudwatch_dimensions to check valid dimension keys, then list_cloudwatch_dimension_values to check valid values",
 		"- Region may be incorrect - check if metrics exist in the specified region",
 		"- Time range may have no data - try extending with start=\"now-6h\"",
 	}
@@ -305,21 +346,22 @@ var QueryCloudWatch = mcpgrafana.MustTool(
 	"query_cloudwatch",
 	`Query AWS CloudWatch metrics via Grafana. Requires region.
 
-REQUIRED FIRST: Use list_cloudwatch_namespaces -> list_cloudwatch_metrics -> list_cloudwatch_dimensions -> then query.
-
 Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 
 Common namespaces: AWS/EC2, AWS/ECS, AWS/RDS, AWS/Lambda, ECS/ContainerInsights
 
 Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}
 
-Cross-account monitoring: Use accountId to query metrics from a specific source account (e.g. '123456789012') or 'all' to query all linked accounts. Only applicable when using a CloudWatch monitoring account datasource.`,
+Cross-account monitoring: Use accountId to query metrics from a specific source account (e.g. '123456789012') or 'all' to query all linked accounts. Only applicable when using a CloudWatch monitoring account datasource.
+
+Results are always in 'series', one entry per time series with its own label, values and statistics. A dimension value of '*' or accountId 'all' can match several.`,
 	queryCloudWatch,
-	mcp.WithTitleAnnotation("Query CloudWatch"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query CloudWatch"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudWatchNamespacesParams defines the parameters for listing CloudWatch namespaces
@@ -389,29 +431,9 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 		params.Set("accountId", args.AccountId)
 	}
 
-	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/namespaces"
-	if len(params) > 0 {
-		resourceURL += "?" + params.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	bodyBytes, err := client.fetchResource(ctx, args.DatasourceUID, "namespaces", params)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	resp, err := client.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("CloudWatch namespaces returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
+		return nil, err
 	}
 
 	return parseCloudWatchResourceResponse(bodyBytes)
@@ -420,13 +442,14 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
 var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	"list_cloudwatch_namespaces",
-	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. Supports cross-account monitoring via optional accountId parameter. NEXT: Use list_cloudwatch_metrics with a namespace.",
+	"List available CloudWatch namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchNamespaces,
-	mcp.WithTitleAnnotation("List CloudWatch namespaces"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List CloudWatch namespaces"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudWatchMetricsParams defines the parameters for listing CloudWatch metrics
@@ -454,26 +477,9 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		params.Set("accountId", args.AccountId)
 	}
 
-	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/metrics?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	bodyBytes, err := client.fetchResource(ctx, args.DatasourceUID, "metrics", params)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	resp, err := client.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("CloudWatch metrics returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
+		return nil, err
 	}
 
 	return parseCloudWatchMetricsResponse(bodyBytes)
@@ -482,13 +488,14 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
 var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	"list_cloudwatch_metrics",
-	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions\\, then query_cloudwatch.",
+	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchMetrics,
-	mcp.WithTitleAnnotation("List CloudWatch metrics"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List CloudWatch metrics"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // ListCloudWatchDimensionsParams defines the parameters for listing CloudWatch dimensions
@@ -518,26 +525,9 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 		params.Set("accountId", args.AccountId)
 	}
 
-	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/dimension-keys?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	bodyBytes, err := client.fetchResource(ctx, args.DatasourceUID, "dimension-keys", params)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	resp, err := client.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("CloudWatch dimensions returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
+		return nil, err
 	}
 
 	return parseCloudWatchResourceResponse(bodyBytes)
@@ -546,19 +536,81 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
+	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter.",
 	listCloudWatchDimensions,
-	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List CloudWatch dimensions"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
-// AddCloudWatchTools registers all CloudWatch tools with the MCP server
-func AddCloudWatchTools(mcp *server.MCPServer) {
-	QueryCloudWatch.Register(mcp)
-	ListCloudWatchNamespaces.Register(mcp)
-	ListCloudWatchMetrics.Register(mcp)
-	ListCloudWatchDimensions.Register(mcp)
+// ListCloudWatchDimensionValuesParams defines the parameters for listing
+// CloudWatch dimension values
+type ListCloudWatchDimensionValuesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
+	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS)"`
+	MetricName    string `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization)"`
+	DimensionKey  string `json:"dimensionKey" jsonschema:"required,description=Dimension key to list values for (e.g. ClusterName)"`
+	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to filter dimension values from a specific source account\\, or 'all' for all linked accounts."`
+}
+
+// listCloudWatchDimensionValues lists available values for a CloudWatch dimension key
+func listCloudWatchDimensionValues(ctx context.Context, args ListCloudWatchDimensionValuesParams) ([]string, error) {
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	// Build query parameters
+	params := url.Values{}
+	params.Set("namespace", args.Namespace)
+	params.Set("metricName", args.MetricName)
+	params.Set("dimensionKey", args.DimensionKey)
+	if args.Region != "" {
+		params.Set("region", args.Region)
+	}
+	if args.AccountId != "" {
+		params.Set("accountId", args.AccountId)
+	}
+
+	bodyBytes, err := client.fetchResource(ctx, args.DatasourceUID, "dimension-values", params)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseCloudWatchResourceResponse(bodyBytes)
+}
+
+// ListCloudWatchDimensionValues is a tool for listing CloudWatch dimension values
+var ListCloudWatchDimensionValues = mcpgrafana.MustTool(
+	"list_cloudwatch_dimension_values",
+	"List values for a CloudWatch dimension key (e.g. the specific cluster names behind a ClusterName dimension). Requires region. Supports cross-account monitoring via optional accountId parameter.",
+	listCloudWatchDimensionValues,
+	mcpgrafana.WithTitleAnnotation("List CloudWatch dimension values"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+// AddCloudWatchTools registers all CloudWatch tools with the MCP server.
+// query_cloudwatch and query_cloudwatch_logs are registered only when
+// enableQueryTools is true; the listing tools stay available either way.
+func AddCloudWatchTools(s *mcp.Server, enableQueryTools bool) {
+	if enableQueryTools {
+		QueryCloudWatch.Register(s)
+	}
+	ListCloudWatchNamespaces.Register(s)
+	ListCloudWatchMetrics.Register(s)
+	ListCloudWatchDimensions.Register(s)
+	ListCloudWatchDimensionValues.Register(s)
+	if enableQueryTools {
+		QueryCloudWatchLogs.Register(s)
+	}
+	ListCloudWatchLogGroups.Register(s)
+	ListCloudWatchLogGroupFields.Register(s)
 }

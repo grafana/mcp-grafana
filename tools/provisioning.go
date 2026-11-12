@@ -9,16 +9,15 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
-// ListProvisioningRepositoriesParams accepts an optional namespace.
-type ListProvisioningRepositoriesParams struct {
-	Namespace string `json:"namespace,omitempty" jsonschema:"description=Kubernetes-style namespace to list repositories from. Defaults to 'default' which matches single-tenant Grafana deployments."`
-}
+// ListProvisioningRepositoriesParams takes no arguments: the namespace is
+// derived from the request's Grafana org (set the optional orgId argument to
+// target a different org).
+type ListProvisioningRepositoriesParams struct{}
 
 // ProvisioningRepository is a concise summary of a single repository, suitable
 // for an agent picking a repo slug to pass to other tools (e.g. as the
@@ -76,15 +75,20 @@ type repositoryItem struct {
 	} `json:"status"`
 }
 
-func listProvisioningRepositories(ctx context.Context, args ListProvisioningRepositoriesParams) ([]ProvisioningRepository, error) {
+func listProvisioningRepositories(ctx context.Context, _ ListProvisioningRepositoriesParams) ([]ProvisioningRepository, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("grafana URL is not configured")
 	}
 
-	ns := args.Namespace
-	if ns == "" {
-		ns = "default"
+	// The namespace is derived from the request's org (default / org-N /
+	// stacks-{id}); an orgId override selects a different org. The resolved
+	// value is trusted and url.PathEscape'd into the URL below, so this slug
+	// check is just a sanity guard that surfaces a malformed namespace as a
+	// clear error instead of an opaque API failure.
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateRepoSlug("namespace", ns); err != nil {
 		return nil, err
@@ -156,22 +160,22 @@ var ListProvisioningRepositories = mcpgrafana.MustTool(
 	"list_provisioning_repositories",
 	"List provisioning repositories (e.g. git-sync sources) configured for this Grafana instance. "+
 		"Returns each repository's slug along with its source URL, branch, path, sync state, and health. "+
-		"Use the returned `name` as the `repo` argument when rendering a not-yet-applied dashboard preview via get_panel_image's provisioningPreview parameter.",
+		"The `name` is the slug used to render not-yet-applied dashboard previews.",
 	listProvisioningRepositories,
-	mcp.WithTitleAnnotation("List provisioning repositories"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List provisioning repositories"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("provisioning.repositories:read", "provisioning.grafana.app/repositories:list"),
 )
 
 // ValidateProvisioningFileParams identifies a single file to validate inside
 // a provisioning repository at a specific ref.
 type ValidateProvisioningFileParams struct {
-	Namespace string `json:"namespace,omitempty" jsonschema:"description=Kubernetes-style namespace to read the repository from. Defaults to 'default'."`
-	Repo      string `json:"repo" jsonschema:"required,description=Provisioning repository slug. Get one from list_provisioning_repositories."`
-	Path      string `json:"path" jsonschema:"required,description=File path within the repository (e.g. 'folder/dashboard.json')."`
-	Ref       string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA. Defaults to the repository's main branch."`
+	Repo string `json:"repo" jsonschema:"required,description=Provisioning repository slug (the repository name)."`
+	Path string `json:"path" jsonschema:"required,description=File path within the repository (e.g. 'folder/dashboard.json')."`
+	Ref  string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA. Defaults to the repository's main branch."`
 }
 
 // ProvisioningResourceType captures the GVK+resource of the file's target.
@@ -291,9 +295,14 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 		return nil, fmt.Errorf("build transport: %w", err)
 	}
 
-	ns := args.Namespace
-	if ns == "" {
-		ns = "default"
+	// The namespace is derived from the request's org (default / org-N /
+	// stacks-{id}); an orgId override selects a different org. The resolved
+	// value is trusted and url.PathEscape'd into the URL below, so this slug
+	// check is just a sanity guard that surfaces a malformed namespace as a
+	// clear error instead of an opaque API failure.
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateRepoSlug("namespace", ns); err != nil {
 		return nil, err
@@ -375,17 +384,24 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 var ValidateProvisioningFile = mcpgrafana.MustTool(
 	"validate_provisioning_file",
 	"Validate a file in a provisioning repository at a given branch or commit by dry-run applying it. "+
-		"Returns whether the file would be accepted (valid)\\, what resource action would result (create/update)\\, the target resource type\\, and any structured validation errors. "+
+		"Returns whether the file would be accepted (valid), what resource action would result (create/update), the target resource type, and any structured validation errors. "+
 		"Use to confirm a draft dashboard or other resource will be accepted before merging or applying a PR — this is the same validation surface that Grafana's PR commenter reports.",
 	validateProvisioningFile,
-	mcp.WithTitleAnnotation("Validate provisioning file"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Validate provisioning file"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Reading a single file is authorized against the resource it parses to
+	// (in practice a dashboard or folder), not the repository.
+	mcpgrafana.RequiresPermissions(
+		"provisioning.repositories:read", "provisioning.grafana.app/repositories:get",
+		"dashboards:read", "dashboard.grafana.app/dashboards:get",
+		"folders:read", "folder.grafana.app/folders:get",
+	),
 )
 
-func AddProvisioningTools(s *server.MCPServer) {
+func AddProvisioningTools(s *mcp.Server) {
 	ListProvisioningRepositories.Register(s)
 	ValidateProvisioningFile.Register(s)
 }

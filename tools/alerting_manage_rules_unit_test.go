@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -13,7 +15,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // Unit tests for parameter validation (no integration tag needed)
@@ -535,6 +537,7 @@ func TestManageRules_ListRules(t *testing.T) {
 			assertRequest: func(t *testing.T, r *http.Request) {
 				t.Helper()
 				require.Equal(t, "/api/prometheus/grafana/api/v1/rules", r.URL.Path)
+				require.Equal(t, "true", r.URL.Query().Get("includeInternalLabels"))
 			},
 			expectedRules: []alertRuleSummary{expectedMockRuleSummary},
 		},
@@ -616,7 +619,7 @@ func TestManageRules_ListRules(t *testing.T) {
 	}
 }
 
-func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
+func TestManageRulesWrite_ValidationErrors(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		name    string
@@ -624,23 +627,23 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "negative rule_limit",
+			name: "list is rejected",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"})
+				return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "list"})
 			},
-			wantErr: "invalid rule_limit",
+			wantErr: "unknown operation",
 		},
 		{
-			name: "folder_uid and search_folder mutually exclusive",
+			name: "get is rejected",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"})
+				return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "get", RuleUID: "abc"})
 			},
-			wantErr: "mutually exclusive",
+			wantErr: "unknown operation",
 		},
 		{
 			name: "create missing title",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+				return manageRulesWrite(ctx, ManageRulesWriteParams{
 					Operation: "create", RuleGroup: "test-group", FolderUID: "test-folder",
 					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
@@ -651,7 +654,7 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		{
 			name: "update missing rule_uid",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+				return manageRulesWrite(ctx, ManageRulesWriteParams{
 					Operation: "update", Title: "Test Rule", RuleGroup: "test-group", FolderUID: "test-folder",
 					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
@@ -661,13 +664,13 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		},
 		{
 			name:    "delete without rule_uid",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete"}) },
+			call:    func() (any, error) { return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete"}) },
 			wantErr: "rule_uid is required",
 		},
 		{
 			name: "unknown operation",
 			call: func() (any, error) {
-				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "invalid"})
+				return manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "invalid"})
 			},
 			wantErr: "unknown operation",
 		},
@@ -682,10 +685,10 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 	}
 }
 
-func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
+func TestManageRulesWriteParams_ToCreateParams(t *testing.T) {
 	t.Run("converts all fields", func(t *testing.T) {
 		disableProvenance := true
-		params := ManageRulesReadWriteParams{
+		params := ManageRulesWriteParams{
 			Operation:         "create",
 			RuleUID:           "custom-uid",
 			Title:             "Test Rule",
@@ -722,7 +725,7 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 	})
 
 	t.Run("empty rule_uid results in nil UID", func(t *testing.T) {
-		params := ManageRulesReadWriteParams{
+		params := ManageRulesWriteParams{
 			Operation: "create",
 			Title:     "Test Rule",
 		}
@@ -733,10 +736,10 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 	})
 }
 
-func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
+func TestManageRulesWriteParams_ToUpdateParams(t *testing.T) {
 	t.Run("converts all fields", func(t *testing.T) {
 		disableProvenance := false
-		params := ManageRulesReadWriteParams{
+		params := ManageRulesWriteParams{
 			Operation:         "update",
 			RuleUID:           "rule-uid-123",
 			Title:             "Updated Rule",
@@ -769,6 +772,84 @@ func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
 		require.Equal(t, int64(2), result.OrgID)
 		require.NotNil(t, result.DisableProvenance)
 		require.False(t, *result.DisableProvenance)
+	})
+}
+
+func TestManageRulesWriteParams_NotificationSettingsKeys(t *testing.T) {
+	receiver := "oncall"
+	full := &models.AlertRuleNotificationSettings{
+		Receiver:            &receiver,
+		GroupBy:             []string{"alertname", "team"},
+		GroupWait:           "45s",
+		GroupInterval:       "7m",
+		RepeatInterval:      "3h",
+		MuteTimeIntervals:   []string{"weekends"},
+		ActiveTimeIntervals: []string{"workhours"},
+	}
+	asMap := func(t *testing.T, v any) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(v)
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		return m
+	}
+
+	t.Run("settings as alerting_rules_read returns them survive create and update", func(t *testing.T) {
+		readBack := asMap(t, full)
+		require.Contains(t, readBack, "mute_time_intervals")
+
+		up, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: readBack}.toUpdateParams()
+		require.NoError(t, err)
+		require.Equal(t, full, convertNotificationSettings(up.NotificationSettings))
+
+		cp, err := ManageRulesWriteParams{Operation: "create", NotificationSettings: readBack}.toCreateParams()
+		require.NoError(t, err)
+		require.Equal(t, full, convertNotificationSettings(cp.NotificationSettings))
+	})
+
+	t.Run("camelCase keys still work", func(t *testing.T) {
+		camel := asMap(t, &NotificationSettings{
+			Receiver:            &receiver,
+			GroupBy:             full.GroupBy,
+			GroupWait:           full.GroupWait,
+			GroupInterval:       full.GroupInterval,
+			RepeatInterval:      full.RepeatInterval,
+			MuteTimeIntervals:   full.MuteTimeIntervals,
+			ActiveTimeIntervals: full.ActiveTimeIntervals,
+		})
+		up, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: camel}.toUpdateParams()
+		require.NoError(t, err)
+		require.Equal(t, full, convertNotificationSettings(up.NotificationSettings))
+	})
+
+	t.Run("an unknown key is an error, not dropped", func(t *testing.T) {
+		_, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: map[string]any{
+			"receiver": "oncall", "mute_timings": []any{"weekends"},
+		}}.toUpdateParams()
+		require.ErrorContains(t, err, `"mute_timings"`)
+		require.ErrorContains(t, err, "mute_time_intervals")
+	})
+
+	t.Run("a null from the read output does not clash with a camelCase key", func(t *testing.T) {
+		// A rule with only a receiver reads back with null lists.
+		readBack := asMap(t, &models.AlertRuleNotificationSettings{Receiver: &receiver})
+		require.Contains(t, readBack, "mute_time_intervals")
+		readBack["muteTimeIntervals"] = []any{"weekends"}
+
+		up, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: readBack}.toUpdateParams()
+		require.NoError(t, err)
+		require.Equal(t, []string{"weekends"}, up.NotificationSettings.MuteTimeIntervals)
+	})
+
+	t.Run("both spellings of one key is an error", func(t *testing.T) {
+		for _, other := range []string{"groupBy", "GroupBy"} {
+			_, err := ManageRulesWriteParams{Operation: "update", NotificationSettings: map[string]any{
+				"receiver": "oncall", "group_by": []any{"a"}, other: []any{"b"},
+			}}.toUpdateParams()
+			require.ErrorContains(t, err, "not both", other)
+			require.ErrorContains(t, err, other)
+		}
 	})
 }
 
@@ -1128,6 +1209,34 @@ func TestConvertRulesResponseToSummary(t *testing.T) {
 		require.Len(t, summaries, 1)
 		require.Empty(t, summaries[0].LastEvaluation)
 	})
+
+	t.Run("fills Grafana-managed UID from internal labels when response omits top-level UID", func(t *testing.T) {
+		resp := &rulesResponse{}
+		resp.Data.RuleGroups = []ruleGroup{
+			{
+				Name: "LegacyGroup",
+				Rules: []alertingRule{
+					{
+						Name:   "Legacy Alert",
+						State:  "inactive",
+						Health: "ok",
+						Labels: labels.FromStrings(
+							"severity", "critical",
+							"__alert_rule_uid__", "legacy-rule-uid",
+							"__alert_rule_namespace_uid__", "legacy-folder-uid",
+						),
+					},
+				},
+			},
+		}
+
+		summaries := convertRulesResponseToSummary(resp)
+		require.Len(t, summaries, 1)
+		require.Equal(t, "legacy-rule-uid", summaries[0].UID)
+		require.Equal(t, "legacy-folder-uid", summaries[0].FolderUID)
+		require.Equal(t, "LegacyGroup", summaries[0].RuleGroup)
+		require.Equal(t, map[string]string{"severity": "critical"}, summaries[0].Labels)
+	})
 }
 
 func TestFilterSummaryByLabels(t *testing.T) {
@@ -1204,6 +1313,45 @@ func TestFilterSummaryByRuleType(t *testing.T) {
 	})
 }
 
+func TestFilterSummaryByRuleName(t *testing.T) {
+	summaries := []alertRuleSummary{
+		{UID: "r1", Title: "HighNoQuotesRateForT2Chains"},
+		{UID: "r2", Title: "HighNoQuotesRateForT1Chains"},
+		{UID: "r3", Title: "GetQuoteErrorRate5Percent"},
+		{UID: "r4", Title: "GatewayAPINoHeartbeatsSent"},
+	}
+
+	t.Run("exact match", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "HighNoQuotesRateForT2Chains")
+		require.Len(t, filtered, 1)
+		require.Equal(t, "r1", filtered[0].UID)
+	})
+
+	t.Run("partial match", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "NoQuotesRate")
+		require.Len(t, filtered, 2)
+		require.Equal(t, "r1", filtered[0].UID)
+		require.Equal(t, "r2", filtered[1].UID)
+	})
+
+	t.Run("case-insensitive match", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "highnoquotes")
+		require.Len(t, filtered, 2)
+	})
+
+	t.Run("no match returns empty", func(t *testing.T) {
+		filtered := filterSummaryByRuleName(summaries, "DoesNotExist")
+		require.Empty(t, filtered)
+	})
+
+	t.Run("empty name keeps all", func(t *testing.T) {
+		// Callers guard on empty RuleName before invoking the filter,
+		// but the filter itself must not drop everything on "".
+		filtered := filterSummaryByRuleName(summaries, "")
+		require.Len(t, filtered, 4)
+	})
+}
+
 func TestFindRuleInResponse(t *testing.T) {
 	evalTime := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
@@ -1256,6 +1404,25 @@ func TestFindRuleInResponse(t *testing.T) {
 		require.NotNil(t, rule)
 		require.Equal(t, "Rule Three", rule.Name)
 		require.Equal(t, "pending", rule.State)
+	})
+
+	t.Run("finds rule by internal UID label when top-level UID is missing", func(t *testing.T) {
+		legacyResp := &rulesResponse{}
+		legacyResp.Data.RuleGroups = []ruleGroup{
+			{
+				Name: "legacy-group",
+				Rules: []alertingRule{
+					{
+						Name:   "Legacy Rule",
+						Labels: labels.FromStrings(alertRuleUIDLabel, "legacy-uid"),
+					},
+				},
+			},
+		}
+
+		rule := findRuleInResponse(legacyResp, "legacy-uid")
+		require.NotNil(t, rule)
+		require.Equal(t, "Legacy Rule", rule.Name)
 	})
 
 	t.Run("returns nil for nonexistent UID", func(t *testing.T) {
@@ -1599,6 +1766,16 @@ func TestQuoteUnquotedLabelValues(t *testing.T) {
 			expected: `{env!~"staging.*"}`,
 		},
 		{
+			name:     "equals sign inside quoted value unchanged",
+			input:    `{path="/a?b=c", severity=critical}`,
+			expected: `{path="/a?b=c", severity="critical"}`,
+		},
+		{
+			name:     "single-quoted value unchanged",
+			input:    `{team='a=b', env=dev}`,
+			expected: `{team='a=b', env="dev"}`,
+		},
+		{
 			name:     "empty selector",
 			input:    `{}`,
 			expected: `{}`,
@@ -1650,6 +1827,30 @@ func TestParseSelectorStrings_UnquotedValues(t *testing.T) {
 		require.Len(t, selectors, 1)
 		require.Equal(t, "critical", selectors[0].Filters[0].Value)
 	})
+
+	t.Run("accepts equals sign inside quoted value", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`{path="/search?q=abc"}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.Equal(t, "/search?q=abc", selectors[0].Filters[0].Value)
+	})
+
+	t.Run("accepts metric-prefixed selector with unquoted values", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`up{env!=dev, team=~back.*}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.ElementsMatch(t, []LabelMatcher{
+			{Name: "__name__", Type: "=", Value: "up"},
+			{Name: "env", Type: "!=", Value: "dev"},
+			{Name: "team", Type: "=~", Value: "back.*"},
+		}, selectors[0].Filters)
+	})
+
+	t.Run("error quotes the original selector", func(t *testing.T) {
+		_, err := parseSelectorStrings([]string{`{severity=}`})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `invalid label selector "{severity=}"`)
+	})
 }
 
 func TestParseMatcherStrings_UnquotedValues(t *testing.T) {
@@ -1667,4 +1868,46 @@ func TestParseMatcherStrings_UnquotedValues(t *testing.T) {
 		require.Len(t, matchers, 1)
 		require.Equal(t, "critical", matchers[0].Value)
 	})
+}
+
+// Every value/operator pair must survive each selector shape LLMs send.
+func TestParseSelectorStrings_Shapes(t *testing.T) {
+	values := []string{"api", "/users/{id}", "/a?b=c", "x,y", "a}b", `q"=x`, "O'Reilly", `C:\temp`, "line\nbreak"}
+	shapes := []struct{ input, canonical string }{
+		{"{%s, env=dev}", `{%s, env="dev"}`},
+		{"%s, env=dev", `{%s, env="dev"}`},
+		{"env=dev, %s", `{env="dev", %s}`},
+		{"up{%s}", "up{%s}"},
+		{"up{%s, env=dev}", `up{%s, env="dev"}`},
+	}
+
+	for _, value := range values {
+		for _, op := range []string{"=", "!=", "=~", "!~"} {
+			matcher := "path" + op + strconv.Quote(value)
+			for _, shape := range shapes {
+				input := fmt.Sprintf(shape.input, matcher)
+				t.Run(input, func(t *testing.T) {
+					want, err := promqlParser.ParseMetricSelector(fmt.Sprintf(shape.canonical, matcher))
+					require.NoError(t, err)
+
+					selectors, err := parseSelectorStrings([]string{input})
+					require.NoError(t, err)
+					got, err := promqlParser.ParseMetricSelector(selectors[0].String())
+					require.NoError(t, err)
+					require.ElementsMatch(t, matcherStrings(want), matcherStrings(got))
+				})
+			}
+		}
+	}
+}
+
+func TestParseSelectorStrings_UnquotedValueShapes(t *testing.T) {
+	for _, input := range []string{"path=api, env=dev", "{path=api, env=dev}", "up{path=api, env=dev}"} {
+		t.Run(input, func(t *testing.T) {
+			selectors, err := parseSelectorStrings([]string{input})
+			require.NoError(t, err)
+			require.Contains(t, selectors[0].Filters, LabelMatcher{Name: "path", Type: "=", Value: "api"})
+			require.Contains(t, selectors[0].Filters, LabelMatcher{Name: "env", Type: "=", Value: "dev"})
+		})
+	}
 }

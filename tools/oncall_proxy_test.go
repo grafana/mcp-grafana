@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,6 +220,11 @@ func TestExtractUserIDs(t *testing.T) {
 			input: []any{},
 			want:  []string{},
 		},
+		{
+			name:  "any slice of user objects",
+			input: []any{map[string]any{"username": "jdoe", "pk": "U1A2B3C4D5E6F"}},
+			want:  []string{"U1A2B3C4D5E6F"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -352,7 +359,7 @@ func TestProxyListSchedules(t *testing.T) {
 	assert.Equal(t, []string{"SHIFT1", "SHIFT2"}, result[0].Shifts)
 }
 
-func TestProxyPagination(t *testing.T) {
+func TestProxyUsernameSearchFollowsPages(t *testing.T) {
 	page := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page++
@@ -360,12 +367,12 @@ func TestProxyPagination(t *testing.T) {
 		if page == 1 {
 			nextURL := "https://oncall-prod.grafana.net/oncall/api/internal/v1/users/?page=2"
 			_ = json.NewEncoder(w).Encode(paginatedResult[onCallUserInternal]{
-				Results: []onCallUserInternal{{PK: "U1", Username: "user1"}},
+				Results: []onCallUserInternal{{PK: "U1", Username: "bennett"}},
 				Next:    &nextURL,
 			})
 		} else {
 			_ = json.NewEncoder(w).Encode(paginatedResult[onCallUserInternal]{
-				Results: []onCallUserInternal{{PK: "U2", Username: "user2"}},
+				Results: []onCallUserInternal{{PK: "U2", Username: "ben"}},
 			})
 		}
 	}))
@@ -377,9 +384,93 @@ func TestProxyPagination(t *testing.T) {
 		IDToken:     "test-id",
 	})
 
-	result, err := proxyListUsers(ctx, ListOnCallUsersParams{})
+	result, err := proxyListUsers(ctx, ListOnCallUsersParams{Username: "ben"})
 	require.NoError(t, err)
-	require.Len(t, result, 2)
-	assert.Equal(t, "U1", result[0].ID)
-	assert.Equal(t, "U2", result[1].ID)
+	require.Len(t, result, 1)
+	assert.Equal(t, "U2", result[0].ID)
+	assert.Equal(t, 2, page)
+}
+
+// newThreePageServer serves 3 pages of one item each and counts requests.
+func newThreePageServer(t *testing.T, requests *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		page := 1
+		if p := r.URL.Query().Get("page"); p != "" {
+			_, err := fmt.Sscanf(p, "%d", &page)
+			require.NoError(t, err)
+		}
+		id := fmt.Sprintf("P%d", page)
+		resp := map[string]any{
+			"results": []map[string]any{{"pk": id, "id": id, "username": id}},
+		}
+		if page < 3 {
+			path := strings.TrimPrefix(r.URL.Path, irmProxyBasePath+"/")
+			resp["next"] = fmt.Sprintf("https://oncall.example/oncall/api/internal/v1/%s?page=%d", path, page+1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+func TestProxyListToolsReturnOnePage(t *testing.T) {
+	tools := map[string]func(ctx context.Context, page int) ([]string, error){
+		"alert groups": func(ctx context.Context, page int) ([]string, error) {
+			r, err := proxyListAlertGroups(ctx, ListAlertGroupsParams{Page: page})
+			ids := make([]string, 0, len(r))
+			for _, x := range r {
+				ids = append(ids, x.ID)
+			}
+			return ids, err
+		},
+		"schedules": func(ctx context.Context, page int) ([]string, error) {
+			r, err := proxyListSchedules(ctx, ListOnCallSchedulesParams{Page: page})
+			ids := make([]string, 0, len(r))
+			for _, x := range r {
+				ids = append(ids, x.ID)
+			}
+			return ids, err
+		},
+		"users": func(ctx context.Context, page int) ([]string, error) {
+			r, err := proxyListUsers(ctx, ListOnCallUsersParams{Page: page})
+			ids := make([]string, 0, len(r))
+			for _, x := range r {
+				ids = append(ids, x.ID)
+			}
+			return ids, err
+		},
+		"teams": func(ctx context.Context, page int) ([]string, error) {
+			r, err := proxyListTeams(ctx, ListOnCallTeamsParams{Page: page})
+			ids := make([]string, 0, len(r))
+			for _, x := range r {
+				ids = append(ids, x.ID)
+			}
+			return ids, err
+		},
+	}
+
+	for name, list := range tools {
+		for _, tc := range []struct {
+			page int
+			want string
+		}{{0, "P1"}, {2, "P2"}} {
+			t.Run(fmt.Sprintf("%s page %d", name, tc.page), func(t *testing.T) {
+				var requests atomic.Int32
+				server := newThreePageServer(t, &requests)
+				defer server.Close()
+
+				ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+					URL:         server.URL,
+					AccessToken: "test-access",
+					IDToken:     "test-id",
+				})
+
+				ids, err := list(ctx, tc.page)
+				require.NoError(t, err)
+				assert.Equal(t, []string{tc.want}, ids)
+				assert.Equal(t, int32(1), requests.Load())
+			})
+		}
+	}
 }

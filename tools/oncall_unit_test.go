@@ -5,11 +5,15 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -144,10 +148,124 @@ func TestGetAlertGroupNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "getting OnCall alert group missing")
 }
 
+func TestGetAlertGroupWithGrafanaURLOverrideUsesRequestToken(t *testing.T) {
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "env-token")
+
+	oncallHeaders := make(chan http.Header, 1)
+	oncall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oncallHeaders <- r.Header.Clone()
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/api/v1/alert_groups/AG123/", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id": "AG123", "state": "new", "created_at": "2026-04-29T07:00:00Z",
+		}))
+	}))
+	t.Cleanup(oncall.Close)
+
+	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer request-token", r.Header.Get("Authorization"))
+		assert.Equal(t, "/api/plugins/grafana-irm-app/settings", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"jsonData": map[string]string{"onCallApiUrl": oncall.URL},
+		}))
+	}))
+	t.Cleanup(grafana.Close)
+
+	var result *OnCallAlertGroup
+	var callErr error
+	handler := mcpgrafana.GrafanaURLOverrideMiddleware(true, []string{grafana.URL}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := mcpgrafana.WithGrafanaConfig(r.Context(), mcpgrafana.GrafanaConfig{
+			AccessToken: "env-access-token", IDToken: "env-id-token",
+		})
+		ctx = mcpgrafana.ExtractGrafanaInfoFromHeaders(ctx, r)
+		result, callErr = getAlertGroup(ctx, GetAlertGroupParams{AlertGroupID: "AG123"})
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request.Header.Set("X-Grafana-URL", grafana.URL)
+	request.Header.Set("X-Grafana-Service-Account-Token", "request-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, request)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+	require.NoError(t, callErr)
+	require.NotNil(t, result)
+	assert.Equal(t, "AG123", result.ID)
+	headers := <-oncallHeaders
+	assert.Equal(t, "request-token", headers.Get("Authorization"))
+	assert.Equal(t, grafana.URL, headers.Get("X-Grafana-URL"))
+}
+
 func TestGetAlertGroupEscapesID(t *testing.T) {
 	ctx, requests := newOnCallPublicAPIServer(t, nil)
 
 	_, err := getAlertGroup(ctx, GetAlertGroupParams{AlertGroupID: "../alert_groups"})
 	require.Error(t, err)
 	assert.NotContains(t, *requests, "GET /api/v1/alert_groups/")
+}
+
+func TestGetAlertGroupUsesConfiguredTLS(t *testing.T) {
+	oncall := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id": "AG1", "state": "new", "created_at": "2026-10-19T00:00:00Z",
+		}))
+	}))
+	t.Cleanup(oncall.Close)
+	grafana := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"jsonData": map[string]string{"onCallApiUrl": oncall.URL},
+		}))
+	}))
+	t.Cleanup(grafana.Close)
+
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: grafana.Certificate().Raw,
+	}), 0o600))
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		URL:       grafana.URL,
+		APIKey:    "oncall-token",
+		TLSConfig: &mcpgrafana.TLSConfig{CAFile: caFile},
+	})
+
+	result, err := getAlertGroup(ctx, GetAlertGroupParams{AlertGroupID: "AG1"})
+	require.NoError(t, err)
+	assert.Equal(t, "AG1", result.ID)
+}
+
+func TestOnCallTransportUnderOverrideRefusesRedirectOffOnCallHost(t *testing.T) {
+	var thirdHits atomic.Int32
+	third := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		thirdHits.Add(1)
+	}))
+	t.Cleanup(third.Close)
+
+	oncall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect/" {
+			http.Redirect(w, r, third.URL+"/", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(oncall.Close)
+
+	// Allow cross-origin redirects so that only the target guard can refuse them.
+	cfg := mcpgrafana.GrafanaConfig{
+		URL:                       "http://grafana.example",
+		OverrideURL:               "http://grafana.example",
+		AllowCrossOriginRedirects: true,
+	}
+	transport, err := oncallTransport(cfg, oncall.URL)
+	require.NoError(t, err)
+	client := &http.Client{Transport: transport}
+
+	resp, err := client.Get(oncall.URL + "/api/v1/alert_groups/")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	_, err = client.Get(oncall.URL + "/redirect/")
+	require.ErrorContains(t, err, "grafana URL override blocked request outside selected target")
+	assert.Zero(t, thirdHits.Load())
 }

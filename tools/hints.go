@@ -93,6 +93,11 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getSnowflakeCauses(ctx)
 		hints.SuggestedActions = getSnowflakeActions(ctx)
 
+	case "cloudlogging":
+		hints.Summary = "The Google Cloud Logging query returned no log entries for the specified time range."
+		hints.PossibleCauses = getCloudLoggingCauses(ctx)
+		hints.SuggestedActions = getCloudLoggingActions(ctx)
+
 	default:
 		hints.Summary = "The query returned no data for the specified parameters."
 		hints.PossibleCauses = getGenericCauses()
@@ -105,10 +110,7 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 // getPrometheusCauses returns possible causes for empty Prometheus results
 func getPrometheusCauses(ctx HintContext) []string {
 	causes := []string{
-		"The metric may not exist in this Prometheus instance",
-		"The label selectors may not match any time series",
-		"The time range may be outside when the metric was being scraped",
-		"The scrape target may be down or not configured",
+		"The metric, labels, time range or scrape target may have no data.",
 	}
 
 	// Add query-specific causes
@@ -125,10 +127,9 @@ func getPrometheusCauses(ctx HintContext) []string {
 // getPrometheusActions returns suggested actions for empty Prometheus results
 func getPrometheusActions(ctx HintContext) []string {
 	actions := []string{
-		"Use list_prometheus_metric_names to verify the metric exists",
-		"Use list_prometheus_label_values to check available label values",
-		"Try expanding the time range to see if data exists in a different period",
-		"Verify the scrape configuration and target health in Prometheus",
+		"Check metrics/labels with list_prometheus_metric_names and list_prometheus_label_values.",
+		"Expand the time range to the last 6h or 24h.",
+		"Check scrape target health with up{job=\"...\"}.",
 	}
 
 	// Add query-specific actions
@@ -142,10 +143,7 @@ func getPrometheusActions(ctx HintContext) []string {
 // getLokiCauses returns possible causes for empty Loki results
 func getLokiCauses(ctx HintContext) []string {
 	causes := []string{
-		"The stream selector labels may not match any log streams",
-		"No logs were ingested during the specified time range",
-		"The filter expression may be too restrictive",
-		"The label values in the selector may be misspelled or incorrect",
+		"The stream selector, time range or filters may not match available logs.",
 	}
 
 	// Add query-specific causes
@@ -163,10 +161,9 @@ func getLokiCauses(ctx HintContext) []string {
 // getLokiActions returns suggested actions for empty Loki results
 func getLokiActions(ctx HintContext) []string {
 	actions := []string{
-		"Use list_loki_label_names to verify available labels",
-		"Use list_loki_label_values to check values for specific labels",
-		"Use query_loki_stats to check if logs exist for the stream selector",
-		"Try expanding the time range to see if logs exist in a different period",
+		"Check labels with list_loki_label_names and list_loki_label_values.",
+		"Check the stream selector with query_loki_stats.",
+		"Expand the time range to the last 6h or 24h.",
 	}
 
 	// Add query-specific actions
@@ -174,7 +171,7 @@ func getLokiActions(ctx HintContext) []string {
 		actions = append(actions, "Try removing pipeline stages to see if the base stream selector matches any logs")
 	}
 	if strings.Contains(ctx.Query, "=~") {
-		actions = append(actions, "Verify regex patterns are correct - use list_loki_label_values to see actual values")
+		actions = append(actions, "Verify regex patterns against the available label values.")
 	}
 
 	return actions
@@ -193,8 +190,8 @@ func getClickHouseCauses(ctx HintContext) []string {
 // getClickHouseActions returns suggested actions for empty ClickHouse results
 func getClickHouseActions(ctx HintContext) []string {
 	return []string{
-		"Use list_clickhouse_tables to verify the table exists",
-		"Use describe_clickhouse_table to check column names and types",
+		"Use list_sql_tables to verify the table exists",
+		"Use describe_sql_table to check column names and types",
 		"Try removing WHERE clause filters to see if the table contains data",
 		"Verify time parameters are in Unix milliseconds format",
 	}
@@ -246,6 +243,34 @@ func getInfluxDBActions(ctx HintContext) []string {
 	}
 }
 
+// getCloudLoggingCauses returns possible causes for empty Google Cloud Logging results
+func getCloudLoggingCauses(ctx HintContext) []string {
+	causes := []string{
+		"The project ID may be wrong, or the datasource's service account may lack the Logs Viewer role on it",
+		"The filter may be too restrictive (resource.type, resource.labels, logName, or severity may not match any entries)",
+		"No logs were written in the time range, or the log bucket's retention period has expired them",
+	}
+	q := strings.ToLower(ctx.Query)
+	if strings.Contains(q, "timestamp") {
+		causes = append(causes, "The filter contains a timestamp clause that conflicts with the automatically applied time range")
+	}
+	if strings.Contains(q, "severity=") && !strings.Contains(q, "severity>=") && !strings.Contains(q, "severity<=") {
+		causes = append(causes, "severity= matches one exact level; severity>=ERROR also matches CRITICAL, ALERT, and EMERGENCY")
+	}
+	return causes
+}
+
+// getCloudLoggingActions returns suggested actions for empty Google Cloud Logging results
+func getCloudLoggingActions(ctx HintContext) []string {
+	return []string{
+		"Verify the project ID with list_cloud_logging_projects",
+		"Remove timestamp clauses from the filter; the time range comes from start/end",
+		"Broaden the filter, e.g. start from resource.type=\"k8s_container\" alone, then add labels one at a time",
+		"Expand the time range to check whether data exists earlier",
+		"If the project uses custom log buckets or sinks, list them with list_cloud_logging_buckets and pass bucketId",
+	}
+}
+
 // getGraphiteCauses returns possible causes for empty Graphite results
 func getGraphiteCauses(ctx HintContext) []string {
 	causes := []string{
@@ -289,8 +314,8 @@ func getAthenaCauses(ctx HintContext) []string {
 // getAthenaActions returns suggested actions for empty Athena results
 func getAthenaActions(ctx HintContext) []string {
 	return []string{
-		"Use list_athena_tables to verify the table exists",
-		"Use describe_athena_table to check column names, or run DESCRIBE db.table via query_athena for column types and partition spec",
+		"Use list_sql_tables to verify the table exists",
+		"Use describe_sql_table to check column names, or run DESCRIBE db.table via query_sql for column types and partition spec",
 		"Widen the time range or check partition column values (run DESCRIBE to see partition structure)",
 		"Try a simple SELECT * FROM table LIMIT 10 to verify access",
 	}
@@ -309,8 +334,8 @@ func getSnowflakeCauses(ctx HintContext) []string {
 // getSnowflakeActions returns suggested actions for empty Snowflake results
 func getSnowflakeActions(ctx HintContext) []string {
 	return []string{
-		"Use list_snowflake_tables to verify the table exists",
-		"Use describe_snowflake_table to check column names and types",
+		"Use list_sql_tables to verify the table exists",
+		"Use describe_sql_table to check column names and types",
 		"Try removing WHERE clause filters to see if the table contains data",
 		"Verify the datasource's default database/role has access to the table",
 	}

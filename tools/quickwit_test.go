@@ -6,10 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,93 +84,169 @@ func TestTimestampInfoFromMetadata(t *testing.T) {
 	})
 }
 
-func TestQuickwitBackendSearch(t *testing.T) {
+const quickwitTestMetadata = `[{
+	"index_config": {
+		"index_id": "test-logs",
+		"doc_mapping": {
+			"timestamp_field": "timestamp",
+			"field_mappings": [
+				{"name": "timestamp", "type": "datetime", "output_format": "rfc3339"},
+				{"name": "body", "type": "text"},
+				{"name": "severity_text", "type": "text"}
+			]
+		}
+	}
+}]`
+
+// newQuickwitTestServer serves index metadata under /proxy, plus whichever of
+// /api/ds/query and /proxy/_elastic/_msearch the test handles.
+func newQuickwitTestServer(t *testing.T, dsQuery, msearch http.HandlerFunc) *quickwitBackend {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxy/indexes":
+			assert.Equal(t, "test-logs", r.URL.Query().Get("index_id_patterns"))
+			_, _ = io.WriteString(w, quickwitTestMetadata)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/ds/query" && dsQuery != nil:
+			dsQuery(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/proxy/_elastic/_msearch" && msearch != nil:
+			msearch(w, r)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return &quickwitBackend{
+		httpClient:      server.Client(),
+		baseURL:         server.URL + "/proxy",
+		dsQueryClient:   server.Client(),
+		grafanaURL:      server.URL,
+		dsUID:           "qw",
+		configuredIndex: "test-logs",
+	}
+}
+
+func TestQuickwitBackendSearchDSQuery(t *testing.T) {
+	// Response shape captured from quickwit-quickwit-datasource 0.6.0.
+	dsQueryResponse := `{"results":{"A":{"status":200,"frames":[{"schema":{"name":"A","refId":"A","fields":[{"name":"A","type":"other","typeInfo":{"frame":"json.RawMessage","nullable":true}}]},"data":{"values":[[{"body":"hello quickwit","severity_text":"ERROR","timestamp":"2024-06-15T12:00:00Z"}]]}}]}}}`
+
+	start := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	backend := newQuickwitTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			From    string                   `json:"from"`
+			To      string                   `json:"to"`
+			Queries []map[string]interface{} `json:"queries"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		assert.Equal(t, strconv.FormatInt(start.UnixMilli(), 10), payload.From)
+		assert.Equal(t, strconv.FormatInt(end.UnixMilli(), 10), payload.To)
+		require.Len(t, payload.Queries, 1)
+		q := payload.Queries[0]
+		assert.Equal(t, "severity_text:ERROR", q["query"])
+		assert.Equal(t, map[string]interface{}{"uid": "qw", "type": quickwitDatasourceType}, q["datasource"])
+		assert.Equal(t, []interface{}{map[string]interface{}{
+			"id": "1", "type": "raw_document", "settings": map[string]interface{}{"size": "10"},
+		}}, q["metrics"])
+		_, _ = io.WriteString(w, dsQueryResponse)
+	}, nil)
+
+	docs, err := backend.Search(context.Background(), "", "severity_text:ERROR", start, end, 10)
+	require.NoError(t, err)
+	require.Len(t, docs, 1)
+	assert.Equal(t, "test-logs", docs[0].Index)
+	assert.Equal(t, "2024-06-15T12:00:00Z", docs[0].Timestamp)
+	assert.Equal(t, "hello quickwit", docs[0].Source["body"])
+}
+
+func TestQuickwitBackendSearchDSQueryError(t *testing.T) {
+	backend := newQuickwitTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"results":{"A":{"status":500,"error":"failed to parse query","frames":[]}}}`)
+	}, nil)
+
+	_, err := backend.Search(context.Background(), "", "bad:(", time.Time{}, time.Time{}, 10)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse query")
+}
+
+func TestQuickwitBackendSearchProxy(t *testing.T) {
 	msearchResponseBody := `{
-		"took": 1,
 		"responses": [{
-			"took": 1,
-			"timed_out": false,
 			"status": 200,
-			"_shards": {"total": 1, "successful": 1, "failed": 0},
 			"hits": {
-				"total": {"value": 1, "relation": "eq"},
-				"max_score": 1.0,
 				"hits": [{
 					"_index": "test-logs",
-					"_id": "1",
-					"_score": 1.0,
 					"_source": {
 						"timestamp": "2024-06-15T12:00:00Z",
 						"body": "hello quickwit",
-						"severity_text": "ERROR"
+						"service_name": "api"
 					}
 				}]
 			}
 		}]
 	}`
+	msearch := func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+		require.Len(t, lines, 2)
 
-	metadataResponseBody := `[{
-		"index_config": {
-			"index_id": "test-logs",
-			"doc_mapping": {
-				"timestamp_field": "timestamp",
-				"field_mappings": [
-					{"name": "timestamp", "type": "datetime", "output_format": "rfc3339"},
-					{"name": "body", "type": "text"},
-					{"name": "severity_text", "type": "text"}
-				]
-			}
-		}
-	}]`
+		var query map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(lines[1]), &query))
+		sort, ok := query["sort"].([]interface{})
+		require.True(t, ok)
+		require.Len(t, sort, 1)
+		sortEntry, ok := sort[0].(map[string]interface{})
+		require.True(t, ok)
+		tsSort, ok := sortEntry["timestamp"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "desc", tsSort["order"])
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/indexes"):
-			assert.Equal(t, "test-logs", r.URL.Query().Get("index_id_patterns"))
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, metadataResponseBody)
-		case r.Method == http.MethodPost && r.URL.Path == "/_elastic/_msearch":
-			body, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
-			lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-			require.Len(t, lines, 2)
-
-			var header map[string]interface{}
-			require.NoError(t, json.Unmarshal([]byte(lines[0]), &header))
-			assert.Equal(t, "test-logs", header["index"])
-
-			var query map[string]interface{}
-			require.NoError(t, json.Unmarshal([]byte(lines[1]), &query))
-			sort, ok := query["sort"].([]interface{})
-			require.True(t, ok)
-			require.Len(t, sort, 1)
-			sortEntry, ok := sort[0].(map[string]interface{})
-			require.True(t, ok)
-			tsSort, ok := sortEntry["timestamp"].(map[string]interface{})
-			require.True(t, ok)
-			assert.Equal(t, "desc", tsSort["order"])
-
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, msearchResponseBody)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	backend := &quickwitBackend{
-		httpClient:      server.Client(),
-		baseURL:         server.URL,
-		configuredIndex: "test-logs",
+		_, _ = io.WriteString(w, msearchResponseBody)
 	}
 
-	docs, err := backend.Search(context.Background(), "test-logs", "severity_text:ERROR", time.Time{}, time.Time{}, 10)
+	check := func(t *testing.T, docs []ElasticsearchDocument, err error) {
+		require.NoError(t, err)
+		require.Len(t, docs, 1)
+		assert.Equal(t, "test-logs", docs[0].Index)
+		assert.Equal(t, "2024-06-15T12:00:00Z", docs[0].Timestamp)
+	}
+
+	t.Run("query DSL JSON", func(t *testing.T) {
+		backend := newQuickwitTestServer(t, nil, msearch)
+		docs, err := backend.Search(context.Background(), "", `{"term":{"service_name":"api"}}`, time.Time{}, time.Time{}, 10)
+		check(t, docs, err)
+	})
+
+	t.Run("narrower index than configured pattern", func(t *testing.T) {
+		backend := newQuickwitTestServer(t, nil, msearch)
+		backend.configuredIndex = "test-*"
+		docs, err := backend.Search(context.Background(), "test-logs", "service_name:api", time.Time{}, time.Time{}, 10)
+		check(t, docs, err)
+	})
+}
+
+func TestQuickwitFramesToDocuments(t *testing.T) {
+	frame := data.NewFrame("A", data.NewField("A", nil, []json.RawMessage{
+		json.RawMessage(`{"ts":"2024-01-01T00:00:00Z","msg":"a","nested":{"k":1}}`),
+		json.RawMessage(`{"ts":1704067200000,"msg":"b"}`),
+		json.RawMessage(`{"msg":"c"}`),
+	}))
+
+	docs, err := quickwitFramesToDocuments(data.Frames{frame}, "idx", "ts")
 	require.NoError(t, err)
-	require.Len(t, docs, 1)
-	assert.Equal(t, "test-logs", docs[0].Index)
-	assert.Equal(t, "1", docs[0].ID)
-	assert.Equal(t, "2024-06-15T12:00:00Z", docs[0].Timestamp)
-	assert.Equal(t, "hello quickwit", docs[0].Source["body"])
+	require.Len(t, docs, 3)
+	assert.Equal(t, "idx", docs[0].Index)
+	assert.Equal(t, "2024-01-01T00:00:00Z", docs[0].Timestamp)
+	assert.Equal(t, map[string]interface{}{"k": float64(1)}, docs[0].Source["nested"])
+	assert.Equal(t, "2024-01-01T00:00:00Z", docs[1].Timestamp)
+	assert.Equal(t, "", docs[2].Timestamp)
+	assert.Equal(t, "c", docs[2].Source["msg"])
+
+	docs, err = quickwitFramesToDocuments(nil, "idx", "ts")
+	require.NoError(t, err)
+	assert.Empty(t, docs)
 }
 
 func TestQuickwitIndexMatchesPattern(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,7 +83,7 @@ func TestCreateAnnotation_GraphiteFormat_Minimal(t *testing.T) {
 		var body models.PostGraphiteAnnotationsCmd
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		assert.Equal(t, "deploy", body.What)
-		assert.Equal(t, int64(1710000000000), body.When)
+		assert.Equal(t, int64(1710000000), body.When, "graphite endpoint takes epoch seconds")
 		assert.Nil(t, body.Tags)
 		assert.Empty(t, body.Data)
 
@@ -112,7 +112,7 @@ func TestCreateAnnotation_GraphiteFormat_WithTagsAndData(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 
 		assert.Equal(t, "incident", body["what"])
-		assert.Equal(t, float64(1720000000000), body["when"])
+		assert.Equal(t, float64(1720000000), body["when"])
 		assert.ElementsMatch(t, []interface{}{"sev1", "network"}, body["tags"].([]interface{}))
 		assert.Equal(t, "context", body["data"])
 
@@ -300,11 +300,59 @@ func TestGetAnnotationTags_UsesCorrectQueryParams(t *testing.T) {
 
 	ctx := mockCtxWithClient(server)
 	tag := "error"
-	limit := "50"
+	limit := int64(50)
 
 	_, err := getAnnotationTags(ctx, GetAnnotationTagsInput{
 		Tag:   &tag,
 		Limit: &limit,
 	})
 	require.NoError(t, err)
+}
+
+func TestDeleteAnnotation_UsesCorrectPathAndMethod(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/annotations/4242", r.URL.Path)
+		assert.Equal(t, http.MethodDelete, r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(models.SuccessResponseBody{Message: "Annotation deleted"})
+	}))
+	defer server.Close()
+
+	ctx := mockCtxWithClient(server)
+
+	resp, err := deleteAnnotation(ctx, DeleteAnnotationInput{ID: 4242})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "Annotation deleted", resp.Payload.Message)
+}
+
+func TestDeleteAnnotation_PropagatesError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Annotation not found"}`))
+	}))
+	defer server.Close()
+
+	ctx := mockCtxWithClient(server)
+
+	_, err := deleteAnnotation(ctx, DeleteAnnotationInput{ID: 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete annotation:")
+}
+
+func TestDeleteAnnotation_RejectsMissingID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request should reach Grafana, got %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	ctx := mockCtxWithClient(server)
+
+	for _, id := range []int64{0, -1} {
+		_, err := deleteAnnotation(ctx, DeleteAnnotationInput{ID: id})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "id is required")
+	}
 }

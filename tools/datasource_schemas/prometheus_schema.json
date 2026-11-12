@@ -630,8 +630,7 @@
             "dependsOn": "jsonData.tlsAuthWithCACert == true",
             "ui": {
                 "component": "textarea",
-                "rows": 7,
-                "placeholder": "Begins with -----BEGIN CERTIFICATE-----"
+                "rows": 7
             }
         },
         {
@@ -644,8 +643,7 @@
             "dependsOn": "jsonData.tlsAuth == true",
             "ui": {
                 "component": "textarea",
-                "rows": 7,
-                "placeholder": "Begins with -----BEGIN CERTIFICATE-----"
+                "rows": 7
             }
         },
         {
@@ -659,8 +657,7 @@
             "dependsOn": "jsonData.tlsAuth == true",
             "ui": {
                 "component": "textarea",
-                "rows": 7,
-                "placeholder": "Begins with -----BEGIN RSA PRIVATE KEY-----"
+                "rows": 7
             }
         }
     ],

@@ -12,21 +12,20 @@ import (
 	"time"
 
 	"github.com/go-openapi/strfmt"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/prometheus/alertmanager/api/v2/models"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 const manageAlertmanagerDescription = `Manage the built-in Grafana Alertmanager: alert notification groups and silences. A silence temporarily suppresses notifications for alerts whose labels match a set of matchers, without changing the alert rules themselves.
 
 Operations:
-- 'list_alert_groups': list alert groups (the /alerting/groups view). Optionally filter by active/silenced/inhibited state, label matchers, or receiver name (regular expression).
-- 'list': list existing silences. Optionally filter by rule_uid (matches the __alert_rule_uid__ label) or by matchers.
-- 'get': retrieve a single silence by silence_id.
-- 'create': create a new silence. Requires matchers, starts_at, ends_at (RFC3339) and comment.
-- 'update': modify an existing silence by silence_id. Requires matchers, starts_at, ends_at and comment. The id is only kept when the posted matchers and starts_at match the stored ones, so pass back the starts_at returned by 'get'; otherwise Alertmanager expires the old silence and returns a new id.
-- 'delete': expire/remove a silence by silence_id.
+- List alert groups (the /alerting/groups view). Optionally filter by active/silenced/inhibited state, label matchers, or receiver name (regular expression).
+- List existing silences. Optionally filter by rule_uid (matches the __alert_rule_uid__ label) or by matchers.
+- Retrieve a single silence by silence_id.
+- Create a new silence. Requires matchers, starts_at, ends_at (RFC3339) and comment.
+- Update an existing silence by silence_id. Requires matchers, starts_at, ends_at and comment. The id is only kept when the posted matchers and starts_at match the stored ones, so pass back the starts_at returned when retrieving the silence; otherwise Alertmanager expires the old silence and returns a new id.
+- Expire or remove a silence by silence_id.
 
 When to use:
 - Muting noisy or expected alerts during maintenance windows
@@ -34,15 +33,15 @@ When to use:
 - Understanding which alert groups are firing and how they are routed to receivers
 
 When NOT to use:
-- Changing alert rule configuration or state (use alerting_manage_rules)
-- Changing how alerts are routed to receivers (use alerting_manage_routing)`
+- Changing alert rule configuration or state (use the alert-rule tools)
+- Changing how alerts are routed to receivers (use the notification-routing tools)`
 
 const manageAlertmanagerReadDescription = `List and inspect the built-in Grafana Alertmanager: alert notification groups and silences. A silence temporarily suppresses notifications for alerts whose labels match a set of matchers.
 
 Operations:
-- 'list_alert_groups': list alert groups (the /alerting/groups view). Optionally filter by active/silenced/inhibited state, label matchers, or receiver name (regular expression).
-- 'list': list existing silences. Optionally filter by rule_uid (matches the __alert_rule_uid__ label) or by matchers.
-- 'get': retrieve a single silence by silence_id.
+- List alert groups (the /alerting/groups view). Optionally filter by active/silenced/inhibited state, label matchers, or receiver name (regular expression).
+- List existing silences. Optionally filter by rule_uid (matches the __alert_rule_uid__ label) or by matchers.
+- Retrieve a single silence by silence_id.
 
 When to use:
 - Inspecting which alerts are currently silenced and why
@@ -50,8 +49,8 @@ When to use:
 
 When NOT to use:
 - Creating, updating or deleting silences (read-only tool)
-- Changing alert rule configuration or state (use alerting_manage_rules)
-- Changing how alerts are routed to receivers (use alerting_manage_routing)`
+- Changing alert rule configuration or state (use the alert-rule tools)
+- Changing how alerts are routed to receivers (use the notification-routing tools)`
 
 const (
 	// alertmanagerBasePath is the Grafana-managed Alertmanager v2 base path.
@@ -73,11 +72,11 @@ type SilenceMatcherParam struct {
 // alertGroupFilterParams contains the list_alert_groups filter fields shared
 // between the read-only and read-write param structs.
 type alertGroupFilterParams struct {
-	Active    *bool    `json:"active,omitempty" jsonschema:"description=Return active alerts. When omitted the API defaults to true. To see only active alerts set active=true and silenced=false and inhibited=false. Only used with 'list_alert_groups'."`
-	Silenced  *bool    `json:"silenced,omitempty" jsonschema:"description=Return silenced alerts. When omitted the API defaults to true. Set to false to exclude silenced alerts. Only used with 'list_alert_groups'."`
-	Inhibited *bool    `json:"inhibited,omitempty" jsonschema:"description=Return inhibited alerts. When omitted the API defaults to true. Set to false to exclude inhibited alerts. Only used with 'list_alert_groups'."`
-	Filter    []string `json:"filter,omitempty" jsonschema:"description=Label matchers to filter alert groups by (e.g. 'severity=critical'). Only used with 'list_alert_groups'."`
-	Receiver  string   `json:"receiver,omitempty" jsonschema:"description=Filter alert groups by receiver name (regular expression). Only used with 'list_alert_groups'."`
+	Active    *bool    `json:"active,omitempty" jsonschema:"description=Return active alerts. When omitted the API defaults to true. To see only active alerts set active=true and silenced=false and inhibited=false. Only used when listing alert groups."`
+	Silenced  *bool    `json:"silenced,omitempty" jsonschema:"description=Return silenced alerts. When omitted the API defaults to true. Set to false to exclude silenced alerts. Only used when listing alert groups."`
+	Inhibited *bool    `json:"inhibited,omitempty" jsonschema:"description=Return inhibited alerts. When omitted the API defaults to true. Set to false to exclude inhibited alerts. Only used when listing alert groups."`
+	Filter    []string `json:"filter,omitempty" jsonschema:"description=Label matchers to filter alert groups by (e.g. 'severity=critical'). Only used when listing alert groups."`
+	Receiver  string   `json:"receiver,omitempty" jsonschema:"description=Filter alert groups by receiver name (regular expression). Only used when listing alert groups."`
 }
 
 func (f alertGroupFilterParams) toGetAlertGroupsOpts() *GetAlertGroupsOpts {
@@ -92,7 +91,7 @@ func (f alertGroupFilterParams) toGetAlertGroupsOpts() *GetAlertGroupsOpts {
 
 // ManageAlertmanagerParams is the param struct for the alerting_manage_alertmanager tool.
 type ManageAlertmanagerParams struct {
-	Operation string `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,enum=create,enum=update,enum=delete,description=The operation to perform: 'list_alert_groups' to list alert groups\\, 'list' to list silences\\, 'get' to retrieve a silence by id\\, 'create' to create a new silence\\, 'update' to modify an existing silence by id\\, 'delete' to expire a silence by id"`
+	Operation string `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,enum=create,enum=update,enum=delete,description=The operation to perform: list alert groups\\, list silences\\, get a silence by id\\, create a new silence\\, update an existing silence by id\\, or expire a silence by id"`
 
 	alertGroupFilterParams
 
@@ -136,7 +135,7 @@ func (p ManageAlertmanagerParams) validate() error {
 // ManageAlertmanagerReadParams is the param struct for the read-only variant of
 // alerting_manage_alertmanager (list_alert_groups/list/get only).
 type ManageAlertmanagerReadParams struct {
-	Operation string `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,description=The operation to perform: 'list_alert_groups' to list alert groups\\, 'list' to list silences\\, 'get' to retrieve a silence by id"`
+	Operation string `json:"operation" jsonschema:"required,enum=list_alert_groups,enum=list,enum=get,description=The operation to perform: list alert groups\\, list silences\\, or get a silence by id"`
 
 	alertGroupFilterParams
 
@@ -360,10 +359,10 @@ func manageAlertmanagerReadWrite(ctx context.Context, args ManageAlertmanagerPar
 	return nil, fmt.Errorf("alerting_manage_alertmanager: unknown operation %q", args.Operation)
 }
 
-// alertmanagerRequest performs a JSON HTTP request against the Grafana built-in
-// Alertmanager v2 API. Unlike makeRequest it accepts any method + body and
-// treats any 2xx as success, decoding the response only when a body is present
-// (DELETE returns 200 with an empty body).
+// alertmanagerRequest performs a JSON HTTP request against the Grafana
+// built-in Alertmanager v2 API. Unlike makeRequest it accepts any method + body
+// and treats any 2xx as success, decoding the response only when a body is
+// present (DELETE returns 200 with an empty body).
 func (c *alertingClient) alertmanagerRequest(ctx context.Context, method, path string, params url.Values, body, out any) error {
 	u := c.baseURL.JoinPath(path)
 	if len(params) > 0 {
@@ -514,11 +513,12 @@ var ManageAlertmanagerRead = mcpgrafana.MustTool(
 	"alerting_manage_alertmanager",
 	manageAlertmanagerReadDescription,
 	manageAlertmanagerRead,
-	mcp.WithTitleAnnotation("Manage Grafana Alertmanager"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Grafana Alertmanager"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("alert.silences:read", "alert.instances:read"),
 )
 
 // ManageAlertmanagerReadWrite is the write-capable variant (all operations),
@@ -527,8 +527,14 @@ var ManageAlertmanagerReadWrite = mcpgrafana.MustTool(
 	"alerting_manage_alertmanager",
 	manageAlertmanagerDescription,
 	manageAlertmanagerReadWrite,
-	mcp.WithTitleAnnotation("Manage Grafana Alertmanager"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Grafana Alertmanager"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// General (not rule-scoped) silences are gated on alert.instances:*, not
+	// alert.silences:*.
+	mcpgrafana.RequiresPermissions(
+		"alert.silences:read", "alert.silences:create", "alert.silences:write",
+		"alert.instances:read", "alert.instances:create", "alert.instances:write",
+	),
 )

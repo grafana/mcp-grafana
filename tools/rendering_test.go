@@ -3,21 +3,24 @@
 package tools
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 func intPtr(i int) *int {
@@ -154,6 +157,7 @@ func TestBuildRenderURL(t *testing.T) {
 	tests := []struct {
 		name        string
 		baseURL     string
+		orgID       int64
 		args        GetPanelImageParams
 		contains    []string
 		notContains []string
@@ -167,11 +171,82 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			contains: []string{
 				"http://localhost:3000/render/d/abc123",
-				"width=1000",
-				"height=500",
+				"width=1200",
+				"height=900",
 				"scale=1",
 				"kiosk=true",
 			},
+		},
+		{
+			name:    "Explore render uses explore path with pane state",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{
+					DatasourceUID: "prom-uid",
+					Queries:       []map[string]interface{}{{"refId": "A", "expr": "up"}},
+				},
+				TimeRange: &RenderTimeRange{From: "now-1h", To: "now"},
+				Variables: map[string]StringOrSlice{"var-x": {"ignored"}},
+			},
+			contains: []string{
+				"http://localhost:3000/render/explore?",
+				"schemaVersion=1",
+				"panes=",
+				"prom-uid",
+				"kiosk=true",
+				"forcePollingMode=true",
+				"height=1000",
+			},
+			notContains: []string{
+				"/render/d",
+				"var-x",
+				"from=now-1h",
+			},
+		},
+		{
+			name:    "Explore render passes custom dimensions",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{DatasourceUID: "prom-uid"},
+				Width:   intPtr(400),
+				Height:  intPtr(200),
+				Scale:   intPtr(2),
+			},
+			contains: []string{
+				"http://localhost:3000/render/explore?",
+				"width=400",
+				"height=200",
+				"scale=2",
+			},
+			notContains: []string{
+				"height=1000",
+			},
+		},
+		{
+			name:    "Explore requires datasourceUid",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Explore rejects panelId",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				Explore: &RenderExplore{DatasourceUID: "prom-uid"},
+				PanelID: intPtr(1),
+			},
+			expectError: true,
+		},
+		{
+			name:    "Explore and dashboardUid are mutually exclusive",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				Explore:      &RenderExplore{DatasourceUID: "prom-uid"},
+			},
+			expectError: true,
 		},
 		{
 			name:    "Panel render with custom dimensions uses d-solo path",
@@ -206,6 +281,63 @@ func TestBuildRenderURL(t *testing.T) {
 			contains: []string{
 				"from=now-1h",
 				"to=now",
+			},
+		},
+		{
+			name:    "RFC3339 time range is sent as epoch millis",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				PanelID:      intPtr(1),
+				TimeRange: &RenderTimeRange{
+					From: "2024-01-01T00:00:00Z",
+					To:   "2024-01-01T12:00:00Z",
+				},
+			},
+			contains: []string{
+				"from=1704067200000",
+				"to=1704110400000",
+			},
+			notContains: []string{"2024-01-01T"},
+		},
+		{
+			name:    "Date-only to resolves to end of day",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				TimeRange:    &RenderTimeRange{From: "2024-01-01", To: "2024-01-01"},
+			},
+			contains: []string{
+				"from=1704067200000",
+				"to=1704153599999",
+			},
+		},
+		{
+			name:    "Relative and epoch times pass through",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				TimeRange:    &RenderTimeRange{From: "now-6h", To: "1704110400000"},
+			},
+			contains: []string{
+				"from=now-6h",
+				"to=1704110400000",
+			},
+		},
+		{
+			name:    "Provisioning preview converts RFC3339 time range",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{Repo: "repo", Path: "dash.json"},
+				TimeRange: &RenderTimeRange{
+					From: "2024-01-01T00:00:00Z",
+					To:   "2024-01-01T12:00:00Z",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/repo/preview/dash.json",
+				"from=1704067200000",
+				"to=1704110400000",
 			},
 		},
 		{
@@ -257,6 +389,18 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			contains: []string{
 				"scale=2",
+			},
+		},
+		{
+			name:    "With org ID",
+			baseURL: "http://localhost:3000",
+			orgID:   2,
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				PanelID:      intPtr(5),
+			},
+			contains: []string{
+				"targetOrgId=2",
 			},
 		},
 		{
@@ -457,11 +601,37 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			expectError: true,
 		},
+		{
+			// targetOrgId (not orgId): orgId would make the renderer's frontend
+			// persist an org switch via /api/user/using; targetOrgId scopes the
+			// org to this single render.
+			name:    "targetOrgId is added to the render URL when set",
+			baseURL: "http://localhost:3000",
+			orgID:   2,
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+			},
+			contains: []string{
+				"http://localhost:3000/render/d/abc123",
+				"targetOrgId=2",
+			},
+		},
+		{
+			name:    "no org param when unset (default org)",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+			},
+			notContains: []string{
+				"targetOrgId",
+				"orgId",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := buildRenderURL(tt.baseURL, tt.args)
+			result, err := buildRenderURL(tt.baseURL, tt.orgID, tt.args)
 			if tt.expectError {
 				require.Error(t, err)
 				return
@@ -476,6 +646,167 @@ func TestBuildRenderURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildRenderURLDimensions(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		args                 GetPanelImageParams
+		width, height, scale string
+	}{
+		{"panel defaults", GetPanelImageParams{DashboardUID: "abc", PanelID: intPtr(1)}, "1000", "750", "1"},
+		{"dashboard defaults", GetPanelImageParams{DashboardUID: "abc"}, "1200", "900", "1"},
+		{"preview panel", GetPanelImageParams{ProvisioningPreview: &ProvisioningPreview{Repo: "repo", Path: "d.json"}, PanelID: intPtr(1)}, "1000", "750", "1"},
+		{"preview dashboard", GetPanelImageParams{ProvisioningPreview: &ProvisioningPreview{Repo: "repo", Path: "d.json"}}, "1200", "900", "1"},
+		{"explore", GetPanelImageParams{Explore: &RenderExplore{DatasourceUID: "prom"}}, "1000", "1000", "1"},
+		{"width only", GetPanelImageParams{DashboardUID: "abc", PanelID: intPtr(1), Width: intPtr(800)}, "800", "750", "1"},
+		{"height only", GetPanelImageParams{DashboardUID: "abc", Height: intPtr(600)}, "1200", "600", "1"},
+		{"scale only", GetPanelImageParams{DashboardUID: "abc", Scale: intPtr(2)}, "1200", "900", "2"},
+		{"scale caps default width", GetPanelImageParams{DashboardUID: "abc", Scale: intPtr(3)}, "1000", "900", "3"},
+		{"all overrides", GetPanelImageParams{DashboardUID: "abc", Width: intPtr(1400), Height: intPtr(600), Scale: intPtr(2)}, "1400", "600", "2"},
+		{"full page", GetPanelImageParams{DashboardUID: "abc", Height: intPtr(-1), Scale: intPtr(3)}, "1000", "-1", "3"},
+		{"large dimensions", GetPanelImageParams{DashboardUID: "abc", Width: intPtr(100000), Height: intPtr(100000)}, "3000", "3000", "1"},
+		{"large scaled dimensions", GetPanelImageParams{DashboardUID: "abc", Width: intPtr(3000), Height: intPtr(3000), Scale: intPtr(2)}, "1500", "1500", "2"},
+		{"scale below minimum", GetPanelImageParams{DashboardUID: "abc", Scale: intPtr(0)}, "1200", "900", "1"},
+		{"negative scale", GetPanelImageParams{DashboardUID: "abc", Scale: intPtr(-5)}, "1200", "900", "1"},
+		{"scale above maximum", GetPanelImageParams{DashboardUID: "abc", Scale: intPtr(5)}, "1000", "900", "3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := buildRenderURL("http://localhost:3000", 0, tc.args)
+			require.NoError(t, err)
+			parsed, err := url.Parse(u)
+			require.NoError(t, err)
+			assert.Equal(t, tc.width, parsed.Query().Get("width"))
+			assert.Equal(t, tc.height, parsed.Query().Get("height"))
+			assert.Equal(t, tc.scale, parsed.Query().Get("scale"))
+		})
+	}
+	for _, args := range []GetPanelImageParams{
+		{DashboardUID: "abc", Width: intPtr(0)},
+		{DashboardUID: "abc", Width: intPtr(-1)},
+		{DashboardUID: "abc", Height: intPtr(0)},
+		{DashboardUID: "abc", Height: intPtr(-2)},
+	} {
+		_, err := buildRenderURL("http://localhost:3000", 0, args)
+		require.Error(t, err)
+	}
+}
+
+func TestGetPanelImageResponseLimit(t *testing.T) {
+	for _, size := range []int{int(defaultResponseLimitBytes) - 1, int(defaultResponseLimitBytes), int(defaultResponseLimitBytes) + 1} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, strings.Repeat("x", size))
+			}))
+			defer server.Close()
+			ctx := mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: server.URL})
+			result, err := getPanelImage(ctx, GetPanelImageParams{DashboardUID: "abc"})
+			if size > int(defaultResponseLimitBytes) {
+				require.ErrorContains(t, err, "exceeds maximum size")
+				require.ErrorIs(t, err, errResponseBodyTooLarge)
+				require.ErrorContains(t, err, "try a smaller width, height or scale")
+				require.NotContains(t, err.Error(), "narrowing your query")
+				require.Nil(t, result)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, result.Content[0].(*mcp.ImageContent).Data, size)
+			}
+		})
+	}
+}
+
+// The deeplink carries no org, so it is only emitted when it would open in the
+// org the image was rendered from. `?orgId=N` would persist an org switch onto
+// the viewer's user record via Grafana's OrgRedirect middleware, so a link that
+// cannot be shown to resolve correctly is dropped instead.
+func TestRenderLimits(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
+		assert.Equal(t, 60*time.Second, renderTimeout(GetPanelImageParams{}))
+		assert.Equal(t, 60*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(0)}))
+		assert.Equal(t, 30*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(30)}))
+		assert.Equal(t, 120*time.Second, renderTimeout(GetPanelImageParams{Timeout: intPtr(1 << 62)}))
+	})
+
+	t.Run("dimensions", func(t *testing.T) {
+		u, err := buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{
+			DashboardUID: "abc123",
+			Width:        intPtr(100000),
+			Height:       intPtr(100000),
+		})
+		require.NoError(t, err)
+		assert.Contains(t, u, "width=3000")
+		assert.Contains(t, u, "height=3000")
+
+		// height=-1 (full page) is passed through unchanged.
+		u, err = buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{
+			DashboardUID: "abc123",
+			Height:       intPtr(-1),
+		})
+		require.NoError(t, err)
+		assert.Contains(t, u, "height=-1")
+	})
+}
+
+func TestDeeplinkResolvesInRenderOrg(t *testing.T) {
+	// userOrg serves /api/user reporting the identity's stored org. That value is
+	// deliberately not request-scoped in Grafana, so it is what a browser session
+	// would land in regardless of GRAFANA_ORG_ID or X-Grafana-Org-Id.
+	userOrg := func(t *testing.T, orgID int64, status int) context.Context {
+		t.Helper()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/user" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if status != http.StatusOK {
+				w.WriteHeader(status)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"orgId":%d}`, orgID)
+		}))
+		t.Cleanup(ts.Close)
+		return mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	}
+
+	t.Run("no org selected: link agrees without a lookup", func(t *testing.T) {
+		// No server at all, proving the zero case short-circuits.
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://127.0.0.1:1"})
+		assert.True(t, deeplinkResolvesInRenderOrg(ctx, 0))
+	})
+
+	t.Run("render org matches the viewer's org", func(t *testing.T) {
+		assert.True(t, deeplinkResolvesInRenderOrg(userOrg(t, 2, http.StatusOK), 2))
+	})
+
+	t.Run("render org differs from the viewer's org", func(t *testing.T) {
+		assert.False(t, deeplinkResolvesInRenderOrg(userOrg(t, 1, http.StatusOK), 2))
+	})
+
+	t.Run("lookup failure omits the link", func(t *testing.T) {
+		assert.False(t, deeplinkResolvesInRenderOrg(userOrg(t, 0, http.StatusForbidden), 2))
+	})
+
+	t.Run("negative org is treated as unset, like the render path", func(t *testing.T) {
+		// OrgIDRoundTripper and buildRenderURL both require > 0, so nothing was
+		// sent to the renderer and the identity's own org was used.
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://127.0.0.1:1"})
+		assert.True(t, deeplinkResolvesInRenderOrg(ctx, -5))
+	})
+}
+
+// The deeplink must never carry orgId, whatever else it encodes.
+func TestBuildDashboardDeeplinkOmitsOrg(t *testing.T) {
+	panelID := 7
+	got, err := buildDashboardDeeplink("http://localhost:3000", GetPanelImageParams{
+		DashboardUID: "abc123",
+		PanelID:      &panelID,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, got, "/d/abc123")
+	assert.Contains(t, got, "viewPanel=7")
+	assert.NotContains(t, got, "orgId")
+	assert.NotContains(t, got, "targetOrgId")
 }
 
 func TestGetPanelImage(t *testing.T) {
@@ -495,8 +826,9 @@ func TestGetPanelImage(t *testing.T) {
 	t.Run("Successful image render", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Contains(t, r.URL.Path, "/render/d/test-dash")
-			assert.Equal(t, "1000", r.URL.Query().Get("width"))
-			assert.Equal(t, "500", r.URL.Query().Get("height"))
+			assert.Equal(t, "1200", r.URL.Query().Get("width"))
+			assert.Equal(t, "900", r.URL.Query().Get("height"))
+			assert.Equal(t, "1", r.URL.Query().Get("scale"))
 
 			w.Header().Set("Content-Type", "image/png")
 			w.WriteHeader(http.StatusOK)
@@ -519,18 +851,18 @@ func TestGetPanelImage(t *testing.T) {
 		require.Len(t, result.Content, 2)
 
 		// Check image content
-		imageContent, ok := result.Content[0].(mcp.ImageContent)
+		imageContent, ok := result.Content[0].(*mcp.ImageContent)
 		require.True(t, ok, "first content item should be ImageContent")
 		assert.Equal(t, "image/png", imageContent.MIMEType)
-		decoded, err := base64.StdEncoding.DecodeString(imageContent.Data)
-		require.NoError(t, err)
+		decoded := imageContent.Data
 		assert.Equal(t, testPNGData, decoded)
 
 		// Check deeplink content
-		textContent, ok := result.Content[1].(mcp.TextContent)
+		textContent, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok, "second content item should be TextContent")
 		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
 		assertDeeplinkMeta(t, textContent)
+		assert.Equal(t, map[string]any{"deeplink": server.URL + "/d/test-dash"}, result.StructuredContent)
 	})
 
 	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
@@ -560,7 +892,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.Content, 2)
 
-		textContent, ok := result.Content[1].(mcp.TextContent)
+		textContent, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, server.URL+"/d/test-dash?viewPanel=5", textContent.Text)
 		assertDeeplinkMeta(t, textContent)
@@ -587,7 +919,7 @@ func TestGetPanelImage(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Content, 2)
 
-			text, ok := result.Content[1].(mcp.TextContent)
+			text, ok := result.Content[1].(*mcp.TextContent)
 			require.True(t, ok)
 			assert.Equal(t,
 				server.URL+"/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
@@ -609,7 +941,7 @@ func TestGetPanelImage(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Content, 2)
 
-			text, ok := result.Content[1].(mcp.TextContent)
+			text, ok := result.Content[1].(*mcp.TextContent)
 			require.True(t, ok)
 			parsed, err := url.Parse(text.Text)
 			require.NoError(t, err)
@@ -643,7 +975,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, publicURL+"/d/test-dash", text.Text)
 		assertDeeplinkMeta(t, text)
@@ -670,7 +1002,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -707,7 +1039,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -736,7 +1068,7 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.Content, 2)
 
-		text, ok := result.Content[1].(mcp.TextContent)
+		text, ok := result.Content[1].(*mcp.TextContent)
 		require.True(t, ok)
 		parsed, err := url.Parse(text.Text)
 		require.NoError(t, err)
@@ -985,23 +1317,79 @@ func TestGetPanelImage(t *testing.T) {
 	})
 }
 
+// The org reaches this tool through GrafanaConfig, set by OrgIDOverrideMiddleware
+// from a per-call orgId or carried from the connection. The render must be scoped
+// to it, and the deeplink withheld when it is not where the viewer would land.
+func TestGetPanelImageOrgIDOmitDeeplink(t *testing.T) {
+	testPNGData := []byte("test PNG")
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL:    "http://grafana.test",
+		APIKey: "test-api-key",
+		OrgID:  2,
+		BaseTransport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			// /api/user is the deeplink gate's viewer-org lookup; report org 1 so
+			// it differs from the render org and the link is withheld.
+			if req.URL.Path == "/api/user" {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"orgId":1}`)),
+					Request:    req,
+				}, nil
+			}
+
+			assert.Equal(t, "2", req.Header.Get("X-Grafana-Org-Id"))
+			assert.Equal(t, "2", req.URL.Query().Get("targetOrgId"))
+			assert.Empty(t, req.URL.Query().Get("orgId"))
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewReader(testPNGData)),
+				Request:    req,
+			}, nil
+		}),
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	result, err := getPanelImage(ctx, GetPanelImageParams{
+		DashboardUID: "test-dash",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+	image, ok := result.Content[0].(*mcp.ImageContent)
+	require.True(t, ok, "only content item should be ImageContent")
+	decoded := image.Data
+	assert.Equal(t, testPNGData, decoded)
+}
+
 func TestGetPanelImageToolMeta(t *testing.T) {
 	tool := GetPanelImage.Tool
 	require.NotNil(t, tool.Meta, "get_panel_image should have _meta for MCP Apps")
-	require.NotNil(t, tool.Meta.AdditionalFields)
+	require.NotNil(t, tool.Meta)
 
-	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	ui, ok := tool.Meta["ui"].(map[string]any)
 	require.True(t, ok, "expected _meta.ui to be a map")
 	assert.Equal(t, mcpgrafana.PanelViewerResourceURI, ui["resourceUri"])
 }
 
 // assertDeeplinkMeta checks the `_meta.ui.kind = "deeplink"` marker the
 // panel viewer uses to detect the deeplink content item.
-func assertDeeplinkMeta(t *testing.T, c mcp.TextContent) {
+func assertDeeplinkMeta(t *testing.T, c *mcp.TextContent) {
 	t.Helper()
 	require.NotNil(t, c.Meta)
-	require.NotNil(t, c.Meta.AdditionalFields)
-	ui, ok := c.Meta.AdditionalFields["ui"].(map[string]any)
-	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta.AdditionalFields["ui"])
+	ui, ok := c.Meta["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta["ui"])
 	assert.Equal(t, mcpgrafana.UIContentKindDeeplink, ui["kind"])
+}
+
+func TestBuildDashboardDeeplinkExplore(t *testing.T) {
+	link, err := buildDashboardDeeplink("http://grafana.example/", GetPanelImageParams{
+		Explore:   &RenderExplore{DatasourceUID: "prom-uid"},
+		TimeRange: &RenderTimeRange{From: "now-1h", To: "now"},
+	})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(link, "http://grafana.example/explore?"), link)
+	assert.Contains(t, link, "panes=")
 }

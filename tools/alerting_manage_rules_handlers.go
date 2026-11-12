@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-openapi/strfmt"
@@ -10,23 +11,23 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/prometheus/model/labels"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, error) {
 	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		return nil, fmt.Errorf("alerting_rules_read: %w", err)
 	}
 
 	switch args.Operation {
 	case "list":
 		opts, err := args.toGetRulesOpts()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_read: %w", err)
 		}
 		selectors, err := args.parseLabelSelectors()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_read: %w", err)
 		}
 		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
 			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
@@ -37,43 +38,29 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 	case "versions":
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	default:
-		return nil, fmt.Errorf("alerting_manage_rules: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("alerting_rules_read: unknown operation %q", args.Operation)
 	}
 }
 
-func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) (any, error) {
+func manageRulesWrite(ctx context.Context, args ManageRulesWriteParams) (any, error) {
 	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		return nil, fmt.Errorf("alerting_rules_write: %w", err)
 	}
 
 	switch args.Operation {
-	case "list":
-		opts, err := args.toGetRulesOpts()
-		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
-		}
-		selectors, err := args.parseLabelSelectors()
-		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
-		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
-		}
-		return listGrafanaRules(ctx, opts, selectors)
-	case "get":
-		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
-	case "versions":
-		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
+		if args.ManagedBy == "datasource" {
+			return createDatasourceAlertRule(ctx, args)
+		}
 		cp, err := args.toCreateParams()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
 		return createAlertRule(ctx, cp)
 	case "update":
 		up, err := args.toUpdateParams()
 		if err != nil {
-			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+			return nil, fmt.Errorf("alerting_rules_write: %w", err)
 		}
 		return updateAlertRule(ctx, up)
 	case "delete":
@@ -81,7 +68,7 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 			UID: args.RuleUID,
 		})
 	default:
-		return nil, fmt.Errorf("alerting_manage_rules: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("alerting_rules_write: unknown operation %q", args.Operation)
 	}
 }
 
@@ -99,7 +86,7 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 		return nil, fmt.Errorf("creating alerting client for rule %s: %w", uid, err)
 	}
 
-	opts := &GetRulesOpts{LimitAlerts: limitAlerts}
+	opts := &GetRulesOpts{LimitAlerts: limitAlerts, IncludeInternalLabels: true}
 	if alertRule.Payload.FolderUID != nil {
 		opts.FolderUID = *alertRule.Payload.FolderUID
 	}
@@ -199,7 +186,7 @@ func normalizeState(state string) string {
 func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {
 	for _, group := range resp.Data.RuleGroups {
 		for i, rule := range group.Rules {
-			if rule.UID == uid {
+			if rule.UID == uid || rule.Labels.Get(alertRuleUIDLabel) == uid {
 				return &group.Rules[i]
 			}
 		}
@@ -212,6 +199,10 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	if err != nil {
 		return nil, fmt.Errorf("creating alerting client: %w", err)
 	}
+	if opts == nil {
+		opts = &GetRulesOpts{}
+	}
+	opts.IncludeInternalLabels = true
 
 	resp, err := client.GetRules(ctx, opts)
 	if err != nil {
@@ -246,6 +237,20 @@ func filterSummaryByRuleType(summaries []alertRuleSummary, ruleType string) []al
 	return filtered
 }
 
+// filterSummaryByRuleName keeps summaries whose title contains name as a
+// case-insensitive substring, matching the partial-match semantics of the
+// search.rule_name parameter on the Grafana-managed rules API.
+func filterSummaryByRuleName(summaries []alertRuleSummary, name string) []alertRuleSummary {
+	needle := strings.ToLower(name)
+	filtered := make([]alertRuleSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if strings.Contains(strings.ToLower(s.Title), needle) {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
 func applyRuleLimit(summaries []alertRuleSummary, ruleLimit int) []alertRuleSummary {
 	limit := ruleLimit
 	if limit == 0 {
@@ -264,12 +269,24 @@ func convertRulesResponseToSummary(resp *rulesResponse) []alertRuleSummary {
 	var result []alertRuleSummary
 	for _, group := range resp.Data.RuleGroups {
 		for _, rule := range group.Rules {
+			labels := publicRuleLabels(rule.Labels)
+			uid := rule.UID
+			if uid == "" {
+				uid = rule.Labels.Get(alertRuleUIDLabel)
+			}
+			folderUID := group.FolderUID
+			if folderUID == "" {
+				folderUID = rule.FolderUID
+			}
+			if folderUID == "" {
+				folderUID = rule.Labels.Get(alertRuleNamespaceUIDLabel)
+			}
 			summary := alertRuleSummary{
-				UID:       rule.UID,
+				UID:       uid,
 				Title:     rule.Name,
 				State:     normalizeState(rule.State),
 				Health:    rule.Health,
-				FolderUID: group.FolderUID,
+				FolderUID: folderUID,
 				RuleGroup: group.Name,
 			}
 			if rule.Duration > 0 {
@@ -278,14 +295,27 @@ func convertRulesResponseToSummary(resp *rulesResponse) []alertRuleSummary {
 			if !rule.LastEvaluation.IsZero() {
 				summary.LastEvaluation = rule.LastEvaluation.Format(time.RFC3339)
 			}
-			if !rule.Labels.IsEmpty() {
-				summary.Labels = rule.Labels.Map()
+			if len(labels) > 0 {
+				summary.Labels = labels
 			}
 			if !rule.Annotations.IsEmpty() {
 				summary.Annotations = rule.Annotations.Map()
 			}
 			result = append(result, summary)
 		}
+	}
+	return result
+}
+
+func publicRuleLabels(lbls labels.Labels) map[string]string {
+	if lbls.IsEmpty() {
+		return nil
+	}
+	result := lbls.Map()
+	delete(result, alertRuleUIDLabel)
+	delete(result, alertRuleNamespaceUIDLabel)
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }

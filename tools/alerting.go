@@ -1,12 +1,9 @@
 package tools
 
 import (
-	"fmt"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 const (
@@ -14,62 +11,76 @@ const (
 	DefaultListContactPointsLimit = 100
 )
 
-const manageAlertRulesDescriptionFmt = `%s
+const alertRulesReadDescription = `List and inspect Grafana alert rules with filtering capabilities.
 
 When to use:
 - Understanding why an alert is or isn't firing
 - Auditing alert rule configuration (queries, conditions, labels, notification settings)
 - Finding alert rules by state, folder, group, or name
-%s
-When NOT to use:
-- Checking how alerts are routed to receivers (use alerting_manage_routing)%s`
+- Comparing rule versions to see what changed
 
-func manageAlertRulesDescription(readOnly bool) string {
-	if readOnly {
-		return fmt.Sprintf(manageAlertRulesDescriptionFmt,
-			"List and inspect Grafana alert rules with filtering capabilities.",
-			"- Comparing rule versions to see what changed\n",
-			"\n- Modifying or creating alert rules (read-only tool)",
-		)
-	}
-	return fmt.Sprintf(manageAlertRulesDescriptionFmt,
-		"Manage Grafana alert rules with full CRUD capabilities and filtering.",
-		"- Creating, updating, or deleting alert rules\n- Comparing rule versions to see what changed\n",
-		"",
-	)
-}
+Read-only: does not create, update, or delete rules, and does not show notification routing.`
 
-var ManageRulesRead = mcpgrafana.MustTool(
-	"alerting_manage_rules",
-	manageAlertRulesDescription(true),
+const alertRulesWriteDescription = `Create, update, and delete Grafana alert rules.
+
+When to use:
+- Creating, updating, or deleting alert rules
+
+Operation 'update' replaces the whole rule: it takes all required fields, not only the changed ones.
+
+Creation defaults to Grafana-managed, even when queries use an external datasource.
+Use managed_by='datasource' when requested or when established conversation or environment context clearly identifies a datasource-managed workflow. An external query datasource or an empty Grafana rule list alone is insufficient. Ask if context conflicts.
+Datasource-managed creation uses a Mimir/Cortex or Loki ruler with namespace, rule_group, title and expression. datasource_uid is optional if exactly one compatible datasource exists. Ambiguity returns candidates for selection. Never falls back to Grafana-managed creation.
+
+Does not list or inspect rules, and does not manage notification routing.`
+
+var AlertRulesRead = mcpgrafana.MustTool(
+	"alerting_rules_read",
+	alertRulesReadDescription,
 	manageRulesRead,
-	mcp.WithTitleAnnotation("Manage alert rules"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Read alert rules"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("alert.rules:read", "alert.rules.external:read", "folders:read"),
+	// Datasource-managed rules look up the datasource first.
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
-var ManageRulesReadWrite = mcpgrafana.MustTool(
-	"alerting_manage_rules",
-	manageAlertRulesDescription(false),
-	manageRulesReadWrite,
-	mcp.WithTitleAnnotation("Manage alert rules"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+var AlertRulesWrite = mcpgrafana.MustTool(
+	"alerting_rules_write",
+	alertRulesWriteDescription,
+	manageRulesWrite,
+	mcpgrafana.WithTitleAnnotation("Write alert rules"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(
+		"alert.rules:read", "alert.rules:create", "alert.rules:write", "alert.rules:delete",
+		"alert.provisioning.provenance:write", "folders:read",
+		"datasources:read", "alert.rules.external:read", "alert.rules.external:write",
+	),
 )
 
-func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
-	if enableWriteTools {
-		ManageRulesReadWrite.Register(mcp)
-	} else {
-		ManageRulesRead.Register(mcp)
+// AddAlertingTools registers the alerting tools. Each write tool is registered
+// only when writeEnabled reports its name as enabled, so it can be opted back in
+// individually under --disable-write.
+func AddAlertingTools(s *mcp.Server, writeEnabled func(name string) bool) {
+	AlertRulesRead.Register(s)
+	if writeEnabled(AlertRulesWrite.Tool.Name) {
+		AlertRulesWrite.Register(s)
 	}
-	ManageRouting.Register(mcp)
-	if enableWriteTools {
-		ManageAlertmanagerReadWrite.Register(mcp)
+	ManageRouting.Register(s)
+	if writeEnabled(AlertRoutingWrite.Tool.Name) {
+		AlertRoutingWrite.Register(s)
+	}
+	// The read-only and write-capable variants share one tool name, so only
+	// register the write variant when writes are enabled; the read variant
+	// stays available otherwise.
+	if writeEnabled(ManageAlertmanagerReadWrite.Tool.Name) {
+		ManageAlertmanagerReadWrite.Register(s)
 	} else {
-		ManageAlertmanagerRead.Register(mcp)
+		ManageAlertmanagerRead.Register(s)
 	}
 }

@@ -1,0 +1,100 @@
+{
+  "manifest_version": "0.2",
+  "name": "grafana-mcp-server",
+  "display_name": "Grafana MCP Server",
+  "version": "0.0.0-template",
+  "description": "An MCP server giving access to Grafana dashboards, datasources, alerting, and more",
+  "author": {
+    "name": "Grafana Labs",
+    "url": "https://grafana.com"
+  },
+  "homepage": "https://github.com/grafana/mcp-grafana",
+  "documentation": "https://github.com/grafana/mcp-grafana/blob/main/README.md",
+  "support": "https://github.com/grafana/mcp-grafana/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grafana/mcp-grafana"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "grafana",
+    "observability",
+    "monitoring",
+    "dashboards",
+    "prometheus",
+    "loki",
+    "alerting",
+    "incidents",
+    "logs",
+    "metrics",
+    "pyroscope",
+    "oncall",
+    "profiling"
+  ],
+  "tools_generated": true,
+  "privacy_policies": [
+    "https://grafana.com/legal/privacy-policy/"
+  ],
+  "icon": "icon.png",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/darwin/mcp-grafana",
+    "mcp_config": {
+      "command": "${__dirname}/server/darwin/mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "${user_config.grafana_url}",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${user_config.service_account_token}",
+        "GRAFANA_USERNAME": "${user_config.username}",
+        "GRAFANA_PASSWORD": "${user_config.password}",
+        "GRAFANA_ORG_ID": "${user_config.org_id}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/win32-x64/mcp-grafana.exe"
+        },
+        "linux": {
+          "command": "/bin/sh",
+          "args": ["${__dirname}/server/linux/launch.sh"]
+        }
+      }
+    }
+  },
+  "user_config": {
+    "grafana_url": {
+      "type": "string",
+      "title": "Grafana URL",
+      "description": "URL to your Grafana instance (e.g., http://localhost:3000 or https://your-org.grafana.net)",
+      "required": true
+    },
+    "service_account_token": {
+      "type": "string",
+      "title": "Service Account Token",
+      "description": "Service account token for authentication (recommended). Leave empty if using username/password.",
+      "required": false,
+      "sensitive": true
+    },
+    "username": {
+      "type": "string",
+      "title": "Username",
+      "description": "Username for basic authentication (alternative to service account token)",
+      "required": false
+    },
+    "password": {
+      "type": "string",
+      "title": "Password",
+      "description": "Password for basic authentication (alternative to service account token)",
+      "required": false,
+      "sensitive": true
+    },
+    "org_id": {
+      "type": "string",
+      "title": "Organization ID",
+      "description": "Organization ID for multi-org support (optional)",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  }
+}

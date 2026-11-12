@@ -26,8 +26,11 @@ import (
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prometheus/prometheus/model/labels"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -52,11 +55,26 @@ const (
 	grafanaAPIKeyHeader              = "X-Grafana-API-Key" // Deprecated: use X-Grafana-Service-Account-Token instead
 )
 
+// lookupEnv is os.LookupEnv, except that an MCPB host's unsubstituted
+// "${user_config.*}" placeholder (left for blank optional fields) counts as unset.
+func lookupEnv(key string) (string, bool) {
+	v, ok := os.LookupEnv(key)
+	if strings.HasPrefix(v, "${user_config.") && strings.HasSuffix(v, "}") {
+		return "", false
+	}
+	return v, ok
+}
+
+func getEnv(key string) string {
+	v, _ := lookupEnv(key)
+	return v
+}
+
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
-	u := normalizeGrafanaURL(os.Getenv(grafanaURLEnvVar))
+	u := normalizeGrafanaURL(getEnv(grafanaURLEnvVar))
 
 	// Check for the new service account token environment variable first.
-	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
+	apiKey := getEnv(grafanaServiceAccountTokenEnvVar)
 	if apiKey != "" {
 		return u, apiKey
 	}
@@ -64,7 +82,7 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	// Next, check for a file-based service account token. This is read fresh on
 	// every call so that rotated tokens (e.g. a Kubernetes Secret mounted as a
 	// volume) are picked up without restarting the server. See issue #800.
-	if tokenFile := os.Getenv(grafanaServiceAccountTokenFileEnvVar); tokenFile != "" {
+	if tokenFile := getEnv(grafanaServiceAccountTokenFileEnvVar); tokenFile != "" {
 		token, err := os.ReadFile(tokenFile)
 		if err != nil {
 			logger.Warn("Failed to read GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, ignoring", "path", tokenFile, "error", err)
@@ -74,7 +92,7 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	}
 
 	// Fall back to the deprecated API key environment variable
-	apiKey = os.Getenv(grafanaAPIEnvVar)
+	apiKey = getEnv(grafanaAPIEnvVar)
 	if apiKey != "" {
 		logger.Warn("GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.")
 	}
@@ -83,8 +101,8 @@ func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 }
 
 func userAndPassFromEnv() *url.Userinfo {
-	username := os.Getenv(grafanaUsernameEnvVar)
-	password, exists := os.LookupEnv(grafanaPasswordEnvVar)
+	username := getEnv(grafanaUsernameEnvVar)
+	password, exists := lookupEnv(grafanaPasswordEnvVar)
 	if username == "" && password == "" {
 		return nil
 	}
@@ -95,7 +113,7 @@ func userAndPassFromEnv() *url.Userinfo {
 }
 
 func orgIdFromEnv(logger *slog.Logger) int64 {
-	orgIDStr := os.Getenv(grafanaOrgIDEnvVar)
+	orgIDStr := getEnv(grafanaOrgIDEnvVar)
 	if orgIDStr == "" {
 		return 0
 	}
@@ -230,6 +248,31 @@ const (
 	LokiGuardrailEnforce = "enforce"
 )
 
+// Loki guardrail behaviours for GrafanaConfig.LokiGuardrailOnEstimateFailure.
+const (
+	// LokiGuardrailFailureAllow runs queries the guardrail could not assess
+	// (default).
+	LokiGuardrailFailureAllow = "allow"
+	// LokiGuardrailFailureBlock rejects queries the guardrail could not assess.
+	LokiGuardrailFailureBlock = "block"
+)
+
+// Prometheus guardrail modes for GrafanaConfig.PrometheusGuardrailMode.
+const (
+	// PrometheusGuardrailOff disables the Prometheus query guardrail (default).
+	PrometheusGuardrailOff = "off"
+	// PrometheusGuardrailShadow evaluates the guardrail and logs queries
+	// that would be blocked, but always lets them run.
+	PrometheusGuardrailShadow = "shadow"
+	// PrometheusGuardrailEnforce rejects blocked queries with a tool error
+	// containing rewrite guidance.
+	PrometheusGuardrailEnforce = "enforce"
+)
+
+// DashboardSchemaV2 is the GrafanaConfig.DashboardSchema value that requires
+// new dashboards to use dashboard schema v2.
+const DashboardSchemaV2 = "v2"
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -245,6 +288,18 @@ type GrafanaConfig struct {
 
 	// URL is the URL of the Grafana instance.
 	URL string
+
+	// OverrideURL pins outbound requests to a request-selected Grafana base URL.
+	// It is set only after the HTTP override middleware authorizes the target.
+	OverrideURL string
+	// AllowGrafanaURLOverride enables request-selected URLs on HTTP transports.
+	// Without an allowlist, callers may select any valid HTTP(S) URL.
+	AllowGrafanaURLOverride bool
+	// AllowedGrafanaURLs optionally restricts selection to exact targets.
+	AllowedGrafanaURLs []string
+	// AllowCrossOriginRedirects permits HTTP redirects to a different origin.
+	// It disables the default redirect guard for clients built with BuildTransport.
+	AllowCrossOriginRedirects bool
 
 	// APIKey is the API key or service account token for the Grafana instance.
 	// It may be empty if we are using on-behalf-of auth.
@@ -277,11 +332,22 @@ type GrafanaConfig struct {
 	// Parsed from GRAFANA_EXTRA_HEADERS environment variable as JSON object.
 	ExtraHeaders map[string]string
 
+	// SOCKS5ProxyURL is an optional SOCKS5 proxy URL (socks5:// or socks5h://,
+	// treated identically: hostname resolution is delegated to the proxy)
+	// applied to all Grafana traffic built via BuildTransport. It is scoped to
+	// this configuration and independent of the HTTP_PROXY/HTTPS_PROXY
+	// environment variables. The CLI populates it from GRAFANA_SOCKS5_PROXY.
+	// When set, BuildTransport returns an error if BaseTransport is present
+	// but is not an *http.Transport, since the proxy cannot be applied to an
+	// opaque RoundTripper.
+	SOCKS5ProxyURL string
+
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
 
-	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs.
+	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs
+	// and query_loki_patterns.
 	// One of LokiGuardrailOff (default), LokiGuardrailShadow, or
 	// LokiGuardrailEnforce. Loki does not enforce max_query_bytes_read on log
 	// queries without a line filter, so the guardrail requires selective
@@ -292,12 +358,94 @@ type GrafanaConfig struct {
 	// LokiGuardrailMaxBytes is the maximum number of bytes a single
 	// query_loki_logs call may scan, estimated via Loki's index/stats API
 	// before the query runs. Zero disables the byte-budget check.
+	// query_loki_patterns skips the byte budget: patterns are served by the
+	// pattern ingesters, not from the chunks index/stats measures.
 	LokiGuardrailMaxBytes int64
 
 	// LokiGuardrailMaxRange is the maximum effective time range allowed for
-	// a single query_loki_logs call, including range-vector durations like
+	// a single query_loki_logs or query_loki_patterns call, including
+	// range-vector durations like
 	// [30d]. Zero disables the range check.
 	LokiGuardrailMaxRange time.Duration
+
+	// LokiGuardrailOnEstimateFailure says what the guardrail does when it
+	// cannot reach a verdict: the query has no stream selector it understands,
+	// or Loki's index/stats estimate failed. LokiGuardrailFailureAllow (the
+	// default, also for "") runs the query; LokiGuardrailFailureBlock rejects
+	// it with a tool error in enforce mode, for autonomous callers. Block only
+	// applies to native Loki: on VictoriaLogs, brace-less LogsQL is the normal
+	// shape and is always run.
+	LokiGuardrailOnEstimateFailure string
+
+	// PrometheusGuardrailMode controls the query guardrail for PromQL queries
+	// (query_prometheus, query_prometheus_histogram, and the Prometheus
+	// queries of run_panel_query). One of PrometheusGuardrailOff (default),
+	// PrometheusGuardrailShadow, or PrometheusGuardrailEnforce. The
+	// guardrail bounds the time range a query reads and the resolution it
+	// asks for, before the query reaches the datasource.
+	PrometheusGuardrailMode string
+
+	// PrometheusGuardrailRequireSelectiveLabels requires each vector selector
+	// to have a non-empty positive label constraint beyond the metric name.
+	// Blanket regexes and negative matchers do not provide scope; selectors
+	// proven empty by a negative universal regex are exempt. Default false.
+	// Independent of MaxRange and MaxPoints; only active when mode is not off.
+	PrometheusGuardrailRequireSelectiveLabels bool
+
+	// PrometheusGuardrailMaxRange is the maximum effective time range for a
+	// single PromQL query: the query's own range plus the longest range
+	// vector or subquery window in the expression. Zero disables the range
+	// check.
+	PrometheusGuardrailMaxRange time.Duration
+
+	// PrometheusGuardrailMaxPoints is the maximum number of points per
+	// series a range query may request, computed from its time range and
+	// step. Zero disables the points check.
+	PrometheusGuardrailMaxPoints int64
+
+	// PrometheusGuardrailMaxMetricCardinality enables a best-effort TSDB
+	// cardinality policy when positive and the guardrail mode is not off.
+	// An exact metric name reported above this threshold must have a non-empty
+	// exact matcher on a CardinalityScopeLabels label. This is a scope heuristic,
+	// not a bound on matched series or query cost. Zero disables the check.
+	PrometheusGuardrailMaxMetricCardinality int64
+
+	// PrometheusGuardrailCardinalityCacheTTL controls the lifetime of cached
+	// TSDB snapshots. Zero uses 10 minutes. Metadata failures fail open.
+	PrometheusGuardrailCardinalityCacheTTL time.Duration
+
+	// PrometheusGuardrailCardinalityScopeLabels names labels whose non-empty
+	// exact matchers satisfy the cardinality policy. Nil or empty uses job,
+	// instance, namespace, pod, service and cluster. Regex and negative matchers
+	// do not satisfy this policy; __name__ is never a scope label.
+	PrometheusGuardrailCardinalityScopeLabels []string
+
+	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
+	// AND-ed into every stream selector of every native-Loki query the server
+	// issues (query, stats, patterns, and label enumeration). It lets an
+	// operator restrict which log streams the MCP can ever read (e.g.
+	// `namespace!~"vault|payments"` to exclude streams that may contain
+	// sensitive information).
+	// Parsed once at startup; an empty slice disables enforcement.
+	// NOTE: this is only effective if raw datasource-proxy access is disabled
+	// (see --disable-api); otherwise a query can bypass the Loki tools entirely.
+	LokiEnforcedMatchers []*labels.Matcher
+
+	// LokiLabelEnumerationFallback controls what the label-enumeration tools
+	// (list_loki_label_names / list_loki_label_values) do when the enforced
+	// matchers cannot be applied to them — which happens only when the enforced
+	// set is purely negative, because Loki rejects a standalone selector with no
+	// positive matcher. Positive/allowlist matchers always scope cleanly and
+	// never hit this fallback. Valid values: "reject" (default, fail closed) and
+	// "unfiltered" (allow unscoped enumeration; never exposes log lines, only
+	// low-cardinality label metadata). Empty means "reject".
+	LokiLabelEnumerationFallback string
+
+	// DashboardSchema, when DashboardSchemaV2, makes update_dashboard reject a
+	// classic v1 (panels[]) body that would create a new dashboard on a Grafana
+	// that serves a v2 dashboard API. Existing dashboards, v2 bodies and
+	// Grafanas without v2 are unaffected. Empty (default) changes nothing.
+	DashboardSchema string
 
 	// BaseTransport is an optional base HTTP transport used as the innermost
 	// layer of the middleware chain in NewGrafanaClient. When set, it replaces
@@ -314,6 +462,22 @@ type GrafanaConfig struct {
 	// to inject their own slog.Logger for consistent structured logging with
 	// per-request context such as tenant_id.
 	Logger *slog.Logger
+
+	// UserAgent overrides the default "mcp-grafana/<version>" User-Agent
+	// header sent with every Grafana API request. Embedders (e.g. the
+	// hosted Cloud MCP server) can set this to distinguish their traffic
+	// from the open-source CLI. When empty the default is used.
+	UserAgent string
+
+	// MeterProvider is an optional OTel metric.MeterProvider used by
+	// instrumentation that lives inside tool handlers (which have no
+	// constructor to take a WithXxxMeterProvider option), such as the Loki
+	// cost guardrail. When unset, otel.GetMeterProvider() is used.
+	//
+	// Setting this matters for embedders whose process installs a noop
+	// global provider: without it every recording is silently dropped. It
+	// mirrors Logger above — the same injection point, for the other signal.
+	MeterProvider metric.MeterProvider
 }
 
 // HTTPTransport returns the base HTTP transport for this config.
@@ -333,6 +497,15 @@ func (c GrafanaConfig) LoggerOrDefault() *slog.Logger {
 	return slog.Default()
 }
 
+// MeterProviderOrDefault returns the configured meter provider, or the global
+// otel.GetMeterProvider() if none is set.
+func (c GrafanaConfig) MeterProviderOrDefault() metric.MeterProvider {
+	if c.MeterProvider != nil {
+		return c.MeterProvider
+	}
+	return otel.GetMeterProvider()
+}
+
 // LoggerFromContext extracts the logger from the GrafanaConfig in the context.
 // Returns slog.Default() if no config or logger is set.
 func LoggerFromContext(ctx context.Context) *slog.Logger {
@@ -341,7 +514,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
-	DefaultGrafanaClientTimeout = 10 * time.Second
+	DefaultGrafanaClientTimeout = 30 * time.Second
 )
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -401,6 +574,14 @@ func isLocalHostPort(hostPort string) bool {
 	host = strings.ToLower(strings.Trim(host, "[]"))
 	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
 		host == "127.0.0.1" || host == "::1"
+}
+
+// TimeoutOr returns the --grafana-timeout value, or def when it is unset.
+func (c GrafanaConfig) TimeoutOr(def time.Duration) time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return def
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.
@@ -485,7 +666,7 @@ func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // version is set at build time via ldflags:
 //
-//	-X github.com/grafana/mcp-grafana.version=v1.2.3
+//	-X github.com/grafana/mcp-grafana/v2.version=v1.2.3
 var version string
 
 // Version returns the version of the mcp-grafana binary.
@@ -568,10 +749,40 @@ func (t *ExtraHeadersRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	if cfg := GrafanaConfigFromContext(req.Context()); len(cfg.ExtraHeaders) > 0 {
 		headers = mergeHeaders(t.headers, cfg.ExtraHeaders)
 	}
-	for k, v := range headers {
-		clonedReq.Header.Set(k, v)
+	if len(headers) > 0 {
+		propagated := propagatedHeaderFields()
+		for k, v := range headers {
+			// Never overwrite a trace-context header the OTel propagator has
+			// already injected for this request. A traceparent forwarded from
+			// the incoming request (GRAFANA_FORWARD_HEADERS) names the caller's
+			// span, so writing it here would re-parent Grafana's spans onto the
+			// caller and cut mcp-grafana out of the middle of the trace. When
+			// nothing was injected — tracing not wired up, or no active span —
+			// the forwarded value is still applied, preserving the behaviour
+			// operators relied on before the propagator existed.
+			if _, ok := propagated[textproto.CanonicalMIMEHeaderKey(k)]; ok && clonedReq.Header.Get(k) != "" {
+				continue
+			}
+			clonedReq.Header.Set(k, v)
+		}
 	}
 	return t.underlying.RoundTrip(clonedReq)
+}
+
+// propagatedHeaderFields returns the canonicalised names of the headers the
+// globally configured OTel TextMapPropagator writes when injecting trace
+// context (e.g. traceparent, tracestate, baggage). Returns nil when no
+// propagator is configured, i.e. when nothing is ever injected.
+func propagatedHeaderFields() map[string]struct{} {
+	fields := otel.GetTextMapPropagator().Fields()
+	if len(fields) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(fields))
+	for _, f := range fields {
+		set[textproto.CanonicalMIMEHeaderKey(f)] = struct{}{}
+	}
+	return set
 }
 
 func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string) *ExtraHeadersRoundTripper {
@@ -642,10 +853,12 @@ func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey stri
 // sensitiveHeaders lists HTTP header names whose values must be redacted in
 // debug logs to prevent credential leakage (see #919).
 var sensitiveHeaders = map[string]bool{
-	"Authorization":  true,
-	"X-Access-Token": true,
-	"X-Grafana-Id":   true,
-	"Cookie":         true,
+	"Authorization":                   true,
+	"X-Access-Token":                  true,
+	"X-Grafana-Id":                    true,
+	"X-Grafana-Service-Account-Token": true,
+	"X-Grafana-Api-Key":               true,
+	"Cookie":                          true,
 }
 
 // redactHeaderValue masks the middle portion of a credential value,
@@ -721,10 +934,121 @@ func WithoutUserAgent() TransportOption {
 	return func(o *transportOptions) { o.withoutUserAgent = true }
 }
 
+// transportCacheKey identifies the settings a cached transport was built from.
+type transportCacheKey struct {
+	socks5ProxyURL string
+	hasTLSConfig   bool
+	tlsConfig      TLSConfig
+}
+
+// fileStamp tells whether a file changed since it was read.
+type fileStamp struct {
+	size    int64
+	modTime int64
+}
+
+// cachedTransport is a transport with the state of the TLS files it was built from.
+type cachedTransport struct {
+	transport http.RoundTripper
+	files     [3]fileStamp
+}
+
+var (
+	transportCacheMu sync.Mutex
+	transportCache   = map[transportCacheKey]cachedTransport{}
+)
+
+// fileStamps returns the state of the certificate, key and CA files.
+func (tc *TLSConfig) fileStamps() [3]fileStamp {
+	var stamps [3]fileStamp
+	if tc == nil {
+		return stamps
+	}
+	for i, path := range []string{tc.CertFile, tc.KeyFile, tc.CAFile} {
+		if path == "" {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil {
+			stamps[i] = fileStamp{size: info.Size(), modTime: info.ModTime().UnixNano()}
+		}
+	}
+	return stamps
+}
+
+// baseTransport returns base with the SOCKS5 proxy and TLS settings from cfg
+// applied. An *http.Transport owns its connection pool and tools build a
+// transport on every call, so the one derived from http.DefaultTransport is
+// shared until the TLS files change on disk. A transport passed in by the
+// caller is not cached, because its lifetime belongs to the caller.
+func baseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+	if (cfg.SOCKS5ProxyURL == "" && cfg.TLSConfig == nil) || base != http.DefaultTransport {
+		return newBaseTransport(cfg, base)
+	}
+
+	key := transportCacheKey{socks5ProxyURL: cfg.SOCKS5ProxyURL}
+	if cfg.TLSConfig != nil {
+		key.hasTLSConfig = true
+		key.tlsConfig = *cfg.TLSConfig
+	}
+	files := cfg.TLSConfig.fileStamps()
+
+	transportCacheMu.Lock()
+	defer transportCacheMu.Unlock()
+
+	cached, ok := transportCache[key]
+	if ok && cached.files == files {
+		return cached.transport, nil
+	}
+	transport, err := newBaseTransport(cfg, base)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if t, isTransport := cached.transport.(*http.Transport); isTransport {
+			t.CloseIdleConnections()
+		}
+	}
+	transportCache[key] = cachedTransport{transport: transport, files: files}
+	return transport, nil
+}
+
+func newBaseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+	// SOCKS5 proxy (applied to the innermost *http.Transport so the TLS layer
+	// below clones it with the proxy already in place).
+	if cfg.SOCKS5ProxyURL != "" {
+		proxyURL, err := parseSOCKS5ProxyURL(cfg.SOCKS5ProxyURL)
+		if err != nil {
+			return nil, err
+		}
+		t, ok := base.(*http.Transport)
+		if !ok {
+			return nil, fmt.Errorf("SOCKS5 proxy requires the base transport to be an *http.Transport, got %T", base)
+		}
+		t = t.Clone()
+		t.Proxy = http.ProxyURL(proxyURL)
+		base = t
+	}
+	transport := base
+
+	// TLS
+	if cfg.TLSConfig != nil {
+		t, ok := base.(*http.Transport)
+		if !ok {
+			t = http.DefaultTransport.(*http.Transport).Clone()
+		}
+		var err error
+		transport, err = cfg.TLSConfig.HTTPTransport(t)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
+		}
+	}
+	return transport, nil
+}
+
 // BuildTransport constructs an http.RoundTripper with the standard middleware
 // chain derived from cfg. The default chain (innermost to outermost) is:
 //
-//	base → TLS → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
 //
 // Auth is innermost among the header-setting layers so that credentials take
 // precedence over any forwarded/extra headers with the same keys.
@@ -744,19 +1068,13 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 	if base == nil {
 		base = cfg.HTTPTransport()
 	}
-	transport := base
 
-	// TLS
-	if cfg.TLSConfig != nil {
-		t, ok := base.(*http.Transport)
-		if !ok {
-			t = http.DefaultTransport.(*http.Transport).Clone()
-		}
-		var err error
-		transport, err = cfg.TLSConfig.HTTPTransport(t)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
-		}
+	transport, err := baseTransport(cfg, base)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.AllowCrossOriginRedirects {
+		transport = &redirectGuardTransport{next: transport}
 	}
 
 	// Debug logging with redacted credentials (innermost among the
@@ -783,12 +1101,19 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 
 	// User-Agent
 	if !options.withoutUserAgent {
-		transport = NewUserAgentTransport(transport)
+		if cfg.UserAgent != "" {
+			transport = NewUserAgentTransport(transport, cfg.UserAgent)
+		} else {
+			transport = NewUserAgentTransport(transport)
+		}
 	}
 
 	// OpenTelemetry HTTP tracing (outermost)
 	if !options.withoutOtel {
 		transport = otelhttp.NewTransport(transport)
+	}
+	if cfg.OverrideURL != "" {
+		transport = &grafanaTargetTransport{baseURL: cfg.OverrideURL, next: transport}
 	}
 
 	return transport, nil
@@ -805,9 +1130,14 @@ func extractKeyGrafanaInfoFromEnv(logger *slog.Logger) (url, apiKey string, auth
 	return
 }
 
-// Gets the Grafana URL from the environment and request-scoped credentials and
-// organization information from HTTP headers, with environment fallbacks.
+// Gets the Grafana URL from the environment unless the HTTP override middleware
+// selected a target. Selected targets use only request-scoped credentials.
 func extractKeyGrafanaInfoFromReq(req *http.Request, logger *slog.Logger) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
+	if overrideURL, ok := req.Context().Value(grafanaOverrideKey{}).(string); ok && overrideURL != "" {
+		// This path is reachable only through GrafanaURLOverrideMiddleware.
+		// Never consult credentials from the environment for a selected target.
+		return overrideURL, apiKeyFromHeaders(req), nil, orgIdFromHeaders(req, logger)
+	}
 	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv(logger)
 	username, password, _ := req.BasicAuth()
 
@@ -836,9 +1166,14 @@ func extractKeyGrafanaInfoFromReq(req *http.Request, logger *slog.Logger) (grafa
 	return
 }
 
+// StdioContextFunc extracts or modifies the context for the stdio transport.
+// Unlike httpContextFunc, it runs once at server startup rather than per call,
+// since a stdio process serves exactly one session for its whole lifetime.
+type StdioContextFunc func(ctx context.Context) context.Context
+
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
 // It reads GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY) environment variables and adds the configuration to the context for use by Grafana clients.
-var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractGrafanaInfoFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
@@ -861,13 +1196,16 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	return WithGrafanaConfig(ctx, config)
 }
 
-// httpContextFunc is a function that can be used as a `server.HTTPContextFunc` or a
-// `server.SSEContextFunc`. It is necessary because, while the two types are functionally
-// identical, they have distinct types and cannot be passed around interchangeably.
+// httpContextFunc extracts or modifies the context for HTTP-based transports
+// (SSE and streamable HTTP). In the go-sdk, it is invoked per JSON-RPC call
+// (via GrafanaContextMiddleware reading Request.GetExtra().Header), not once
+// per connection, so request-scoped auth/org headers are honored even when
+// multiple calls share one underlying session.
 type httpContextFunc func(ctx context.Context, req *http.Request) context.Context
 
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts request-scoped Grafana configuration from HTTP headers.
-// The Grafana URL is always read from GRAFANA_URL. Authentication and organization headers fall back to environment variables when absent.
+// The Grafana URL comes from GRAFANA_URL unless an authorized request override
+// was authorized. Only the configured URL permits environment credential fallbacks.
 // Headers listed in GRAFANA_FORWARD_HEADERS are copied from the incoming request and merged with GRAFANA_EXTRA_HEADERS.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	// Get existing config or create a new one.
@@ -876,13 +1214,30 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	logger := config.LoggerOrDefault()
 
 	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+	if overrideURL, ok := req.Context().Value(grafanaOverrideKey{}).(string); ok && overrideURL != "" {
+		// Environment-provided headers and client certificates can contain
+		// credentials just as the service account token can.
+		config.OverrideURL = overrideURL
+		config.AccessToken = ""
+		config.IDToken = ""
+		if config.TLSConfig != nil {
+			tlsConfig := *config.TLSConfig
+			tlsConfig.CertFile = ""
+			tlsConfig.KeyFile = ""
+			tlsConfig.SkipVerify = false
+			config.TLSConfig = &tlsConfig
+		}
+		config.BaseTransport = nil
+		config.ExtraHeaders = forwardedHeadersFromRequest(req)
+	} else {
+		config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
+	}
 
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 
-	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -917,61 +1272,183 @@ type grafanaClientKey struct{}
 type GrafanaClient struct {
 	*client.GrafanaHTTPAPI
 
-	// PublicURL is the public-facing URL of the Grafana instance, fetched from
-	// /api/frontend/settings (the appUrl field). It may differ from the configured
+	// PublicURL is the public-facing URL of the Grafana instance, from the
+	// appUrl field of /api/frontend/settings. It may differ from the configured
 	// URL when the MCP server accesses Grafana via an internal URL behind a load
 	// balancer or reverse proxy.
+	//
+	// Building a client makes no network calls, so this is only set when an
+	// earlier fetch already cached the value. Read it through GrafanaPublicURL,
+	// which fetches the settings on first use.
 	PublicURL string
+
+	// Version is the Grafana version reported by buildInfo.version in
+	// /api/frontend/settings (e.g. "12.1.0"). Like PublicURL, it is only set
+	// when the value was already cached when the client was built. Read it
+	// through GrafanaVersion, which fetches on first use. The empty string
+	// means "unknown", never "old".
+	Version string
+
+	// settingsConfig is the configuration used to fetch /api/frontend/settings
+	// lazily, on the first read of the public URL or version.
+	settingsConfig *GrafanaConfig
+}
+
+// loadSharedSettings returns the org-independent frontend settings for this
+// client's Grafana instance, fetching them on first use. Successful fetches
+// are cached per Grafana URL, so later calls cost nothing.
+func (gc *GrafanaClient) loadSharedSettings() (sharedSettings, bool) {
+	if gc.settingsConfig == nil {
+		return sharedSettings{}, false
+	}
+	return cachedSharedSettings(gc.settingsConfig)
+}
+
+// GrafanaPublicURL returns the public-facing URL of the Grafana instance for
+// the client in ctx, from the appUrl field of /api/frontend/settings. The
+// settings are fetched on first use and cached per Grafana URL. It returns ""
+// when there is no client in ctx, the instance reports no appUrl, or the
+// settings endpoint is unavailable; callers should fall back to the configured
+// URL.
+func GrafanaPublicURL(ctx context.Context) string {
+	gc := GrafanaClientFromContext(ctx)
+	if gc == nil {
+		return ""
+	}
+	if gc.PublicURL != "" {
+		return gc.PublicURL
+	}
+	settings, ok := gc.loadSharedSettings()
+	if !ok {
+		return ""
+	}
+	return settings.AppURL
 }
 
 func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
 }
 
-// publicURLCache caches successfully fetched public URLs per Grafana URL.
-// Only non-empty (successful) results are cached; failures are retried on
-// subsequent calls so that transient errors at startup don't permanently
-// disable the feature.
-var publicURLCache sync.Map // map[string]string (grafanaURL -> publicURL)
+// sharedSettingsCache caches the org-independent half of a successful
+// /api/frontend/settings fetch — the public URL and the Grafana version —
+// keyed by Grafana URL. Neither field varies by org, so partitioning this
+// cache by org would just multiply identical requests.
+//
+// Only successful fetches are cached, so a transient error at startup is
+// retried rather than pinned for the process lifetime. A fetch that succeeds
+// but omits a field IS cached: "this instance does not report a version" is a
+// real answer, and re-asking on every call would not produce a better one.
+var sharedSettingsCache sync.Map // map[string]sharedSettings (grafanaURL -> settings)
 
-// publicURLFlight deduplicates concurrent fetchPublicURL calls for the same
-// Grafana URL, preventing thundering-herd HTTP requests and race conditions
-// where a failing goroutine could overwrite a successful result.
-var publicURLFlight singleflight.Group
+// frontendSettingsFlight deduplicates concurrent /api/frontend/settings fetches,
+// preventing thundering-herd HTTP requests and races where a failing goroutine
+// could overwrite a successful result. It is keyed by (URL, OrgID) — the widest
+// key any consumer needs — because the namespace field is org-scoped even
+// though the cached public URL and version are not.
+var frontendSettingsFlight singleflight.Group
 
-// fetchPublicURL fetches the public URL (appUrl) from Grafana's frontend settings API.
-// It returns the appUrl if available, or an empty string if the request fails.
-// Successful results are cached permanently; failures are retried on subsequent calls.
-// Concurrent calls for the same grafanaURL are coalesced via singleflight.
-func fetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
-	// Check cache first (only successful results are cached)
-	if cached, ok := publicURLCache.Load(cfg.URL); ok {
-		return cached.(string)
-	}
+// sharedSettings holds the parts of /api/frontend/settings that do not depend
+// on the requesting org, and so can be cached per Grafana URL.
+type sharedSettings struct {
+	AppURL  string
+	Version string
+}
 
-	// Use singleflight to coalesce concurrent requests for the same URL
-	result, _, _ := publicURLFlight.Do(cfg.URL, func() (any, error) {
-		// Double-check cache inside singleflight (another goroutine may have populated it)
-		if cached, ok := publicURLCache.Load(cfg.URL); ok {
-			return cached.(string), nil
+// settingsResult pairs the fetched settings with the fetch error, if any.
+// singleflight hands back a single value, and success cannot be inferred from
+// the value itself: an instance may legitimately report none of these fields,
+// which is a successful fetch that happens to be empty. The error is carried
+// rather than a bool so callers can tell "could not reach Grafana" from
+// "reached it, and it reports nothing" -- namespace resolution must not guess
+// in the first case.
+type settingsResult struct {
+	settings frontendSettings
+	err      error
+}
+
+// frontendSettingsKey builds the (URL, OrgID) cache key shared by the
+// namespace cache and the fetch singleflight.
+func frontendSettingsKey(grafanaURL string, orgID int64) string {
+	return fmt.Sprintf("%s|%d", grafanaURL, orgID)
+}
+
+// loadFrontendSettings fetches /api/frontend/settings and populates every cache
+// that a consumer of that endpoint reads: the URL-keyed sharedSettingsCache and
+// the org-keyed namespaceCache. It is the single point at which this endpoint is
+// requested, so one round trip serves the public URL, the version, and the
+// namespace instead of one round trip each.
+//
+// Concurrent callers for the same (URL, OrgID) are coalesced via singleflight.
+// Failures are not cached.
+func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, error) {
+	key := frontendSettingsKey(cfg.URL, cfg.OrgID)
+
+	result, _, _ := frontendSettingsFlight.Do(key, func() (any, error) {
+		// Double-check the caches inside the singleflight: another goroutine may
+		// have populated them between this caller's own lookup and this closure
+		// starting. The namespace and the shared fields are cached separately, so
+		// the fetch is only skippable when both are present.
+		if cachedShared, sharedOK := sharedSettingsCache.Load(cfg.URL); sharedOK {
+			if cachedNS, nsOK := namespaceCache.Load(key); nsOK {
+				s := cachedShared.(sharedSettings)
+				return settingsResult{frontendSettings{
+					AppURL:    s.AppURL,
+					Namespace: cachedNS.(string),
+					Version:   s.Version,
+				}, nil}, nil
+			}
 		}
 
-		// Use a detached context with timeout so that a cancelled request
-		// context from the first caller doesn't fail the fetch for all waiters.
+		// Detached context with timeout so a cancelled caller doesn't fail the
+		// fetch for all waiters; re-inject the GrafanaConfig so the request
+		// carries the right auth and Org-ID header.
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		fetchCtx = WithGrafanaConfig(fetchCtx, *cfg)
 
-		publicURL := doFetchPublicURL(fetchCtx, cfg)
-
-		// Only cache successful (non-empty) results so transient failures are retried
-		if publicURL != "" {
-			publicURLCache.Store(cfg.URL, publicURL)
+		settings, err := doFetchFrontendSettings(fetchCtx, cfg)
+		if err != nil {
+			// Don't cache failures, so a transient error is retried.
+			return settingsResult{err: err}, nil
 		}
 
-		return publicURL, nil
+		sharedSettingsCache.Store(cfg.URL, sharedSettings{
+			AppURL:  settings.AppURL,
+			Version: settings.Version,
+		})
+		// An absent namespace is not cached: unlike the version, there is a
+		// cheap org-derived fallback, and caching the miss would pin it.
+		if settings.Namespace != "" {
+			namespaceCache.Store(key, settings.Namespace)
+		}
+
+		return settingsResult{settings, nil}, nil
 	})
 
-	return result.(string)
+	r := result.(settingsResult)
+	return r.settings, r.err
+}
+
+// cachedSharedSettings returns the org-independent settings for cfg's Grafana
+// URL, fetching them only if they are not already cached.
+func cachedSharedSettings(cfg *GrafanaConfig) (sharedSettings, bool) {
+	if cached, ok := sharedSettingsCache.Load(cfg.URL); ok {
+		return cached.(sharedSettings), true
+	}
+
+	settings, err := loadFrontendSettings(cfg)
+	if err == nil {
+		return sharedSettings{AppURL: settings.AppURL, Version: settings.Version}, true
+	}
+
+	// This org's fetch failed, but these fields do not depend on the org, and
+	// the fetch singleflight is keyed by (URL, OrgID) — so a fetch for another
+	// org may have populated them while this one was in flight. Prefer that over
+	// reporting unknown, which is what a URL-keyed flight would have given us.
+	if cached, ok := sharedSettingsCache.Load(cfg.URL); ok {
+		return cached.(sharedSettings), true
+	}
+	return sharedSettings{}, false
 }
 
 // frontendSettings holds the subset of /api/frontend/settings that the MCP
@@ -983,29 +1460,33 @@ type frontendSettings struct {
 	// computed server-side by Grafana's namespacer (e.g. "default", "org-2",
 	// or "stacks-123" on Grafana Cloud). Empty if not reported.
 	Namespace string
-}
-
-// doFetchPublicURL performs the actual HTTP request to fetch the public URL.
-func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
-	return doFetchFrontendSettings(ctx, cfg).AppURL
+	// Version is the Grafana version reported by buildInfo.version
+	// (e.g. "12.1.0"). Empty if not reported.
+	Version string
 }
 
 // doFetchFrontendSettings performs the actual HTTP request to fetch the
 // Grafana frontend settings, returning the fields the MCP server uses.
-// On any error it returns a zero-value frontendSettings.
-func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSettings {
+//
+// A non-nil error means the settings could not be retrieved (transport, network,
+// non-200, read, or parse failure) -- the caller cannot know anything about the
+// instance. A nil error means the settings were retrieved and parsed; the
+// returned fields may still be empty if this Grafana version does not report
+// them (e.g. the namespace field predates v10.2.3). Distinguishing the two lets
+// namespace resolution avoid guessing when it simply could not reach Grafana.
+func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendSettings, error) {
 	logger := cfg.LoggerOrDefault()
 	settingsURL := cfg.URL + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
 		logger.Warn("Failed to create request for frontend settings", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, fmt.Errorf("create frontend settings request: %w", err)
 	}
 
 	transport, err := BuildTransport(cfg, nil)
 	if err != nil {
 		logger.Warn("Failed to build transport for frontend settings request", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, fmt.Errorf("build frontend settings transport: %w", err)
 	}
 
 	httpClient := &http.Client{
@@ -1016,46 +1497,53 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSe
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		logger.Warn("Failed to fetch frontend settings", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, fmt.Errorf("fetch frontend settings: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
-		return frontendSettings{}
+		return frontendSettings{}, fmt.Errorf("frontend settings returned HTTP %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Warn("Failed to read frontend settings response", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, fmt.Errorf("read frontend settings response: %w", err)
 	}
 
 	var settings struct {
 		AppURL    string `json:"appUrl"`
 		Namespace string `json:"namespace"`
+		BuildInfo struct {
+			Version string `json:"version"`
+		} `json:"buildInfo"`
 	}
 	if err := json.Unmarshal(body, &settings); err != nil {
 		logger.Warn("Failed to parse frontend settings response", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, fmt.Errorf("parse frontend settings response: %w", err)
 	}
 
 	publicURL := strings.TrimRight(settings.AppURL, "/")
 	if publicURL != "" {
 		logger.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
 	}
-	return frontendSettings{AppURL: publicURL, Namespace: settings.Namespace}
+	return frontendSettings{
+		AppURL:    publicURL,
+		Namespace: settings.Namespace,
+		Version:   settings.BuildInfo.Version,
+	}, nil
 }
 
 // namespaceCache caches the Kubernetes-style namespace per (Grafana URL, OrgID).
-// Unlike the public URL, the namespace depends on the org, so the cache key
-// includes the OrgID. Only non-empty results from frontend settings are cached;
+// Unlike the public URL and version, the namespace depends on the org, so the
+// cache key includes the OrgID and this cache stays separate from
+// sharedSettingsCache. Only non-empty results from frontend settings are cached;
 // the OrgID-derived fallback is cheap and recomputed on each miss.
+//
+// Entries are written by loadFrontendSettings, so a fetch made for any consumer
+// of /api/frontend/settings warms this cache too.
 var namespaceCache sync.Map // map[string]string ("URL|orgID" -> namespace)
-
-// namespaceFlight deduplicates concurrent frontend-settings fetches for the
-// same (URL, OrgID).
-var namespaceFlight singleflight.Group
 
 // orgNamespace derives a Kubernetes-style namespace from an org ID, matching
 // Grafana authlib's OrgNamespaceFormatter (org 1 / unset maps to "default").
@@ -1066,62 +1554,122 @@ func orgNamespace(orgID int64) string {
 	return fmt.Sprintf("org-%d", orgID)
 }
 
-// nsResult is the resolved namespace plus whether it came from frontend
-// settings (true) or the OrgID-derived fallback (false).
-type nsResult struct {
-	namespace    string
-	fromSettings bool
-}
-
-// DashboardNamespace returns the Kubernetes-style namespace to use for
-// dashboard.grafana.app API calls, given the Grafana config in ctx, and whether
-// it was resolved from Grafana's /api/frontend/settings (fromSettings=true) or
-// fell back to the OrgID-derived value (fromSettings=false).
+// GrafanaNamespace returns the Kubernetes-style namespace to use for
+// app-platform (/apis/*.grafana.app) API calls, given the Grafana config in ctx.
 //
-// It prefers the namespace reported by /api/frontend/settings, which is correct
+// The namespace is a property of the (instance, org) pair, not of any
+// particular API group, so every app-platform tool — dashboards, provisioning,
+// etc. — should resolve it through this function. The org is taken from
+// GrafanaConfig.OrgID, which a per-call orgId override (see
+// OrgIDOverrideMiddleware) or the X-Grafana-Org-Id header can set, so this is
+// what makes multi-org selection work consistently across tools.
+//
+// It resolves the namespace reported by /api/frontend/settings, which is correct
 // for both single-tenant ("default" / "org-N") and Grafana Cloud ("stacks-{id}"),
-// caching successful results per (URL, OrgID). If the settings endpoint is
-// unavailable or omits the namespace, it falls back to deriving the namespace
-// from the OrgID — which is correct on-prem but may be wrong on Grafana Cloud,
-// so callers can use fromSettings to qualify a subsequent not-found.
-func DashboardNamespace(ctx context.Context) (namespace string, fromSettings bool) {
+// caching successful results per (URL, OrgID).
+//
+// If the settings endpoint cannot be reached (transport/network/non-200), it
+// returns an error rather than guessing: the namespace field predates every
+// /apis/* API this resolves for (it shipped in Grafana v10.2.3), so any instance
+// new enough to serve those APIs reports it, and guessing the OrgID-derived
+// namespace would silently misroute on Grafana Cloud (where it is "stacks-{id}",
+// not "org-N"). Because successful lookups are cached for the process lifetime,
+// the cost of requiring success is at most one settings call per (URL, OrgID).
+//
+// The one exception is a reachable instance that returns settings WITHOUT a
+// namespace: that means a pre-v10.2.3 Grafana. Such an instance serves no
+// /apis/* API and predates Grafana Cloud's "stacks-{id}" namespacing entirely,
+// so it is necessarily org-based and orgNamespace ("default" / "org-N") is the
+// correct answer. That value is not cached, so a later upgrade is picked up.
+func GrafanaNamespace(ctx context.Context) (string, error) {
 	cfg := GrafanaConfigFromContext(ctx)
-	fallback := orgNamespace(cfg.OrgID)
 
-	key := fmt.Sprintf("%s|%d", cfg.URL, cfg.OrgID)
+	key := frontendSettingsKey(cfg.URL, cfg.OrgID)
 	if cached, ok := namespaceCache.Load(key); ok {
-		return cached.(string), true
+		return cached.(string), nil
 	}
 
-	result, _, _ := namespaceFlight.Do(key, func() (any, error) {
-		// Double-check cache inside singleflight.
-		if cached, ok := namespaceCache.Load(key); ok {
-			return nsResult{cached.(string), true}, nil
-		}
+	settings, err := loadFrontendSettings(&cfg)
+	if err != nil {
+		// Couldn't reach settings -- do not guess (would misroute on Cloud).
+		return "", fmt.Errorf("resolve grafana namespace from /api/frontend/settings: %w", err)
+	}
+	if settings.Namespace == "" {
+		// Reached settings but no namespace reported: pre-v10.2.3 Grafana, which
+		// serves no /apis/* API and predates Cloud stacks namespacing. Derive it
+		// from the OrgID; loadFrontendSettings deliberately does not cache that.
+		return orgNamespace(cfg.OrgID), nil
+	}
+	return settings.Namespace, nil
+}
 
-		// Detached context with timeout so a cancelled caller doesn't fail the
-		// fetch for all waiters; re-inject the GrafanaConfig so the request
-		// carries the right auth and Org-ID header.
-		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		fetchCtx = WithGrafanaConfig(fetchCtx, cfg)
+// GrafanaVersion returns the version of the Grafana instance described by the
+// context, as reported by buildInfo.version in /api/frontend/settings
+// (e.g. "12.1.0").
+//
+// The settings are fetched on first use, with the GrafanaClient in ctx when
+// there is one and the GrafanaConfig in ctx otherwise, and cached per Grafana
+// URL, so later calls cost nothing.
+//
+// It fails soft: if the settings endpoint is unavailable, unauthorised, or
+// omits buildInfo, it returns an empty string rather than an error. Callers
+// MUST treat the empty string as "version unknown" and behave as they would
+// without the information.
+//
+// Because unknown is indistinguishable from old here, do not use this to gate
+// anything that must fail closed — a caller lacking permission to read the
+// settings endpoint gets the same empty string as an ancient Grafana. Prefer
+// capability detection (e.g. KubernetesClient.GroupVersions) for that, and
+// keep this for advisory uses: error hints, tool descriptions, telemetry.
+func GrafanaVersion(ctx context.Context) string {
+	gc := GrafanaClientFromContext(ctx)
+	if gc != nil && gc.Version != "" {
+		return gc.Version
+	}
 
-		ns := doFetchFrontendSettings(fetchCtx, &cfg).Namespace
-		if ns != "" {
-			namespaceCache.Store(key, ns)
-			return nsResult{ns, true}, nil
-		}
-		// Don't cache the fallback, so a transient settings failure is retried.
-		return nsResult{fallback, false}, nil
-	})
+	var settings sharedSettings
+	var ok bool
+	if gc != nil && gc.settingsConfig != nil {
+		settings, ok = gc.loadSharedSettings()
+	} else {
+		cfg := GrafanaConfigFromContext(ctx)
+		settings, ok = cachedSharedSettings(&cfg)
+	}
+	if !ok {
+		return ""
+	}
+	return settings.Version
+}
 
-	r := result.(nsResult)
-	return r.namespace, r.fromSettings
+// GrafanaVersionIfKnown returns the Grafana version only when it is already
+// known, and never issues a request to find out: it reads the GrafanaClient in
+// ctx, then the settings cache a previous fetch populated, and returns ""
+// otherwise.
+//
+// Use this instead of GrafanaVersion wherever a miss must not cost anything.
+// GrafanaVersion falls through to cachedSharedSettings, which fetches
+// /api/frontend/settings on a miss and does not cache failures — so on an
+// instance where that endpoint is unreachable or forbidden, every call pays the
+// client timeout and issues a request of its own. That is the right trade for
+// a tool that needs the answer, and the wrong one for a caller that is merely
+// describing what it happens to know (usage statistics), where it would add
+// both latency and traffic the operator did not ask for.
+//
+// As with GrafanaVersion, "" means "unknown", never "old".
+func GrafanaVersionIfKnown(ctx context.Context) string {
+	if gc := GrafanaClientFromContext(ctx); gc != nil && gc.Version != "" {
+		return gc.Version
+	}
+	cfg := GrafanaConfigFromContext(ctx)
+	if cached, ok := sharedSettingsCache.Load(cfg.URL); ok {
+		return cached.(sharedSettings).Version
+	}
+	return ""
 }
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
-// It also fetches the Grafana instance's public URL from /api/frontend/settings for use in deep link generation.
+// Building a client makes no network calls. The Grafana instance's public URL and version come from /api/frontend/settings, which GrafanaPublicURL and GrafanaVersion fetch on first use.
 // The org ID is read from the GrafanaConfig in the context, which should be set by ExtractGrafanaInfoFromEnv or ExtractGrafanaInfoFromHeaders before calling this function.
 func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo) *GrafanaClient {
 	cfg := client.DefaultTransportConfig()
@@ -1132,6 +1680,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
 	}
+	// Trim any trailing slash so every path built from grafanaURL below
+	// (the OpenAPI client's base path, and the frontend-settings fetch) is
+	// well-formed instead of double-slashed.
+	grafanaURL = strings.TrimRight(grafanaURL, "/")
 
 	parsedURL, err = url.Parse(grafanaURL)
 	if err != nil {
@@ -1203,8 +1755,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	// The OpenAPI client handles APIKey/BasicAuth itself, so we skip transport-
 	// level auth and only inject OBO tokens (which the OpenAPI client doesn't
 	// know about) via the AuthRoundTripper.
+	transportInstalled := false
 	v := reflect.ValueOf(grafanaClient.Transport)
-	if v.Kind() == reflect.Ptr && !v.IsNil() {
+	if v.Kind() == reflect.Pointer && !v.IsNil() {
 		v = v.Elem()
 		if v.Kind() == reflect.Struct {
 			transportField := v.FieldByName("Transport")
@@ -1233,52 +1786,84 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					// transport-level injection since the OpenAPI client
 					// doesn't support them natively.
 					oboConfig := GrafanaConfig{
-						AccessToken:  config.AccessToken,
-						IDToken:      config.IDToken,
-						OrgID:        config.OrgID,
-						TLSConfig:    config.TLSConfig,
-						ExtraHeaders: config.ExtraHeaders,
-						Debug:        config.Debug,
-						Logger:       config.Logger,
+						AccessToken:               config.AccessToken,
+						IDToken:                   config.IDToken,
+						OrgID:                     config.OrgID,
+						TLSConfig:                 config.TLSConfig,
+						ExtraHeaders:              config.ExtraHeaders,
+						OverrideURL:               config.OverrideURL,
+						AllowCrossOriginRedirects: config.AllowCrossOriginRedirects,
+						SOCKS5ProxyURL:            config.SOCKS5ProxyURL,
+						Debug:                     config.Debug,
+						Logger:                    config.Logger,
+						UserAgent:                 config.UserAgent,
 					}
-					// Panic matches the existing TLS error handling above
-					// (line ~887). The only realistic failure is a TLS
-					// misconfiguration, which can't happen here since base
-					// is always an *http.Transport.
 					wrapped, err := BuildTransport(&oboConfig, base)
 					if err != nil {
-						panic(fmt.Errorf("failed to build transport: %w", err))
+						if config.SOCKS5ProxyURL != "" {
+							// Fail closed: a default transport would bypass the
+							// configured proxy. Install a transport that rejects
+							// every request so the failure surfaces as a graceful
+							// tool error rather than aborting request handling
+							// with a panic (matching the OnCall/incident paths).
+							wrapped = failClosedTransport(err)
+						} else {
+							// No proxy configured; a TLS/transport build failure
+							// here is a genuine misconfiguration with no safe
+							// fallback. Panic matches the TLS error handling above.
+							panic(fmt.Errorf("failed to build transport: %w", err))
+						}
 					}
 					transportField.Set(reflect.ValueOf(wrapped))
+					transportInstalled = true
 					logger.Debug("HTTP tracing, user agent tracking, and timeout enabled for Grafana client", "timeout", timeout)
 				}
 			}
 		}
 	}
+	if (config.SOCKS5ProxyURL != "" || config.OverrideURL != "") && !transportInstalled {
+		// Fail closed: the reflection above could not reach the OpenAPI
+		// client's transport field at all, so there is nowhere to install a
+		// fail-closed transport and its default transport would bypass the
+		// configured proxy. This is a defensive guard against a structural
+		// change in the go-openapi runtime and is unreachable in practice.
+		panic(fmt.Errorf("grafana OpenAPI client's guarded transport could not be replaced"))
+	}
 
-	// Fetch the public URL from Grafana's frontend settings.
+	// The public URL and version come from Grafana's frontend settings. They are
+	// fetched lazily, on first use, so that building a client (which happens on
+	// every HTTP JSON-RPC message, discovery included) never dials Grafana.
 	fetchCfg := &GrafanaConfig{
-		URL:          grafanaURL,
-		APIKey:       apiKey,
-		BasicAuth:    auth,
-		AccessToken:  config.AccessToken,
-		IDToken:      config.IDToken,
-		TLSConfig:    config.TLSConfig,
-		ExtraHeaders: config.ExtraHeaders,
-		Logger:       config.Logger,
+		URL:                       grafanaURL,
+		APIKey:                    apiKey,
+		BasicAuth:                 auth,
+		AccessToken:               config.AccessToken,
+		IDToken:                   config.IDToken,
+		TLSConfig:                 config.TLSConfig,
+		ExtraHeaders:              config.ExtraHeaders,
+		OverrideURL:               config.OverrideURL,
+		AllowCrossOriginRedirects: config.AllowCrossOriginRedirects,
+		SOCKS5ProxyURL:            config.SOCKS5ProxyURL,
+		Logger:                    config.Logger,
+		UserAgent:                 config.UserAgent,
 	}
-	publicURL := fetchPublicURL(ctx, fetchCfg)
-
-	return &GrafanaClient{
+	gc := &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
-		PublicURL:      publicURL,
+		settingsConfig: fetchCfg,
 	}
+	// Fill the fields from the cache only; a miss is fetched on first use.
+	if cached, ok := sharedSettingsCache.Load(grafanaURL); ok {
+		settings := cached.(sharedSettings)
+		gc.PublicURL = settings.AppURL
+		gc.Version = settings.Version
+	}
+	return gc
 }
 
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
 // It uses configuration from GRAFANA_URL, GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY), GRAFANA_USERNAME/PASSWORD environment variables to initialize
 // the client with proper authentication.
-var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractGrafanaClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars
 	logger := LoggerFromContext(ctx)
 	grafanaURL, apiKey := urlAndAPIKeyFromEnv(logger)
@@ -1290,14 +1875,33 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
+// logDefaultOrg notes, at Debug level, that a request falls back to the
+// default org. It runs on every JSON-RPC message, so it must not warn: the
+// operator-facing warning is logged once at startup by WarnIfOrgIDUnset.
+// Under dynamic multi-org the org is chosen per tool call, so an unset
+// connection-level org is the expected starting point, not a misconfiguration.
+func logDefaultOrg(logger *slog.Logger, config GrafanaConfig) {
+	if config.OrgID == 0 && !DynamicMultiOrgEnabled {
+		logger.Debug("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
+	}
+}
+
+// WarnIfOrgIDUnset logs one warning at startup when GRAFANA_ORG_ID is unset,
+// since requests without an X-Grafana-Org-Id header then use the default org.
+// It is silent under dynamic multi-org, where the org is chosen per tool call.
+func WarnIfOrgIDUnset(logger *slog.Logger) {
+	if DynamicMultiOrgEnabled || orgIdFromEnv(logger) != 0 {
+		return
+	}
+	logger.Warn("GRAFANA_ORG_ID is not set, so requests without an X-Grafana-Org-Id header use the default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id to target a specific org.")
+}
+
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
-// It uses GRAFANA_URL with request-scoped authentication headers and environment fallbacks.
+// It uses the resolved Grafana URL and request-scoped authentication headers.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
-	if config.OrgID == 0 {
-		logger.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
-	}
+	logDefaultOrg(logger, config)
 
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
@@ -1329,7 +1933,7 @@ type kubernetesClientKey struct{}
 // Kubernetes-style API client into the context, used by tools that talk to
 // Grafana's app-platform APIs (e.g. dashboard.grafana.app). On failure it injects
 // a nil client; callers fall back to the legacy API.
-var ExtractKubernetesClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractKubernetesClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	logger := LoggerFromContext(ctx)
 	client, err := NewKubernetesClient(ctx)
 	if err != nil {
@@ -1370,9 +1974,20 @@ func KubernetesClientFromContext(ctx context.Context) *KubernetesClient {
 
 type incidentClientKey struct{}
 
+// newIncidentClient returns an incident client and its transport options.
+// incident-go only sends bearer tokens, so without one AuthRoundTripper handles auth.
+func newIncidentClient(incidentURL, apiKey string) (*incident.Client, []TransportOption) {
+	client := incident.NewClient(incidentURL, apiKey)
+	if apiKey == "" {
+		client.BeforeRequest = nil
+		return client, nil
+	}
+	return client, []TransportOption{WithoutAuth()}
+}
+
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
 // It configures the client using environment variables and applies any custom TLS settings from the context.
-var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
 	grafanaURL, apiKey := urlAndAPIKeyFromEnv(logger)
@@ -1385,36 +2000,40 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
 	}
 	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
-	transport, err := BuildTransport(&config, nil, WithoutAuth())
-	if err != nil {
-		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
-	} else {
+	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
+	// build failure it returns ok=false and we keep the client's default.
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
+	} else if config.OverrideURL != "" {
+		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
+	rejectIncidentErrorStatuses(client)
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
 // ExtractIncidentClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana Incident client into the context.
-// It uses GRAFANA_URL with request-scoped authentication and organization headers and environment fallbacks.
+// It uses the resolved Grafana URL and request-scoped authentication and organization headers.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
 	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
-	transport, err := BuildTransport(&config, nil, WithoutAuth())
-	if err != nil {
-		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
-	} else {
+	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
+	// build failure it returns ok=false and we keep the client's default.
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
+	} else if config.OverrideURL != "" {
+		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
 	}
+	rejectIncidentErrorStatuses(client)
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
@@ -1437,7 +2056,7 @@ func IncidentClientFromContext(ctx context.Context) *incident.Client {
 
 // ComposeStdioContextFuncs composes multiple StdioContextFuncs into a single one.
 // Functions are applied in order, allowing each to modify the context before passing it to the next.
-func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioContextFunc {
+func ComposeStdioContextFuncs(funcs ...StdioContextFunc) StdioContextFunc {
 	return func(ctx context.Context) context.Context {
 		for _, f := range funcs {
 			ctx = f(ctx)
@@ -1446,9 +2065,11 @@ func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioCont
 	}
 }
 
-// ComposeSSEContextFuncs composes multiple SSEContextFuncs into a single one.
-// This enables chaining of context modifications for Server-Sent Events transport, such as extracting headers and setting up clients.
-func ComposeSSEContextFuncs(funcs ...httpContextFunc) server.SSEContextFunc {
+// ComposeHTTPContextFuncs composes multiple httpContextFuncs into a single one.
+// This enables chaining of context modifications for HTTP-based transports
+// (SSE and streamable HTTP), allowing modular setup of authentication,
+// clients, and configuration.
+func ComposeHTTPContextFuncs(funcs ...httpContextFunc) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		for _, f := range funcs {
 			ctx = f(ctx, req)
@@ -1457,20 +2078,46 @@ func ComposeSSEContextFuncs(funcs ...httpContextFunc) server.SSEContextFunc {
 	}
 }
 
-// ComposeHTTPContextFuncs composes multiple HTTPContextFuncs into a single one.
-// This enables chaining of context modifications for HTTP transport, allowing modular setup of authentication, clients, and configuration.
-func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
-	return func(ctx context.Context, req *http.Request) context.Context {
-		for _, f := range funcs {
-			ctx = f(ctx, req)
+// GrafanaContextMiddleware returns an mcp.Middleware that runs httpFn on
+// every incoming JSON-RPC call for HTTP-based transports (streamable HTTP
+// and SSE), synthesizing a minimal *http.Request from the call's headers
+// so the existing httpContextFunc family is reused unchanged.
+//
+// This replaces the per-transport context-func hooks from mark3labs' SDK
+// with a single hook that runs per call. When Extra.Header is populated
+// (streamable HTTP POSTs, SSE message POSTs that forward headers), per-call
+// auth/org-ID isolation is preserved. When headers are absent (SSE message
+// POSTs from clients that don't forward headers), the httpContextFunc still
+// runs with an empty header set, falling back to environment-variable config
+// so tool handlers always have a valid GrafanaConfig/client.
+//
+// This middleware is registered only on HTTP transports (SSE, streamable
+// HTTP) — never on stdio, which sets up its context once at startup via
+// ComposedStdioContextFunc. It runs httpFn on every call: when the transport
+// provides HTTP headers (streamable HTTP), they are forwarded for per-call
+// auth/org isolation; when it does not (SSE message POSTs), httpFn runs
+// with an empty header set and falls back to environment-variable config.
+func GrafanaContextMiddleware(httpFn httpContextFunc) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			var header http.Header
+			if extra := req.GetExtra(); extra != nil && extra.Header != nil {
+				header = extra.Header
+			} else {
+				header = http.Header{}
+			}
+			// Carry ctx on the request: GrafanaURLOverrideMiddleware hands the
+			// authorized target on as a request-context value, and the go-sdk
+			// derives the handler ctx from the HTTP request's context.
+			ctx = httpFn(ctx, (&http.Request{Header: header}).WithContext(ctx))
+			return next(ctx, method, req)
 		}
-		return ctx
 	}
 }
 
 // ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs.
 // It sets up the complete context for stdio transport including Grafana configuration, client initialization from environment variables, and incident management support.
-func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
+func ComposedStdioContextFunc(config GrafanaConfig) StdioContextFunc {
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -1482,26 +2129,12 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 	)
 }
 
-// ComposedSSEContextFunc returns a SSEContextFunc that comprises all predefined SSEContextFuncs.
-// It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
+// ComposedHTTPContextFunc returns a composed httpContextFunc that comprises all
+// predefined HTTP context functions. It sets up the complete context for
+// HTTP-based transports (SSE and streamable HTTP), extracting configuration
+// from HTTP headers with environment variable fallbacks.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
-func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
-	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
-	return ComposeSSEContextFuncs(
-		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaConfig(ctx, config)
-		},
-		ExtractGrafanaInfoFromHeaders,
-		grafanaExtractor,
-		k8sExtractor,
-		incidentExtractor,
-	)
-}
-
-// ComposedHTTPContextFunc returns a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
-// It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
-// If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
-func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
+func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) httpContextFunc {
 	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {

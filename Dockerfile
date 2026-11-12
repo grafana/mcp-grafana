@@ -1,5 +1,5 @@
 # Build stage
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -17,7 +17,9 @@ COPY . .
 # TARGETOS and TARGETARCH are automatically set by Docker BuildKit.
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o mcp-grafana ./cmd/mcp-grafana
+# VERSION is injected by CI on tag builds; when empty, Version() falls back to build info.
+ARG VERSION=""
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -X github.com/grafana/mcp-grafana/v2.version=${VERSION}" -o mcp-grafana ./cmd/mcp-grafana
 
 # Final stage
 FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3

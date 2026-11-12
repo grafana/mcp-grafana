@@ -29,7 +29,18 @@ All Grafana API calls use the chosen organization context, and any extra headers
 
 Set **GRAFANA_ORG_ID** to the numeric organization ID. The server sends `X-Grafana-Org-Id` on all requests to Grafana.
 
-When using SSE or streamable-http, you can also send **X-Grafana-Org-Id** from the client; the header takes precedence over the environment variable so you can override the default org per request.
+When using streamable-http, you can also send **X-Grafana-Org-Id** from the client; the header takes precedence over the environment variable so you can override the default org per request.
+
+## Select an organization per tool call
+
+The settings above fix the organization for the whole connection. To let a single connection target different organizations per call, start the server with the `--dynamic-multi-org` flag. This is off by default.
+
+When enabled:
+
+- Every tool accepts an optional `orgId` argument that overrides the connection's organization for that call, setting both the `X-Grafana-Org-Id` header and, for app-platform APIs, the resolved Kubernetes namespace. Calls that omit `orgId` use the connection's default organization.
+- Tempo tools resolve the datasource in the calling organization, so you can target a Tempo datasource in any org with `orgId` plus its `datasourceUid`.
+
+This only works for credentials that belong to more than one organization (for example a user or on-behalf-of identity); a service-account token stays bound to its single organization. Call the `user_info` tool to discover which `orgId` values are valid.
 
 ## Send custom headers
 

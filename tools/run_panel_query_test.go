@@ -3,12 +3,52 @@
 package tools
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/grafana/mcp-grafana/v2/tools/sql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// These test shims preserve the historic single-value helper signatures used
+// by the existing substitution and extraction tests. Production code uses the
+// multi-value helpers directly so formatted variables can retain all values.
+func testTemplateVariableValues(variables map[string]string) templateVariableValues {
+	if variables == nil {
+		return nil
+	}
+
+	result := make(templateVariableValues, len(variables))
+	for name, value := range variables {
+		result[name] = []string{value}
+	}
+	return result
+}
+
+func substituteTemplateVariables(query string, variables map[string]string) string {
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolate(query)
+}
+
+func substituteTemplateVariablesInMap(target map[string]interface{}, variables map[string]string) map[string]interface{} {
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolateTarget(target)
+}
+
+func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
+	return newVariableInterpolator(testTemplateVariableValues(variables), nil).interpolateValue(slice).([]interface{})
+}
+
+func extractTemplateVariables(db map[string]interface{}) map[string]string {
+	in := newDashboardInterpolator(db, nil)
+	first := make(map[string]string)
+	for name := range in.values {
+		if value, ok := in.firstValue(name); ok {
+			first[name] = value
+		}
+	}
+	return first
+}
 
 func TestFindPanelByIDForRunPanelQuery(t *testing.T) {
 	tests := []struct {
@@ -265,7 +305,9 @@ func TestExtractPanelInfo(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name: "panel with no datasource",
+			// Grafana runs such a panel on the default datasource (schema 36
+			// migrates a null reference to the default datasource's ref).
+			name: "panel with no datasource uses the default",
 			panel: map[string]interface{}{
 				"id":    7,
 				"title": "No Datasource",
@@ -274,6 +316,47 @@ func TestExtractPanelInfo(t *testing.T) {
 						"expr": "up",
 					},
 				},
+			},
+			wantQuery: "up",
+			wantDSUID: "default",
+		},
+		{
+			name: "null panel datasource uses the default",
+			panel: map[string]interface{}{
+				"id":         7,
+				"datasource": nil,
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "default",
+		},
+		{
+			// Dashboards saved before schema 33 reference datasources by name.
+			name: "legacy datasource name",
+			panel: map[string]interface{}{
+				"id":         8,
+				"datasource": "Prometheus",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "Prometheus",
+		},
+		{
+			name: "legacy target datasource name wins over the panel's",
+			panel: map[string]interface{}{
+				"id":         9,
+				"datasource": "-- Mixed --",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up", "datasource": "$ds"}},
+			},
+			wantQuery: "up",
+			wantDSUID: "$ds",
+		},
+		{
+			name: "mixed panel with an unreferenced target",
+			panel: map[string]interface{}{
+				"id":         10,
+				"datasource": "-- Mixed --",
+				"targets":    []interface{}{map[string]interface{}{"expr": "up"}},
 			},
 			wantErr:     true,
 			errContains: "could not determine datasource",
@@ -439,6 +522,75 @@ func TestExtractTemplateVariables(t *testing.T) {
 			},
 			want: map[string]string{},
 		},
+		{
+			name: "constant variable without current falls back to query",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "conversionRate",
+							"type":  "constant",
+							"query": "158.87",
+						},
+					},
+				},
+			},
+			want: map[string]string{
+				"conversionRate": "158.87",
+			},
+		},
+		{
+			name: "textbox variable without current falls back to query",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "daysBack",
+							"type":  "textbox",
+							"query": "30",
+						},
+					},
+				},
+			},
+			want: map[string]string{
+				"daysBack": "30",
+			},
+		},
+		{
+			name: "current takes precedence over query for constant",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "margin",
+							"type":  "constant",
+							"query": "1",
+							"current": map[string]interface{}{
+								"value": "1.5",
+							},
+						},
+					},
+				},
+			},
+			want: map[string]string{
+				"margin": "1.5",
+			},
+		},
+		{
+			name: "query variable does not fall back to its datasource query",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "job",
+							"type":  "query",
+							"query": "label_values(up, job)",
+						},
+					},
+				},
+			},
+			want: map[string]string{},
+		},
 	}
 
 	for _, tt := range tests {
@@ -513,6 +665,87 @@ func TestSubstituteTemplateVariables(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := substituteTemplateVariables(tt.query, tt.variables)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSubstituteTemplateVariablesSQLString(t *testing.T) {
+	query := "SELECT * FROM orders WHERE order_intent_id = ${order_intent_id:sqlstring}"
+	variables := map[string]string{"order_intent_id": "oi-123"}
+
+	assert.Equal(t,
+		"SELECT * FROM orders WHERE order_intent_id = 'oi-123'",
+		substituteTemplateVariables(query, variables),
+	)
+}
+
+func TestSubstituteTemplateVariableValuesSQLString(t *testing.T) {
+	expression := "$" + "{order_intent_id:sqlstring}"
+	tests := []struct {
+		name      string
+		query     string
+		variables templateVariableValues
+		want      string
+	}{
+		{
+			name:      "single value",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {"oi-123"}},
+			want:      "WHERE order_intent_id = 'oi-123'",
+		},
+		{
+			name:      "multiple values",
+			query:     "WHERE order_intent_id IN (" + expression + ")",
+			variables: templateVariableValues{"order_intent_id": {"oi-123", "oi-456"}},
+			want:      "WHERE order_intent_id IN ('oi-123','oi-456')",
+		},
+		{
+			name:      "single quote is doubled",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {"oi'123"}},
+			want:      "WHERE order_intent_id = 'oi''123'",
+		},
+		{
+			name:      "double quote is escaped",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {"oi\"123"}},
+			want:      "WHERE order_intent_id = 'oi\\\"123'",
+		},
+		{
+			name:      "empty string is quoted",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {""}},
+			want:      "WHERE order_intent_id = ''",
+		},
+		{
+			name:      "empty multi-select is empty",
+			query:     "WHERE order_intent_id IN (" + expression + ")",
+			variables: templateVariableValues{"order_intent_id": {}},
+			want:      "WHERE order_intent_id IN ()",
+		},
+		{
+			name:      "unknown format falls back to glob",
+			query:     "WHERE order_intent_id IN ($" + "{order_intent_id:unsupported})",
+			variables: templateVariableValues{"order_intent_id": {"oi-123", "oi-456"}},
+			want:      "WHERE order_intent_id IN ({oi-123,oi-456})",
+		},
+		{
+			name:      "unformatted multi-select keeps historical first value",
+			query:     "WHERE order_intent_id = $order_intent_id",
+			variables: templateVariableValues{"order_intent_id": {"oi-123", "oi-456"}},
+			want:      "WHERE order_intent_id = oi-123",
+		},
+		{
+			name:      "missing variable remains unchanged",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{},
+			want:      "WHERE order_intent_id = " + expression,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, newVariableInterpolator(tt.variables, nil).interpolate(tt.query))
 		})
 	}
 }
@@ -645,28 +878,70 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			expected: "increase(requests[1h30m])",
 		},
 		{
+			name:     "range_keeps_seconds",
+			query:    "increase(requests[$__range])",
+			duration: 90 * time.Second,
+			expected: "increase(requests[1m30s])",
+		},
+		{
+			name:     "range_keeps_minutes_and_seconds",
+			query:    "increase(requests[$__range])",
+			duration: 2*time.Hour + 30*time.Minute + 45*time.Second,
+			expected: "increase(requests[2h30m45s])",
+		},
+		{
+			name:     "interval_matches_interval_ms",
+			query:    "rate(requests[$__interval]) * $__interval_ms",
+			duration: 3 * time.Hour,
+			expected: "rate(requests[2m]) * 120000", // 10800/100 = 108s, rounded to 2m
+		},
+		{
 			name:     "rate_interval",
 			query:    "rate(requests[$__rate_interval])",
 			duration: time.Hour,
 			expected: "rate(requests[1m])",
 		},
 		{
+			name:     "rate_interval_ms_not_corrupted_by_rate_interval",
+			query:    "rate(x[$__rate_interval]) * $__rate_interval_ms",
+			duration: time.Hour,
+			expected: "rate(x[1m]) * 60000",
+		},
+		{
+			name:     "rate_interval_ms_braced",
+			query:    "timestamp(up) - ${__rate_interval_ms}",
+			duration: time.Hour,
+			expected: "timestamp(up) - 60000",
+		},
+		{
 			name:     "interval_1_hour",
 			query:    "rate(requests[$__interval])",
 			duration: time.Hour,
-			expected: "rate(requests[36s])", // 3600/100 = 36s
+			expected: "rate(requests[30s])", // 3600/100 = 36s, rounded to 30s
 		},
 		{
 			name:     "interval_braced",
 			query:    "rate(requests[${__interval}])",
 			duration: time.Hour,
-			expected: "rate(requests[36s])",
+			expected: "rate(requests[30s])",
+		},
+		{
+			name:     "auto",
+			query:    `count_over_time({job="x"}[$__auto])`,
+			duration: time.Hour,
+			expected: `count_over_time({job="x"}[30s])`,
+		},
+		{
+			name:     "auto_braced",
+			query:    `count_over_time({job="x"}[${__auto}])`,
+			duration: time.Hour,
+			expected: `count_over_time({job="x"}[30s])`,
 		},
 		{
 			name:     "interval_ms",
 			query:    "timestamp(up) - $__interval_ms",
 			duration: time.Hour,
-			expected: "timestamp(up) - 36000", // 36s = 36000ms
+			expected: "timestamp(up) - 30000", // 30s = 30000ms
 		},
 		{
 			name:     "multiple_macros",
@@ -681,10 +956,10 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			expected: "up{job='api'}",
 		},
 		{
-			name:     "short_duration_floor_to_1s",
+			name:     "short_duration_sub_second",
 			query:    "rate(x[$__interval])",
-			duration: 30 * time.Second, // 30s/100 = 0.3s, floors to 1s
-			expected: "rate(x[1s])",
+			duration: 30 * time.Second, // 30s/100 = 0.3s, rounded to 200ms
+			expected: "rate(x[200ms])",
 		},
 		{
 			name:     "range_s_macro",
@@ -726,7 +1001,7 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 			name:     "interval_ms_braced",
 			query:    "timestamp(up) - ${__interval_ms}",
 			duration: time.Hour,
-			expected: "timestamp(up) - 36000",
+			expected: "timestamp(up) - 30000",
 		},
 	}
 
@@ -734,10 +1009,109 @@ func TestSubstituteGrafanaMacros(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
 			end := start.Add(tt.duration)
-			result := substituteGrafanaMacros(tt.query, start, end)
+			result := substituteGrafanaMacros(tt.query, start, end, intervalOptions{})
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// Expected values come from Grafana's rangeutil.calculateInterval with 100 data points.
+func TestSubstituteGrafanaMacrosRoundsInterval(t *testing.T) {
+	day := 24 * time.Hour
+	tests := []struct {
+		span     time.Duration
+		interval string
+		ms       string
+	}{
+		{30 * time.Second, "200ms", "200"},
+		{5 * time.Minute, "2s", "2000"},
+		{14 * time.Minute, "10s", "10000"},
+		{30 * time.Minute, "20s", "20000"},
+		{time.Hour, "30s", "30000"},
+		{3 * time.Hour, "2m", "120000"},
+		{6 * time.Hour, "5m", "300000"},
+		{day, "15m", "900000"},
+		{7 * day, "2h", "7200000"},
+		{30 * day, "6h", "21600000"},
+		{90 * day, "12h", "43200000"},
+		{365 * day, "1d", "86400000"},
+		{730 * day, "7d", "604800000"},
+	}
+	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.span.String(), func(t *testing.T) {
+			got := substituteGrafanaMacros("$__interval ${__interval_ms} $__auto", start, start.Add(tt.span), intervalOptions{})
+			assert.Equal(t, tt.interval+" "+tt.ms+" "+tt.interval, got)
+		})
+	}
+}
+
+// Expected values come from Grafana's rangeutil.calculateInterval(range, maxDataPoints, lowerLimit).
+func TestSubstituteGrafanaMacrosIntervalOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		span    time.Duration
+		options intervalOptions
+		want    string
+	}{
+		{"fallback data points", time.Hour, intervalOptions{}, "30s 30000"},
+		{"panel max data points", time.Hour, intervalOptions{maxDataPoints: 1000}, "5s 5000"},
+		{"panel max data points short range", 5 * time.Minute, intervalOptions{maxDataPoints: 1000}, "200ms 200"},
+		{"min interval raises", time.Hour, intervalOptions{minInterval: "1m"}, "1m 60000"},
+		{"min interval below calculated", time.Hour, intervalOptions{minInterval: "10s"}, "30s 30000"},
+		{"prometheus 15s on 5m", 5 * time.Minute, intervalOptions{minInterval: "15s"}, "15s 15000"},
+		{"both", time.Hour, intervalOptions{maxDataPoints: 1000, minInterval: "10s"}, "10s 10000"},
+	}
+	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := substituteGrafanaMacros("$__interval ${__interval_ms}", start, start.Add(tt.span), tt.options)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// Precedence follows SceneQueryRunner.prepareRequests: the panel's min interval,
+// else the datasource's (Prometheus timeInterval or 15s, SQL timeInterval or 1m).
+func TestIntervalOptionsLowerLimit(t *testing.T) {
+	tests := []struct {
+		name          string
+		panelInterval string
+		dsType        string
+		jsonData      interface{}
+		want          string
+	}{
+		{"prometheus default", "", "prometheus", nil, "15s"},
+		{"prometheus scrape interval", "", "prometheus", map[string]interface{}{"timeInterval": "30s"}, "30s"},
+		{"panel beats datasource", "1m", "prometheus", map[string]interface{}{"timeInterval": "30s"}, "1m"},
+		{"panel variable", "$min", "prometheus", nil, "2m"},
+		{"postgres default", "", "grafana-postgresql-datasource", nil, "1m"},
+		{"mysql time interval", "", "mysql", map[string]interface{}{"timeInterval": "5m"}, "5m"},
+		{"mssql default", "", "mssql", nil, "1m"},
+		{"loki has none", "", "loki", map[string]interface{}{"timeInterval": "30s"}, ""},
+		{"cloudwatch has none", "", "cloudwatch", nil, ""},
+		{"stackdriver is not prometheus", "", "stackdriver", nil, ""},
+		{"panel on loki", "10s", "loki", nil, "10s"},
+	}
+	interp := newVariableInterpolator(templateVariableValues{"min": {"2m"}}, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := intervalOptions{maxDataPoints: 500, minInterval: tt.panelInterval}.withLowerLimit(interp, tt.dsType, tt.jsonData)
+			assert.Equal(t, intervalOptions{maxDataPoints: 500, minInterval: tt.want}, got)
+		})
+	}
+}
+
+func TestPanelIntervalOptions(t *testing.T) {
+	v1 := map[string]interface{}{"maxDataPoints": float64(1000), "interval": "1m"}
+	assert.Equal(t, intervalOptions{maxDataPoints: 1000, minInterval: "1m"}, panelIntervalOptions(v1))
+
+	v2 := map[string]interface{}{"data": map[string]interface{}{"spec": map[string]interface{}{
+		"queryOptions": map[string]interface{}{"maxDataPoints": float64(800), "interval": "30s"},
+	}}}
+	assert.Equal(t, intervalOptions{maxDataPoints: 800, minInterval: "30s"}, panelIntervalOptionsV2(v2))
+
+	assert.Equal(t, intervalOptions{}, panelIntervalOptions(map[string]interface{}{"maxDataPoints": nil}))
 }
 
 func TestFormatPrometheusDuration(t *testing.T) {
@@ -753,6 +1127,10 @@ func TestFormatPrometheusDuration(t *testing.T) {
 		{"hours_only", 3 * time.Hour, "3h"},
 		{"hours_and_minutes", 90 * time.Minute, "1h30m"},
 		{"complex", 2*time.Hour + 15*time.Minute, "2h15m"},
+		{"minutes_and_seconds", 90 * time.Second, "1m30s"},
+		{"hours_minutes_and_seconds", time.Hour + 30*time.Second, "1h30s"},
+		{"over_a_day", 25*time.Hour + 36*time.Second, "25h36s"},
+		{"zero", 0, "0s"},
 	}
 
 	for _, tt := range tests {
@@ -797,18 +1175,18 @@ func TestIsEmptyPanelResult(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "nil ClickHouseQueryResult",
-			results:  (*ClickHouseQueryResult)(nil),
+			name:     "nil sql.SQLQueryResult",
+			results:  (*sql.SQLQueryResult)(nil),
 			expected: true,
 		},
 		{
-			name:     "empty ClickHouseQueryResult",
-			results:  &ClickHouseQueryResult{Rows: []map[string]interface{}{}},
+			name:     "empty sql.SQLQueryResult",
+			results:  &sql.SQLQueryResult{Rows: []map[string]interface{}{}},
 			expected: true,
 		},
 		{
-			name: "non-empty ClickHouseQueryResult",
-			results: &ClickHouseQueryResult{
+			name: "non-empty sql.SQLQueryResult",
+			results: &sql.SQLQueryResult{
 				Rows: []map[string]interface{}{{"value": 1}},
 			},
 			expected: false,
@@ -831,18 +1209,18 @@ func TestIsEmptyPanelResult(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "nil SQLQueryResult",
-			results:  (*SQLQueryResult)(nil),
+			name:     "nil sql.SQLQueryResult",
+			results:  (*sql.SQLQueryResult)(nil),
 			expected: true,
 		},
 		{
-			name:     "empty SQLQueryResult",
-			results:  &SQLQueryResult{Rows: []map[string]interface{}{}},
+			name:     "empty sql.SQLQueryResult",
+			results:  &sql.SQLQueryResult{Rows: []map[string]interface{}{}},
 			expected: true,
 		},
 		{
-			name: "non-empty SQLQueryResult",
-			results: &SQLQueryResult{
+			name: "non-empty sql.SQLQueryResult",
+			results: &sql.SQLQueryResult{
 				Rows: []map[string]interface{}{{"count": 42}},
 			},
 			expected: false,
@@ -869,10 +1247,10 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			datasourceType: "prometheus",
 			query:          "rate(http_requests[5m])",
 			containsHints: []string{
-				"No data found",
-				"Time range",
+				"Prometheus query returned no data",
+				"time range",
 				"list_prometheus_metric_names",
-				"Label selectors",
+				"target health",
 			},
 		},
 		{
@@ -880,8 +1258,8 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			datasourceType: "loki",
 			query:          "{job=\"app\"} |= \"error\"",
 			containsHints: []string{
-				"No data found",
-				"Time range",
+				"Loki query returned no log entries",
+				"time range",
 				"list_loki_label_names",
 				"query_loki_stats",
 			},
@@ -893,7 +1271,7 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			containsHints: []string{
 				"No data found",
 				"Time range",
-				"describe_clickhouse_table",
+				"describe_sql_table",
 				"COUNT(*)",
 			},
 		},
@@ -938,6 +1316,27 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 				"SELECT permission",
 			},
 		},
+		{
+			name:           "postgres hints (modern identifier)",
+			datasourceType: "grafana-postgresql-datasource",
+			query:          "SELECT COUNT(*) FROM revenue WHERE $__timeFilter(ts)",
+			containsHints: []string{
+				"No data found",
+				"Time range",
+				"COUNT(*)",
+				"PostgreSQL",
+				"search_path",
+			},
+		},
+		{
+			name:           "postgres hints (legacy identifier)",
+			datasourceType: "postgres",
+			query:          "SELECT COUNT(*) FROM revenue WHERE $__timeFilter(ts)",
+			containsHints: []string{
+				"No data found",
+				"PostgreSQL",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -950,6 +1349,46 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			for _, expected := range tt.containsHints {
 				assert.Contains(t, hintsStr, expected)
 			}
+		})
+	}
+}
+
+func TestGeneratePanelQueryHintsGroups(t *testing.T) {
+	for _, tc := range []struct {
+		datasource, query string
+		want              []string
+	}{
+		{
+			datasource: "prometheus",
+			query:      "up",
+			want: []string{
+				"The Prometheus query returned no data for the specified time range.",
+				"Possible causes:",
+				"- The metric, labels, time range or scrape target may have no data.",
+				"Try:",
+				"- Check metrics/labels with list_prometheus_metric_names and list_prometheus_label_values.",
+				"- Expand the time range to the last 6h or 24h.",
+				"- Check scrape target health with up{job=\"...\"}.",
+				"- Query executed: up",
+			},
+		},
+		{
+			datasource: "loki",
+			query:      `{job="app"}`,
+			want: []string{
+				"The Loki query returned no log entries for the specified time range.",
+				"Possible causes:",
+				"- The stream selector, time range or filters may not match available logs.",
+				"Try:",
+				"- Check labels with list_loki_label_names and list_loki_label_values.",
+				"- Check the stream selector with query_loki_stats.",
+				"- Expand the time range to the last 6h or 24h.",
+				`- Query executed: {job="app"}`,
+			},
+		},
+	} {
+		t.Run(tc.datasource, func(t *testing.T) {
+			require.Equal(t, tc.want, generatePanelQueryHints(tc.datasource, tc.query))
 		})
 	}
 }
@@ -1003,6 +1442,8 @@ func TestNormalizeDatasourceType(t *testing.T) {
 		{"prometheus", "prometheus"},
 		{"Prometheus", "prometheus"},
 		{"PROMETHEUS", "prometheus"},
+		{"grafana-amazonprometheus-datasource", "prometheus"},
+		{"grafana-azureprometheus-datasource", "prometheus"},
 		{"loki", "loki"},
 		{"Loki", "loki"},
 		{"cloudwatch", "cloudwatch"},
@@ -1017,6 +1458,10 @@ func TestNormalizeDatasourceType(t *testing.T) {
 		{"MSSQL", "mssql"},
 		{"bigquery", "bigquery"},
 		{"BigQuery", "bigquery"},
+		{"postgres", "postgres"},
+		{"Postgres", "postgres"},
+		{"grafana-postgresql-datasource", "postgres"},
+		{"Grafana-PostgreSQL-Datasource", "postgres"},
 		{"some-other-type", "some-other-type"},
 		{"", ""},
 	}
@@ -1163,11 +1608,15 @@ func TestExtractPanelInfo_BigQuery(t *testing.T) {
 
 func TestExecuteSQLPanelQuery_NilTarget(t *testing.T) {
 	// A missing raw target should produce a clear error rather than panicking.
-	_, err := executeSQLPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, BigQueryDatasourceType)
+	_, err := executeSQLPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.BigQueryDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 
-	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, MSSQLDatasourceType)
+	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.MSSQLDatasourceType)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SQL panel target not available")
+
+	_, err = executeSQLPanelQuery(t.Context(), "postgres-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.PostgresDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 }
@@ -1175,8 +1624,12 @@ func TestExecuteSQLPanelQuery_NilTarget(t *testing.T) {
 func TestDefaultSQLFormat(t *testing.T) {
 	// BigQuery's sqlds query model takes a numeric format enum, MSSQL's sqleng model
 	// unmarshals format into a string and errors on a number.
-	assert.Equal(t, SQLFormatTable, defaultSQLFormat(BigQueryDatasourceType))
-	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(MSSQLDatasourceType))
+	assert.Equal(t, SQLFormatTable, defaultSQLFormat(sql.BigQueryDatasourceType))
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(sql.MSSQLDatasourceType))
+	// PostgreSQL is also sqleng-based, so it uses the string table format under
+	// both its modern and legacy datasource identifiers.
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(sql.PostgresDatasourceType))
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(sql.PostgresLegacyDatasourceType))
 }
 
 func TestExtractPanelInfoMSSQL(t *testing.T) {
@@ -1204,6 +1657,49 @@ func TestExtractPanelInfoMSSQL(t *testing.T) {
 	assert.Equal(t, "mssql", info.DatasourceType)
 	assert.Contains(t, info.Query, "$__timeFrom()")
 	assert.Equal(t, "table", info.RawTarget["format"])
+}
+
+func TestExtractPanelInfoPostgres(t *testing.T) {
+	// PostgreSQL panels carry their statement in rawSql like the other SQL
+	// datasources, and the raw target must survive so datasource-specific fields
+	// (e.g. format) and the format override are preserved.
+	tests := []struct {
+		name       string
+		dsType     string
+		wantDSType string
+	}{
+		{name: "modern identifier", dsType: "grafana-postgresql-datasource", wantDSType: "grafana-postgresql-datasource"},
+		{name: "legacy identifier", dsType: "postgres", wantDSType: "postgres"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			panel := map[string]interface{}{
+				"id":    91,
+				"title": "Reconciliation",
+				"datasource": map[string]interface{}{
+					"uid":  "postgres-uid",
+					"type": tt.dsType,
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId":  "A",
+						"rawSql": "SELECT $__timeGroup(ts, '1h') AS t, count(*) FROM checks WHERE $__timeFilter(ts) GROUP BY 1",
+						"format": "table",
+					},
+				},
+			}
+
+			info, err := extractPanelInfo(panel, 0)
+			require.NoError(t, err)
+			assert.Equal(t, "postgres-uid", info.DatasourceUID)
+			assert.Equal(t, tt.wantDSType, info.DatasourceType)
+			assert.Contains(t, info.Query, "$__timeGroup(ts, '1h')")
+			assert.Contains(t, info.Query, "$__timeFilter(ts)")
+			// The raw target survives so the panel's saved format is preserved.
+			assert.Equal(t, "table", info.RawTarget["format"])
+		})
+	}
 }
 
 func TestSubstituteTemplateVariablesInMap(t *testing.T) {
@@ -1259,4 +1755,87 @@ func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 
 	assert.Equal(t, "my-cluster", result[0])
 	assert.Equal(t, "static-value", result[1])
+}
+
+// executeLokiAutoQuery runs a $__auto count query, expanded as runSinglePanelQuery does.
+func executeLokiAutoQuery(t *testing.T, server *httptest.Server, start, end string, options intervalOptions) error {
+	t.Helper()
+	from, err := parseTime(start)
+	require.NoError(t, err)
+	to, err := parseTime(end)
+	require.NoError(t, err)
+	query := substituteGrafanaMacros(`sum(count_over_time({app="a"}[$__auto]))`, from, to, options)
+	_, err = executeLokiQuery(enforceTestCtx(server, false), "loki", query, start, end, options)
+	return err
+}
+
+// Grafana replaces $__auto with the step of a Loki range query, so the step sent to Loki must
+// match the value substituted for $__auto. Otherwise Loki falls back to range/250 and
+// count_over_time windows overlap, counting each line more than once.
+func TestExecuteLokiQuerySendsAutoAsStep(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z", intervalOptions{})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[30s]))`, q["expr"])
+	assert.Equal(t, "30s", q["step"], "step must equal $__auto")
+}
+
+// Over 3h the interval rounds to 2m; the step must match it.
+func TestExecuteLokiQueryStepMatchesFormattedAuto(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T13:00:00Z", intervalOptions{})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[2m]))`, q["expr"])
+	assert.Equal(t, "120s", q["step"], "step must equal $__auto")
+}
+
+// Over 24h the interval rounds to 15m; the step must match it.
+func TestExecuteLokiQueryStepMatchesFormattedAuto24h(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	err := executeLokiAutoQuery(t, server, "2024-01-15T00:00:00Z", "2024-01-16T00:00:00Z", intervalOptions{})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[15m]))`, q["expr"])
+	assert.Equal(t, "900s", q["step"], "step must equal $__auto")
+}
+
+// Under 150s the interval is sub-second; Grafana's Loki backend sends it as the step unchanged.
+func TestExecuteLokiQuerySubSecondStep(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T10:00:30Z", intervalOptions{})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[200ms]))`, q["expr"])
+	assert.Equal(t, "200ms", q["step"], "step must equal $__auto")
+}
+
+// The panel's max data points shrink $__auto, and the step follows it.
+func TestExecuteLokiQueryStepFollowsPanelMaxDataPoints(t *testing.T) {
+	server, payload := lokiQueryStub()
+	defer server.Close()
+
+	err := executeLokiAutoQuery(t, server, "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z", intervalOptions{maxDataPoints: 1000})
+	require.NoError(t, err)
+	q := (*payload)["queries"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, `sum(count_over_time({app="a"}[5s]))`, q["expr"])
+	assert.Equal(t, "5s", q["step"], "step must equal $__auto")
+}
+
+func TestSubstituteGrafanaMacrosPreservesLongerNames(t *testing.T) {
+	start := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	for _, name := range []string{"__interval_env", "__range_bucket", "__auto_mode", "__rate_interval_custom", "__interval_ms2", "__interval_ENV"} {
+		query := "$" + name + " ${" + name + "} $__interval"
+		assert.Equal(t, "$"+name+" ${"+name+"} 30s", substituteGrafanaMacros(query, start, end, intervalOptions{}))
+	}
 }

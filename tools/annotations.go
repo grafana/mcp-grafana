@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 
 	"github.com/grafana/grafana-openapi-client-go/client/annotations"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -58,11 +57,12 @@ var GetAnnotationsTool = mcpgrafana.MustTool(
 	"get_annotations",
 	"Fetch Grafana annotations using filters such as dashboard UID, time range and tags.",
 	getAnnotations,
-	mcp.WithTitleAnnotation("Get Annotations"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get Annotations"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:read"),
 )
 
 // CreateAnnotationInput creates a new annotation, optionally in Graphite format.
@@ -93,7 +93,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		}
 		req := &models.PostGraphiteAnnotationsCmd{
 			What: args.What,
-			When: args.When,
+			When: args.When / 1000, // the Graphite endpoint takes epoch seconds
 			Tags: args.Tags,
 			Data: args.GraphiteData,
 		}
@@ -134,11 +134,12 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 	"create_annotation",
 	"Create a new annotation on a dashboard or panel. Set format to 'graphite' and provide 'what' for Graphite-format annotations.",
 	createAnnotation,
-	mcp.WithTitleAnnotation("Create Annotation"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create Annotation"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:create"),
 )
 
 // UpdateAnnotationInput updates only the provided fields of an annotation (PATCH semantics).
@@ -187,25 +188,73 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"update_annotation",
 	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged.",
 	updateAnnotation,
-	mcp.WithTitleAnnotation("Update Annotation"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Update Annotation"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Grafana finds the annotation through a search filtered by
+	// annotations:read before checking annotations:write; without read it
+	// answers 404.
+	mcpgrafana.RequiresPermissions("annotations:read", "annotations:write"),
+)
+
+// DeleteAnnotationInput identifies the annotation to delete.
+type DeleteAnnotationInput struct {
+	ID int64 `json:"id" jsonschema:"required,description=Annotation ID to delete"`
+}
+
+// deleteAnnotation permanently removes an annotation by ID.
+func deleteAnnotation(ctx context.Context, args DeleteAnnotationInput) (*annotations.DeleteAnnotationByIDOK, error) {
+	// The jsonschema "required" is advisory — nothing rejects a call that omits
+	// id, and Grafana answers the resulting /api/annotations/0 with a permission
+	// error that reads as a real access problem. Say what is actually wrong.
+	if args.ID <= 0 {
+		return nil, fmt.Errorf("delete annotation: id is required and must be positive, got %d", args.ID)
+	}
+
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	id := strconv.FormatInt(args.ID, 10)
+
+	resp, err := c.Annotations.DeleteAnnotationByIDWithParams(
+		annotations.NewDeleteAnnotationByIDParamsWithContext(ctx).WithAnnotationID(id),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("delete annotation: %w", err)
+	}
+	return resp, nil
+}
+
+var DeleteAnnotationTool = mcpgrafana.MustTool(
+	"delete_annotation",
+	"Permanently delete an annotation by ID. The annotation cannot be recovered afterwards.",
+	deleteAnnotation,
+	mcpgrafana.WithTitleAnnotation("Delete Annotation"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:delete"),
 )
 
 // GetAnnotationTagsInput defines filters for retrieving annotation tags.
 type GetAnnotationTagsInput struct {
 	Tag   *string `json:"tag,omitempty"   jsonschema:"description=Optional filter by tag name"`
-	Limit *string `json:"limit,omitempty" jsonschema:"description=Max results\\, default 100"`
+	Limit *int64  `json:"limit,omitempty" jsonschema:"minimum=1,description=Max results\\, default 100"`
 }
 
 func getAnnotationTags(ctx context.Context, args GetAnnotationTagsInput) (*annotations.GetAnnotationTagsOK, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
+	var limitStr *string
+	if args.Limit != nil {
+		s := strconv.FormatInt(*args.Limit, 10)
+		limitStr = &s
+	}
+
 	req := annotations.GetAnnotationTagsParams{
 		Tag:     args.Tag,
-		Limit:   args.Limit,
+		Limit:   limitStr,
 		Context: ctx,
 	}
 
@@ -221,18 +270,20 @@ var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	"get_annotation_tags",
 	"Returns annotation tags with optional filtering by tag name. Only the provided filters are applied.",
 	getAnnotationTags,
-	mcp.WithTitleAnnotation("Get Annotation Tags"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get Annotation Tags"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("annotations:read"),
 )
 
-func AddAnnotationTools(mcp *server.MCPServer, enableWriteTools bool) {
-	GetAnnotationsTool.Register(mcp)
+func AddAnnotationTools(s *mcp.Server, enableWriteTools bool) {
+	GetAnnotationsTool.Register(s)
 	if enableWriteTools {
-		CreateAnnotationTool.Register(mcp)
-		UpdateAnnotationTool.Register(mcp)
+		CreateAnnotationTool.Register(s)
+		UpdateAnnotationTool.Register(s)
+		DeleteAnnotationTool.Register(s)
 	}
-	GetAnnotationTagsTool.Register(mcp)
+	GetAnnotationTagsTool.Register(s)
 }

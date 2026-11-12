@@ -7,12 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // Helper function to create string pointers
@@ -73,11 +74,13 @@ func TestGenerateDeeplink(t *testing.T) {
 
 		result, err := generateDeeplink(ctx, params)
 		require.NoError(t, err)
-		assert.Contains(t, result, "http://localhost:3000/explore?left=")
+		assert.Contains(t, result, "http://localhost:3000/explore?")
+		assert.Contains(t, result, "schemaVersion=1")
+		assert.Contains(t, result, "panes=")
 		assert.Contains(t, result, "prometheus-uid")
 	})
 
-	t.Run("Explore deeplink with time range inside left JSON", func(t *testing.T) {
+	t.Run("Explore deeplink with time range inside the pane", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType:  "explore",
 			DatasourceUID: stringPtr("prometheus-uid"),
@@ -93,18 +96,24 @@ func TestGenerateDeeplink(t *testing.T) {
 		u, err := url.Parse(result)
 		require.NoError(t, err)
 
-		leftRaw := u.Query().Get("left")
-		require.NotEmpty(t, leftRaw)
+		panesRaw := u.Query().Get("panes")
+		require.NotEmpty(t, panesRaw)
+		assert.Equal(t, "1", u.Query().Get("schemaVersion"))
+		assert.Empty(t, u.Query().Get("left"), "the pre-10.2 left param must not be emitted")
 
-		// Range must be inside `left`, not as top-level URL params.
-		assert.Contains(t, leftRaw, `"range"`)
-		assert.Contains(t, leftRaw, "now-1h")
-		assert.Contains(t, leftRaw, "now")
+		// Range must be inside the pane, not as top-level URL params.
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(panesRaw), &panes))
+		require.Len(t, panes, 1)
+		pane := panes["a"]
+		require.NotNil(t, pane)
+		assert.Equal(t, "prometheus-uid", pane["datasource"])
+		assert.Equal(t, map[string]any{"from": "now-1h", "to": "now"}, pane["range"])
 		assert.Empty(t, u.Query().Get("from"), "from should not be a top-level URL param for explore")
 		assert.Empty(t, u.Query().Get("to"), "to should not be a top-level URL param for explore")
 
-		// There must be exactly one `left` param.
-		assert.Len(t, u.Query()["left"], 1)
+		// There must be exactly one `panes` param.
+		assert.Len(t, u.Query()["panes"], 1)
 	})
 
 	t.Run("Explore deeplink with queries", func(t *testing.T) {
@@ -123,10 +132,69 @@ func TestGenerateDeeplink(t *testing.T) {
 		u, err := url.Parse(result)
 		require.NoError(t, err)
 
-		leftRaw := u.Query().Get("left")
-		assert.Contains(t, leftRaw, `"queries"`)
-		assert.Contains(t, leftRaw, `"expr"`)
-		assert.Contains(t, leftRaw, "up")
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+		queries, ok := panes["a"]["queries"].([]any)
+		require.True(t, ok)
+		require.Len(t, queries, 1)
+		q := queries[0].(map[string]any)
+		assert.Equal(t, "A", q["refId"])
+		assert.Equal(t, "up", q["expr"])
+		// A query with no explicit datasource inherits the pane's uid, which
+		// the pane query format expects.
+		assert.Equal(t, map[string]any{"uid": "prometheus-uid"}, q["datasource"])
+	})
+
+	t.Run("Explore deeplink preserves a datasource-specific query model", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType:  "explore",
+			DatasourceUID: stringPtr("gcp-uid"),
+			Queries: []map[string]interface{}{
+				{
+					"refId":      "A",
+					"queryType":  "promQL",
+					"datasource": map[string]string{"type": "stackdriver", "uid": "gcp-uid"},
+				},
+			},
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+		q := panes["a"]["queries"].([]any)[0].(map[string]any)
+		assert.Equal(t, "promQL", q["queryType"], "queryType must survive into the URL")
+		assert.Equal(t, map[string]any{"type": "stackdriver", "uid": "gcp-uid"}, q["datasource"],
+			"a caller-supplied datasource, including its plugin type, must be preserved")
+	})
+
+	t.Run("Explore deeplink replaces a null or empty query datasource", func(t *testing.T) {
+		for name, ds := range map[string]interface{}{"null": nil, "empty": ""} {
+			t.Run(name, func(t *testing.T) {
+				params := GenerateDeeplinkParams{
+					ResourceType:  "explore",
+					DatasourceUID: stringPtr("prometheus-uid"),
+					Queries: []map[string]interface{}{
+						{"refId": "A", "datasource": ds},
+					},
+				}
+
+				result, err := generateDeeplink(ctx, params)
+				require.NoError(t, err)
+				u, err := url.Parse(result)
+				require.NoError(t, err)
+
+				var panes map[string]map[string]any
+				require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+				q := panes["a"]["queries"].([]any)[0].(map[string]any)
+				assert.Equal(t, map[string]any{"uid": "prometheus-uid"}, q["datasource"],
+					"a null or empty datasource must be replaced, not propagated: Grafana would "+
+						"resolve it to the default datasource and show the wrong data")
+			})
+		}
 	})
 
 	t.Run("With time range on dashboard", func(t *testing.T) {
@@ -181,6 +249,36 @@ func TestGenerateDeeplink(t *testing.T) {
 		result, err := generateDeeplink(ctxWithPublicURL, params)
 		require.NoError(t, err)
 		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+	})
+
+	t.Run("Trailing slash on base URL does not produce double slash", func(t *testing.T) {
+		// Embedders (e.g. the hosted Cloud MCP server) set PublicURL directly
+		// from a stack URL that may end in "/".
+		withPublic := mcpgrafana.WithGrafanaClient(
+			mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://internal:3000"}),
+			&mcpgrafana.GrafanaClient{PublicURL: "https://example.grafana.net/"},
+		)
+		withConfig := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "https://example.grafana.net/"})
+
+		for name, ctx := range map[string]context.Context{"public URL": withPublic, "config URL": withConfig} {
+			t.Run(name, func(t *testing.T) {
+				panelID := 1
+				result, err := generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType: "panel",
+					DashboardUID: stringPtr("abc123"),
+					PanelID:      &panelID,
+				})
+				require.NoError(t, err)
+				assert.Equal(t, "https://example.grafana.net/d/abc123?viewPanel=1", result)
+
+				result, err = generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType:  "explore",
+					DatasourceUID: stringPtr("ds1"),
+				})
+				require.NoError(t, err)
+				assert.True(t, strings.HasPrefix(result, "https://example.grafana.net/explore?"), result)
+			})
+		}
 	})
 
 	t.Run("Falls back to config URL when public URL is empty", func(t *testing.T) {
@@ -524,9 +622,28 @@ func TestShortenURL(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "missing url field")
 	})
+
+	t.Run("Strips sub-path prefix so /goto does not double it", func(t *testing.T) {
+		var capturedPath string
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			capturedPath = body["path"]
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"uid":"sub123","url":"https://grafana.example.com/grafana/goto/sub123"}`))
+		}))
+
+		ctx := newShortenTestContext(ts.URL, "https://grafana.example.com/grafana", "")
+
+		result, err := shortenURL(ctx, "https://grafana.example.com/grafana/d/dash1?from=now-3h&to=now")
+		require.NoError(t, err)
+		assert.Equal(t, "d/dash1?from=now-3h&to=now", capturedPath)
+		assert.Equal(t, "https://grafana.example.com/grafana/goto/sub123", result)
+	})
 }
 
-func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
+func TestGenerateDeeplink_Shorten(t *testing.T) {
 	t.Run("Returns shortened URL when shortening succeeds", func(t *testing.T) {
 		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, http.MethodPost, r.Method)
@@ -546,7 +663,7 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 		assert.Equal(t, "https://grafana.example.com/goto/abc123", result)
 	})
 
-	t.Run("Falls back to long URL when shortening fails", func(t *testing.T) {
+	t.Run("Returns error with long URL when shortening fails", func(t *testing.T) {
 		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -560,8 +677,11 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 			DashboardUID: stringPtr("abc123"),
 			Shorten:      true,
 		})
-		require.NoError(t, err)
-		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+		require.Error(t, err)
+		assert.Empty(t, result)
+		assert.Contains(t, err.Error(), "failed to shorten deeplink")
+		assert.Contains(t, err.Error(), "https://grafana.example.com/d/abc123")
+		assert.Contains(t, err.Error(), "status 403")
 	})
 
 	t.Run("Read-only mode ignores shorten and returns long URL", func(t *testing.T) {
@@ -637,18 +757,23 @@ func TestToGrafanaTimeParam(t *testing.T) {
 		name     string
 		input    string
 		expected string
+		end      bool
 	}{
-		{"relative now-1h", "now-1h", "now-1h"},
-		{"relative now", "now", "now"},
-		{"epoch milliseconds", "1777380300000", "1777380300000"},
-		{"ISO 8601 UTC", "2026-04-28T12:45:00Z", "1777380300000"},
-		{"ISO 8601 with offset", "2026-04-28T13:45:00+01:00", "1777380300000"},
-		{"ISO 8601 with ms", "2026-04-28T12:45:00.000Z", "1777380300000"},
-		{"unrecognized format passthrough", "yesterday", "yesterday"},
+		{"relative now-1h", "now-1h", "now-1h", false},
+		{"relative now", "now", "now", false},
+		{"epoch milliseconds", "1777380300000", "1777380300000", false},
+		{"ISO 8601 UTC", "2026-04-28T12:45:00Z", "1777380300000", false},
+		{"ISO 8601 with offset", "2026-04-28T13:45:00+01:00", "1777380300000", false},
+		{"ISO 8601 with ms", "2026-04-28T12:45:00.000Z", "1777380300000", false},
+		{"date-only start", "2026-04-28", "1777334400000", false},
+		{"date-only end resolves to end of day", "2026-04-28", "1777420799999", true},
+		{"naive datetime as UTC", "2026-04-28T12:45:00", "1777380300000", false},
+		{"naive datetime with fraction as UTC", "2026-04-28T12:45:00.500", "1777380300500", false},
+		{"unrecognized format passthrough", "yesterday", "yesterday", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, toGrafanaTimeParam(tt.input))
+			assert.Equal(t, tt.expected, toGrafanaTimeParam(tt.input, tt.end))
 		})
 	}
 }
@@ -697,4 +822,100 @@ func TestGenerateDeeplink_ExploreISO8601TimeRange(t *testing.T) {
 	assert.Contains(t, result, "1777380300000")
 	assert.Contains(t, result, "1777382100000")
 	assert.NotContains(t, result, "2026-04-28")
+}
+
+func TestSupportsExplorePanes(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"10.2.0", true},
+		{"10.2.3", true},
+		{"10.3.0", true},
+		{"11.0.0", true},
+		{"12.1.0", true},
+		{"10.1.9", false},
+		{"10.0.0", false},
+		{"9.5.21", false},
+		{"9.0.0", false},
+		{"10.2.0-64123pre", true},
+		{"10.1.0-64123pre", false},
+		{"v11.0.0", true},
+		{"10", false},
+		{"11", true},
+		// Unknown versions keep the pane format: GrafanaVersion fails soft, so
+		// an unreadable settings endpoint must not downgrade every link.
+		{"", true},
+		{"unknown", true},
+		{"10.x", true},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			assert.Equal(t, tc.want, supportsExplorePanes(tc.version))
+		})
+	}
+}
+
+// newVersionedGrafanaContext returns a context pointing at a Grafana whose
+// frontend settings report the given version. Each call gets its own server
+// URL, which is also the version cache key, so subtests stay isolated.
+func newVersionedGrafanaContext(t *testing.T, version string) context.Context {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/frontend/settings" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"buildInfo": {"version": "` + version + `"}}`))
+	}))
+	t.Cleanup(ts.Close)
+	return mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+}
+
+func TestGenerateDeeplink_ExploreFormatByGrafanaVersion(t *testing.T) {
+	params := GenerateDeeplinkParams{
+		ResourceType:  "explore",
+		DatasourceUID: stringPtr("prometheus-uid"),
+		Queries: []map[string]interface{}{
+			{"refId": "A", "expr": "up"},
+		},
+		TimeRange: &TimeRange{From: "now-1h", To: "now"},
+	}
+
+	t.Run("10.2 and later use panes", func(t *testing.T) {
+		result, err := generateDeeplink(newVersionedGrafanaContext(t, "12.1.0"), params)
+		require.NoError(t, err)
+
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+		assert.Empty(t, u.Query().Get("left"))
+		assert.Equal(t, "1", u.Query().Get("schemaVersion"))
+
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+		assert.Equal(t, "prometheus-uid", panes["a"]["datasource"])
+		assert.Equal(t, map[string]any{"from": "now-1h", "to": "now"}, panes["a"]["range"])
+	})
+
+	t.Run("before 10.2 falls back to left", func(t *testing.T) {
+		result, err := generateDeeplink(newVersionedGrafanaContext(t, "9.5.21"), params)
+		require.NoError(t, err)
+
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+		assert.Empty(t, u.Query().Get("panes"))
+		assert.Empty(t, u.Query().Get("schemaVersion"))
+
+		var left map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("left")), &left))
+		assert.Equal(t, "prometheus-uid", left["datasource"])
+		assert.Equal(t, map[string]any{"from": "now-1h", "to": "now"}, left["range"])
+
+		queries, ok := left["queries"].([]any)
+		require.True(t, ok)
+		require.Len(t, queries, 1)
+		// The legacy format takes queries verbatim: Grafana 9 resolves them
+		// against the top-level datasource.
+		assert.Equal(t, map[string]any{"refId": "A", "expr": "up"}, queries[0])
+	})
 }

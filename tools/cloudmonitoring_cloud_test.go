@@ -13,6 +13,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,13 +37,16 @@ func TestCloudMonitoringQuery(t *testing.T) {
 	ctx := createCloudMonitoringTestContext(t)
 
 	t.Run("range query", func(t *testing.T) {
-		result, err := queryPrometheus(ctx, QueryPrometheusParams{
+		params := QueryPrometheusParams{
 			DatasourceUID: cloudMonitoringTestDatasourceUID,
 			Expr:          `compute_googleapis_com:instance:cpu:utilization{monitored_resource="gce_instance"}`,
 			StartTime:     "now-1h",
 			EndTime:       "now",
 			StepSeconds:   60,
 			QueryType:     "range",
+		}
+		result, err := retryCloudTestOperation(ctx, t, func() (model.Value, error) {
+			return queryPrometheus(ctx, params)
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)

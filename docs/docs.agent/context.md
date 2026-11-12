@@ -95,7 +95,7 @@ Order articles from foundational to advanced configuration.
 ### Enable and disable tools
 
 - **Context:** README.md (Tool Configuration, --enabled-tools, --disable-*)
-- **Include:** --enabled-tools for runpanelquery, examples, clickhouse, cloudwatch, etc. --disable-* by category (including snapshot). Read-only mode (--disable-write).
+- **Include:** --enabled-tools for runpanelquery, examples, sql, cloudwatch, etc. --disable-* by category (including snapshot). Read-only mode (--disable-write). Query-free mode (--disable-query), and --enable-query for raw-SQL query tools under read-only mode.
 - **Exclude:** Full tool list (refer to README or introduction).
 
 ### Client TLS (Grafana connection)
@@ -121,7 +121,7 @@ Order articles from foundational to advanced configuration.
 Create one `introduction.md` article covering these key unique concepts:
 
 - **Model Context Protocol (MCP):** What MCP is and how the Grafana MCP server lets AI assistants and LLM clients talk to Grafana (dashboards, datasources, metrics, logs, traces, alerts, incidents).
-- **Tools and capabilities:** High-level categories (dashboards, datasources, Prometheus/Loki/others, alerting, incidents, OnCall, Sift, navigation, annotations, snapshots, rendering). Configurable tool set and context-window considerations.
+- **Tools and capabilities:** High-level categories (dashboards, datasources, Prometheus/Loki/others, alerting, incidents, OnCall, navigation, annotations, snapshots, rendering). Configurable tool set and context-window considerations.
 - **Authentication and RBAC:** Service account (or user) and Grafana RBAC; least-privilege vs Editor role; link to Grafana RBAC docs.
 
 - **Context:** README.md (Features, Requirements, RBAC sections)
@@ -181,10 +181,10 @@ Order articles from foundational to advanced use cases.
 - **Include:** Enabling runpanelquery, executing a panel query with time range and variable overrides.
 - **Exclude:** Writing new queries in Prometheus/Loki tools.
 
-### Use Grafana Incident and Sift
+### Use Grafana Incident
 
-- **Context:** README.md (Incidents, Sift Investigations)
-- **Include:** List/create/update incidents; list investigations, find error patterns, find slow requests. Viewer vs Editor role.
+- **Context:** README.md (Incidents)
+- **Include:** List/create/update incidents; add activities. Viewer vs Editor role.
 - **Exclude:** OnCall schedules (separate).
 
 ## Developer
@@ -206,5 +206,5 @@ Order articles from most popular language or framework to least.
 ### Observability (metrics and tracing)
 
 - **Context:** README.md (Observability)
-- **Include:** --metrics, --metrics-address; Prometheus metrics (mcp_server_operation_duration_seconds, etc.). OTEL env vars and tracing.
+- **Include:** --metrics, --metrics-address, --healthz-address; Prometheus metrics (mcp_server_operation_duration_seconds, etc.). OTEL env vars and tracing.
 - **Exclude:** Grafana datasource setup for metrics (out of scope).

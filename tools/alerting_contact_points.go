@@ -9,7 +9,8 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/alertmanager/config"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
 type ListContactPointsParams struct {
@@ -26,9 +27,34 @@ func (p ListContactPointsParams) validate() error {
 }
 
 type contactPointSummary struct {
-	UID  string  `json:"uid"`
-	Name string  `json:"name"`
-	Type *string `json:"type,omitempty"`
+	UID           string  `json:"uid"`
+	Name          string  `json:"name"`
+	Type          *string `json:"type,omitempty"`
+	DatasourceUID string  `json:"datasource_uid,omitempty"`
+}
+
+func createContactPoint(ctx context.Context, args ManageRoutingWriteParams) (*contactPointSummary, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	params := provisioning.NewPostContactpointsParams().WithContext(ctx).WithBody(&models.EmbeddedContactPoint{
+		Name:                  args.Name,
+		Type:                  &args.Type,
+		Settings:              args.Settings,
+		UID:                   args.UID,
+		DisableResolveMessage: args.DisableResolveMessage,
+	})
+	if args.DisableProvenance == nil || *args.DisableProvenance {
+		header := "true"
+		params.WithXDisableProvenance(&header)
+	}
+	response, err := c.Provisioning.PostContactpoints(params)
+	if err != nil {
+		return nil, fmt.Errorf("create contact point: %w", err)
+	}
+	return &contactPointSummary{
+		UID:  response.Payload.UID,
+		Name: response.Payload.Name,
+		Type: response.Payload.Type,
+	}, nil
 }
 
 func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
@@ -87,7 +113,7 @@ func applyLimitToContactPoints(items []*models.EmbeddedContactPoint, limit int) 
 func listAlertmanagerReceivers(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
 	dsUID := *args.DatasourceUID
 
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
+	ds, err := datasource.ByUID(ctx, dsUID)
 	if err != nil {
 		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
 	}
@@ -96,7 +122,7 @@ func listAlertmanagerReceivers(ctx context.Context, args ListContactPointsParams
 		return nil, fmt.Errorf("datasource %s (type: %s) is not an Alertmanager datasource", dsUID, ds.Type)
 	}
 
-	implementation := "prometheus"
+	implementation := defaultAlertmanagerImplementation
 	if ds.JSONData != nil {
 		if jsonDataMap, ok := ds.JSONData.(map[string]interface{}); ok {
 			if impl, ok := jsonDataMap["implementation"].(string); ok && impl != "" {

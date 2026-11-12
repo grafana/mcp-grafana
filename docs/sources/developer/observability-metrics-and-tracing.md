@@ -59,13 +59,87 @@ For `tools/call`, `mcp_server_operation_duration_seconds` can carry up to three 
 
 | Label | Source | Notes |
 |-------|--------|-------|
-| `mcp_tool_operation` | the tool's `operation` argument | Multiplexer tools only (e.g. `alerting_manage_rules`); one of the tool's declared operations, else `other`. |
+| `mcp_tool_operation` | the tool's `operation` argument | Multiplexer tools only (e.g. `alerting_rules_write`); one of the tool's declared operations, else `other`. |
 | `mcp_tool_resource_type` | the tool's `type` argument | e.g. the datasource plugin type on `create_datasource`; a plugin type the server ships a schema for, else `other`. |
 | `mcp_tool_phase` | the tool's result `_meta` | Phase of a multi-call flow (e.g. `create_datasource` schema guidance vs. actual creation). |
 
 Arguments are raw client input, so the two argument-derived labels are allowlisted by tool **and** by value: unlisted tools emit neither, and unlisted values collapse into one `other` bucket, giving each label a fixed maximum series count. Tool validation alone would not bound them — a rejected `operation` is still instrumented, and `create_datasource`'s `type` is free text that succeeds for unknown values. `mcp_tool_phase` is exempt: the tool sets it on its own result, and tools must keep that value set small.
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
+
+### Metric-name discovery
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_metric_names_response_size_bytes` | Native histogram | Bytes consumed from complete successful discovery HTTP responses, after HTTP decompression |
+| `mcp_metric_names_count` | Native histogram | Number of metric names decoded successfully before local filtering and pagination |
+
+These metrics help us understand the responses we get from prometheus-type backends when discovering available metric names. The metrics only measure the sizes of successful responses. The bounded `backend` label distinguishes `prometheus` (including compatible backends) from `cloud_monitoring`. Unlike the prometheus backend, Cloud Monitoring measures the full descriptor response, which contain more than just names, so comparing response byte sizes between the two backends is not meaningful.
+
+For example, the p95 response size over the last hour is:
+
+```promql
+histogram_quantile(0.95, sum by (backend) (rate(mcp_metric_names_response_size_bytes[1h])))
+```
+
+These metrics use Native Histograms, so the scraper must also support native histograms.
+
+### Loki cost guardrail metrics
+
+When the [Loki query cost guardrail](../../configure/command-line-flags/) is enabled (`--loki-guardrail-mode` is `shadow` or `enforce`), every `query_loki_logs` call it evaluates increments exactly one of four counters:
+
+| Metric | Type | Incremented when |
+|--------|------|------------------|
+| `mcp_loki_guardrail_admitted_total` | Counter | The query passed every enabled check |
+| `mcp_loki_guardrail_would_block_total` | Counter | The query failed a check in `shadow` mode and ran anyway |
+| `mcp_loki_guardrail_blocked_total` | Counter | The query failed a check in `enforce` mode and was rejected |
+| `mcp_loki_guardrail_fail_open_total` | Counter | The guardrail could not reach a verdict and admitted the query |
+
+The four partition the guarded population, so their sum is the number of calls the guardrail evaluated, and each is a query count rather than a check count.
+
+**Labels:**
+
+| Label | On | Values |
+|-------|-----|--------|
+| `reason` | `would_block`, `blocked` | `selector` (no selective label matcher), `range` (effective time range over the cap), `bytes` (index/stats estimate over the budget) |
+| `cause` | `fail_open` | `unparseable` (no stream selector the scanner recognises), `estimate_failed` (index/stats unavailable) |
+| `backend` | all four | `loki`, `victorialogs`, `unknown` |
+
+A query can trip more than one check. It is counted **once**, labelled with the check that ran first — `selector`, then `range`, then `bytes`. That ordering is deliberate: the selectivity check is unconditional, so a query attributed to `selector` would not be admitted by raising `--loki-guardrail-max-range` or `--loki-guardrail-max-bytes`. When promoting from `shadow` to `enforce`, read `sum(rate(mcp_loki_guardrail_would_block_total[5m]))` for the size of the affected population and `sum by (reason) (...)` for whether tuning the bounds would shrink it.
+
+Watch `mcp_loki_guardrail_fail_open_total` alongside them: a quiet `would_block` rate means "nothing would be blocked" only if the fail-open rate is also low. A high `cause="unparseable"` rate on `backend="loki"` means the guardrail's LogQL scanner does not recognise the query shapes in use, which calls for improving the scanner rather than tuning the bounds. On `backend="victorialogs"` a high `unparseable` rate is expected — brace-less LogsQL is the normal shape there, and the byte-budget check never runs on that backend at all, which is why `backend` is a label rather than being folded together.
+
+Neither the stream selector nor the LogQL is exported as a label: both are unbounded, and line filters can carry sensitive literals. The extracted selectors are logged at `WARN` and the full query at `DEBUG` instead.
+
+### Prometheus guardrail metrics
+
+When the [Prometheus query guardrail](../../configure/command-line-flags/) is enabled (`--prometheus-guardrail-mode` is `shadow` or `enforce`), every PromQL query it evaluates increments exactly one of four counters:
+
+| Metric | Type | Incremented when |
+|--------|------|------------------|
+| `mcp_prometheus_guardrail_admitted_total` | Counter | The query passed every enabled check |
+| `mcp_prometheus_guardrail_would_block_total` | Counter | The query failed a check in `shadow` mode and ran anyway |
+| `mcp_prometheus_guardrail_blocked_total` | Counter | The query failed a check in `enforce` mode and was rejected |
+| `mcp_prometheus_guardrail_fail_open_total` | Counter | No check failed, but parsing or an enabled cardinality assessment was unavailable |
+
+**Labels:**
+
+| Label | On | Values |
+|-------|-----|--------|
+| `reason` | `would_block`, `blocked` | `selector` (a vector selector lacks a selective positive label constraint when the selector policy is enabled), `range` (effective time range over `--prometheus-guardrail-max-range`), `points` (requested points per series over `--prometheus-guardrail-max-points`), `cardinality` (a known high-cardinality metric lacks an exact scope matcher) |
+| `reason` | `fail_open` | `unparseable`, `cardinality_unknown` (metric cardinality or TSDB metadata unavailable) |
+
+A query that fails multiple checks is counted once, under the first failure in the order `selector`, `range`, `points`, `cardinality`. Selector checks are enabled independently of the numeric budgets. The time range and step are checked even when the expression does not parse, so a macro-bearing query over too long a range is still blocked rather than counted as a fail-open. Unlike the Loki counters, these have no `backend` label. Static checks apply to every Prometheus-compatible backend; unsupported TSDB metadata fails open for the opt-in cardinality policy.
+
+Built-in Grafana macros such as `$__rate_interval` are substituted before parsing. A steady `fail_open` rate can indicate unresolved dashboard variables such as `$window` or unsupported syntax; a low `would_block` rate is meaningful only alongside a low fail-open rate. The guardrail has these limits:
+
+- The optional selector check is a static heuristic, not a bound on series count or backend work. Neither query text nor label names/values are exported as metric attributes.
+- The cardinality policy requires exact scope for known high-cardinality metrics from cached TSDB top-N statistics. It does not estimate matched series; missing metrics are unknown, and a scope matcher can still select many series. Watch `cardinality_unknown` alongside blocks when evaluating coverage.
+- The points check budgets the requested resolution, `floor(range / step) + 1`. It does not bound the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step.
+- `offset` and `@` modifiers are ignored. `offset` shifts a window without widening it; ignoring `@` can only overestimate.
+- Expressions that need Grafana macro substitution or a dialect-only feature fail open on the expression part.
+
+The expression is never a label. Blocked queries are logged at `WARN` with the reasons, and the expression is logged at `DEBUG` only.
 
 ## Enable OpenTelemetry tracing
 
@@ -89,6 +163,21 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 ```
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+### Trace context propagation
+
+Under an HTTP transport (SSE or streamable-http) the server takes part in [W3C trace context](https://www.w3.org/TR/trace-context/) propagation on both sides, so a caller, mcp-grafana, and Grafana appear as one connected trace:
+
+- **Inbound**: a `traceparent`/`tracestate` header on the incoming request (from an MCP client or an upstream proxy) parents the server span, continuing the caller's trace instead of starting a new one.
+- **Outbound**: requests to the Grafana API carry a `traceparent` naming mcp-grafana's own span, so Grafana's spans hang off ours.
+
+Propagation is always active — it does not require `OTEL_EXPORTER_OTLP_ENDPOINT`. With trace export off, no spans are recorded but an inbound trace context is still passed through to Grafana rather than dropped.
+
+The propagators used are configured with the standard [`OTEL_PROPAGATORS`](https://opentelemetry.io/docs/languages/sdk-configuration/general/#otel_propagators) environment variable, defaulting to `tracecontext,baggage`. Set it to interoperate with a non-W3C system (`b3`, `b3multi`, `jaeger`, `xray`, `ottrace`, in any comma-separated combination) or to `none` to disable propagation entirely.
+
+Tool call requests may also carry `traceparent`/`tracestate` in their MCP `_meta` field; when present, that context parents the tool span. This is the only propagation channel available under stdio, where there is no HTTP request to read headers from.
+
+Listing `traceparent` or `tracestate` in `GRAFANA_FORWARD_HEADERS` is not needed and no longer has an effect: forwarding the *caller's* `traceparent` verbatim would parent Grafana's spans onto the caller and cut mcp-grafana out of the middle of the trace, so a forwarded value never overrides the propagated one. Forwarded trace headers still apply when propagation is disabled with `OTEL_PROPAGATORS=none`.
 
 Tool-call spans also carry the [tool-call dimensions](#tool-call-dimension-labels) `mcp.tool.operation`, `mcp.tool.resource_type`, and `mcp.tool.phase`, plus the span-only `mcp.tool.target` (the datasource `uid`, else `name`) for grouping the spans that touch one entity. `mcp.tool.target` is empty when a call names no entity — notably `create_datasource`'s `phase=schema` call, where the datasource does not exist yet — so stitching that call to the later `phase=created` one relies on the shared trace (when the client propagates context via `_meta`) or on `mcp.session.id` plus `mcp_tool_resource_type`, rather than on the target. Unlike the metric labels, these are attached for **all** tools with their **raw** values (no allowlist, no `other` bucket), since traces are high-cardinality by design. They require an **HTTP transport** (SSE or streamable-http, so a server span exists to enrich) **and tracing enabled**, but **not** `--metrics`; with stdio or tracing off, enrichment is a no-op.
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"regexp"
 	"slices"
 	"sort"
@@ -14,12 +15,13 @@ import (
 
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/go-openapi/runtime"
+	"github.com/go-openapi/strfmt"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/dashboards"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // dashboardAPIGroup is the Kubernetes-style API group serving dashboards.
@@ -34,7 +36,8 @@ const dashboardAPIGroup = "dashboard.grafana.app"
 const dashboardReadVersion = "v1beta1"
 
 type GetDashboardByUIDParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	UID     string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	Version *int64 `json:"version,omitempty" jsonschema:"minimum=1,description=Optional saved version. Omit for the current dashboard"`
 }
 
 // dashboardResult is the internal representation of a fetched dashboard. The
@@ -67,7 +70,10 @@ type DashboardResponse struct {
 }
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*DashboardResponse, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	if args.Version != nil {
+		return fetchDashboardVersion(ctx, args.UID, *args.Version)
+	}
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -91,30 +97,38 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*Dash
 // back to the legacy API, because doing so on a v2-capable Grafana would read —
 // and, for update_dashboard, write — a lossy v1 conversion that corrupts the
 // stored v2 dashboard. Only a definitive "v1beta1 not served" routes to legacy.
-func fetchDashboard(ctx context.Context, uid string) (*dashboardResult, error) {
+// forWrite is passed through to fetchDashboardViaK8s.
+func fetchDashboard(ctx context.Context, uid string, forWrite bool) (*dashboardResult, error) {
 	if k8s := mcpgrafana.KubernetesClientFromContext(ctx); k8s != nil {
 		versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
 		if err != nil {
 			return nil, fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
 		}
 		if slices.Contains(versions, dashboardReadVersion) {
-			return fetchDashboardViaK8s(ctx, k8s, uid)
+			return fetchDashboardViaK8s(ctx, k8s, uid, forWrite)
 		}
 	}
 	return fetchDashboardLegacy(ctx, uid)
 }
 
 // fetchDashboardViaK8s fetches a dashboard through the dashboard.grafana.app API.
-// It requests v1beta1 first (one round-trip for the common classic case), then
-// re-fetches at the stored version when the dashboard is actually stored as v2.
+// It requests v1beta1 first, then re-fetches at the stored version when the
+// dashboard is actually stored as v2. Because storedVersion can be stale (a
+// dashboard created as v1 and later saved as v2 keeps reporting "v1"), a
+// non-v2 storedVersion is double-checked against the v2 representation. If that
+// check fails, reads (forWrite=false) fall back to the v1 result, while writes
+// get an error, since a v1 save of a dashboard that is really v2 is lossy.
 // Callers only reach this after confirming v1beta1 is served, so a 404 here is a
 // genuine "dashboard not found".
-func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient, uid string) (*dashboardResult, error) {
-	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
+func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient, uid string, forWrite bool) (*dashboardResult, error) {
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	obj, err := k8s.Get(ctx, dashboardDescriptor(dashboardReadVersion), ns, uid)
 	if err != nil {
-		return nil, k8sDashboardErr("get", uid, ns, nsFromSettings, err)
+		return nil, fmt.Errorf("get dashboard %q via k8s api: %w", uid, err)
 	}
 
 	// If the dashboard is stored as v2, the v1beta1 response is a lossy
@@ -127,9 +141,134 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 			return nil, fmt.Errorf("get native %s dashboard via k8s api %s: %w", storedVersion, uid, err)
 		}
 		obj = nativeObj
+	} else if v2Obj, err := fetchV2IfV1Lossy(ctx, k8s, ns, uid); err != nil {
+		if forWrite {
+			// %v, not %w: a wrapped 404 from the v2 read must not look like
+			// "dashboard not found" to callers that would then create it.
+			return nil, fmt.Errorf("cannot confirm dashboard %q is not stored as v2, refusing a possibly lossy write: %v", uid, err)
+		}
+	} else if v2Obj != nil {
+		obj = v2Obj
 	}
 
 	return dashboardResultFromK8s(obj)
+}
+
+// fetchV2IfV1Lossy reads the dashboard at the preferred served v2 version and
+// returns it when its layout holds content the v1 schema cannot represent, i.e.
+// the dashboard is really v2 despite its storedVersion. It returns nil when no
+// v2 version is served or the v2 view is one a v1 dashboard up-converts to:
+// a v1-convertible layout and no preferences beyond the default GridLayout one
+// the v1→v2 conversion sets, since the v2→v1 conversion drops preferences.
+func fetchV2IfV1Lossy(ctx context.Context, k8s *mcpgrafana.KubernetesClient, ns, uid string) (map[string]interface{}, error) {
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		return nil, fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
+	}
+	version := preferredV2Version(versions)
+	if version == "" {
+		return nil, nil
+	}
+	obj, err := k8s.Get(ctx, dashboardDescriptor(version), ns, uid)
+	if err != nil {
+		return nil, fmt.Errorf("get %s dashboard via k8s api %s: %w", version, uid, err)
+	}
+	spec, _ := obj["spec"].(map[string]interface{})
+	if isV1ConvertibleLayout(spec["layout"]) && isDefaultPreferences(safeObject(spec, "preferences")) {
+		return nil, nil
+	}
+	return obj, nil
+}
+
+// isDefaultPreferences reports whether v2 preferences are empty or hold only
+// the empty GridLayout the v1→v2 conversion sets as the default layout.
+func isDefaultPreferences(prefs map[string]interface{}) bool {
+	for k := range prefs {
+		if k != "layout" {
+			return false
+		}
+	}
+	layout := safeObject(prefs, "layout")
+	return layout == nil || safeString(layout, "kind") == "GridLayout" && len(safeArray(safeObject(layout, "spec"), "items")) == 0
+}
+
+// isV1ConvertibleLayout reports whether a v2 layout has a shape the v1→v2
+// conversion produces: a GridLayout, or a RowsLayout of rows that
+// isV1ConvertibleRow accepts, with no conditional rendering anywhere. Anything
+// else (auto grid, tabs, nested rows, layout kinds added later) would be lost by
+// a v1 save.
+// ponytail: shape heuristic for a stale storedVersion. grafana/grafana#135108
+// stops persisting it, but affected dashboards keep the stale value until
+// re-saved; drop this once Grafana also ignores the persisted value on read.
+func isV1ConvertibleLayout(layout interface{}) bool {
+	if layout == nil {
+		return true
+	}
+	if hasConditionalRendering(layout) {
+		return false
+	}
+	m, _ := layout.(map[string]interface{})
+	switch safeString(m, "kind") {
+	case "GridLayout":
+		return true
+	case "RowsLayout":
+		for i, row := range safeArray(safeObject(m, "spec"), "rows") {
+			if !isV1ConvertibleRow(i, row) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isV1ConvertibleRow reports whether a RowsLayoutRow is one the v1→v2
+// conversion emits: a GridLayout plus only title, collapse and repeat set, or
+// the untitled, unrepeated hidden-header row it creates first for panels above
+// the first v1 row. Other settings (fillScreen, row variables, a hidden header
+// elsewhere) have no v1 equivalent.
+func isV1ConvertibleRow(i int, row interface{}) bool {
+	r, _ := row.(map[string]interface{})
+	spec := safeObject(r, "spec")
+	if safeString(r, "kind") != "RowsLayoutRow" || safeString(safeObject(spec, "layout"), "kind") != "GridLayout" {
+		return false
+	}
+	for k, v := range spec {
+		switch k {
+		case "title", "collapse", "repeat", "layout", "hideHeader":
+			continue
+		}
+		if arr, ok := v.([]interface{}); ok && len(arr) == 0 {
+			continue
+		}
+		if v != nil && v != false {
+			return false
+		}
+	}
+	if hidden, _ := spec["hideHeader"].(bool); hidden {
+		return i == 0 && safeString(spec, "title") == "" && spec["repeat"] == nil
+	}
+	return true
+}
+
+// hasConditionalRendering reports whether any node in a layout tree sets
+// conditionalRendering, which v1 has no equivalent for.
+func hasConditionalRendering(node interface{}) bool {
+	switch n := node.(type) {
+	case map[string]interface{}:
+		for k, v := range n {
+			if (k == "conditionalRendering" && v != nil) || hasConditionalRendering(v) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, v := range n {
+			if hasConditionalRendering(v) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // dashboardDescriptor builds a ResourceDescriptor for the dashboards resource at
@@ -160,18 +299,17 @@ func dashboardResultFromK8s(obj map[string]interface{}) (*dashboardResult, error
 		}
 	}
 
-	meta := &models.DashboardMeta{}
-	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
-		if name, ok := metadata["name"].(string); ok && name != "" {
-			// Classic (v1) dashboards expect the uid inside the body; the v2
-			// spec carries identity in metadata, so only set it for v1 shapes.
-			if _, hasElements := spec["elements"]; !hasElements {
-				spec["uid"] = name
-			}
-		}
-		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
-			if folderUID, ok := annotations["grafana.app/folder"].(string); ok {
-				meta.FolderUID = folderUID
+	metadata, _ := obj["metadata"].(map[string]interface{})
+	if name := safeString(metadata, "name"); name != "" {
+		// Classic (v1) dashboards expect the uid inside the body; the v2
+		// spec carries identity in metadata, so only set it for v1 shapes.
+		// The version goes in too, as Grafana's frontend does, because the
+		// save endpoint only accepts an existing dashboard without overwrite
+		// when the body carries its current version.
+		if _, hasElements := spec["elements"]; !hasElements {
+			spec["uid"] = name
+			if generation, ok := metadata["generation"].(float64); ok {
+				spec["version"] = generation
 			}
 		}
 	}
@@ -180,9 +318,48 @@ func dashboardResultFromK8s(obj map[string]interface{}) (*dashboardResult, error
 		Spec:       spec,
 		APIVersion: version,
 		IsV2:       strings.HasPrefix(version, "v2"),
-		Meta:       meta,
+		Meta:       dashboardMetaFromK8s(metadata),
 		Object:     obj,
 	}, nil
+}
+
+// dashboardMetaFromK8s fills the legacy meta fields from a dashboard.grafana.app
+// object's metadata, the way Grafana's frontend does in
+// public/app/features/dashboard/api/v1.ts, so a dashboard read through the k8s
+// API reports the same folder, version, timestamps and provisioning as one read
+// through /api/dashboards/uid. A field the object doesn't carry stays zero.
+func dashboardMetaFromK8s(metadata map[string]interface{}) *models.DashboardMeta {
+	annotations := safeObject(metadata, "annotations")
+	meta := &models.DashboardMeta{
+		FolderUID: safeString(annotations, "grafana.app/folder"),
+	}
+	if generation, ok := metadata["generation"].(float64); ok {
+		meta.Version = int64(generation)
+	}
+	if created, ok := parseK8sTimestamp(safeString(metadata, "creationTimestamp")); ok {
+		meta.Created = created
+		// updatedTimestamp is only set once the dashboard has been saved again;
+		// until then the legacy API reports the creation time.
+		meta.Updated = created
+	}
+	if updated, ok := parseK8sTimestamp(safeString(annotations, "grafana.app/updatedTimestamp")); ok {
+		meta.Updated = updated
+	}
+	if manager := safeString(annotations, "grafana.app/managedBy"); manager != "" {
+		meta.Provisioned = manager != "repo" && safeString(annotations, "grafana.app/managerAllowsEdits") != "true"
+	}
+	return meta
+}
+
+// parseK8sTimestamp parses an RFC 3339 timestamp from k8s metadata. It reports
+// false for an empty value, which strfmt.ParseDateTime would turn into the Unix
+// epoch rather than an error.
+func parseK8sTimestamp(value string) (strfmt.DateTime, bool) {
+	if value == "" {
+		return strfmt.DateTime{}, false
+	}
+	t, err := strfmt.ParseDateTime(value)
+	return t, err == nil
 }
 
 // fetchDashboardLegacy fetches a dashboard via the legacy REST API. The result
@@ -224,16 +401,16 @@ func k8sNestedString(obj map[string]interface{}, keys ...string) string {
 type PatchOperation struct {
 	Op    string      `json:"op" jsonschema:"required,description=Operation type: 'replace'\\, 'add'\\, 'remove'"`
 	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, '$.templating.list/-' (append a variable)\\, '$.annotations.list/-' (append a saved dashboard annotation query/definition). For appending to arrays\\, use '/- ' syntax: '$.panels/- ' (append to panels array) or '$.panels[2]/- ' (append to nested array at index 2)."`
-	Value interface{} `json:"value,omitempty" jsonschema:"description=New value for replace/add operations. When adding a saved dashboard annotation query/definition\\, append an object to '$.annotations.list' rather than calling create_annotation."`
+	Value interface{} `json:"value,omitempty" jsonschema:"description=New value for replace/add operations. When adding a saved dashboard annotation query/definition\\, append an object to '$.annotations.list'."`
 }
 
 type UpdateDashboardParams struct {
 	// For full dashboard updates (creates new dashboards or complete rewrites)
-	Dashboard map[string]interface{} `json:"dashboard,omitempty" jsonschema:"description=The full dashboard JSON. Use for creating new dashboards or complete updates. Saved dashboard annotation queries/definitions live in 'annotations.list' inside this JSON; they are different from annotation events created with create_annotation. Large dashboards consume significant context - consider using patches for small changes."`
+	Dashboard map[string]interface{} `json:"dashboard,omitempty" jsonschema:"description=The full dashboard JSON: classic v1 (panels[]) or v2 (elements/layout; skeleton in the tool description). Use for creating new dashboards or complete updates. Saved dashboard annotation queries/definitions live in 'annotations.list' inside this JSON; they are different from annotation events\\, which are stored separately. Large dashboards consume significant context - consider using patches for small changes."`
 
 	// For targeted updates using patch operations (preferred for existing dashboards)
 	UID        string           `json:"uid,omitempty" jsonschema:"description=UID of existing dashboard to update. Must be used together with 'operations'. Providing 'uid' without 'operations' will fail."`
-	Operations []PatchOperation `json:"operations,omitempty" jsonschema:"description=Array of patch operations for targeted updates. More efficient than full dashboard JSON for small changes. Common paths: '$.templating.list/-' to add a variable\\, '$.annotations.list/-' to add a saved dashboard annotation query/definition\\, '$.panels[0].targets[0].expr' to replace a panel query."`
+	Operations []PatchOperation `json:"operations,omitempty" jsonschema:"description=Array of patch operations for targeted updates. More efficient than full dashboard JSON for small changes. Common paths: '$.templating.list/-' to add a variable\\, '$.annotations.list/-' to add a saved dashboard annotation query/definition\\, '$.panels[0].targets[0].expr' to replace a panel query. v2 paths: '$.elements.<name>.spec.title'\\, '$.variables/-'\\, '$.layout.spec.items/-'."`
 
 	// Common parameters
 	FolderUID string `json:"folderUid,omitempty" jsonschema:"description=The UID of the dashboard's folder"`
@@ -245,12 +422,42 @@ type UpdateDashboardParams struct {
 // updateDashboard intelligently handles dashboard updates using either full JSON or patch operations.
 // It automatically uses the most efficient approach based on the provided parameters.
 func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
+	dashboard, err := updateDashboardContent(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	if dashboard != nil && dashboard.UID != nil && *dashboard.UID != "" {
+		// Return a user-facing link, including when Grafana is accessed internally.
+		// Keep the API's URL if no instance URL is available: the save succeeded.
+		if deeplink, err := generateDeeplink(ctx, GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: dashboard.UID,
+		}); err == nil {
+			dashboard.URL = &deeplink
+		} else {
+			mcpgrafana.LoggerFromContext(ctx).DebugContext(ctx,
+				"failed to generate dashboard deeplink",
+				"uid", *dashboard.UID,
+				"error", err,
+			)
+		}
+	}
+	return dashboard, nil
+}
+
+func updateDashboardContent(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
 	// Determine the update strategy based on provided parameters
 	if len(args.Operations) > 0 && args.UID != "" {
 		// Patch-based update: fetch current dashboard and apply operations
 		return updateDashboardWithPatches(ctx, args)
 	} else if args.Dashboard != nil {
 		// Full dashboard update: use the provided JSON
+		if err := rejectV1BodyOverV2Stored(ctx, args.Dashboard); err != nil {
+			return nil, err
+		}
+		if err := rejectNewV1Dashboard(ctx, args.Dashboard); err != nil {
+			return nil, err
+		}
 		return updateDashboardWithFullJSON(ctx, args)
 	} else if args.UID != "" && len(args.Operations) == 0 {
 		return nil, fmt.Errorf("'uid' was provided without 'operations'. To update an existing dashboard, provide both 'uid' and 'operations' (array of patch operations). To replace a dashboard entirely, provide 'dashboard' (full JSON) instead")
@@ -271,7 +478,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	args.Operations = sortedOps
 
 	// Get the current dashboard in its native stored schema.
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, true)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -348,17 +555,23 @@ func updateDashboardV2(ctx context.Context, uid string, res *dashboardResult, ar
 		return nil, fmt.Errorf("missing Kubernetes object for v2 dashboard update")
 	}
 
-	// res.Spec aliases res.Object["spec"], so the applied patches are already
-	// reflected; set it explicitly to be safe against future refactors.
+	// Fill the list fields on the patch path too: a patch that adds a panel
+	// without transformations or links would otherwise store nulls, and a
+	// dashboard already stored with nulls is repaired by the next patch.
+	// fillV2ListDefaults returns a copy, so the object's spec is set from it.
+	res.Spec = fillV2ListDefaults(res.Spec)
 	res.Object["spec"] = res.Spec
 
 	// Honor folderUid (move) and message (version-history note) via annotations.
 	applyV2WriteMetadata(res.Object, args)
 
-	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 	updated, err := k8s.Update(ctx, dashboardDescriptor(res.APIVersion), ns, uid, res.Object)
 	if err != nil {
-		return nil, k8sDashboardErr("update", uid, ns, nsFromSettings, err)
+		return nil, fmt.Errorf("update dashboard %q via k8s api: %w", uid, err)
 	}
 	return postDashboardOKBodyFromK8s(updated, uid), nil
 }
@@ -371,6 +584,11 @@ func postDashboardOKBodyFromK8s(obj map[string]interface{}, uid string) *models.
 	body := &models.PostDashboardOKBody{
 		UID:    &uid,
 		Status: &status,
+	}
+	if spec, ok := obj["spec"].(map[string]interface{}); ok {
+		if title, ok := spec["title"].(string); ok {
+			body.Title = &title
+		}
 	}
 	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
 		// The legacy dashboard "version" is the k8s metadata.generation: Grafana's
@@ -431,18 +649,6 @@ func isK8sNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
 }
 
-// k8sDashboardErr wraps a dashboard k8s API error. When it is a 404 and the
-// namespace was only derived from the org id (frontend settings was
-// unavailable), it adds a hint that the namespace itself may be wrong (e.g.
-// Grafana Cloud uses "stacks-{id}") rather than the dashboard being absent — so
-// the same diagnostic applies to both reads and writes.
-func k8sDashboardErr(action, uid, ns string, nsFromSettings bool, err error) error {
-	if isK8sNotFound(err) && !nsFromSettings {
-		return fmt.Errorf("%s dashboard %q: not found in namespace %q, which was derived from the org id because /api/frontend/settings was unavailable; the namespace may be wrong (e.g. Grafana Cloud uses \"stacks-{id}\"): %w", action, uid, ns, err)
-	}
-	return fmt.Errorf("%s dashboard %q via k8s api: %w", action, uid, err)
-}
-
 // updateDashboardWithFullJSON performs a traditional full dashboard update
 func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
 	// A full dashboard JSON in the v2 schema (elements/layout) must be written
@@ -463,9 +669,89 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 		dashboards.NewPostDashboardParamsWithContext(ctx).WithBody(cmd),
 	)
 	if err != nil {
+		// The client has no type for 409, so Grafana's message is lost. On a
+		// save without overwrite it means the stored version differs from the
+		// one sent, usually because the dashboard changed since it was read.
+		var apiErr *runtime.APIError
+		if errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict) {
+			return nil, fmt.Errorf("unable to save dashboard: it already exists and the body's version is missing or not the current one, so it may have changed since it was read. Fetch it again with get_dashboard_by_uid and reapply the change to that copy. overwrite=true would discard whatever changed in between: %w", err)
+		}
 		return nil, fmt.Errorf("unable to save dashboard: %w", err)
 	}
+	// Grafana's save response has no title; report the one that was saved.
+	if title, ok := args.Dashboard["title"].(string); ok && dashboard.Payload != nil && dashboard.Payload.Title == nil {
+		dashboard.Payload.Title = &title
+	}
 	return dashboard.Payload, nil
+}
+
+// rejectV1BodyOverV2Stored refuses a classic v1 full-JSON body whose uid names a
+// dashboard stored as v2. The legacy save endpoint would down-convert it to v1,
+// silently dropping v2-only structure such as tabs. It is the mirror of the
+// v2-over-v1 check in createOrUpdateDashboardV2.
+func rejectV1BodyOverV2Stored(ctx context.Context, dashboard map[string]interface{}) error {
+	uid, _ := dashboard["uid"].(string)
+	if uid == "" || isV2DashboardJSON(dashboard) {
+		return nil
+	}
+	k8s := mcpgrafana.KubernetesClientFromContext(ctx)
+	if k8s == nil {
+		return nil
+	}
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		// Fail closed, like fetchDashboard: an inconclusive check must not let a
+		// possibly lossy write through.
+		return fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
+	}
+	if !slices.Contains(versions, dashboardReadVersion) {
+		return nil // pre-v2 Grafana: no v2 dashboards can exist
+	}
+	existing, err := fetchDashboardViaK8s(ctx, k8s, uid, true)
+	if isK8sNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check existing dashboard %s: %w", uid, err)
+	}
+	if existing.IsV2 {
+		return fmt.Errorf("dashboard %q is stored as %s and cannot be replaced with a classic v1 (panels[]) body: Grafana would down-convert it, dropping v2-only content such as tabs. Use patch operations (uid + operations) against the v2 spec, or send a full v2 body (elements/layout); fetch it with get_dashboard_by_uid to see its current v2 structure", uid, existing.APIVersion)
+	}
+	return nil
+}
+
+// preferredV2Version picks the most stable, newest v2 version the dashboard API
+// serves (v2 > v2beta2 > v2beta1 > v2alpha1), so new v2 dashboards aren't pinned
+// to a version that older or newer Grafanas don't serve.
+func preferredV2Version(versions []string) string {
+	rank := func(v string) (int, int) {
+		rest := strings.TrimPrefix(v, "v2")
+		stability := 2
+		for i, s := range []string{"alpha", "beta"} {
+			if after, ok := strings.CutPrefix(rest, s); ok {
+				stability, rest = i, after
+				break
+			}
+		}
+		n, _ := strconv.Atoi(rest)
+		return stability, n
+	}
+	best := ""
+	for _, v := range versions {
+		if !strings.HasPrefix(v, "v2") {
+			continue
+		}
+		if best == "" {
+			best = v
+			continue
+		}
+		s, n := rank(v)
+		bs, bn := rank(best)
+		if s > bs || (s == bs && n > bn) {
+			best = v
+		}
+	}
+	return best
 }
 
 // isV2DashboardJSON reports whether a full dashboard JSON body uses the v2
@@ -478,6 +764,66 @@ func isV2DashboardJSON(dashboard map[string]interface{}) bool {
 	_, hasElements := dashboard["elements"]
 	_, hasLayout := dashboard["layout"]
 	return hasElements || hasLayout
+}
+
+// fillV2ListDefaults returns a copy of a v2 dashboard spec in which the list
+// fields Grafana stores as null when they are absent hold an empty list
+// instead. The dashboard loader does not survive two of those nulls
+// (grafana/grafana#136859): a panel's `transformations` ("Cannot read properties
+// of null (reading 'map')") and the dashboard's `links` ("not iterable"), so a
+// body that leaves them out produces a dashboard nobody can open. The other
+// lists are filled for the same reason the generated constructors initialise
+// them. Maps on the path to a filled field are cloned, so the caller's input is
+// left untouched; a list that is present, even empty, is kept as given.
+//
+// annotations is deliberately left alone. Grafana validates the spec after
+// decoding it into its Go types, where an omitted cursorSync becomes "" and
+// fails the enum; a null annotations list hides that error, so filling it
+// turns every sparse body, and every patch of a dashboard stored that way,
+// into a 422 unless cursorSync is set as well.
+func fillV2ListDefaults(spec map[string]interface{}) map[string]interface{} {
+	if spec == nil {
+		return nil
+	}
+	fill := func(m map[string]interface{}, keys ...string) {
+		for _, k := range keys {
+			if v, ok := m[k]; !ok || v == nil {
+				m[k] = []interface{}{}
+			}
+		}
+	}
+	out := maps.Clone(spec)
+	fill(out, "links", "tags", "variables")
+	elements, ok := out["elements"].(map[string]interface{})
+	if !ok {
+		return out
+	}
+	filled := make(map[string]interface{}, len(elements))
+	for name, el := range elements {
+		elMap, ok := el.(map[string]interface{})
+		if !ok || elMap["kind"] != "Panel" {
+			filled[name] = el
+			continue
+		}
+		elMap = maps.Clone(elMap)
+		if pspec, ok := elMap["spec"].(map[string]interface{}); ok {
+			pspec = maps.Clone(pspec)
+			fill(pspec, "links")
+			if data, ok := pspec["data"].(map[string]interface{}); ok {
+				data = maps.Clone(data)
+				if dspec, ok := data["spec"].(map[string]interface{}); ok {
+					dspec = maps.Clone(dspec)
+					fill(dspec, "transformations")
+					data["spec"] = dspec
+				}
+				pspec["data"] = data
+			}
+			elMap["spec"] = pspec
+		}
+		filled[name] = elMap
+	}
+	out["elements"] = filled
+	return out
 }
 
 // createOrUpdateDashboardV2 creates or replaces a dashboard from a full v2 spec
@@ -501,14 +847,12 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		}
 	}
 	delete(spec, "uid")
+	spec = fillV2ListDefaults(spec)
 
-	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
-	// TODO: negotiate the version to write instead of hardcoding v2beta1 — e.g.
-	// discover the group's preferred/served v2 version via GET /apis/dashboard.grafana.app
-	// (it could be v2, v2beta1, v2alpha1 depending on the Grafana version) rather
-	// than assuming v2beta1. An existing v2 dashboard reuses its own stored version
-	// below; this default only applies when creating a brand-new dashboard.
-	version := "v2beta1"
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// If a uid is given and the dashboard already exists, update it in place
 	// using its current object (for resourceVersion); if it genuinely does not
@@ -516,7 +860,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	// treated as "absent" — that would turn an update into a create/conflict and
 	// hide the real failure — so surface it.
 	if uid != "" {
-		existing, err := fetchDashboardViaK8s(ctx, k8s, uid)
+		existing, err := fetchDashboardViaK8s(ctx, k8s, uid, true)
 		switch {
 		case err == nil && existing.Object != nil:
 			// Mirror the legacy save: refuse to replace an existing dashboard
@@ -534,11 +878,10 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			}
 			obj := existing.Object
 			obj["spec"] = spec
-			version = existing.APIVersion // an existing v2 dashboard's stored v2 version
 			applyV2WriteMetadata(obj, args)
-			updated, err := k8s.Update(ctx, dashboardDescriptor(version), ns, uid, obj)
+			updated, err := k8s.Update(ctx, dashboardDescriptor(existing.APIVersion), ns, uid, obj)
 			if err != nil {
-				return nil, k8sDashboardErr("update", uid, ns, nsFromSettings, err)
+				return nil, fmt.Errorf("update dashboard %q via k8s api: %w", uid, err)
 			}
 			return postDashboardOKBodyFromK8s(updated, uid), nil
 		case err != nil && !isK8sNotFound(err):
@@ -547,7 +890,15 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		// not found — fall through to create
 	}
 
-	// Create a new dashboard object.
+	// Create a new dashboard object at the best v2 version this Grafana serves.
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		return nil, fmt.Errorf("determine %s capability: %w", dashboardAPIGroup, err)
+	}
+	version := preferredV2Version(versions)
+	if version == "" {
+		return nil, fmt.Errorf("this Grafana does not serve a v2 version of %s (served: %v), so a v2 (elements/layout) dashboard cannot be created; send a classic v1 (panels[]) body instead", dashboardAPIGroup, versions)
+	}
 	metadata := map[string]interface{}{"namespace": ns}
 	if uid != "" {
 		metadata["name"] = uid
@@ -561,7 +912,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	applyV2WriteMetadata(obj, args)
 	created, err := k8s.Create(ctx, dashboardDescriptor(version), ns, obj)
 	if err != nil {
-		return nil, k8sDashboardErr("create", uid, ns, nsFromSettings, err)
+		return nil, fmt.Errorf("create dashboard %q via k8s api: %w", uid, err)
 	}
 	createdUID := uid
 	if createdUID == "" {
@@ -669,29 +1020,40 @@ func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, 
 
 var GetDashboardByUID = mcpgrafana.MustTool(
 	"get_dashboard_by_uid",
-	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID. The response includes 'apiVersion' and 'isV2': when 'isV2' is true the dashboard uses the v2 schema (panels live under 'elements' keyed by name, arranged by 'layout'; variables under 'variables'), otherwise it is classic v1 ('panels[]' with 'templating.list'). WARNING: Large dashboards can consume significant context window space. Consider using get_dashboard_summary for overview or get_dashboard_property for specific data instead.",
+	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID. Pass optional version to load a saved snapshot instead of the current dashboard. Saved snapshots are fetched through Grafana's legacy versions API, so 'apiVersion' is omitted and 'meta' is partial: only version, createdBy, and created are populated. For current (non-versioned) fetches, the response includes 'apiVersion' and 'isV2': when 'isV2' is true the dashboard uses the v2 schema (panels live under 'elements' keyed by name, arranged by 'layout'; variables under 'variables'), otherwise it is classic v1 ('panels[]' with 'templating.list'). The full JSON of a large dashboard can be very large.",
 	getDashboardByUID,
-	mcp.WithTitleAnnotation("Get dashboard details"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard details"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
+	// Fetching a saved version uses Grafana's legacy versions API, which
+	// requires dashboards:write, even to read.
+	mcpgrafana.RequiresPermissions("dashboards:write"),
 )
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one\\, many\\, or All values from a multi-select variable inside a regex expression or matcher\\, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions must be written into dashboard JSON under 'annotations.list'; the create_annotation tool creates annotation events and does not add a reusable dashboard annotation query/definition to the saved dashboard. For stat panels over the current dashboard range\\, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'\\, '$.templating.list/-'\\, and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. v2 dashboards (check 'isV2' from get_dashboard_by_uid) use a different shape: patch '$.elements.<name>.spec.title' or '$.elements.<name>.spec.data.spec.queries[0].spec' and edit '$.variables'/'$.layout' rather than '$.panels'/'$.templating.list'. Full-JSON saves containing top-level 'elements'/'layout' are written as v2 and require a Kubernetes-capable Grafana. After creating or updating a dashboard\\, verify that panel queries return data by using `run_panel_query` or the appropriate query tool (`query_prometheus`\\, `query_loki_logs`\\, etc.) to validate expressions before considering the task complete.",
+	"Create or update a dashboard. Returns the saved dashboard UID and dashboard link in the 'url' field, using the instance public URL when available. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid', 'message', and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one, many, or All values from a multi-select variable inside a regex expression or matcher, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions live in dashboard JSON under 'annotations.list'; annotation events are stored separately and are not part of the dashboard JSON. For stat panels over the current dashboard range, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr', '$.panels[1].title', '$.panels[2].targets[0].datasource', '$.templating.list/-', and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\", \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. Schema: prefer v2 for new dashboards; if this Grafana lacks v2 the save fails saying so, then send v1. Keep an existing dashboard in its stored schema (indicated by 'isV2'/'apiVersion' on the fetched dashboard). A body with top-level 'elements'/'layout' is saved as v2. Send list fields as [] when empty; the server fills links, tags, variables and each panel's links and transformations if omitted. Minimal v2 body: "+dashboardV2Skeleton+". For tabs, layout is {\"kind\":\"TabsLayout\",\"spec\":{\"tabs\":[{\"kind\":\"TabsLayoutTab\",\"spec\":{\"title\":\"A\",\"layout\":<GridLayout>}}]}}.",
 	updateDashboard,
-	mcp.WithTitleAnnotation("Create or update dashboard"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create or update dashboard"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions(
+		"dashboards:create", "dashboards:write", "folders:read",
+		"dashboard.grafana.app/dashboards:create", "dashboard.grafana.app/dashboards:update",
+	),
 )
 
 type DashboardPanelQueriesParams struct {
 	UID       string            `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 	PanelID   *int              `json:"panelId,omitempty" jsonschema:"description=Optional panel ID to filter to a specific panel"`
 	Variables map[string]string `json:"variables,omitempty" jsonschema:"description=Optional variable substitutions (e.g.\\, {\"job\": \"api-server\"})"`
+	Start     string            `json:"start,omitempty" jsonschema:"description=Query start time for macros (default now-1h)."`
+	End       string            `json:"end,omitempty" jsonschema:"description=Query end time for macros (default now)."`
 }
 
 type datasourceInfo struct {
@@ -700,16 +1062,27 @@ type datasourceInfo struct {
 }
 
 type panelQuery struct {
-	Title             string         `json:"title"`
-	Query             string         `json:"query"`
-	ProcessedQuery    string         `json:"processedQuery,omitempty"`
-	Datasource        datasourceInfo `json:"datasource"`
-	RefID             string         `json:"refId,omitempty"`
-	RequiredVariables []VariableInfo `json:"requiredVariables,omitempty"`
+	Title string `json:"title"`
+	Query string `json:"query"`
+	// Target holds the panel's raw query target, minus the datasource and refId
+	// returned separately. It is set for a target built in a datasource's visual
+	// editor (CloudWatch metric search, InfluxDB's query builder), which has no
+	// string expression to put in Query.
+	Target            map[string]interface{} `json:"target,omitempty"`
+	Warnings          []string               `json:"warnings,omitempty"`
+	ProcessedQuery    string                 `json:"processedQuery,omitempty"`
+	Datasource        datasourceInfo         `json:"datasource"`
+	RefID             string                 `json:"refId,omitempty"`
+	RequiredVariables []VariableInfo         `json:"requiredVariables,omitempty"`
+
+	// Keep expression target dependencies without exposing another response field.
+	rawTarget map[string]interface{}
+	// interval holds the panel's max data points and min interval.
+	interval intervalOptions
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -721,12 +1094,6 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 	if res.IsV2 {
 		return getPanelQueriesV2(db, args)
-	}
-
-	// Determine if variable processing is needed
-	var dashboardVars map[string]VariableInfo
-	if args.Variables != nil {
-		dashboardVars = extractDashboardVariables(db)
 	}
 
 	// Determine which panels to process
@@ -743,22 +1110,23 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		queries := extractPanelQueries(panel, dashboardVars, args.Variables)
+		queries := extractPanelQueries(panel)
 		result = append(result, queries...)
 	}
 
-	return result, nil
+	return preparePanelQueries(db, args, result, extractDashboardVariables(db))
 }
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Optionally provide `variables` for template variable substitution, which populates `processedQuery` and `requiredVariables` fields. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, and requiredVariables.",
+	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to populate `processedQuery` and `requiredVariables`. Referenced All selections, and variables saved without a value, return `warnings` requesting explicit values. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.",
 	GetDashboardPanelQueriesTool,
-	mcp.WithTitleAnnotation("Get dashboard panel queries"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard panel queries"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
 )
 
 // GetDashboardPropertyParams defines parameters for getting specific dashboard properties
@@ -770,7 +1138,7 @@ type GetDashboardPropertyParams struct {
 // getDashboardProperty retrieves specific parts of a dashboard using JSONPath expressions.
 // This helps reduce context window usage by fetching only the needed data.
 func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) (interface{}, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -804,13 +1172,14 @@ func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) 
 
 var GetDashboardProperty = mcpgrafana.MustTool(
 	"get_dashboard_property",
-	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. JSONPath targets the dashboard's native schema. Classic v1 paths: '$.title' (title)\\, '$.panels[*].title' (all panel titles)\\, '$.panels[0]' (first panel)\\, '$.templating.list' (variables)\\, '$.annotations.list' (saved dashboard annotation queries/definitions)\\, '$.tags' (tags)\\, '$.panels[*].targets[*].expr' (all queries). v2 dashboards (see isV2 from get_dashboard_by_uid) use different paths: '$.title'\\, '$.elements' (panels\\, keyed by name)\\, '$.variables' (variables)\\, '$.annotations'. Use this instead of get_dashboard_by_uid when you only need specific dashboard properties.",
+	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. JSONPath targets the dashboard's native schema. Classic v1 paths: '$.title' (title), '$.panels[*].title' (all panel titles), '$.panels[0]' (first panel), '$.templating.list' (variables), '$.annotations.list' (saved dashboard annotation queries/definitions), '$.tags' (tags), '$.panels[*].targets[*].expr' (all queries). v2 dashboards (isV2 true) use different paths: '$.title', '$.elements' (panels, keyed by name), '$.variables' (variables), '$.annotations'.",
 	getDashboardProperty,
-	mcp.WithTitleAnnotation("Get dashboard property"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard property"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
 )
 
 // GetDashboardSummaryParams defines parameters for getting a dashboard summary
@@ -853,7 +1222,7 @@ type TimeRangeSummary struct {
 
 // getDashboardSummary provides a compact overview of a dashboard to help with context management
 func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*DashboardSummary, error) {
-	res, err := fetchDashboard(ctx, args.UID)
+	res, err := fetchDashboard(ctx, args.UID, false)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
@@ -919,13 +1288,14 @@ func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*
 
 var GetDashboardSummary = mcpgrafana.MustTool(
 	"get_dashboard_summary",
-	"Get a compact summary of a dashboard including title\\, panel count\\, panel types\\, variables\\, and other metadata without the full JSON. Use this for dashboard overview and planning modifications without consuming large context windows.",
+	"Get a compact summary of a dashboard including title, panel count, panel types, variables, and other metadata without the full JSON. Use this for dashboard overview and planning modifications without consuming large context windows.",
 	getDashboardSummary,
-	mcp.WithTitleAnnotation("Get dashboard summary"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard summary"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(dashboardRead...),
 )
 
 // applyJSONPath applies a value to a JSONPath or removes it if remove=true
@@ -1216,12 +1586,13 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 	}
 }
 
-func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
-	GetDashboardByUID.Register(mcp)
+func AddDashboardTools(s *mcp.Server, enableWriteTools bool) {
+	GetDashboardByUID.Register(s)
+	ListDashboardVersions.Register(s)
 	if enableWriteTools {
-		UpdateDashboard.Register(mcp)
+		UpdateDashboard.Register(s)
 	}
-	GetDashboardPanelQueries.Register(mcp)
-	GetDashboardProperty.Register(mcp)
-	GetDashboardSummary.Register(mcp)
+	GetDashboardPanelQueries.Register(s)
+	GetDashboardProperty.Register(s)
+	GetDashboardSummary.Register(s)
 }

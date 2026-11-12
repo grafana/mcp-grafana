@@ -1,0 +1,881 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const (
+	tempoAcceptLLM = "application/vnd.grafana.llm"
+)
+
+// tempoBackend runs search, metrics and trace-by-ID queries through Grafana's
+// /api/ds/query endpoint, so they go through the query service like dashboard
+// and Explore queries. Trace diffs and attribute discovery call Tempo's HTTP API
+// through the datasource proxy, as do queries on Grafana releases whose Tempo
+// datasource cannot run them (see useDSQuery).
+type tempoBackend struct {
+	httpClient *http.Client
+	baseURL    string
+
+	dsQueryClient *http.Client
+	grafanaURL    string
+	dsUID         string
+}
+
+func newTempoBackend(ctx context.Context, datasourceUID string) (*tempoBackend, error) {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	proxyURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), datasourceUID)
+
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
+	}
+	dsQueryClient, grafanaURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tempoBackend{
+		httpClient:    &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
+		baseURL:       proxyURL,
+		dsQueryClient: dsQueryClient,
+		grafanaURL:    grafanaURL,
+		dsUID:         datasourceUID,
+	}, nil
+}
+
+func tempoBackendForDatasource(ctx context.Context, uid string) (*tempoBackend, error) {
+	ds, err := datasource.ByUID(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	if ds.Type != "tempo" {
+		return nil, fmt.Errorf("datasource %s is of type %s, not tempo", uid, ds.Type)
+	}
+	return newTempoBackend(ctx, ds.UID)
+}
+
+func (b *tempoBackend) doGet(ctx context.Context, path string, query url.Values) (string, error) {
+	u := b.baseURL + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", tempoAcceptLLM)
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", tempoAPIError(resp.StatusCode, body)
+	}
+
+	return string(body), nil
+}
+
+func (b *tempoBackend) doPost(ctx context.Context, path string, payload any) (string, error) {
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	u := b.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", tempoAcceptLLM)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", tempoAPIError(resp.StatusCode, body)
+	}
+
+	return string(body), nil
+}
+
+func tempoAPIError(statusCode int, body []byte) error {
+	msg := strings.TrimSpace(string(body))
+	if msg == "" && statusCode == 499 {
+		msg = "query timed out — try narrowing the time range or simplifying the query"
+	}
+	return fmt.Errorf("tempo API returned %d: %s", statusCode, msg)
+}
+
+// tempoFilterHasOR checks whether a TraceQL filter query contains an OR (||)
+// operator outside of quoted strings. Tempo 2.10 silently reduces unsupported
+// OR filters to empty via ExtractMatchers.
+func tempoFilterHasOR(q string) bool {
+	inQuote := false
+	for i := 0; i < len(q); i++ {
+		switch {
+		case q[i] == '\\' && inQuote:
+			i++ // skip escaped character
+		case q[i] == '"':
+			inQuote = !inQuote
+		case !inQuote && i+1 < len(q) && q[i] == '|' && q[i+1] == '|':
+			return true
+		}
+	}
+	return false
+}
+
+// tempoDefaultTimeBoundsSeconds sets start and end, defaulting to the past
+// hour. Tempo 2.10 interprets omitted bounds as an ingester-only search,
+// silently missing traces already flushed to backend storage.
+func tempoDefaultTimeBoundsSeconds(params url.Values, start, end string) (url.Values, error) {
+	from, to, err := tempoTimeRange(start, end)
+	if err != nil {
+		return nil, err
+	}
+	params.Set("start", strconv.FormatInt(from.Unix(), 10))
+	params.Set("end", strconv.FormatInt(to.Unix(), 10))
+	return params, nil
+}
+
+// tempoDefaultTimeBoundsNanos is like tempoDefaultTimeBoundsSeconds but emits
+// nanosecond-precision epoch values, as required by the metrics endpoints.
+func tempoDefaultTimeBoundsNanos(params url.Values, start, end string) (url.Values, error) {
+	from, to, err := tempoTimeRange(start, end)
+	if err != nil {
+		return nil, err
+	}
+	params.Set("start", strconv.FormatInt(from.UnixNano(), 10))
+	params.Set("end", strconv.FormatInt(to.UnixNano(), 10))
+	return params, nil
+}
+
+// Parameter structs for Tempo tools.
+
+type SearchTempoTracesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	Query         string `json:"query" jsonschema:"required,description=TraceQL query string"`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
+	Limit         int    `json:"limit,omitempty" jsonschema:"default=20,description=Maximum number of traces to return"`
+	Spss          int    `json:"spss,omitempty" jsonschema:"default=3,description=Maximum number of matching spans to return per span set"`
+}
+
+type QueryTempoMetricsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	Query         string `json:"query" jsonschema:"required,description=TraceQL metrics query of the form '{ <selector> } | <aggregation> [by (<attribute>)]'. Example: '{ } | quantile_over_time(span:duration\\, .99) by (span.name)'."`
+	Type          string `json:"type,omitempty" jsonschema:"enum=instant,enum=range,default=range,description=Query type: 'instant' returns a single value at the end of the time range; 'range' returns a time series. Default is 'range'."`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time (RFC3339 format). If not provided will search the past 1 hour."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time (RFC3339 format). If not provided will search the past 1 hour."`
+}
+
+type GetTempoTraceParams struct {
+	FocusSpanID   *string `json:"focus_span_id,omitempty" jsonschema:"description=Optional 16-character hexadecimal span ID to select initially. The full trace remains available."`
+	DatasourceUID string  `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	TraceID       string  `json:"trace_id" jsonschema:"required,description=Trace ID to retrieve"`
+	Start         string  `json:"start,omitempty" jsonschema:"description=Optional start of the trace search range in RFC3339 format. Must be provided with end. Narrowing the range makes the lookup much cheaper."`
+	End           string  `json:"end,omitempty" jsonschema:"description=Optional end of the trace search range in RFC3339 format. Must be provided with start."`
+}
+
+type DiffTempoTracesParams struct {
+	DatasourceUID  string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	BaseTraceID    string `json:"base_trace_id" jsonschema:"required,description=Trace ID for the baseline trace"`
+	CompareTraceID string `json:"compare_trace_id" jsonschema:"required,description=Trace ID for the comparison trace"`
+	BaseStart      string `json:"base_start,omitempty" jsonschema:"description=Optional start of the baseline trace search range in RFC3339 format. Must be provided with base_end."`
+	BaseEnd        string `json:"base_end,omitempty" jsonschema:"description=Optional end of the baseline trace search range in RFC3339 format. Must be provided with base_start."`
+	CompareStart   string `json:"compare_start,omitempty" jsonschema:"description=Optional start of the comparison trace search range in RFC3339 format. Must be provided with compare_end."`
+	CompareEnd     string `json:"compare_end,omitempty" jsonschema:"description=Optional end of the comparison trace search range in RFC3339 format. Must be provided with compare_start."`
+	Format         string `json:"format,omitempty" jsonschema:"enum=trace-summary-v0-composed,enum=trace-summary-v0-native,enum=trace-patch-v0,default=trace-summary-v0-composed,description=Output format. The composed format returns a compact summary and attaches the full patch only when it is at most 64 KiB. trace-patch-v0 has no output-size guarantee."`
+}
+
+type ListTempoAttributeNamesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	Scope         string `json:"scope,omitempty" jsonschema:"description=Scope to filter attributes by (span\\, resource\\, event\\, link\\, instrumentation). Strongly recommended — omitting scope returns all attributes across all scopes which can be very large (100K+ chars)."`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
+}
+
+type ListTempoAttributeValuesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the tempo datasource to query"`
+	Name          string `json:"name" jsonschema:"required,description=The attribute name to get values for (e.g. 'span.http.method'\\, 'resource.service.name')"`
+	FilterQuery   string `json:"filter-query,omitempty" jsonschema:"description=Filter query to apply to the attribute values. It can only have one spanset and only &&'ed conditions like { <cond> && <cond> && ... }. This is useful for filtering the values to a specific set of values."`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be before end."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided\\, must be after start."`
+}
+
+type GetTempoTraceQLDocsParams struct {
+	Topic string `json:"topic" jsonschema:"required,enum=basic,enum=aggregates,enum=structural,enum=metrics,description=Which section of the TraceQL reference to retrieve: 'basic' for attribute and duration filters\\, 'aggregates' for count/avg/sum and by() grouping\\, 'structural' for parent/child and descendant operators\\, 'metrics' for rate/quantile_over_time metrics queries"`
+}
+
+// Handler functions.
+
+func searchTempoTraces(ctx context.Context, args SearchTempoTracesParams) (*mcp.CallToolResult, error) {
+	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	limit := tempoDefaultSearchLimit
+	if args.Limit > 0 {
+		limit = args.Limit
+	}
+
+	if useDSQuery(ctx, tempoDSQuerySearchSince) {
+		from, to, err := tempoTimeRange(args.Start, args.End)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		// The "traces" table type keeps attribute values typed; "raw" turns
+		// false, 0 and "" into nulls.
+		query := map[string]any{"queryType": "traceql", "query": args.Query, "limit": limit, "tableType": "traces"}
+		if args.Spss > 0 {
+			query["spss"] = args.Spss
+		}
+		frames, err := backend.dsQuery(ctx, from, to, query)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		traces, ok, err := tempoSearchFromFrames(frames)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		if !ok {
+			// Grafana runs queries with a metrics function as metrics queries,
+			// which return time series (or nothing) instead of traces.
+			return mcpgrafana.NewToolResultError("no trace search results: TraceQL metrics queries such as '{ } | rate()' return time series, not traces; run them as metrics queries instead"), nil
+		}
+		out, err := json.Marshal(map[string]any{"traces": traces})
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		return tempoToolResult(string(out), "search-results", "json"), nil
+	}
+
+	params := url.Values{}
+	params.Set("q", args.Query)
+	params.Set("limit", strconv.Itoa(limit))
+	if args.Spss > 0 {
+		params.Set("spss", strconv.Itoa(args.Spss))
+	}
+
+	params, err = tempoDefaultTimeBoundsSeconds(params, args.Start, args.End)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	body, err := backend.doGet(ctx, "/api/search", params)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	return tempoToolResult(tidyTempoSearchResults(body, limit), "search-results", "json"), nil
+}
+
+// tempoDefaultSearchLimit matches Tempo's own default search limit.
+const tempoDefaultSearchLimit = 20
+
+// tidyTempoSearchResults drops each trace's deprecated spanSet field, which
+// Tempo still sends as a copy of the first entry in spanSets, flattens
+// attribute lists into objects, and adds a note when the search did not run
+// every job. Bodies it cannot parse are returned unchanged.
+func tidyTempoSearchResults(body string, limit int) string {
+	var resp map[string]any
+	if err := unmarshalTempoJSON(json.RawMessage(body), &resp); err != nil || resp == nil {
+		return body
+	}
+	traces, _ := resp["traces"].([]any)
+	for _, trace := range traces {
+		if t, ok := trace.(map[string]any); ok && t["spanSets"] != nil {
+			delete(t, "spanSet")
+		}
+	}
+	flattenTempoAttributes(resp)
+
+	metrics, _ := resp["metrics"].(map[string]any)
+	completed, _ := toFloat(metrics["completedJobs"])
+	total, _ := toFloat(metrics["totalJobs"])
+	if completed < total {
+		if len(traces) >= limit {
+			resp["note"] = fmt.Sprintf("Partial results: the search stopped after %d of %d jobs because it reached the limit of %d traces. Raise limit or narrow the query or time range to see more matches.", int(completed), int(total), limit)
+		} else {
+			resp["note"] = fmt.Sprintf("Partial results: only %d of %d search jobs completed, so some matching traces may be missing.", int(completed), int(total))
+		}
+	}
+
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return body
+	}
+	return string(out)
+}
+
+func queryTempoMetrics(ctx context.Context, args QueryTempoMetricsParams) (*mcp.CallToolResult, error) {
+	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	queryType := args.Type
+	if queryType == "" {
+		queryType = "range"
+	}
+
+	since := tempoDSQueryMetricsSince
+	if queryType == "instant" {
+		since = tempoDSQueryInstantSince
+	}
+	if useDSQuery(ctx, since) {
+		if queryType != "instant" && queryType != "range" {
+			return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid type %q: must be 'instant' or 'range'", queryType)), nil
+		}
+		from, to, err := tempoTimeRange(args.Start, args.End)
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		// Grafana runs the query as a search unless it recognises a metrics
+		// function; tableType keeps that search from failing on a nil table type.
+		frames, err := backend.dsQuery(ctx, from, to, map[string]any{"queryType": "traceql", "query": args.Query, "metricsQueryType": queryType, "tableType": "traces"})
+		if err != nil {
+			return mcpgrafana.NewToolResultError(annotateTraceQLParseError(err.Error())), nil
+		}
+		if _, isSearch, _ := tempoSearchFromFrames(frames); isSearch {
+			return mcpgrafana.NewToolResultError("not a TraceQL metrics query: Grafana ran it as a trace search. Metrics queries pipe a spanset into a function such as rate(), count_over_time() or quantile_over_time()."), nil
+		}
+		out, err := json.Marshal(map[string]any{"series": tempoMetricsFromFrames(frames, queryType == "instant")})
+		if err != nil {
+			return mcpgrafana.NewToolResultError(err.Error()), nil
+		}
+		return tempoToolResult(string(out), "metrics-"+queryType, "json"), nil
+	}
+
+	params := url.Values{}
+	params.Set("q", args.Query)
+
+	params, err = tempoDefaultTimeBoundsNanos(params, args.Start, args.End)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	var endpoint string
+	var resultType string
+	switch queryType {
+	case "instant":
+		endpoint = "/api/metrics/query"
+		resultType = "metrics-instant"
+	case "range":
+		endpoint = "/api/metrics/query_range"
+		resultType = "metrics-range"
+	default:
+		return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid type %q: must be 'instant' or 'range'", queryType)), nil
+	}
+
+	body, err := backend.doGet(ctx, endpoint, params)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(annotateTraceQLParseError(err.Error())), nil
+	}
+
+	return tempoToolResult(body, resultType, "json"), nil
+}
+
+// annotateTraceQLParseError appends a worked example to a Tempo parse error.
+// Tempo reports the offending column and says to consult its docs, but returns
+// nothing to pattern-match against, and the common failures are PromQL habits
+// (a [5m] range selector, a where clause, by() ahead of the aggregation, a bare
+// duration) that one correct query rules out. Only fires on a rejected query,
+// so it costs nothing on the success path.
+func annotateTraceQLParseError(msg string) string {
+	if !strings.Contains(msg, "parse error") {
+		return msg
+	}
+	return msg + "\n\nTraceQL metrics queries take the form '{ <spanset filter> } | <aggregation> [by (<attribute>)]'." +
+		"\nWorking example: {resource.service.name=\"checkout\"} | quantile_over_time(span:duration, .99) by (span.name)" +
+		"\nCommon mistakes: a PromQL range selector such as [5m]; a 'where' clause; 'by (...)' placed before the aggregation instead of after;" +
+		" a bare 'duration' instead of the 'span:duration' intrinsic; an aggregation name missing its '_over_time' suffix (count_over_time, not count)." +
+		"\nCall get_tempo_traceql_docs with topic 'metrics' for the full reference."
+}
+
+func getTempoTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
+	if args.FocusSpanID != nil {
+		if !isHexID(*args.FocusSpanID, 16) {
+			return mcpgrafana.NewToolResultError("focus_span_id must be 16 hexadecimal characters"), nil
+		}
+		focus := strings.ToLower(*args.FocusSpanID)
+		args.FocusSpanID = &focus
+	}
+	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	start, end, err := parseOptionalTimeRange(args.Start, args.End, "start", "end")
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+	// Zero bounds make Tempo look the trace up across all time.
+	from, to := time.UnixMilli(0), time.UnixMilli(0)
+	if start != nil {
+		// Tempo's trace-by-ID lookup takes unix seconds and the datasource
+		// floors both bounds; round end up so the range stays inclusive.
+		sec := int64(time.Second)
+		from = time.Unix(*start/sec, 0)
+		to = time.Unix((*end+sec-1)/sec, 0)
+	}
+	frames, err := backend.dsQuery(ctx, from, to, map[string]any{"queryType": "traceId", "query": args.TraceID})
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+	trace, spans, err := tempoTraceFromFrames(args.TraceID, frames)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+	out, err := json.Marshal(trace)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+	result := tempoToolResult(string(out), "trace", "json")
+	if spans != nil {
+		setTraceViewContent(ctx, args, spans, result)
+	}
+	return result, nil
+}
+
+type traceDiffAPIRequest struct {
+	Base    traceDiffTraceRequest `json:"base"`
+	Compare traceDiffTraceRequest `json:"compare"`
+	Format  string                `json:"format"`
+}
+
+type traceDiffTraceRequest struct {
+	TraceID string `json:"traceID"`
+	Start   *int64 `json:"start,omitempty"`
+	End     *int64 `json:"end,omitempty"`
+}
+
+func diffTempoTraces(ctx context.Context, args DiffTempoTracesParams) (*mcp.CallToolResult, error) {
+	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	format := args.Format
+	if format == "" {
+		format = "trace-summary-v0-composed"
+	}
+
+	baseStart, baseEnd, err := parseOptionalTimeRange(args.BaseStart, args.BaseEnd, "base_start", "base_end")
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+	compareStart, compareEnd, err := parseOptionalTimeRange(args.CompareStart, args.CompareEnd, "compare_start", "compare_end")
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	diffReq := traceDiffAPIRequest{
+		Base: traceDiffTraceRequest{
+			TraceID: args.BaseTraceID,
+			Start:   baseStart,
+			End:     baseEnd,
+		},
+		Compare: traceDiffTraceRequest{
+			TraceID: args.CompareTraceID,
+			Start:   compareStart,
+			End:     compareEnd,
+		},
+		Format: format,
+	}
+
+	body, err := backend.doPost(ctx, "/api/v2/traces/diff", diffReq)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	return tempoToolResult(body, "trace-diff", "json"), nil
+}
+
+func parseOptionalTimeRange(startStr, endStr, startName, endName string) (*int64, *int64, error) {
+	hasStart := startStr != ""
+	hasEnd := endStr != ""
+	if hasStart != hasEnd {
+		return nil, nil, fmt.Errorf("arguments %q and %q must be provided together", startName, endName)
+	}
+	if !hasStart {
+		return nil, nil, nil
+	}
+
+	startTS, err := parseStartTime(startStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid %s: %w", startName, err)
+	}
+	endTS, err := parseEndTime(endStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid %s: %w", endName, err)
+	}
+
+	startNanos := startTS.UnixNano()
+	endNanos := endTS.UnixNano()
+	return &startNanos, &endNanos, nil
+}
+
+const tempoAttributeNamesSummaryThreshold = 32_000
+
+func listTempoAttributeNames(ctx context.Context, args ListTempoAttributeNamesParams) (*mcp.CallToolResult, error) {
+	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	params := url.Values{}
+	if args.Scope != "" {
+		params.Set("scope", args.Scope)
+	}
+
+	params, err = tempoDefaultTimeBoundsSeconds(params, args.Start, args.End)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	body, err := backend.doGet(ctx, "/api/v2/search/tags", params)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	if args.Scope == "" && len(body) > tempoAttributeNamesSummaryThreshold {
+		if summary, ok := summarizeTempoAttributeNames(body); ok {
+			return tempoToolResult(summary, "attribute-names-summary", "text"), nil
+		}
+	}
+
+	return tempoToolResult(body, "attribute-names", "json"), nil
+}
+
+func summarizeTempoAttributeNames(body string) (string, bool) {
+	var resp struct {
+		Scopes []struct {
+			Name string   `json:"name"`
+			Tags []string `json:"tags"`
+		} `json:"scopes"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return "", false
+	}
+
+	var b strings.Builder
+	total := 0
+	b.WriteString("Response too large to return in full. Attribute counts per scope:\n\n")
+	for _, s := range resp.Scopes {
+		total += len(s.Tags)
+		fmt.Fprintf(&b, "  %s: %d attributes\n", s.Name, len(s.Tags))
+	}
+	fmt.Fprintf(&b, "\nTotal: %d attributes across %d scopes.\n", total, len(resp.Scopes))
+	b.WriteString("Call again with the scope parameter (e.g. scope=resource or scope=span) to see the attribute names for a specific scope.")
+	return b.String(), true
+}
+
+func listTempoAttributeValues(ctx context.Context, args ListTempoAttributeValuesParams) (*mcp.CallToolResult, error) {
+	backend, err := tempoBackendForDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	params := url.Values{}
+	if args.FilterQuery != "" {
+		if tempoFilterHasOR(args.FilterQuery) {
+			return mcpgrafana.NewToolResultError("OR conditions (||) are not supported in filter queries — Tempo silently reduces them to an empty filter, returning unfiltered values. Use separate calls for each alternative instead."), nil
+		}
+		params.Set("q", args.FilterQuery)
+	}
+
+	params, err = tempoDefaultTimeBoundsSeconds(params, args.Start, args.End)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	body, err := backend.doGet(ctx, "/api/v2/search/tag/"+url.PathEscape(args.Name)+"/values", params)
+	if err != nil {
+		return mcpgrafana.NewToolResultError(err.Error()), nil
+	}
+
+	return tempoToolResult(body, "attribute-values", "json"), nil
+}
+
+// traceQLDocs holds the static TraceQL reference documentation, keyed by topic.
+var traceQLDocs = map[string]string{
+	"basic": `# TraceQL: Basic Filters
+
+TraceQL queries select spans from traces. Every query starts with ` + "`{}`" + ` (match all spans) and adds conditions inside the braces.
+
+## Attribute Filters
+- Span attributes: ` + "`{ span.http.method = \"GET\" }`" + `
+- Resource attributes: ` + "`{ resource.service.name = \"frontend\" }`" + `
+- Intrinsics: ` + "`{ name = \"HTTP GET\" }`" + `, ` + "`{ duration > 100ms }`" + `, ` + "`{ status = error }`" + `, ` + "`{ kind = server }`" + `
+- Nested: ` + "`{ span.http.request.header.x-custom = \"value\" }`" + `
+
+## Operators
+- Comparison: ` + "`=`" + `, ` + "`!=`" + `, ` + "`>`" + `, ` + "`>=`" + `, ` + "`<`" + `, ` + "`<=`" + `, ` + "`=~`" + ` (regex), ` + "`!~`" + `
+- Logical: ` + "`&&`" + ` (AND within a spanset), ` + "`||`" + ` (OR, alternative spansets)
+- String: ` + "`=~\"regex\"`" + `, ` + "`!~\"regex\"`" + `
+
+## Combining Conditions
+- AND (same span): ` + "`{ span.http.method = \"GET\" && status = error }`" + `
+- OR (either match): ` + "`{ span.http.method = \"GET\" } || { span.http.method = \"POST\" }`" + `
+- Pipeline: ` + "`{ status = error } | count() > 2`" + `
+
+## Duration Filters
+- ` + "`{ duration > 500ms }`" + `
+- ` + "`{ duration >= 1s && duration < 5s }`" + `
+- Units: ` + "`ns`" + `, ` + "`us`" + `/` + "`µs`" + `, ` + "`ms`" + `, ` + "`s`" + `, ` + "`m`" + `, ` + "`h`" + `
+
+## Status Filters
+- ` + "`{ status = ok }`" + `, ` + "`{ status = error }`" + `, ` + "`{ status = unset }`" + `
+- Status message: ` + "`{ statusMessage =~ \".*timeout.*\" }`" + `
+
+## Typed Values
+- String: ` + "`\"value\"`" + ` (double quotes required)
+- Integer: ` + "`200`" + `, ` + "`-1`" + `
+- Float: ` + "`1.5`" + `
+- Duration: ` + "`100ms`" + `, ` + "`2s`" + `
+- Status: ` + "`ok`" + `, ` + "`error`" + `, ` + "`unset`" + ``,
+
+	"aggregates": `# TraceQL: Aggregates and Grouping
+
+Aggregate functions operate on spansets (groups of spans within a trace) and return scalar values. Use them in pipelines after a spanset selector.
+
+## Aggregate Functions
+- ` + "`count()`" + ` — number of matching spans
+- ` + "`avg(field)`" + ` — average of a numeric field (e.g. ` + "`avg(duration)`" + `)
+- ` + "`min(field)`" + ` — minimum value
+- ` + "`max(field)`" + ` — maximum value
+- ` + "`sum(field)`" + ` — sum of values
+
+## Pipeline Syntax
+Aggregates are used in pipelines with ` + "`|`" + `:
+- ` + "`{ status = error } | count() > 5`" + ` — traces with more than 5 error spans
+- ` + "`{ } | avg(duration) > 500ms`" + ` — traces whose spans average over 500ms
+- ` + "`{ name = \"HTTP GET\" } | max(duration) > 2s`" + ` — traces with a slow GET span
+
+## Grouping with by()
+` + "`by()`" + ` groups spans before aggregation:
+- ` + "`{ } | count() by(resource.service.name) > 10`" + ` — services with >10 spans
+- ` + "`{ } | avg(duration) by(span.http.method)`" + ` — average duration per HTTP method
+
+## Coalesce
+` + "`coalesce()`" + ` merges sibling spansets after ` + "`by()`" + `:
+- ` + "`{ } | count() by(resource.service.name) | coalesce() | count() > 3`" + `
+
+## Select
+` + "`select()`" + ` picks specific fields to include in results:
+- ` + "`{ duration > 1s } | select(span.http.url, resource.service.name)`" + ``,
+
+	"structural": `# TraceQL: Structural Operators
+
+Structural operators query relationships between spans. The result is always the right-hand spanset.
+
+## Child (>>)
+The right-hand spans are direct children of the left-hand spans:
+- ` + "`{ resource.service.name = \"frontend\" } >> { resource.service.name = \"backend\" }`" + ` — backend spans directly called by frontend
+
+## Parent (<<)
+The right-hand spans are direct parents of the left-hand spans:
+- ` + "`{ resource.service.name = \"database\" } << { resource.service.name = \"backend\" }`" + ` — backend spans that are parents of database spans
+
+## Descendant (>>)
+` + "`>>`" + ` matches only direct parent-child. To match across multiple levels, use a pipeline or nest structural operators:
+- ` + "`{ resource.service.name = \"gateway\" } >> { } >> { status = error }`" + ` — error spans two levels below gateway
+
+## Sibling (~)
+Match spans that share the same parent:
+- ` + "`{ span.http.method = \"GET\" } ~ { span.http.method = \"POST\" }`" + ` — GET and POST siblings
+
+## Combining with Conditions
+Structural queries can include attribute filters on both sides:
+- ` + "`{ resource.service.name = \"frontend\" && span.http.method = \"GET\" } >> { status = error && duration > 500ms }`" + `
+
+## Negation with !
+Negate structural operators:
+- ` + "`{ resource.service.name = \"frontend\" } !>> { status = error }`" + ` — frontend spans with no direct error children
+- ` + "`{ } !<< { status = error }`" + ` — spans that are not parents of error spans`,
+
+	"metrics": `# TraceQL: Metrics Queries
+
+TraceQL metrics queries compute aggregate time series from trace data. They use a different endpoint than search queries.
+
+## Functions
+- ` + "`rate()`" + ` — spans per second matching the selector
+- ` + "`count_over_time()`" + ` — total count of matching spans per interval
+- ` + "`min_over_time(field)`" + ` — minimum value per interval
+- ` + "`max_over_time(field)`" + ` — maximum value per interval
+- ` + "`avg_over_time(field)`" + ` — average value per interval
+- ` + "`quantile_over_time(field, quantile)`" + ` — quantile value per interval (0.0-1.0)
+- ` + "`histogram_over_time(field)`" + ` — histogram buckets per interval
+
+## Basic Examples
+- ` + "`{ } | rate()`" + ` — total span throughput
+- ` + "`{ status = error } | rate()`" + ` — error rate
+- ` + "`{ } | avg_over_time(duration)`" + ` — average span duration over time
+- ` + "`{ } | quantile_over_time(duration, 0.95)`" + ` — p95 latency
+- ` + "`{ resource.service.name = \"frontend\" } | count_over_time()`" + ` — frontend span count
+
+## Grouping with by()
+- ` + "`{ } | rate() by(resource.service.name)`" + ` — throughput per service
+- ` + "`{ } | quantile_over_time(duration, 0.99) by(span.http.method)`" + ` — p99 per HTTP method
+
+## Query Types
+- **Range queries** (default): return time series data points, one per interval across the time range
+- **Instant queries**: return a single value at the end of the time range; keep the window under 15 minutes to avoid timeouts
+
+## Tips
+- Metrics queries scan all matching spans, so narrow your selector for performance
+- Use ` + "`rate()`" + ` rather than ` + "`count_over_time()`" + ` for comparing across different time ranges
+- Combine with grouping for RED metrics: Rate, Errors, Duration`,
+}
+
+func getTempoTraceQLDocs(_ context.Context, args GetTempoTraceQLDocsParams) (*mcp.CallToolResult, error) {
+	doc, ok := traceQLDocs[args.Topic]
+	if !ok {
+		return mcpgrafana.NewToolResultError(fmt.Sprintf("invalid topic %q: must be 'basic', 'aggregates', 'structural', or 'metrics'", args.Topic)), nil
+	}
+	return tempoToolResult(doc, "traceql-docs", "markdown"), nil
+}
+
+func tempoToolResult(body string, contentType string, encoding string) *mcp.CallToolResult {
+	res := mcpgrafana.NewToolResultText(body)
+	res.Meta = mcp.Meta{
+		"type":     contentType,
+		"encoding": encoding,
+	}
+	return res
+}
+
+// Tool definitions.
+
+var SearchTempoTracesTool = mcpgrafana.MustTool(
+	"search_tempo_traces",
+	"Search for traces using TraceQL queries. Returns each matching trace with its root service, root span name, start time and duration, and the span sets the query matched. Each span lists its ID, start time, duration and the attributes the query returned, as an object mapping attribute names to values.",
+	searchTempoTraces,
+	mcpgrafana.WithTitleAnnotation("Search Tempo traces"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+var QueryTempoMetricsTool = mcpgrafana.MustTool(
+	"query_tempo_metrics",
+	"Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead. Returns each series with its labels and either its samples and exemplars (range) or a single value (instant).",
+	queryTempoMetrics,
+	mcpgrafana.WithTitleAnnotation("Query Tempo metrics"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+var GetTempoTraceTool = mcpgrafana.MustTool(
+	"get_tempo_trace",
+	"Retrieve a specific trace by ID. Returns its spans grouped by service and resource, with span attributes, events and links.",
+	getTempoTrace,
+	mcpgrafana.WithTitleAnnotation("Get Tempo trace"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+var DiffTempoTracesTool = mcpgrafana.MustTool(
+	"diff_tempo_traces",
+	"Compare two complete traces. Returns a compact summary and includes the full span-level patch when it is at most 64 KiB. Request trace-patch-v0 only when full details are required; full patches are not size-bounded.",
+	diffTempoTraces,
+	mcpgrafana.WithTitleAnnotation("Diff Tempo traces"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+var ListTempoAttributeNamesTool = mcpgrafana.MustTool(
+	"list_tempo_attribute_names",
+	"List available attribute names for TraceQL queries. Without a scope (resource, span, etc.) the response can be very large.",
+	listTempoAttributeNames,
+	mcpgrafana.WithTitleAnnotation("List Tempo attribute names"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+var ListTempoAttributeValuesTool = mcpgrafana.MustTool(
+	"list_tempo_attribute_values",
+	"List values for a fully scoped attribute name (e.g. resource.service.name). Useful for discovering what values exist for a specific attribute.",
+	listTempoAttributeValues,
+	mcpgrafana.WithTitleAnnotation("List Tempo attribute values"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
+	"get_tempo_traceql_docs",
+	"Retrieve TraceQL reference documentation with examples, covering attribute filters, aggregates, structural operators, and metrics queries. Consult this before writing a non-trivial TraceQL query, or after one returns an error or no results.",
+	getTempoTraceQLDocs,
+	mcpgrafana.WithTitleAnnotation("Get TraceQL documentation"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(), // embedded docs
+)
+
+// AddTempoTools registers all Tempo tools on the MCP server. Search, metrics
+// and trace-by-ID queries go through Grafana's /api/ds/query endpoint; trace
+// diffs and attribute discovery call Tempo's REST API through the Grafana
+// datasource proxy. The TraceQL docs tool returns static reference material
+// inlined in the binary.
+func AddTempoTools(s *mcp.Server, enableQueryTools bool) {
+	if !enableQueryTools {
+		return
+	}
+	SearchTempoTracesTool.Register(s)
+	QueryTempoMetricsTool.Register(s)
+	GetTempoTraceTool.Register(s)
+	DiffTempoTracesTool.Register(s)
+	ListTempoAttributeNamesTool.Register(s)
+	ListTempoAttributeValuesTool.Register(s)
+	GetTempoTraceQLDocsTool.Register(s)
+}

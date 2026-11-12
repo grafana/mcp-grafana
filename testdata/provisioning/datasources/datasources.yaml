@@ -28,21 +28,12 @@ datasources:
     url: http://pyroscope:4040
     isDefault: false
   - name: Tempo
-    id: 4
     uid: tempo
     type: tempo
     access: proxy
     url: http://tempo:3200
     isDefault: false
-  - name: Tempo Secondary
-    id: 5
-    uid: tempo-secondary
-    type: tempo
-    access: proxy
-    url: http://tempo2:3201
-    isDefault: false
   - name: Alertmanager
-    id: 6
     uid: alertmanager
     type: alertmanager
     access: proxy
@@ -151,6 +142,35 @@ datasources:
     secureJsonData:
       accessKey: test
       secretKey: test
+    isDefault: false
+  - name: Google Cloud Logging
+    uid: googlecloud-logging
+    type: googlecloud-logging-datasource
+    access: proxy
+    jsonData:
+      authenticationType: gce
+    isDefault: false
+  - name: MySQL
+    uid: mysql
+    type: mysql
+    access: proxy
+    url: mysql:3306
+    database: test
+    user: root
+    secureJsonData:
+      password: rootroot
+    isDefault: false
+  - name: PostgreSQL
+    uid: postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    database: test
+    user: postgres
+    jsonData:
+      sslmode: disable
+    secureJsonData:
+      password: postgres
     isDefault: false
   - name: Graphite
     id: 9

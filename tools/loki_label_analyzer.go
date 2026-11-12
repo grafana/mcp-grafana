@@ -7,9 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // The functions in this file translate the Grafana Professional Services
@@ -159,7 +158,7 @@ func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityPa
 
 	labels := args.LabelNames
 	if len(labels) == 0 {
-		all, err := backend.ListLabelNames(ctx, start, end)
+		all, err := backend.ListLabelNames(ctx, "", start, end)
 		if err != nil {
 			return nil, fmt.Errorf("listing label names: %w", err)
 		}
@@ -183,7 +182,7 @@ func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityPa
 
 	out := make([]LokiLabelCardinality, 0, len(labels))
 	for _, name := range labels {
-		values, err := backend.ListLabelValues(ctx, name, start, end)
+		values, err := backend.ListLabelValues(ctx, name, "", start, end)
 		if err != nil {
 			return nil, fmt.Errorf("listing values for %q: %w", name, err)
 		}
@@ -926,7 +925,7 @@ func buildPerfSummary(findings []QueryPerfFinding, stats *Stats) string {
 
 // AddLokiLabelAnalyzerTools registers the label-analyzer tool set.
 // AddLokiTools calls this so the standard Loki bundle includes them.
-func AddLokiLabelAnalyzerTools(s *server.MCPServer) {
+func AddLokiLabelAnalyzerTools(s *mcp.Server) {
 	AnalyzeLokiLabels.Register(s)
 }
 
@@ -962,6 +961,8 @@ func analyzeLokiLabels(ctx context.Context, args AnalyzeLokiLabelsParams) (*Anal
 	if args.DatasourceUID == "" && len(args.Labels) == 0 {
 		return nil, fmt.Errorf("either datasourceUid or labels must be supplied")
 	}
+	// VictoriaLogs reads a missing start as all of retention, so pin the window here.
+	args.StartRFC3339, args.EndRFC3339 = getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	audit, err := auditLokiLabelStrategy(ctx, AuditLokiLabelStrategyParams{
 		DatasourceUID:      args.DatasourceUID,
@@ -1008,9 +1009,10 @@ var AnalyzeLokiLabels = mcpgrafana.MustTool(
 	"analyze_loki_labels",
 	"Audits a Loki label strategy and optionally diagnoses query performance. Returns per-label verdicts, missing base labels, normalisation issues, and a recommended set. Pass datasourceUid for live cardinality or labels for static scoring; both may be combined.",
 	analyzeLokiLabels,
-	mcp.WithTitleAnnotation("Analyze Loki label strategy"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Analyze Loki label strategy"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )

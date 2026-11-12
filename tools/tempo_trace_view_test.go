@@ -1,0 +1,424 @@
+//go:build unit
+
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/grafana/grafana-openapi-client-go/client"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	testTraceID = "0123456789abcdef0123456789abcdef"
+	testSpanID  = "1111111111111111"
+)
+
+func TestTraceQueryToolDefinition(t *testing.T) {
+	tool := GetTempoTraceTool.Tool
+	assert.Equal(t, "get_tempo_trace", tool.Name)
+	require.NotNil(t, tool.Annotations)
+	assert.True(t, tool.Annotations.ReadOnlyHint)
+	assert.True(t, tool.Annotations.IdempotentHint)
+	require.NotNil(t, tool.Meta)
+
+	assert.NotContains(t, tool.Meta, "ui")
+
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	require.NoError(t, json.Unmarshal(tool.InputSchema.(json.RawMessage), &schema))
+	assert.ElementsMatch(t, []string{"trace_id", "datasourceUid"}, schema.Required)
+	assert.Contains(t, schema.Properties, "focus_span_id")
+}
+
+func TestRenderTraceFetchesThroughAuthenticatedDSQuery(t *testing.T) {
+	stacktrace := strings.Repeat("at payment.authorize (payment.go:42)\n", 128)
+	traceData := testTraceData(stacktrace)
+
+	var requestedPath, authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/datasources/uid/tempo-main" {
+			writeTempoDatasource(t, w)
+			return
+		}
+		if r.URL.Path == "/api/user" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"orgId":7}`)
+			return
+		}
+		requestedPath = r.URL.Path
+		authorization = r.Header.Get("Authorization")
+		writeTraceFrameResponse(t, w, traceData)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{
+		URL:    server.URL,
+		OrgID:  7,
+		APIKey: "test-token",
+	})
+	gc := mcpgrafana.GrafanaClientFromContext(ctx)
+	gc.PublicURL = "https://grafana.example.com/grafana"
+	gc.Version = "11.0.0"
+	focusSpanID := testSpanID
+
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{
+		TraceID:       testTraceID,
+		DatasourceUID: "tempo-main",
+		FocusSpanID:   &focusSpanID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/api/ds/query", requestedPath)
+	assert.Equal(t, "Bearer test-token", authorization)
+
+	structured, ok := result.StructuredContent.(TraceViewResult)
+	require.True(t, ok)
+	assert.Equal(t, testTraceID, structured.TraceID)
+	assert.Equal(t, "tempo-main", structured.DatasourceUID)
+	require.Len(t, structured.Spans, 2)
+	link, err := url.Parse(structured.GrafanaURL)
+	require.NoError(t, err)
+	assert.Equal(t, "grafana.example.com", link.Host)
+	assert.Equal(t, "/grafana/explore", link.Path)
+	assert.Empty(t, link.Query().Get("orgId"))
+	assert.Equal(t, "1", link.Query().Get("schemaVersion"))
+	var panes map[string]struct {
+		Queries []map[string]any `json:"queries"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(link.Query().Get("panes")), &panes))
+	require.Len(t, panes[explorePaneID].Queries, 1)
+	assert.Equal(t, testTraceID, panes[explorePaneID].Queries[0]["query"])
+	assert.Equal(t, testSpanID, panes[explorePaneID].Queries[0]["spanId"])
+	var paneRanges map[string]struct {
+		Range map[string]string `json:"range"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(link.Query().Get("panes")), &paneRanges))
+	assert.Equal(t, "1749999940000", paneRanges[explorePaneID].Range["from"])
+	assert.Equal(t, "1750000060125", paneRanges[explorePaneID].Range["to"])
+
+	root := structured.Spans[0]
+	assert.Equal(t, "checkout", root.ServiceName)
+	assert.Equal(t, "error", root.Status, "an exception event marks an unset OTLP span as an error")
+	assert.Equal(t, "production", root.Attributes["resource.deployment.environment.name"])
+	require.Len(t, root.Events, 1)
+	assert.Equal(t, stacktrace, root.Events[0].Attributes["exception.stacktrace"],
+		"exception data must be returned intact")
+
+	child := structured.Spans[1]
+	require.NotNil(t, child.ParentID)
+	assert.Equal(t, "0102030405060708", *child.ParentID)
+	assert.Equal(t, "ok", child.Status)
+}
+
+func TestRenderTraceFetchesWithUserScopedAuthentication(t *testing.T) {
+	var accessToken, idToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/datasources/uid/tempo-main" {
+			writeTempoDatasource(t, w)
+			return
+		}
+		accessToken = r.Header.Get("X-Access-Token")
+		idToken = r.Header.Get("X-Grafana-Id")
+		writeTraceFrameResponse(t, w, testTraceData("stack"))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{
+		URL: server.URL, AccessToken: "user-access-token", IDToken: "user-id-token",
+	})
+	_, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	require.NoError(t, err)
+	assert.Equal(t, "user-access-token", accessToken)
+	assert.Equal(t, "user-id-token", idToken)
+}
+
+func TestTraceExploreURLStripsCredentialsAndUsesLegacyState(t *testing.T) {
+	link, err := traceExploreURL("https://user:secret@grafana.example.com/grafana/?old=1#fragment", "9.5.0", GetTempoTraceParams{
+		TraceID: testTraceID, DatasourceUID: "tempo-main",
+	}, []TraceSpan{{StartTimeMS: 1750000000000, DurationMS: 125}})
+	require.NoError(t, err)
+	parsed, err := url.Parse(link)
+	require.NoError(t, err)
+	assert.Nil(t, parsed.User)
+	assert.Equal(t, "grafana.example.com", parsed.Host)
+	assert.Equal(t, "/grafana/explore", parsed.Path)
+	assert.Empty(t, parsed.Fragment)
+	assert.Empty(t, parsed.Query().Get("old"))
+	assert.Empty(t, parsed.Query().Get("orgId"))
+	assert.Empty(t, parsed.Query().Get("panes"))
+	var left map[string]any
+	require.NoError(t, json.Unmarshal([]byte(parsed.Query().Get("left")), &left))
+	assert.Equal(t, "tempo-main", left["datasource"])
+	assert.Equal(t, map[string]any{"from": "1749999940000", "to": "1750000060125"}, left["range"])
+}
+
+func TestRenderTraceOmitsLinkWhenPublicURLInvalid(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/datasources/uid/tempo-main" {
+			writeTempoDatasource(t, w)
+			return
+		}
+		writeTraceFrameResponse(t, w, testTraceData("stack"))
+	}))
+	t.Cleanup(server.Close)
+	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "not a Grafana URL"
+
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	require.NoError(t, err)
+	structured, ok := result.StructuredContent.(TraceViewResult)
+	require.True(t, ok)
+	assert.Empty(t, structured.GrafanaURL)
+	assert.Len(t, structured.Spans, 2)
+}
+
+func TestRenderTraceOmitsLinkForDifferentViewerOrg(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/datasources/uid/tempo-main":
+			writeTempoDatasource(t, w)
+		case "/api/user":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"orgId":3}`)
+		case "/api/frontend/settings":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"buildInfo":{"version":"13.2.0"}}`)
+		case "/api/ds/query":
+			writeTraceFrameResponse(t, w, testTraceData("stack"))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, OrgID: 7, APIKey: "test-token"})
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	require.NoError(t, err)
+	structured, ok := result.StructuredContent.(TraceViewResult)
+	require.True(t, ok)
+	assert.Empty(t, structured.GrafanaURL)
+	assert.Len(t, structured.Spans, 2)
+}
+
+func TestRenderTraceMissingFocusPreservesTrace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/datasources/uid/tempo-main" {
+			writeTempoDatasource(t, w)
+			return
+		}
+		writeTraceFrameResponse(t, w, testTraceData("stack"))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
+	missing := "aaaaaaaaaaaaaaaa"
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{
+		TraceID:       testTraceID,
+		DatasourceUID: "tempo-main",
+		FocusSpanID:   &missing,
+	})
+	require.NoError(t, err)
+	structured, ok := result.StructuredContent.(TraceViewResult)
+	require.True(t, ok)
+	require.NotNil(t, structured.FocusSpanID)
+	assert.Equal(t, missing, *structured.FocusSpanID)
+	assert.Len(t, structured.Spans, 2)
+}
+
+func TestTraceStatusRespectsExplicitOKWithException(t *testing.T) {
+	assert.Equal(t, "ok", traceStatus(&tracepb.Status{Code: tracepb.Status_STATUS_CODE_OK}, []TraceEvent{{Name: "exception"}}))
+}
+
+func TestRenderTraceRejectsNonTempoDatasource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datasources/uid/tempo-main" {
+			t.Errorf("unexpected Tempo request: %s", r.URL.Path)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"uid": "tempo-main", "name": "Prometheus", "type": "prometheus", "id": 1,
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-token"})
+	result, err := callInteractiveTrace(ctx, GetTempoTraceParams{TraceID: testTraceID, DatasourceUID: "tempo-main"})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(*mcp.TextContent).Text, "datasource tempo-main is of type prometheus, not tempo")
+}
+
+func testTraceData(stacktrace string) *tracepb.TracesData {
+	return &tracepb.TracesData{ResourceSpans: []*tracepb.ResourceSpans{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+			stringAttribute("service.name", "checkout"),
+			stringAttribute("deployment.environment.name", "production"),
+		}},
+		ScopeSpans: []*tracepb.ScopeSpans{{
+			Spans: []*tracepb.Span{
+				{
+					TraceId:           []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef},
+					SpanId:            []byte{1, 2, 3, 4, 5, 6, 7, 8},
+					Name:              "POST /checkout",
+					StartTimeUnixNano: 1_750_000_000_000_000_000,
+					EndTimeUnixNano:   1_750_000_000_125_000_000,
+					Status:            &tracepb.Status{Code: tracepb.Status_STATUS_CODE_UNSET},
+					Attributes:        []*commonpb.KeyValue{stringAttribute("http.request.method", "POST")},
+					Events: []*tracepb.Span_Event{{
+						Name:         "exception",
+						TimeUnixNano: 1_750_000_000_100_000_000,
+						Attributes: []*commonpb.KeyValue{
+							stringAttribute("exception.type", "PaymentTimeout"),
+							stringAttribute("exception.message", "payment authorization timed out"),
+							stringAttribute("exception.stacktrace", stacktrace),
+						},
+					}},
+				},
+				{
+					TraceId:           []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef},
+					SpanId:            []byte{0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11},
+					ParentSpanId:      []byte{1, 2, 3, 4, 5, 6, 7, 8},
+					Name:              "authorize",
+					StartTimeUnixNano: 1_750_000_000_020_000_000,
+					EndTimeUnixNano:   1_750_000_000_080_000_000,
+					Status:            &tracepb.Status{Code: tracepb.Status_STATUS_CODE_OK},
+				},
+			},
+		}},
+	}}}
+}
+
+// testTraceFrame builds the frame Grafana's Tempo datasource returns for a
+// trace-by-ID query: one row per span.
+func testTraceFrame(trace *tracepb.TracesData) *data.Frame {
+	keyValues := func(attrs []*commonpb.KeyValue) json.RawMessage {
+		kvs := []map[string]any{}
+		for _, a := range attrs {
+			kvs = append(kvs, map[string]any{"key": a.Key, "value": a.Value.GetStringValue()})
+		}
+		b, _ := json.Marshal(kvs)
+		return b
+	}
+	frame := data.NewFrame("Trace",
+		data.NewField("traceID", nil, []string{}),
+		data.NewField("spanID", nil, []string{}),
+		data.NewField("parentSpanID", nil, []string{}),
+		data.NewField("operationName", nil, []string{}),
+		data.NewField("serviceName", nil, []string{}),
+		data.NewField("kind", nil, []string{}),
+		data.NewField("statusCode", nil, []int64{}),
+		data.NewField("statusMessage", nil, []string{}),
+		data.NewField("instrumentationLibraryName", nil, []string{}),
+		data.NewField("instrumentationLibraryVersion", nil, []string{}),
+		data.NewField("traceState", nil, []string{}),
+		data.NewField("serviceTags", nil, []json.RawMessage{}),
+		data.NewField("startTime", nil, []float64{}),
+		data.NewField("duration", nil, []float64{}),
+		data.NewField("logs", nil, []json.RawMessage{}),
+		data.NewField("references", nil, []json.RawMessage{}),
+		data.NewField("tags", nil, []json.RawMessage{}),
+	)
+	frame.SetMeta(&data.FrameMeta{Custom: map[string]any{"partial": false, "message": ""}})
+	for _, rs := range trace.ResourceSpans {
+		resource := keyValues(rs.Resource.GetAttributes())
+		service := ""
+		for _, a := range rs.Resource.GetAttributes() {
+			if a.Key == "service.name" {
+				service = a.Value.GetStringValue()
+			}
+		}
+		for _, ss := range rs.ScopeSpans {
+			for _, span := range ss.Spans {
+				logs := []map[string]any{}
+				for _, e := range span.Events {
+					logs = append(logs, map[string]any{"timestamp": float64(e.TimeUnixNano) / 1e6, "name": e.Name, "fields": keyValues(e.Attributes)})
+				}
+				logsJSON, _ := json.Marshal(logs)
+				parent := ""
+				if len(span.ParentSpanId) > 0 {
+					parent = fmt.Sprintf("%x", span.ParentSpanId)
+				}
+				frame.AppendRow(fmt.Sprintf("%x", span.TraceId), fmt.Sprintf("%x", span.SpanId), parent, span.Name, service,
+					"server", int64(span.Status.GetCode()), span.Status.GetMessage(), ss.Scope.GetName(), ss.Scope.GetVersion(), "",
+					resource, float64(span.StartTimeUnixNano)/1e6, float64(span.EndTimeUnixNano-span.StartTimeUnixNano)/1e6,
+					json.RawMessage(logsJSON), json.RawMessage("[]"), keyValues(span.Attributes))
+			}
+		}
+	}
+	return frame
+}
+
+// writeTraceFrameResponse answers an /api/ds/query request with the trace's frame.
+func writeTraceFrameResponse(t *testing.T, w http.ResponseWriter, trace *tracepb.TracesData) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{
+		"A": backend.DataResponse{Frames: data.Frames{testTraceFrame(trace)}},
+	}}))
+}
+
+func stringAttribute(key, value string) *commonpb.KeyValue {
+	return &commonpb.KeyValue{
+		Key: key,
+		Value: &commonpb.AnyValue{
+			Value: &commonpb.AnyValue_StringValue{StringValue: value},
+		},
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
+func traceTestContext(t *testing.T, config mcpgrafana.GrafanaConfig) context.Context {
+	t.Helper()
+	u, err := url.Parse(config.URL)
+	require.NoError(t, err)
+	transportConfig := client.DefaultTransportConfig()
+	transportConfig.Host = u.Host
+	transportConfig.Schemes = []string{u.Scheme}
+	transportConfig.APIKey = "test"
+	apiClient := client.NewHTTPClientWithConfig(nil, transportConfig)
+	ctx := mcpgrafana.WithGrafanaClient(
+		mcpgrafana.WithGrafanaConfig(t.Context(), config),
+		&mcpgrafana.GrafanaClient{GrafanaHTTPAPI: apiClient},
+	)
+	return ctx
+}
+
+func writeTempoDatasource(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+		"uid": "tempo-main", "name": "Main Tempo", "type": "tempo", "id": 1,
+	}))
+}
+
+func callInteractiveTrace(ctx context.Context, args GetTempoTraceParams) (*mcp.CallToolResult, error) {
+	values := map[string]any{"trace_id": args.TraceID, "datasourceUid": args.DatasourceUID}
+	if args.FocusSpanID != nil {
+		values["focus_span_id"] = *args.FocusSpanID
+	}
+	return GetTempoTraceTool.Handler(ctx, makeTempoRequest("get_tempo_trace", values))
+}

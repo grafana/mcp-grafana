@@ -38,9 +38,13 @@ You can probe readiness from scripts or upstream checks when the server uses an 
 # For streamable HTTP or SSE transport with default listen address (localhost:8000)
 curl http://localhost:8000/healthz
 
-# With custom address
-curl http://localhost:9090/healthz
+# Health check on a separate listen address (for example Kubernetes probes
+# while --address is bound to 127.0.0.1 behind a sidecar)
+./mcp-grafana -t streamable-http --address 127.0.0.1:8000 --healthz-address :8080
+curl http://localhost:8080/healthz
 ```
+
+The `/healthz` handler only reports that the HTTP server is up; it does not check Grafana connectivity. A `--healthz-address` listener is not wrapped by `--allowed-hosts` / `--allowed-origins` validation, matching `--metrics-address`.
 
 **Note**:  The health check endpoint is only available when using SSE or streamable HTTP transports. It is **not** available with the stdio transport (`-t stdio`), because stdio does not start an HTTP server.
 

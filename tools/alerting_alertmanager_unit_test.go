@@ -715,7 +715,7 @@ func TestAlertGroupFilterParams_toGetAlertGroupsOpts(t *testing.T) {
 func TestAlertingClient_GetAlertGroups(t *testing.T) {
 	mockAlertGroup := &models.AlertGroup{
 		Labels:   models.LabelSet{"alertname": "HighCPU", "grafana_folder": "Production"},
-		Receiver: &models.Receiver{Name: strPtr("slack-ops")},
+		Receiver: &models.ReceiverReference{Name: strPtr("slack-ops")},
 		Alerts: []*models.GettableAlert{
 			{
 				Alert: models.Alert{

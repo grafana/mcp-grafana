@@ -9,14 +9,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/observability"
-	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
+	"github.com/grafana/mcp-grafana/v2/observability"
+	datasourceschemas "github.com/grafana/mcp-grafana/v2/tools/datasource_schemas"
 )
 
 const (
@@ -27,7 +27,9 @@ const (
 // create_datasource telemetry phases, declared on the tool result via
 // observability.ToolPhaseMetaKey so the server's per-call metric/span can
 // distinguish a schema-guidance call from an actual creation. Keep this set
-// small — the value becomes a bounded Prometheus label (mcp_tool_phase).
+// small — the value becomes a bounded Prometheus label (mcp_tool_phase). Adding
+// a phase here means adding it to create_datasource's phases set in
+// observability.toolMetricDims too, or the metric drops it.
 const (
 	dsPhaseSchema  = "schema"  // returned field guidance (schema or no-schema); nothing created
 	dsPhaseCreated = "created" // a datasource was created
@@ -39,12 +41,9 @@ const (
 // data (see observability.ToolPhaseMetaKey).
 func withToolPhase(r *mcp.CallToolResult, phase string) *mcp.CallToolResult {
 	if r.Meta == nil {
-		r.Meta = &mcp.Meta{}
+		r.Meta = mcp.Meta{}
 	}
-	if r.Meta.AdditionalFields == nil {
-		r.Meta.AdditionalFields = map[string]any{}
-	}
-	r.Meta.AdditionalFields[observability.ToolPhaseMetaKey] = phase
+	r.Meta[observability.ToolPhaseMetaKey] = phase
 	return r
 }
 
@@ -70,16 +69,13 @@ type ListDatasourcesResult struct {
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Datasources.GetDataSourcesWithParams(
-		datasources.NewGetDataSourcesParamsWithContext(ctx),
-	)
+	list, err := datasource.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list datasources: %w", err)
+		return nil, err
 	}
 
 	// Filter by type and/or name if specified
-	datasources := filterDatasources(resp.Payload, args.Type, args.Name)
+	datasources := filterDatasources(list, args.Type, args.Name)
 	total := len(datasources)
 
 	// Apply default limit if not specified
@@ -119,7 +115,7 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 }
 
 type CreateDatasourceParams struct {
-	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
+	Name            string         `json:"name,omitempty" jsonschema:"description=Datasource display name. Required to create; omit it on the first call to get the fields to fill in."`
 	Type            string         `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
 	URL             string         `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
 	Access          string         `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
@@ -128,7 +124,7 @@ type CreateDatasourceParams struct {
 	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
 	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
-	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected values from the user."`
+	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=True once the field schema has been retrieved; required to create a schema-backed datasource."`
 }
 
 type CreateDatasourceResult struct {
@@ -155,7 +151,8 @@ func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
 		Message: "No schema is available for this datasource type. " +
 			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
 			"Provide the collected values as top-level arguments — name (required), plus any relevant optional ones such as url, database, basicAuth, isDefault, or withCredentials. " +
-			"Do NOT use the fields map; it applies only to schema-based types.",
+			"Do NOT use the fields map; it applies only to schema-based types. " +
+			"Secrets cannot be set here — direct the user to the Grafana UI for those, and if the user shares a credential in the conversation, remind them to rotate it.",
 	}
 }
 
@@ -310,11 +307,11 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// directly.
 	if schema != nil && (!args.SchemaReviewed || args.Name == "") {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
-		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
+		return withToolPhase(mcpgrafana.NewToolResultText(string(text)), dsPhaseSchema), nil
 	}
 	if schema == nil && args.Name == "" {
 		text, _ := json.Marshal(noSchemaGuidance(args.Type))
-		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
+		return withToolPhase(mcpgrafana.NewToolResultText(string(text)), dsPhaseSchema), nil
 	}
 
 	dsAccess := args.Access
@@ -367,7 +364,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 			result.Health = health
 		}
 
-		grafanaURL := c.PublicURL
+		grafanaURL := mcpgrafana.GrafanaPublicURL(ctx)
 		if grafanaURL == "" {
 			grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
 		}
@@ -378,9 +375,8 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		if err != nil {
 			return nil, fmt.Errorf("marshal result: %w", err)
 		}
-		toolResult := mcp.NewToolResultText(string(b))
-		toolResult.Content = append(toolResult.Content, mcp.ResourceLink{
-			Type:        "resource_link",
+		toolResult := mcpgrafana.NewToolResultText(string(b))
+		toolResult.Content = append(toolResult.Content, &mcp.ResourceLink{
 			URI:         configPageURL,
 			Name:        result.Name,
 			Description: "Datasource configuration page",
@@ -391,7 +387,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
 	}
-	return withToolPhase(mcp.NewToolResultText(string(b)), dsPhaseCreated), nil
+	return withToolPhase(mcpgrafana.NewToolResultText(string(b)), dsPhaseCreated), nil
 }
 
 // filterDatasources returns only datasources whose type contains `t` and
@@ -434,68 +430,39 @@ var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
 	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and/or name (case-insensitive substring match) and pagination.",
 	listDatasources,
-	mcp.WithTitleAnnotation("List datasources"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List datasources"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the display name in the top-level name argument, schemaReviewed=true, and the fields map populated with values confirmed by the user. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
+	"Create a datasource in two steps. Called with only the type, it returns the fields to fill in and creates nothing. Called again with the type, a display name in name, and the field values, it creates the datasource; for a type with a field schema, put the values in the fields map and set schemaReviewed=true. The plugin for the type must already be installed. Secrets (passwords, tokens) can't be set. Returns the UID, the result of a health check against the new datasource, and a config page link.",
 	createDatasource,
-	mcp.WithTitleAnnotation("Create datasource"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create datasource"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	// The health check connects to the datasource's own URL.
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions("datasources:read", "datasources:create"),
 )
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret datasource fields by UID. Omitted fields are preserved. IMPORTANT: always call this tool twice. First call: provide only the uid — the tool returns the datasource's field schema. After receiving the schema, ask the user which fields they want to change and confirm each new value; do not infer or reset fields the user did not mention. Second call: provide the uid, schemaReviewed=true, and the changed values in the fields map. Returns an update message and a health check. For secrets, direct the user to the Grafana UI.",
+	"Update non-secret datasource fields by UID in two steps. Called with only the uid, it returns the datasource's field schema and changes nothing. Called with the uid, schemaReviewed=true, and the changed values in the fields map, it applies the update. Omitted fields are preserved. Secrets (passwords, tokens) cannot be changed. Returns an update message and a health check.",
 	updateDatasource,
-	mcp.WithTitleAnnotation("Update datasource"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Update datasource"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	// The health check connects to the datasource's own URL.
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.RequiresPermissions("datasources:read", "datasources:write"),
 )
-
-type GetDatasourceByUIDParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
-}
-
-func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	datasource, err := c.Datasources.GetDataSourceByUIDWithParams(
-		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID),
-	)
-	if err != nil {
-		// Check if it's a 404 Not Found Error
-		if strings.Contains(err.Error(), "404") {
-			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
-		}
-		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
-	}
-	return datasource.Payload, nil
-}
-
-type GetDatasourceByNameParams struct {
-	Name string `json:"name" jsonschema:"required,description=The name of the datasource"`
-}
-
-func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	datasource, err := c.Datasources.GetDataSourceByNameWithParams(
-		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(args.Name),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
-	}
-	return datasource.Payload, nil
-}
 
 // GetDatasourceParams accepts either a UID or Name to look up a datasource.
 type GetDatasourceParams struct {
@@ -505,10 +472,10 @@ type GetDatasourceParams struct {
 
 func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataSource, error) {
 	if args.UID != "" {
-		return getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.UID})
+		return datasource.ByUID(ctx, args.UID)
 	}
 	if args.Name != "" {
-		return getDatasourceByName(ctx, GetDatasourceByNameParams{Name: args.Name})
+		return datasource.ByName(ctx, args.Name)
 	}
 	return nil, fmt.Errorf("either uid or name must be provided")
 }
@@ -517,11 +484,12 @@ var GetDatasource = mcpgrafana.MustTool(
 	"get_datasource",
 	"Retrieves detailed information about a specific datasource by UID or name. Returns the full datasource model, including name, type, URL, access settings, JSON data, and secure JSON field status. Provide either uid or name; uid takes priority if both are given.",
 	getDatasource,
-	mcp.WithTitleAnnotation("Get datasource"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get datasource"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("datasources:read"),
 )
 
 type UpdateDatasourceParams struct {
@@ -534,7 +502,7 @@ type UpdateDatasourceParams struct {
 	IsDefault      *bool                  `json:"isDefault,omitempty" jsonschema:"description=Make this the default datasource"`
 	JSONData       map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; replaces existing jsonData when set"`
 	Fields         map[string]any         `json:"fields,omitempty" jsonschema:"description=Datasource field values to change\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly\\, merging jsonData changes into the existing settings. Only include the fields you want to change. Example: {\"httpMethod\": \"POST\"}."`
-	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected the changes from the user."`
+	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=True once the field schema has been retrieved; required to apply the update."`
 }
 
 type UpdateDatasourceResult struct {
@@ -573,7 +541,7 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*mcp.Ca
 			guidance = noUpdateSchemaGuidance(ds.Type)
 		}
 		text, _ := json.Marshal(guidance)
-		return mcp.NewToolResultText(string(text)), nil
+		return mcpgrafana.NewToolResultText(string(text)), nil
 	}
 
 	cmd := &models.UpdateDataSourceCommand{
@@ -646,7 +614,7 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*mcp.Ca
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	return mcpgrafana.NewToolResultText(string(b)), nil
 }
 
 type CheckDatasourceHealthParams struct {
@@ -735,7 +703,12 @@ type BulkDatasourceHealthResult struct {
 	Checked   int                           `json:"checked"` // Number of datasources health-checked in this page
 	Healthy   int                           `json:"healthy"`
 	Unhealthy int                           `json:"unhealthy"`
-	HasMore   bool                          `json:"hasMore"` // Whether more datasources exist beyond this page
+	// Unknown counts datasources whose plugin has no backend component (so
+	// the health endpoint can only ever fail for them, e.g. the built-in
+	// Alertmanager datasource type) and were therefore not asked at all,
+	// rather than genuinely unreachable. See issue #1069.
+	Unknown int  `json:"unknown"`
+	HasMore bool `json:"hasMore"` // Whether more datasources exist beyond this page
 }
 
 func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
@@ -745,6 +718,14 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	)
 	if err != nil {
+		// Health checks require the datasource metadata API and the
+		// per-datasource health endpoint (a uid-based route that only exists
+		// from Grafana 9.0). On deployments where the metadata API is
+		// inaccessible to this token (see internal/datasource), say so
+		// explicitly instead of surfacing a confusing permission error.
+		if datasource.FallbackAvailable(ctx) {
+			return nil, fmt.Errorf("checking datasource health is not supported on this Grafana deployment: the datasource metadata API is not accessible to this token, and health checks require it. Datasource discovery still works via the list_datasources tool")
+		}
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
@@ -779,13 +760,29 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		targets = all[offset:end]
 	}
 
+	withoutBackend := datasource.WithoutBackend(ctx)
+
 	results := make([]DatasourceHealthCheckResult, len(targets))
+	// noBackend tracks which results were skipped for lacking a backend
+	// component, distinct from a backend plugin's own health check
+	// legitimately returning a "UNKNOWN" status: both currently surface as
+	// Status == "UNKNOWN", but only the former belongs in the unknown tally
+	// below — folding a real inconclusive/failed backend check into it would
+	// hide it from Unhealthy.
+	noBackend := make([]bool, len(targets))
 	var wg sync.WaitGroup
 	for i, ds := range targets {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
+			if withoutBackend[ds.UID] {
+				r.Status = "UNKNOWN"
+				r.Message = "This datasource's plugin has no backend component, so it cannot be health-checked."
+				results[i] = r
+				noBackend[i] = true
+				return
+			}
 			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
 			if err != nil {
 				r.Error = err.Error()
@@ -798,11 +795,14 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 	}
 	wg.Wait()
 
-	healthy, unhealthy := 0, 0
-	for _, r := range results {
-		if r.Error != "" || r.Status != "OK" {
+	healthy, unhealthy, unknown := 0, 0, 0
+	for i, r := range results {
+		switch {
+		case noBackend[i]:
+			unknown++
+		case r.Error != "" || r.Status != "OK":
 			unhealthy++
-		} else {
+		default:
 			healthy++
 		}
 	}
@@ -813,6 +813,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		Checked:   len(results),
 		Healthy:   healthy,
 		Unhealthy: unhealthy,
+		Unknown:   unknown,
 		HasMore:   offset+len(results) < len(all),
 	}, nil
 }
@@ -821,20 +822,21 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	"check_datasources_health",
 	"Check datasource health. Filter by type or UIDs; omit both to check all.",
 	checkDatasourcesHealth,
-	mcp.WithTitleAnnotation("Check datasources health"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Check datasources health"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.
-func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
-	ListDatasources.Register(mcp)
-	GetDatasource.Register(mcp)
-	CheckDatasourcesHealth.Register(mcp)
+func AddDatasourceTools(s *mcp.Server, enableWriteTools bool) {
+	ListDatasources.Register(s)
+	GetDatasource.Register(s)
+	CheckDatasourcesHealth.Register(s)
 	if enableWriteTools {
-		CreateDatasource.Register(mcp)
-		UpdateDatasource.Register(mcp)
+		CreateDatasource.Register(s)
+		UpdateDatasource.Register(s)
 	}
 }

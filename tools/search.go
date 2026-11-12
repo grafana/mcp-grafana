@@ -3,22 +3,33 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/go-openapi/runtime"
+	"github.com/go-openapi/strfmt"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/search"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 var dashboardTypeStr = "dash-db"
 var folderTypeStr = "dash-folder"
 
+// folderListPageSize is the page size used when listing every folder to
+// build folder paths.
+const folderListPageSize = 1000
+
 type SearchDashboardsParams struct {
-	Query string `json:"query" jsonschema:"description=The query to search for"`
-	Limit int    `json:"limit,omitempty" jsonschema:"default=50,description=Maximum number of results to return (max 100)"`
-	Page  int    `json:"page,omitempty" jsonschema:"default=1,description=Page number for pagination (1-indexed)"`
+	Query      string   `json:"query,omitempty" jsonschema:"description=Optional query. Omit to filter by folderUid\\, folderPath\\, tag\\, or starred"`
+	FolderUID  string   `json:"folderUid,omitempty" jsonschema:"description=Optional immediate folder UID (not nested)"`
+	FolderPath string   `json:"folderPath,omitempty" jsonschema:"description=Optional folder path like Ops/Production. Includes subfolders. Case-insensitive"`
+	Tag        []string `json:"tag,omitempty" jsonschema:"description=Optional tags to match (AND)"`
+	Starred    bool     `json:"starred,omitempty" jsonschema:"description=If true\\, only starred dashboards"`
+	Limit      int      `json:"limit,omitempty" jsonschema:"default=50,description=Maximum number of results to return (max 100)"`
+	Page       int      `json:"page,omitempty" jsonschema:"default=1,description=Page number for pagination (1-indexed)"`
 }
 
 type dashboardSearchHit struct {
@@ -28,6 +39,7 @@ type dashboardSearchHit struct {
 	Type        string   `json:"type,omitempty"`
 	FolderUID   string   `json:"folderUid,omitempty"`
 	FolderTitle string   `json:"folderTitle,omitempty"`
+	FolderPath  string   `json:"folderPath,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 	Description string   `json:"description,omitempty"`
 }
@@ -58,12 +70,201 @@ func summarizeHitList(hits models.HitList) []dashboardSearchHit {
 	return result
 }
 
+// folderNode is one folder of the folder tree, keyed by UID in folderTree.
+type folderNode struct {
+	title     string
+	parentUID string
+}
+
+type folderTree map[string]folderNode
+
+// listFolderTree lists every folder the caller can see, at every nesting
+// level. Grafana's folder search returns each folder with its parent, so the
+// request count does not depend on the depth of the tree.
+func listFolderTree(ctx context.Context) (folderTree, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	tree := folderTree{}
+	limit := int64(folderListPageSize)
+	for page := int64(1); ; page++ {
+		params := search.NewSearchParamsWithContext(ctx)
+		params.SetType(&folderTypeStr)
+		params.SetLimit(&limit)
+		params.SetPage(&page)
+		resp, err := c.Search.Search(params)
+		if err != nil {
+			return nil, fmt.Errorf("list folders (page %d): %w", page, err)
+		}
+		for _, h := range resp.Payload {
+			tree[h.UID] = folderNode{title: h.Title, parentUID: h.FolderUID}
+		}
+		if len(resp.Payload) < folderListPageSize {
+			return tree, nil
+		}
+	}
+}
+
+// titles returns the folder titles from the root down to uid. It returns nil
+// if the chain is incomplete (a parent the caller cannot see) or loops, so a
+// partial path is never mistaken for a root path.
+func (t folderTree) titles(uid string) []string {
+	var titles []string
+	seen := map[string]bool{}
+	for uid != "" {
+		node, ok := t[uid]
+		if !ok || seen[uid] {
+			return nil
+		}
+		seen[uid] = true
+		titles = append(titles, node.title)
+		uid = node.parentUID
+	}
+	slices.Reverse(titles)
+	return titles
+}
+
+// path returns the folder path of uid, built like Grafana's folder fullpath:
+// escaped titles joined by "/". It returns "" if titles returns nil.
+func (t folderTree) path(uid string) string {
+	titles := t.titles(uid)
+	for i, title := range titles {
+		titles[i] = escapeFolderTitle(title)
+	}
+	return strings.Join(titles, "/")
+}
+
+// subtree returns the UIDs of every folder whose path starts with want, that
+// is the folders at want and all folders below them. Titles match whole,
+// case-insensitively. Several folders can share a path, and all of them match.
+func (t folderTree) subtree(want []string) []string {
+	var uids []string
+	for uid := range t {
+		titles := t.titles(uid)
+		if len(titles) >= len(want) && slices.EqualFunc(titles[:len(want)], want, strings.EqualFold) {
+			uids = append(uids, uid)
+		}
+	}
+	slices.Sort(uids)
+	return uids
+}
+
+// escapeFolderTitle escapes a title the way Grafana does when it builds a
+// folder fullpath, so a title containing "/" is not read as two folders.
+func escapeFolderTitle(title string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(title, `\`, `\\`), "/", `\/`)
+}
+
+// splitFolderPath splits a folder path into titles on unescaped "/", the
+// inverse of escapeFolderTitle. Like Grafana's SplitFullpath, a backslash
+// that starts no escape sequence is kept, and empty titles are dropped.
+func splitFolderPath(path string) []string {
+	var titles []string
+	var current strings.Builder
+	escaped := false
+	for _, r := range path {
+		switch {
+		case escaped:
+			if r != '\\' && r != '/' {
+				current.WriteRune('\\')
+			}
+			current.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '/':
+			if current.Len() > 0 {
+				titles = append(titles, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if current.Len() > 0 {
+		titles = append(titles, current.String())
+	}
+	return titles
+}
+
+// withRepeatedFolderUIDs sends uids as repeated folderUIDs query parameters.
+// The generated client joins several values with commas, which Grafana reads
+// as a single UID that matches nothing.
+func withRepeatedFolderUIDs(uids []string) search.ClientOption {
+	return func(op *runtime.ClientOperation) {
+		inner := op.Params
+		op.Params = runtime.ClientRequestWriterFunc(func(r runtime.ClientRequest, reg strfmt.Registry) error {
+			if err := inner.WriteToRequest(r, reg); err != nil {
+				return err
+			}
+			return r.SetQueryParam("folderUIDs", uids...)
+		})
+	}
+}
+
+// addFolderPaths sets FolderPath on each hit. tree may be nil, in which case it
+// is listed only if a hit is in a folder. Paths are best effort: if listing
+// fails, the hits keep an empty FolderPath and the search still succeeds.
+func addFolderPaths(ctx context.Context, hits []dashboardSearchHit, tree folderTree) {
+	if tree == nil {
+		if !slices.ContainsFunc(hits, func(h dashboardSearchHit) bool { return h.FolderUID != "" }) {
+			return
+		}
+		var err error
+		if tree, err = listFolderTree(ctx); err != nil {
+			mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx, "failed to list folders for folder paths", "error", err)
+			return
+		}
+	}
+	for i := range hits {
+		hits[i].FolderPath = tree.path(hits[i].FolderUID)
+	}
+}
+
 func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*SearchDashboardsResult, error) {
+	var folderPath []string
+	if strings.TrimSpace(args.FolderPath) != "" {
+		folderPath = splitFolderPath(strings.TrimSpace(args.FolderPath))
+		if len(folderPath) == 0 {
+			return nil, fmt.Errorf("folderPath %q names no folder; omit it to search all folders", args.FolderPath)
+		}
+	}
+	if folderPath != nil && args.FolderUID != "" {
+		return nil, fmt.Errorf("set either folderUid or folderPath, not both")
+	}
+
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	params := search.NewSearchParamsWithContext(ctx)
+	params.SetType(&dashboardTypeStr)
 	if args.Query != "" {
 		params.SetQuery(&args.Query)
-		params.SetType(&dashboardTypeStr)
+	}
+	if args.FolderUID != "" {
+		params.SetFolderUIDs([]string{args.FolderUID})
+	}
+
+	// Grafana's folderUIDs filter only matches the immediate folder, so a
+	// folderPath is expanded to the folder and all its subfolders first.
+	var tree folderTree
+	var opts []search.ClientOption
+	if folderPath != nil {
+		var err error
+		if tree, err = listFolderTree(ctx); err != nil {
+			return nil, err
+		}
+		uids := tree.subtree(folderPath)
+		if len(uids) == 0 {
+			return &SearchDashboardsResult{Dashboards: []dashboardSearchHit{}}, nil
+		}
+		opts = append(opts, withRepeatedFolderUIDs(uids))
+	}
+	if len(args.Tag) > 0 {
+		params.SetTag(args.Tag)
+	}
+	if args.Starred {
+		starred := true
+		params.SetStarred(&starred)
 	}
 
 	// Apply default limit if not specified
@@ -84,7 +285,7 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*Search
 	}
 	params.SetPage(&page)
 
-	searchResp, err := c.Search.Search(params)
+	searchResp, err := c.Search.Search(params, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("search dashboards for %+v: %w", c, err)
 	}
@@ -93,8 +294,11 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*Search
 	// If we got exactly limit results, there may be more
 	hasMore := len(searchResp.Payload) == int(limit)
 
+	hits := summarizeHitList(searchResp.Payload)
+	addFolderPaths(ctx, hits, tree)
+
 	return &SearchDashboardsResult{
-		Dashboards: summarizeHitList(searchResp.Payload),
+		Dashboards: hits,
 		Total:      len(searchResp.Payload), // Grafana doesn't return total count
 		HasMore:    hasMore,
 	}, nil
@@ -102,13 +306,14 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*Search
 
 var SearchDashboards = mcpgrafana.MustTool(
 	"search_dashboards",
-	"Search for Grafana dashboards by a query string. Returns a list of matching dashboards with details like title, UID, folder, tags, and URL.",
+	"Search Grafana dashboards by query and/or folderUid, folderPath, tag, and starred. Returns matching dashboards with title, UID, folder, folder path, tags, and URL.",
 	searchDashboards,
-	mcp.WithTitleAnnotation("Search dashboards"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Search dashboards"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("dashboards:read", "folders:read"),
 )
 
 type SearchFoldersParams struct {
@@ -136,14 +341,15 @@ var SearchFolders = mcpgrafana.MustTool(
 	"search_folders",
 	"Search for Grafana folders by a query string. Returns matching folders with details like title, UID, and URL.",
 	searchFolders,
-	mcp.WithTitleAnnotation("Search folders"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Search folders"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions("folders:read"),
 )
 
-func AddSearchTools(mcp *server.MCPServer) {
-	SearchDashboards.Register(mcp)
-	SearchFolders.Register(mcp)
+func AddSearchTools(s *mcp.Server) {
+	SearchDashboards.Register(s)
+	SearchFolders.Register(s)
 }

@@ -31,12 +31,15 @@ backfill() {
 /bin/prometheus \
     --config.file=/etc/prometheus/prometheus.yml \
     --web.enable-remote-write-receiver &
+PROM_PID=$!
 
 backfill
 
 # Restarting Prometheus after backfilling will allow to load the new blocks directly
 # without having to wait for the next compaction cycle
-kill %1
+kill "$PROM_PID"
+# Wait for it to release the port and TSDB lock; it exits non-zero on SIGTERM.
+wait "$PROM_PID" || true
 echo "Starting Prometheus server..."
 # Start Prometheus with the regular configuration
 /bin/prometheus \

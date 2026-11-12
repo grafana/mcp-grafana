@@ -3,12 +3,13 @@ package tools
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
-	"github.com/mark3labs/mcp-go/mcp"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 const manageRoutingDescription = `Manage Grafana alerting routing configuration, including notification policies, contact points and time intervals.
@@ -21,8 +22,7 @@ When to use:
 - Debugging why an alert went to a specific receiver
 - Checking grouping, timing, or mute interval settings
 
-When NOT to use:
-- Checking alert rule configuration or state (use alerting_manage_rules)`
+Does not show alert rule configuration or state.`
 
 // ManageRoutingParams is the param struct for the alerting_manage_routing tool.
 type ManageRoutingParams struct {
@@ -157,9 +157,96 @@ var ManageRouting = mcpgrafana.MustTool(
 	"alerting_manage_routing",
 	manageRoutingDescription,
 	manageRouting,
-	mcp.WithTitleAnnotation("Manage alerting routing"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage alerting routing"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// Each Grafana read route accepts the legacy alert.notifications:read or a
+	// fine-grained action: receivers:read (contact points), time-intervals:read
+	// (time intervals), and routes:read or routingtrees:get (policies). Each is
+	// declared so the on-behalf-of token carries whichever the user holds.
+	mcpgrafana.RequiresPermissions(
+		"alert.notifications:read",
+		"alert.notifications.receivers:read",
+		"alert.notifications.time-intervals:read",
+		"alert.notifications.routes:read",
+		"notifications.alerting.grafana.app/routingtrees:get",
+		"alert.notifications.external:read",
+	),
+	// datasource_uid reads an external Alertmanager through the datasource proxy.
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
+)
+
+// ManageRoutingWriteParams is the param struct for alerting_routing_write.
+type ManageRoutingWriteParams struct {
+	ManagedBy             string         `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Omission defaults to Grafana-managed. Select datasource when requested or clearly established by conversation or environment context."`
+	DatasourceUID         string         `json:"datasource_uid,omitempty" jsonschema:"description=External Mimir/Cortex Alertmanager UID. Only for managed_by=datasource. Omit to select the sole compatible datasource. Ambiguity returns candidates for selection."`
+	Operation             string         `json:"operation" jsonschema:"required,enum=create_contact_point,description=The operation to perform: 'create_contact_point'"`
+	Name                  string         `json:"name" jsonschema:"required,description=Contact point name. Integrations with the same name are grouped together."`
+	Type                  string         `json:"type" jsonschema:"required,description=Integration type (for example email\\, slack or webhook)."`
+	Settings              map[string]any `json:"settings" jsonschema:"required,description=Integration-specific settings as a JSON object (for example {\"addresses\":\"team@example.com\"} for email)."`
+	UID                   string         `json:"uid,omitempty" jsonschema:"description=Optional integration UID. Grafana generates one if omitted."`
+	DisableResolveMessage bool           `json:"disable_resolve_message,omitempty" jsonschema:"description=Disable resolved notifications. Defaults to false."`
+	DisableProvenance     *bool          `json:"disable_provenance,omitempty" jsonschema:"description=Keep the contact point editable in the Grafana UI. Defaults to true."`
+}
+
+var contactPointUIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,40}$`)
+
+func (p ManageRoutingWriteParams) validate() error {
+	if err := validateAlertingTarget(p.ManagedBy, p.DatasourceUID); err != nil {
+		return err
+	}
+	if p.ManagedBy == "datasource" {
+		if p.UID != "" || p.DisableProvenance != nil {
+			return fmt.Errorf("uid and disable_provenance apply only to Grafana-managed contact points")
+		}
+		if _, ok := p.Settings["send_resolved"]; ok {
+			return fmt.Errorf("use disable_resolve_message instead of settings.send_resolved")
+		}
+	}
+	if p.Operation != "create_contact_point" {
+		return fmt.Errorf("unknown operation %q, must be create_contact_point", p.Operation)
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("name is required for 'create_contact_point'")
+	}
+	if strings.TrimSpace(p.Type) == "" {
+		return fmt.Errorf("type is required for 'create_contact_point'")
+	}
+	if len(p.Settings) == 0 {
+		return fmt.Errorf("settings must be a non-empty JSON object")
+	}
+	if p.UID != "" && !contactPointUIDPattern.MatchString(p.UID) {
+		return fmt.Errorf("uid must contain 1 to 40 letters, digits, underscores or hyphens")
+	}
+	return nil
+}
+
+func manageRoutingWrite(ctx context.Context, args ManageRoutingWriteParams) (*contactPointSummary, error) {
+	if err := args.validate(); err != nil {
+		return nil, fmt.Errorf("alerting_routing_write: %w", err)
+	}
+	if args.ManagedBy == "datasource" {
+		return createExternalContactPoint(ctx, args)
+	}
+	return createContactPoint(ctx, args)
+}
+
+var AlertRoutingWrite = mcpgrafana.MustTool(
+	"alerting_routing_write",
+	`Create Grafana-managed contact points for alert notifications using operation 'create_contact_point'.
+Requires name, type and integration-specific settings. Returns uid, name and type without settings or secrets.
+Grafana-managed is the default and remains editable in the UI. Use managed_by='datasource' for an external Mimir/Cortex Alertmanager receiver when requested or when established conversation or environment context clearly identifies an external Alertmanager workflow. An external query datasource or an empty Grafana contact point list alone is insufficient. Ask if context conflicts.
+Use native Alertmanager settings (email: to, webhook: url). Without datasource_uid select the sole compatible datasource, or return candidates for selection if ambiguous. Does not change notification routes.`,
+	manageRoutingWrite,
+	mcpgrafana.WithTitleAnnotation("Write alerting routing"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// POST /api/v1/provisioning/contact-points: receivers:create plus
+	// provenance:write.
+	mcpgrafana.RequiresPermissions("alert.notifications.receivers:create", "alert.provisioning.provenance:write"),
+	mcpgrafana.RequiresPermissions("datasources:read", "alert.notifications.external:read", "alert.notifications.external:write"),
 )

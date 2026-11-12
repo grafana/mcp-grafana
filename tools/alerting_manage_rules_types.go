@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -18,9 +19,10 @@ var validAlertStates = map[string]bool{
 	"recovering": true, "nodata": true, "error": true,
 }
 
-// unquotedLabelValueRe matches a label matcher operator followed by an unquoted
-// value. Values already starting with " are excluded by [^"}.
-var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
+// unquotedLabelValueRe matches either a quoted string, which is left untouched so
+// operators inside quoted values are never rewritten, or a label matcher operator
+// followed by an unquoted value.
+var unquotedLabelValueRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(!=|!~|=~|=)\s*([^"'}\s,~][^},]*)`)
 
 // quoteUnquotedLabelValues adds double quotes around unquoted label values in
 // Prometheus-style selectors. LLMs frequently omit the required quotes, e.g.
@@ -28,13 +30,7 @@ var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
 func quoteUnquotedLabelValues(s string) string {
 	return unquotedLabelValueRe.ReplaceAllStringFunc(s, func(match string) string {
 		groups := unquotedLabelValueRe.FindStringSubmatch(match)
-		if len(groups) < 3 {
-			return match
-		}
-		// When "=" matched but the value starts with "~", the actual operator
-		// is "=~" with an already-quoted value — the regex fell back from =~ to
-		// = because " didn't match the value-start character class.
-		if groups[1] == "=" && strings.HasPrefix(groups[2], "~") {
+		if groups[1] == "" {
 			return match
 		}
 		return groups[1] + `"` + strings.TrimSpace(groups[2]) + `"`
@@ -42,7 +38,7 @@ func quoteUnquotedLabelValues(s string) string {
 }
 
 type alertRuleSummary struct {
-	UID            string            `json:"uid"`
+	UID            string            `json:"uid,omitempty"`
 	Title          string            `json:"title"`
 	Type           string            `json:"type,omitempty"`
 	State          string            `json:"state,omitempty"`
@@ -51,6 +47,7 @@ type alertRuleSummary struct {
 	RuleGroup      string            `json:"rule_group,omitempty"`
 	For            string            `json:"for,omitempty"`
 	LastEvaluation string            `json:"last_evaluation,omitempty"`
+	LastError      string            `json:"last_error,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 	Annotations    map[string]string `json:"annotations,omitempty"`
 	// Query is the rule expression. Populated for datasource-managed rules
@@ -58,6 +55,10 @@ type alertRuleSummary struct {
 	// rules where the expression is split across multiple AlertQuery nodes
 	// and exposed via the 'get' operation instead.
 	Query string `json:"query,omitempty"`
+	// Namespace is the ruler namespace of a datasource-managed rule (the
+	// rules API "file" field). Mimir and Loki identify a rule group by
+	// namespace + group name, so group names alone can collide.
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // alertRuleDetail is the enriched response for a single rule, combining
@@ -520,11 +521,7 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 	var result []Selector
 	for _, s := range strs {
 		s = strings.TrimSpace(s)
-		if !strings.HasPrefix(s, "{") {
-			s = "{" + s + "}"
-		}
-		s = quoteUnquotedLabelValues(s)
-		parsed, err := promqlParser.ParseMetricSelector(s)
+		parsed, err := parseSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
 		}
@@ -539,6 +536,19 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 		result = append(result, Selector{Filters: filters})
 	}
 	return result, nil
+}
+
+func parseSelector(s string) ([]*labels.Matcher, error) {
+	matchers, err := promqlParser.ParseMetricSelector(s)
+	if err == nil {
+		return matchers, nil
+	}
+	for _, candidate := range []string{s, "{" + s + "}"} {
+		if repaired, repairErr := promqlParser.ParseMetricSelector(quoteUnquotedLabelValues(candidate)); repairErr == nil {
+			return repaired, nil
+		}
+	}
+	return nil, err
 }
 
 // buildGetRulesOpts validates shared list filter fields and constructs GetRulesOpts.
@@ -588,7 +598,7 @@ type listFilterParams struct {
 	Matchers       []string `json:"matchers,omitempty" jsonschema:"description=Label matchers to filter alert instances. Each string is a Prometheus-style matcher e.g. 'severity=\"critical\"'\\, 'env!=\"dev\"'\\, 'team=~\"backend.*\"'. Requires Grafana 12.4+."`
 }
 
-// ManageRulesReadParams is the param struct for the read-only version of alerting_manage_rules.
+// ManageRulesReadParams is the param struct for alerting_rules_read.
 type ManageRulesReadParams struct {
 	listFilterParams
 
@@ -623,48 +633,44 @@ func (p ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
 	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 }
 
-// ManageRulesReadWriteParams is the param struct for the read-write version of alerting_manage_rules.
-type ManageRulesReadWriteParams struct {
-	listFilterParams
+// ManageRulesWriteParams is the param struct for alerting_rules_write.
+type ManageRulesWriteParams struct {
+	ManagedBy          string `json:"managed_by,omitempty" jsonschema:"enum=grafana,enum=datasource,default=grafana,description=Creation target. Omission defaults to Grafana-managed. Select datasource when requested or clearly established by conversation or environment context. Other mutations remain Grafana-only."`
+	Namespace          string `json:"namespace,omitempty" jsonschema:"description=Namespace for datasource-managed creation. Required with managed_by=datasource."`
+	Expression         string `json:"expression,omitempty" jsonschema:"description=PromQL or LogQL expression for datasource-managed creation."`
+	EvaluationInterval string `json:"evaluation_interval,omitempty" jsonschema:"description=Interval for a new datasource rule group (default 1m). Must match an existing group's interval if supplied."`
 
-	Operation                   string            `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,enum=create,enum=update,enum=delete,description=The operation to perform: 'list'\\, 'get'\\, 'versions'\\, 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, first use 'get' to retrieve its full configuration\\, then 'update' with all required fields plus your changes."`
-	RuleUID                     string            `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get'\\, 'versions'\\, 'update'\\, 'delete'; optional for 'create')"`
-	DatasourceUID               *string           `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules (for 'list' operation)"`
+	Operation                   string            `json:"operation" jsonschema:"required,enum=create,enum=update,enum=delete,description=The operation to perform: 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, use 'update' with the rule's full current configuration plus your changes."`
+	RuleUID                     string            `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'update' and 'delete'; optional for 'create')"`
+	DatasourceUID               *string           `json:"datasource_uid,omitempty" jsonschema:"description=Datasource UID for managed_by=datasource creation. Omit to select the sole compatible datasource. Ambiguity returns candidates for selection."`
 	Title                       string            `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create'\\, 'update')"`
 	RuleGroup                   string            `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
-	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For 'create'/'update': the folder to store the rule in (required)."`
-	Condition                   string            `json:"condition,omitempty" jsonschema:"description=The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
-	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Array of alert query objects (required for 'create'/'update'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
-	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m' (required for 'create'\\, 'update')"`
+	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. Required destination folder for Grafana-managed 'create'/'update'."`
+	Condition                   string            `json:"condition,omitempty" jsonschema:"description=Grafana-managed only. The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
+	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Grafana-managed only. Array of alert query objects (required for 'create'/'update'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
+	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=Grafana-managed only. State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=Grafana-managed only. State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m'. Required for Grafana-managed create/update. Optional for datasource-managed rules (default 0s)."`
 	KeepFiringFor               string            `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    bool              `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
-	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string)."`
+	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string). snake_case keys are also accepted."`
 	Record                      map[string]any    `json:"record,omitempty" jsonschema:"description=Recording rule config. Fields: from (string\\, required - ref ID e.g. 'A')\\, metric (string\\, required - metric name)\\, targetDatasourceUid (string\\, optional)."`
 	MissingSeriesEvalsToResolve int64             `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
-	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=The organization ID (required for 'create'\\, 'update')"`
+	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=Grafana-managed organization ID (required for 'create'\\, 'update')"`
 	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
 }
 
-func (p ManageRulesReadWriteParams) validate() error {
-	switch p.Operation {
-	case "list":
-		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+func (p ManageRulesWriteParams) validate() error {
+	if err := p.validateCreationTarget(); err != nil {
 		return err
-	case "get":
-		if p.RuleUID == "" {
-			return fmt.Errorf("rule_uid is required for 'get' operation")
-		}
-		return nil
-	case "versions":
-		if p.RuleUID == "" {
-			return fmt.Errorf("rule_uid is required for 'versions' operation")
-		}
-		return nil
+	}
+	switch p.Operation {
 	case "create":
+		if p.ManagedBy == "datasource" {
+			return p.validateDatasourceRule()
+		}
 		cp, err := p.toCreateParams()
 		if err != nil {
 			return err
@@ -682,7 +688,7 @@ func (p ManageRulesReadWriteParams) validate() error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown operation %q, must be one of: list, get, versions, create, update, delete", p.Operation)
+		return fmt.Errorf("unknown operation %q, must be one of: create, update, delete", p.Operation)
 	}
 }
 
@@ -702,6 +708,70 @@ func unmarshalVia[T any](m map[string]any) (*T, error) {
 	return &t, nil
 }
 
+// notificationSettingsSnakeKeys maps the snake_case keys that
+// alerting_rules_read returns (Grafana's provisioning format) to the camelCase
+// fields of NotificationSettings, so a rule read and written back keeps its
+// grouping, timings and mute intervals.
+var notificationSettingsSnakeKeys = map[string]string{
+	"group_by":              "groupBy",
+	"group_wait":            "groupWait",
+	"group_interval":        "groupInterval",
+	"repeat_interval":       "repeatInterval",
+	"mute_time_intervals":   "muteTimeIntervals",
+	"active_time_intervals": "activeTimeIntervals",
+}
+
+// notificationSettingsFromMap decodes notification_settings in either key
+// style and rejects unknown keys, which plain json.Unmarshal would drop
+// without a word. Two spellings of one key are compared case-insensitively,
+// as encoding/json matches them, and a null counts as unset because
+// alerting_rules_read returns null for empty lists.
+func notificationSettingsFromMap(m map[string]any) (*NotificationSettings, error) {
+	if m == nil {
+		return nil, nil
+	}
+	type setting struct {
+		sent  string
+		key   string
+		value any
+	}
+	byField := make(map[string]setting, len(m))
+	for sent, value := range m {
+		key := sent
+		if camel, ok := notificationSettingsSnakeKeys[sent]; ok {
+			key = camel
+		}
+		field := strings.ToLower(key)
+		if prev, ok := byField[field]; ok {
+			if prev.value != nil && value != nil {
+				return nil, fmt.Errorf("set %s or %s, not both", min(prev.sent, sent), max(prev.sent, sent))
+			}
+			if value == nil {
+				continue
+			}
+		}
+		byField[field] = setting{sent: sent, key: key, value: value}
+	}
+	normalized := make(map[string]any, len(byField))
+	for _, s := range byField {
+		normalized[s.key] = s.value
+	}
+	b, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("marshal map: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var ns NotificationSettings
+	if err := dec.Decode(&ns); err != nil {
+		if strings.HasPrefix(err.Error(), "json: unknown field") {
+			return nil, fmt.Errorf("%w (valid keys: receiver, group_by, group_wait, group_interval, repeat_interval, mute_time_intervals, active_time_intervals, or their camelCase forms)", err)
+		}
+		return nil, err
+	}
+	return &ns, nil
+}
+
 // unmarshalDataToAlertQueries converts []map[string]any to []*AlertQuery.
 func unmarshalDataToAlertQueries(data []map[string]any) ([]*AlertQuery, error) {
 	if data == nil {
@@ -718,12 +788,12 @@ func unmarshalDataToAlertQueries(data []map[string]any) ([]*AlertQuery, error) {
 	return queries, nil
 }
 
-func (p ManageRulesReadWriteParams) toCreateParams() (CreateAlertRuleParams, error) {
+func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) {
 	data, err := unmarshalDataToAlertQueries(p.Data)
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid data: %w", err)
 	}
-	ns, err := unmarshalVia[NotificationSettings](p.NotificationSettings)
+	ns, err := notificationSettingsFromMap(p.NotificationSettings)
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid notification_settings: %w", err)
 	}
@@ -756,12 +826,12 @@ func (p ManageRulesReadWriteParams) toCreateParams() (CreateAlertRuleParams, err
 	return params, nil
 }
 
-func (p ManageRulesReadWriteParams) toUpdateParams() (UpdateAlertRuleParams, error) {
+func (p ManageRulesWriteParams) toUpdateParams() (UpdateAlertRuleParams, error) {
 	data, err := unmarshalDataToAlertQueries(p.Data)
 	if err != nil {
 		return UpdateAlertRuleParams{}, fmt.Errorf("invalid data: %w", err)
 	}
-	ns, err := unmarshalVia[NotificationSettings](p.NotificationSettings)
+	ns, err := notificationSettingsFromMap(p.NotificationSettings)
 	if err != nil {
 		return UpdateAlertRuleParams{}, fmt.Errorf("invalid notification_settings: %w", err)
 	}
@@ -789,8 +859,4 @@ func (p ManageRulesReadWriteParams) toUpdateParams() (UpdateAlertRuleParams, err
 		Record:                      rec,
 		MissingSeriesEvalsToResolve: p.MissingSeriesEvalsToResolve,
 	}, nil
-}
-
-func (p ManageRulesReadWriteParams) toGetRulesOpts() (*GetRulesOpts, error) {
-	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 }

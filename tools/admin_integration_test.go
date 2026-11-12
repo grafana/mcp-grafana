@@ -43,9 +43,10 @@ func TestAdminToolsIntegration(t *testing.T) {
 
 		users, err := listUsersByOrg(ctx, ListUsersByOrgParams{})
 		require.NoError(t, err)
-		assert.NotEmpty(t, users, "Should return at least one user")
+		assert.NotEmpty(t, users.OrgUsers, "Should return at least one user")
+		assert.Positive(t, users.TotalCount)
 
-		firstUser := users[0]
+		firstUser := users.OrgUsers[0]
 		userRoles, err := listUserRoles(ctx, ListUserRolesParams{UserIDs: []int64{firstUser.UserID}})
 		require.NoError(t, err)
 		assert.NotNil(t, userRoles)

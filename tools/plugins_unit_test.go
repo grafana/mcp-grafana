@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +32,32 @@ func pluginTestContext(t *testing.T, serverURL string) context.Context {
 	t.Helper()
 	cfg := mcpgrafana.GrafanaConfig{URL: serverURL}
 	return mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+}
+
+// TestSearchPlugins_RoutesCatalogThroughProxy is the regression test for the
+// grafana.com proxy-bypass bug: when a SOCKS5 proxy is configured, the plugin
+// catalog request must be dialed through the proxy, never sent directly to
+// grafana.com. With the proxy pointed at an unreachable port, the request must
+// fail rather than reach the (directly addressable) catalog server.
+func TestSearchPlugins_RoutesCatalogThroughProxy(t *testing.T) {
+	var directHits atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		directHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(catalogListResponse{})
+	}))
+	t.Cleanup(func() {
+		grafanaComCatalogURL = "https://grafana.com/api/plugins"
+		ts.Close()
+	})
+	grafanaComCatalogURL = ts.URL
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		SOCKS5ProxyURL: "socks5://127.0.0.1:1",
+	})
+	_, err := searchPlugins(ctx, SearchPluginsParams{Query: "loki"})
+	require.Error(t, err, "request must be routed through the (unreachable) proxy, not sent directly")
+	assert.Zero(t, directHits.Load(), "the catalog request must not bypass the proxy")
 }
 
 func TestGetPlugin_Found(t *testing.T) {
@@ -542,21 +569,46 @@ func TestInstallPlugin_NoVersion_PluginNotInCatalog_PromptsToVerifyID(t *testing
 }
 
 func TestInstallPlugin_WithVersion_Success(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/plugins/grafana-test-plugin/install", r.URL.Path)
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(ts.Close)
+	for _, tc := range []struct {
+		pluginType     string
+		settingsStatus int
+		wantSuggestion string
+	}{
+		{"datasource", http.StatusOK, "Configure a new data source for the plugin."},
+		{"panel", http.StatusOK, "Add a panel using this visualization to a dashboard."},
+		{"app", http.StatusOK, "Enable and configure the app plugin."},
+		{"", http.StatusNotFound, ""},
+	} {
+		t.Run(tc.pluginType, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/plugins/grafana-test-plugin/install":
+					assert.Equal(t, http.MethodPost, r.Method)
+					w.WriteHeader(http.StatusOK)
+				case "/api/plugins/grafana-test-plugin/settings":
+					assert.Equal(t, http.MethodGet, r.Method)
+					if tc.settingsStatus != http.StatusOK {
+						w.WriteHeader(tc.settingsStatus)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(pluginSettingsResponse{ID: "grafana-test-plugin", Type: tc.pluginType})
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			t.Cleanup(ts.Close)
 
-	ctx := pluginTestContext(t, ts.URL)
-	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin", Version: "2.0.0"})
+			ctx := pluginTestContext(t, ts.URL)
+			result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin", Version: "2.0.0"})
 
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, "grafana-test-plugin", result.PluginID)
-	assert.False(t, result.ConfirmationRequired)
-	assert.Contains(t, result.Message, "installed successfully")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, "grafana-test-plugin", result.PluginID)
+			assert.False(t, result.ConfirmationRequired)
+			assert.Contains(t, result.Message, "installed successfully")
+			assert.Equal(t, tc.wantSuggestion, result.Suggestion)
+		})
+	}
 }
 
 func TestInstallPlugin_WithVersion_UnexpectedStatus(t *testing.T) {
@@ -578,7 +630,9 @@ func TestInstallPlugin_WithVersion_UnexpectedStatus(t *testing.T) {
 func TestInstallPlugin_WithVersion_TrimsWhitespaceFromPluginID(t *testing.T) {
 	var capturedPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedPath = r.URL.Path
+		if r.Method == http.MethodPost {
+			capturedPath = r.URL.Path
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(ts.Close)

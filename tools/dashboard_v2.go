@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // This file holds helpers for the dashboard schema v2 (dashboard.grafana.app
@@ -16,6 +18,57 @@ import (
 //     the datasource type is `group` and the uid is `datasource.name`.
 //   - template variables live under `variables` (an array of {kind, spec}).
 //   - the time range lives under `timeSettings` (from/to).
+
+// dashboardV2Skeleton is the minimal v2 body quoted in the update_dashboard
+// description and in the rejectNewV1Dashboard error, so the two cannot drift.
+// TestDashboardV2DescriptionSkeleton saves it against a real Grafana.
+const dashboardV2Skeleton = `{"title":"T","timeSettings":{"from":"now-6h","to":"now"},"variables":[],"links":[],"elements":{"p1":{"kind":"Panel","spec":{"id":1,"title":"Up","vizConfig":{"kind":"VizConfig","group":"timeseries","spec":{}},"data":{"kind":"QueryGroup","spec":{"queries":[{"kind":"PanelQuery","spec":{"refId":"A","query":{"kind":"DataQuery","group":"prometheus","datasource":{"name":"<ds uid>"},"spec":{"expr":"up"}}}}],"transformations":[]}}}}},"layout":{"kind":"GridLayout","spec":{"items":[{"kind":"GridLayoutItem","spec":{"x":0,"y":0,"width":24,"height":8,"element":{"kind":"ElementReference","name":"p1"}}}]}}}`
+
+// rejectNewV1Dashboard refuses a classic v1 (panels[]) body that would create a
+// new dashboard when the server requires schema v2 for new dashboards
+// (GrafanaConfig.DashboardSchema) and this Grafana serves a v2 dashboard API.
+// A body whose uid names an existing dashboard is an update and passes, as does
+// a body with an id and no uid, and everything when the setting is off or v2 is
+// not served. Like rejectV1BodyOverV2Stored, it fails closed when discovery is
+// inconclusive.
+func rejectNewV1Dashboard(ctx context.Context, dashboard map[string]interface{}) error {
+	if mcpgrafana.GrafanaConfigFromContext(ctx).DashboardSchema != mcpgrafana.DashboardSchemaV2 || isV2DashboardJSON(dashboard) {
+		return nil
+	}
+	uid, _ := dashboard["uid"].(string)
+	// Grafana saves a body with an id and no uid over that dashboard, or fails
+	// with "not found"; it never creates one. With a uid it goes by the uid and
+	// creates the dashboard when the uid is new, so the uid is checked below.
+	if id, _ := dashboard["id"].(float64); id != 0 && uid == "" {
+		return nil
+	}
+	k8s := mcpgrafana.KubernetesClientFromContext(ctx)
+	if k8s == nil {
+		return nil // no dashboard API, so no v2 to require
+	}
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		return fmt.Errorf("cannot check whether this Grafana serves dashboard schema v2, which this server requires for new dashboards, so the save was refused: %w", err)
+	}
+	version := preferredV2Version(versions)
+	if version == "" {
+		return nil
+	}
+	if uid != "" {
+		ns, err := mcpgrafana.GrafanaNamespace(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = k8s.Get(ctx, dashboardDescriptor(version), ns, uid)
+		if err == nil {
+			return nil
+		}
+		if !isK8sNotFound(err) {
+			return fmt.Errorf("check whether dashboard %q exists: %w", uid, err)
+		}
+	}
+	return fmt.Errorf("this server requires new dashboards to use dashboard schema v2, so a classic v1 (panels[]) body cannot create one. Existing v1 dashboards stay editable as v1: send the body with their uid, or use patches. Send a v2 body (top-level elements/layout) instead, with <ds uid> set to a datasource uid. Minimal v2 body: %s", dashboardV2Skeleton)
+}
 
 // v2Element is a single entry from a v2 dashboard's `elements` map.
 type v2Element struct {
@@ -83,11 +136,6 @@ func findPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]inter
 
 // getPanelQueriesV2 implements get_dashboard_panel_queries for v2 dashboards.
 func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	var dashboardVars map[string]VariableInfo
-	if args.Variables != nil {
-		dashboardVars = extractDashboardVariablesV2(spec)
-	}
-
 	var panels []map[string]interface{}
 	if args.PanelID != nil {
 		panel, err := findPanelByIDV2(spec, *args.PanelID)
@@ -101,16 +149,16 @@ func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesPa
 
 	result := make([]panelQuery, 0)
 	for _, panel := range panels {
-		result = append(result, extractPanelQueriesV2(panel, dashboardVars, args.Variables)...)
+		result = append(result, extractPanelQueriesV2(panel)...)
 	}
-	return result, nil
+	return preparePanelQueries(templatingV1FromV2(spec), args, result, extractDashboardVariablesV2(spec))
 }
 
 // extractPanelQueriesV2 extracts all queries from a v2 panel spec. The query
 // string is read from the free-form per-query body (query.spec), reusing the
 // same field-probe as v1; the datasource type is the query `group` and the uid
 // is `datasource.name`.
-func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
@@ -151,21 +199,23 @@ func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[strin
 		result := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
+			rawTarget:  queryTargetFields(safeObject(query, "spec")),
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
+			interval:   panelIntervalOptionsV2(panel),
 		}
 
-		if dashboardVars != nil {
-			result.RequiredVariables = findVariablesInQuery(rawQuery, dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			result.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			result.Datasource = dsInfo
+		// As in v1, a target built in a visual editor has no string expression;
+		// hand back the query body rather than dropping the panel.
+		if rawQuery == "" {
+			body := safeObject(query, "spec")
+			if body == nil || !targetDescribesQuery(body) {
+				continue
+			}
+			result.Target = queryTargetFields(body)
 		}
 
-		if rawQuery != "" {
-			queries = append(queries, result)
-		}
+		queries = append(queries, result)
 	}
 
 	return queries
@@ -296,4 +346,102 @@ func extractVariableSummaryV2(vk map[string]interface{}) VariableSummary {
 		summary.Label = safeString(spec, "label")
 	}
 	return summary
+}
+
+// extractPanelInfoV2 is extractPanelInfo for a v2 panel spec. A v2 query keeps
+// its plugin-specific fields in query.spec, its refId on the PanelQuery and its
+// datasource in query.datasource.name, so RawTarget is a copy of the body plus
+// the refId and datasource the panel query executors read.
+func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
+	info := &panelInfo{
+		ID:       safeInt(panel, "id"),
+		Title:    safeString(panel, "title"),
+		Interval: panelIntervalOptionsV2(panel),
+	}
+
+	var queries []interface{}
+	if data := safeObject(panel, "data"); data != nil {
+		if dataSpec := safeObject(data, "spec"); dataSpec != nil {
+			queries = safeArray(dataSpec, "queries")
+		}
+	}
+	if len(queries) == 0 {
+		return nil, fmt.Errorf("panel has no query targets")
+	}
+	if queryIndex < 0 || queryIndex >= len(queries) {
+		return nil, fmt.Errorf("queryIndex %d out of range (panel has %d queries, valid range: 0-%d)", queryIndex, len(queries), len(queries)-1)
+	}
+
+	pq, _ := queries[queryIndex].(map[string]interface{})
+	pqSpec := safeObject(pq, "spec")
+	query := safeObject(pqSpec, "query")
+	if query == nil {
+		return nil, fmt.Errorf("invalid target format")
+	}
+
+	info.DatasourceType = safeString(query, "group")
+	if ref := safeObject(query, "datasource"); ref != nil {
+		info.DatasourceUID = safeString(ref, "name")
+	}
+	if info.DatasourceUID == "" {
+		return nil, fmt.Errorf("could not determine datasource for panel")
+	}
+
+	target := map[string]interface{}{}
+	for k, v := range safeObject(query, "spec") {
+		target[k] = v
+	}
+	target["refId"] = safeString(pqSpec, "refId")
+	target["datasource"] = map[string]interface{}{"uid": info.DatasourceUID, "type": info.DatasourceType}
+	info.RawTarget = target
+
+	// CloudWatch and Infinity panels use structured targets rather than string expressions
+	info.Query = panelQueryExpression(target, info.DatasourceType)
+	if info.Query == "" && !usesStructuredTarget(info.DatasourceType) {
+		return nil, errNoQueryExpression
+	}
+
+	return info, nil
+}
+
+// templatingV1FromV2 converts a v2 dashboard's variables to the v1
+// `templating.list` shape that run_panel_query reads.
+func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
+	list := []interface{}{}
+	for _, v := range safeArray(spec, "variables") {
+		vk, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		vspec := safeObject(vk, "spec")
+		if vspec == nil {
+			continue
+		}
+
+		variable := map[string]interface{}{}
+		for _, key := range []string{"name", "current", "query", "multi", "includeAll", "auto", "auto_min", "auto_count"} {
+			if val, ok := vspec[key]; ok {
+				variable[key] = val
+			}
+		}
+		// Only constant and textbox variables need their v1 type: their value
+		// falls back to `query` when no `current` is saved.
+		switch safeString(vk, "kind") {
+		case "ConstantVariable":
+			variable["type"] = "constant"
+		case "TextVariable":
+			variable["type"] = "textbox"
+		case "IntervalVariable":
+			variable["type"] = "interval"
+		case "DatasourceVariable":
+			// v2 names the plugin type pluginId; v1 keeps it in query.
+			variable["type"] = "datasource"
+			variable["query"] = vspec["pluginId"]
+			if regex, ok := vspec["regex"]; ok {
+				variable["regex"] = regex
+			}
+		}
+		list = append(list, variable)
+	}
+	return map[string]interface{}{"templating": map[string]interface{}{"list": list}}
 }

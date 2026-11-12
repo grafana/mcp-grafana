@@ -314,6 +314,22 @@ func TestPrometheusQueries(t *testing.T) {
 		assert.Equal(t, scalar[0].Metric["__name__"], model.LabelValue("up"))
 	})
 
+	t.Run("query prometheus instant range vector", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryPrometheus(ctx, QueryPrometheusParams{
+			DatasourceUID: "prometheus",
+			Expr:          "up[5s]",
+			EndTime:       "now",
+			QueryType:     "instant",
+		})
+		require.NoError(t, err)
+		require.IsType(t, model.Matrix{}, result)
+		matrix := result.(model.Matrix)
+		require.Len(t, matrix, 1)
+		// Prometheus scrapes itself every second, so the window holds several samples.
+		assert.Greater(t, len(matrix[0].Values), 1)
+	})
+
 	t.Run("query prometheus range with relative timestamps", func(t *testing.T) {
 		ctx := newTestContext()
 		beforeQuery := model.TimeFromUnix(time.Now().Unix())
@@ -337,16 +353,17 @@ func TestPrometheusQueries(t *testing.T) {
 		oneHour := time.Hour
 
 		firstSampleTime := matrix[0].Values[0].Timestamp
-		// Check that the start timestamp is within the expected range
-		assert.True(t, firstSampleTime >= beforeQuery.Add(-oneHour),
-			"First timestamp should be after or equal to the time before the query minus one hour")
+		// Grafana aligns the range start down to a multiple of the step, so the
+		// first sample can precede the requested start by up to one step.
+		assert.True(t, firstSampleTime >= beforeQuery.Add(-oneHour).Add(-time.Minute),
+			"First timestamp should be no more than one query step before the time before the query minus one hour")
 		assert.True(t, firstSampleTime <= afterQuery.Add(buffer).Add(-oneHour),
 			"First timestamp should be before or equal to the time after the query minus one hour (with 5s buffer)")
 
-		// Check that the end timestamp is is within the expected range
+		// Range samples are step-aligned, so the last sample can precede the end by up to one step.
 		lastSampleTime := matrix[0].Values[len(matrix[0].Values)-1].Timestamp
-		assert.True(t, lastSampleTime >= beforeQuery,
-			"Last timestamp should be after or equal to the time before the query")
+		assert.True(t, lastSampleTime >= beforeQuery.Add(-time.Minute),
+			"Last timestamp should be no more than one query step before the time before the query")
 		assert.True(t, lastSampleTime <= afterQuery.Add(buffer),
 			"Last timestamp should be before or equal to the time after the query (with 5s buffer)")
 

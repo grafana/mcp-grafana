@@ -7,20 +7,31 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const quickwitDatasourceType = "quickwit-quickwit-datasource"
 
+// quickwitBackend searches a Quickwit datasource. Lucene searches on the
+// configured index run through Grafana's /api/ds/query endpoint so they go
+// through Grafana's query service. Query DSL JSON and an index narrower than the
+// configured one stay on the datasource proxy's _msearch, because the
+// plugin's query model can't express them. Index metadata lookups always use
+// the proxy.
 type quickwitBackend struct {
 	httpClient            *http.Client
 	baseURL               string
+	dsQueryClient         *http.Client
+	grafanaURL            string
+	dsUID                 string
 	configuredIndex       string
 	timeField             string
 	timestampOutputFormat string
@@ -58,22 +69,27 @@ func indexFromQuickwitDataSource(ds *models.DataSource) string {
 
 func newQuickwitBackend(ctx context.Context, ds *models.DataSource) (*quickwitBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	proxyURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), ds.UID)
-
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
+	dsQueryClient, grafanaURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	return &quickwitBackend{
 		httpClient:      &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
-		baseURL:         proxyURL,
+		dsQueryClient:   dsQueryClient,
+		baseURL:         fmt.Sprintf("%s/api/datasources/proxy/uid/%s", grafanaURL, ds.UID),
+		grafanaURL:      grafanaURL,
+		dsUID:           ds.UID,
 		configuredIndex: indexFromQuickwitDataSource(ds),
 	}, nil
 }
 
 func quickwitBackendForDatasource(ctx context.Context, uid string) (*quickwitBackend, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +123,10 @@ func (b *quickwitBackend) Search(ctx context.Context, index, query string, start
 		return nil, err
 	}
 
+	if resolvedIndex == b.configuredIndex && !isQueryDSL(query) {
+		return b.searchViaDSQuery(ctx, query, startTime, endTime, limit)
+	}
+
 	searchQuery := esSearchQuery{
 		query:      query,
 		startTime:  startTime,
@@ -116,6 +136,93 @@ func (b *quickwitBackend) Search(ctx context.Context, index, query string, start
 		sortFormat: quickwitTimestampSortFormat(b.timestampOutputFormat),
 	}.build()
 	return executeMSearch(ctx, b.httpClient, buildURL(b.baseURL, "_elastic/_msearch"), resolvedIndex, searchQuery, b.timeField)
+}
+
+// isQueryDSL reports whether query is Elasticsearch Query DSL JSON rather
+// than a Lucene string, using the same test as esSearchQuery.
+func isQueryDSL(query string) bool {
+	var parsed map[string]interface{}
+	return json.Unmarshal([]byte(query), &parsed) == nil
+}
+
+// searchViaDSQuery runs a Lucene search through /api/ds/query using the
+// plugin's raw_document metric. The plugin always searches the datasource's
+// configured index and sorts by its timestamp field, newest first.
+func (b *quickwitBackend) searchViaDSQuery(ctx context.Context, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error) {
+	// /api/ds/query needs both bounds; an unset bound means unbounded.
+	from := time.Unix(0, 0)
+	if !startTime.IsZero() {
+		from = startTime
+	}
+	to := time.Now()
+	if !endTime.IsZero() {
+		to = endTime
+	}
+
+	payload := dsQueryPayload(from, to, map[string]interface{}{
+		"refId": "A",
+		"datasource": map[string]interface{}{
+			"uid":  b.dsUID,
+			"type": quickwitDatasourceType,
+		},
+		"query": query,
+		"metrics": []map[string]interface{}{
+			{
+				"id":       "1",
+				"type":     "raw_document",
+				"settings": map[string]interface{}{"size": strconv.Itoa(limit)},
+			},
+		},
+		"bucketAggs": []interface{}{},
+	})
+
+	resp, err := doDSQuery(ctx, b.dsQueryClient, b.grafanaURL, payload)
+	if err != nil {
+		return nil, err
+	}
+	result, ok := resp.Responses["A"]
+	if !ok {
+		return nil, fmt.Errorf("no result found for refId A")
+	}
+	if result.Error != nil {
+		return nil, fmt.Errorf("quickwit query error: %s", result.Error)
+	}
+	return quickwitFramesToDocuments(result.Frames, b.configuredIndex, b.timeField)
+}
+
+// quickwitFramesToDocuments converts the plugin's raw_document frame, a single
+// column holding each hit's _source as JSON, into documents.
+func quickwitFramesToDocuments(frames data.Frames, index, timeField string) ([]ElasticsearchDocument, error) {
+	documents := []ElasticsearchDocument{}
+	for _, frame := range frames {
+		if len(frame.Fields) == 0 {
+			continue
+		}
+		for i := 0; i < frame.Rows(); i++ {
+			var raw []byte
+			switch v := frame.At(0, i).(type) {
+			case json.RawMessage:
+				raw = v
+			case *json.RawMessage:
+				if v == nil {
+					continue
+				}
+				raw = *v
+			default:
+				return nil, fmt.Errorf("unexpected raw_document value type %T", v)
+			}
+			var source map[string]interface{}
+			if err := json.Unmarshal(raw, &source); err != nil {
+				return nil, fmt.Errorf("decoding document: %w", err)
+			}
+			documents = append(documents, ElasticsearchDocument{
+				Index:     index,
+				Source:    source,
+				Timestamp: esTimestamp(source[timeField]),
+			})
+		}
+	}
+	return documents, nil
 }
 
 func (b *quickwitBackend) ensureTimestampInfo(ctx context.Context, index string) error {
@@ -222,8 +329,8 @@ type QueryQuickwitParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Quickwit datasource to query"`
 	Index         string `json:"index,omitempty" jsonschema:"description=Optionally\\, the index or index pattern to search. Defaults to the index configured on the datasource (jsonData.index)"`
 	Query         string `json:"query" jsonschema:"required,description=The search query in Lucene syntax (e.g.\\, 'severity_text:ERROR AND service_name:api') or partial Elasticsearch-compatible Query DSL JSON"`
-	StartTime     string `json:"startTime,omitempty" jsonschema:"description=Optionally\\, the start time. Filters results to documents with timestamp >= this value. Supports RFC3339 (e.g. '2024-01-01T00:00:00Z')\\, relative to now (e.g. 'now'\\, 'now-1h'\\, 'now-30m')\\, or Unix timestamps"`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=Optionally\\, the end time. Filters results to documents with timestamp <= this value. Supports RFC3339 (e.g. '2024-01-01T23:59:59Z')\\, relative to now (e.g. 'now'\\, 'now-1h')\\, or Unix timestamps"`
+	StartTime     string `json:"startTime,omitempty" jsonschema:"description=Optionally\\, the start time. Filters results to documents with timestamp >= this value. Supports RFC3339 (e.g. '2024-01-01T00:00:00Z')\\, relative to now (e.g. 'now'\\, 'now-1h'\\, 'now-30m')\\, or Unix ms (e.g. '1738519200000')"`
+	EndTime       string `json:"endTime,omitempty" jsonschema:"description=Optionally\\, the end time. Filters results to documents with timestamp <= this value. Supports RFC3339 (e.g. '2024-01-01T23:59:59Z')\\, relative to now (e.g. 'now'\\, 'now-1h')\\, or Unix ms (e.g. '1738522800000')"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of documents to return (max: 100\\, default: 10)"`
 }
 
@@ -259,14 +366,19 @@ var QueryQuickwit = mcpgrafana.MustTool(
 	"query_quickwit",
 	"Executes a search query against a Quickwit datasource and retrieves matching documents. Supports Lucene query syntax (e.g., 'severity_text:ERROR AND service_name:api') and partial Elasticsearch-compatible Query DSL JSON. The timestamp field is resolved from Quickwit index metadata (not jsonData.timeField). Returns a list of documents with their index, ID, source fields, and optional score. Use this to search logs or other indexed data stored in Quickwit. Defaults to 10 results and sorts by the index timestamp field in descending order (newest first).",
 	queryQuickwit,
-	mcp.WithTitleAnnotation("Query Quickwit"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Quickwit"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
 // AddQuickwitTools registers all Quickwit tools with the MCP server.
-func AddQuickwitTools(mcp *server.MCPServer) {
-	QueryQuickwit.Register(mcp)
+// Every tool in this category executes a query, so nothing is registered when
+// enableQueryTools is false.
+func AddQuickwitTools(s *mcp.Server, enableQueryTools bool) {
+	if enableQueryTools {
+		QueryQuickwit.Register(s)
+	}
 }

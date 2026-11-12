@@ -13,6 +13,15 @@
         "group:allNonMajor",
         "github>grafana/grafana-renovate-config//presets/plugin-ci-workflows"
     ],
+    "ignorePaths": [
+        "**/node_modules/**",
+        "**/bower_components/**",
+        "**/vendor/**",
+        "**/examples/**",
+        "**/__tests__/**",
+        "**/test/**",
+        "**/__fixtures__/**"
+    ],
     "minimumReleaseAge": "14 days",
     "rebaseWhen": "conflicted",
     "separateMajorMinor": true,
@@ -21,11 +30,6 @@
             "description": "Group all non-major updates into a single PR",
             "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
             "groupName": "all non-major dependencies"
-        },
-        {
-            "description": "Major updates get individual PRs for careful review",
-            "matchUpdateTypes": ["major"],
-            "groupName": null
         },
         {
             "description": "Group Docker digest updates and automerge",
@@ -38,6 +42,34 @@
             "description": "Automerge patch-level updates",
             "matchUpdateTypes": ["patch", "pin"],
             "automerge": true
+        },
+        {
+            "description": "grafana-legacy (11) and grafana-legacy-8 (8.5) in docker-compose.yaml pin old majors on purpose to exercise the legacy API fallbacks. Only the main grafana service tracks new majors.",
+            "matchDatasources": ["docker"],
+            "matchPackageNames": ["grafana/grafana"],
+            "matchCurrentVersion": "<12.0.0",
+            "matchUpdateTypes": ["major"],
+            "enabled": false
+        },
+        {
+            "description": "Bump the go directive in the root go.mod, which Renovate skips by default. lokiguard keeps its own consumer minimum.",
+            "matchManagers": ["gomod"],
+            "matchFileNames": ["go.mod"],
+            "matchDepNames": ["go"],
+            "matchDepTypes": ["golang"],
+            "rangeStrategy": "bump"
+        },
+        {
+            "description": "Bump Go everywhere in one PR: the go.mod directive, mise.toml, and the Dockerfile builder images.",
+            "matchDepNames": ["go", "golang"],
+            "groupName": "go"
+        },
+        {
+            "description": "Patch only for Go in go.mod, mise.toml and the Dockerfile builder images. A minor in go.mod raises the minimum Go for module consumers. mise.toml and the Dockerfiles build the release binaries and images, which stay on 1.26 until golang/go#81199 is fixed (see mise.toml).",
+            "matchManagers": ["gomod", "mise", "dockerfile"],
+            "matchDepNames": ["go", "golang"],
+            "matchUpdateTypes": ["major", "minor"],
+            "enabled": false
         }
     ]
 }

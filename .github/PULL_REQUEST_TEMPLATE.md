@@ -25,7 +25,7 @@ Fixes #
 | --- | --- | --- |
 | `` | new / changed | default-on / opt-in category |
 
-**Token cost:** <!-- From the Token Analysis check's run summary, or `make token-check` locally. Please paste the change if this adds a default-on tool — it's the most useful number for reviewing the proposal. -->
+**Token cost:** <!-- From the Token Analysis check's run summary, or `mise run token-check` locally. Please paste the change if this adds a default-on tool — it's the most useful number for reviewing the proposal. -->
 
 **Why not extend an existing tool?** <!-- Only needed for new tools. -->
 
@@ -41,11 +41,12 @@ so anything that helps them reproduce your setup is genuinely useful.
 
 ## Checklist
 
-- [ ] `make lint` and `make test-unit` pass locally
+- [ ] `mise run lint` and `mise run test-unit` pass locally
 - [ ] Commits are signed (required to merge — see CONTRIBUTING.md)
 - [ ] CLA signed (required to merge)
 - [ ] README tool table updated, with RBAC permissions and scopes, if this adds a tool
 - [ ] Any write operation respects `--disable-write`
+- [ ] Any datasource query execution respects `--disable-query` (and `--disable-write` too, if the query is passed through unfiltered)
 
 <!--
 Note on CI: workflow runs on fork PRs need manual maintainer approval, on every

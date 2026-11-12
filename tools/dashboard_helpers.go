@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -182,9 +183,7 @@ func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 }
 
 // extractPanelQueries extracts all queries from a panel.
-// When dashboardVars is non-nil, performs variable analysis and substitution,
-// populating ProcessedQuery and RequiredVariables fields.
-func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]VariableInfo, overrides map[string]string) []panelQuery {
+func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 	var queries []panelQuery
 
 	title := safeString(panel, "title")
@@ -214,8 +213,8 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 		// Get datasource from target or fall back to panel level
 		dsInfo := panelDs
 		if targetDs := safeObject(target, "datasource"); targetDs != nil {
-			if uid := safeString(targetDs, "uid"); uid != "" {
-				dsInfo.UID = uid
+			if uid := safeString(targetDs, "uid"); uid != "" && uid != panelDs.UID {
+				dsInfo = datasourceInfo{UID: uid}
 			}
 			if dsType := safeString(targetDs, "type"); dsType != "" {
 				dsInfo.Type = dsType
@@ -225,40 +224,46 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 		pq := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
+			rawTarget:  queryTargetFields(target),
 			Datasource: dsInfo,
 			RefID:      refID,
+			interval:   panelIntervalOptions(panel),
 		}
 
-		// Only do variable processing when dashboardVars is provided
-		if dashboardVars != nil {
-			pq.RequiredVariables = findVariablesInQuery(rawQuery, dashboardVars, overrides)
-			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
-			pq.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
-			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
-			pq.Datasource = dsInfo
+		// Targets built in a datasource's visual editor carry no string
+		// expression at all. Hand back the target itself instead of dropping
+		// them silently.
+		if rawQuery == "" {
+			if !targetDescribesQuery(target) {
+				continue
+			}
+			pq.Target = queryTargetFields(target)
 		}
 
-		if rawQuery != "" {
-			queries = append(queries, pq)
-		}
+		queries = append(queries, pq)
 	}
 
 	return queries
 }
 
-// extractQueryExpression extracts the query string from a target
-// Different datasources store queries in different fields
-func extractQueryExpression(target map[string]interface{}) string {
-	// Try common query field names
-	queryFields := []string{
-		"expr",       // Prometheus
-		"query",      // Loki, ClickHouse, generic
-		"expression", // CloudWatch
-		"rawSql",     // SQL databases
-		"rawSQL",     // Athena (grafana-athena-datasource)
-		"rawQuery",   // Some datasources
-	}
+// queryFields are the target fields that hold a query string, in lookup order.
+// Different datasources store queries in different fields.
+var queryFields = []string{
+	"expr",        // Prometheus
+	"query",       // Loki, ClickHouse, generic
+	"expression",  // CloudWatch
+	"rawSql",      // SQL databases
+	"rawSQL",      // Athena (grafana-athena-datasource)
+	"rawQuery",    // Some datasources
+	"target",      // Graphite metric path
+	"cypherQuery", // Neo4j
+}
 
+// errNoQueryExpression reports a target without a query string in any of queryFields.
+var errNoQueryExpression = fmt.Errorf("could not extract query from panel target (checked: %s)", strings.Join(queryFields, ", "))
+
+// extractQueryExpression extracts the query string from a target
+func extractQueryExpression(target map[string]interface{}) string {
 	for _, field := range queryFields {
 		if val := safeString(target, field); val != "" {
 			return val
@@ -268,16 +273,152 @@ func extractQueryExpression(target map[string]interface{}) string {
 	return ""
 }
 
-// variableRegex matches Grafana template variable patterns
-// Matches: $varname, ${varname}, ${varname:option}, [[varname]]
-var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}|\$([a-zA-Z_][a-zA-Z0-9_]*)|\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
+// structuredQueryFields are target fields we recognise as part of a query built
+// in a datasource's visual editor rather than written out as a string
+// expression: CloudWatch metric search, Pyroscope profile selection, InfluxDB's
+// query builder and so on. Recognising a field is not enough to call the target
+// a query -- see identifyingQueryFields.
+var structuredQueryFields = []string{
+	// CloudWatch metric search
+	"region", "namespace", "metricName", "statistic", "statistics", "dimensions", "accountId",
+	// Pyroscope
+	"profileTypeId", "labelSelector", "spanSelector",
+	// InfluxDB query builder
+	"policy", "measurement", "select", "tags", "groupBy",
+	// Elasticsearch aggregations
+	"metrics", "bucketAggs",
+	// Azure Monitor
+	"azureMonitor", "azureLogAnalytics", "azureTraces",
+}
 
-// Pre-compiled regex patterns for substituteVariables
-var (
-	dollarBraceVarRegex   = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}`)
-	dollarBraceNameRegex  = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)`)
-	doubleBracketVarRegex = regexp.MustCompile(`\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
-)
+// structuredFieldSet indexes structuredQueryFields for lookups.
+var structuredFieldSet = func() map[string]bool {
+	set := make(map[string]bool, len(structuredQueryFields))
+	for _, field := range structuredQueryFields {
+		set[field] = true
+	}
+	return set
+}()
+
+// identifyingQueryFields is the subset of structuredQueryFields that says what a
+// query is *about*. The rest only refine one: Grafana persists them straight
+// from the query editor's defaults -- CloudWatch's "Average" statistic and
+// "default" region, InfluxDB's default retention policy -- so a query row nobody
+// filled in has them set and nothing else.
+var identifyingQueryFields = map[string]bool{
+	"metricName":        true, // CloudWatch metric search
+	"profileTypeId":     true, // Pyroscope
+	"measurement":       true, // InfluxDB query builder
+	"metrics":           true, // Elasticsearch aggregations (an empty lucene query is match-all, and still runs)
+	"azureMonitor":      true,
+	"azureLogAnalytics": true,
+	"azureTraces":       true,
+}
+
+// editorStateFields hold rendering, transport or query-editor state. Their
+// presence says nothing about whether a target asks for anything, so they don't
+// keep an otherwise-empty query row in the results. They are still returned to
+// the caller: queryType, for one, is what tells InfluxDB whether the panel is
+// influxql or flux.
+var editorStateFields = map[string]bool{
+	"datasource":       true,
+	"datasourceId":     true,
+	"refId":            true,
+	"hide":             true,
+	"hidden":           true,
+	"key":              true,
+	"id":               true,
+	"editorMode":       true,
+	"queryType":        true,
+	"queryMode":        true,
+	"metricQueryType":  true,
+	"metricEditorMode": true,
+	"matchExact":       true,
+	"format":           true,
+	"resultFormat":     true,
+	"instant":          true,
+	"range":            true,
+	"exemplar":         true,
+	"legendFormat":     true,
+	"alias":            true,
+	"interval":         true,
+	"intervalMs":       true,
+	"intervalFactor":   true,
+	"maxDataPoints":    true,
+}
+
+// targetDescribesQuery reports whether a target that carries no string
+// expression nevertheless describes a query. It distinguishes a real
+// visual-editor query from a query row somebody added in the UI and never
+// filled in, which Grafana saves with the editor's defaults in place.
+func targetDescribesQuery(target map[string]interface{}) bool {
+	for field, val := range target {
+		if isEmptyTargetValue(val) {
+			continue
+		}
+		if identifyingQueryFields[field] {
+			return true
+		}
+		// A field we don't recognise at all belongs to a datasource we have no
+		// list for. Take the target at its word rather than dropping the panel,
+		// which is the failure this whole path exists to avoid.
+		if !structuredFieldSet[field] && !editorStateFields[field] {
+			return true
+		}
+	}
+	return false
+}
+
+// queryTargetFields returns a target's fields for the caller to interpret,
+// minus the two the result already carries in their own fields. Nothing else is
+// filtered: Grafana runs a CloudWatch panel by posting the whole target back to
+// /api/ds/query, so any field may be part of what the panel asks for.
+func queryTargetFields(target map[string]interface{}) map[string]interface{} {
+	fields := make(map[string]interface{}, len(target))
+	for k, v := range target {
+		if k == "datasource" || k == "refId" {
+			continue
+		}
+		fields[k] = v
+	}
+	return fields
+}
+
+// isEmptyTargetValue reports whether a target field is set but carries no
+// information, which query editors leave behind routinely.
+func isEmptyTargetValue(val interface{}) bool {
+	switch v := val.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case []interface{}:
+		return len(v) == 0
+	case map[string]interface{}:
+		return len(v) == 0
+	default:
+		return false
+	}
+}
+
+// variableSearchText includes both the expression and target fields, since
+// expression queries can also reference variables in location or dimensions.
+// rawTarget preserves those fields without changing the public response shape.
+func variableSearchText(pq panelQuery) string {
+	target := pq.rawTarget
+	if target == nil {
+		target = pq.Target
+	}
+	encoded, err := json.Marshal(target)
+	if err != nil {
+		return pq.Query
+	}
+	return pq.Query + " " + string(encoded)
+}
+
+// variableRegex matches Grafana template variable patterns
+// Matches: $varname, ${varname}, ${varname:option}, [[varname]], [[varname:option]]
+var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}|\$([a-zA-Z_][a-zA-Z0-9_]*)|\[\[([a-zA-Z_][a-zA-Z0-9_]*)(?::[^\]]*)?\]\]`)
 
 // findVariablesInQuery extracts all variable references from a query
 func findVariablesInQuery(query string, dashboardVars map[string]VariableInfo, overrides map[string]string) []VariableInfo {
@@ -319,87 +460,4 @@ func findVariablesInQuery(query string, dashboardVars map[string]VariableInfo, o
 	}
 
 	return variables
-}
-
-// buildEffectiveVariables combines dashboard variables with user overrides
-func buildEffectiveVariables(dashboardVars map[string]VariableInfo, overrides map[string]string) map[string]string {
-	effective := make(map[string]string)
-
-	// Start with dashboard variable current values
-	for name, varInfo := range dashboardVars {
-		if varInfo.CurrentValue != "" {
-			effective[name] = varInfo.CurrentValue
-		} else if varInfo.DefaultValue != "" {
-			effective[name] = varInfo.DefaultValue
-		}
-	}
-
-	// Apply overrides
-	for name, value := range overrides {
-		effective[name] = value
-	}
-
-	return effective
-}
-
-// substituteVariables replaces template variables in a query with their values
-func substituteVariables(query string, variables map[string]string) string {
-	result := query
-
-	// Replace ${varname:option} and ${varname} patterns
-	result = dollarBraceVarRegex.ReplaceAllStringFunc(result, func(match string) string {
-		// Extract variable name
-		m := dollarBraceNameRegex.FindStringSubmatch(match)
-		if len(m) > 1 {
-			if val, ok := variables[m[1]]; ok {
-				return val
-			}
-		}
-		return match
-	})
-
-	// Replace $varname patterns (but not ${varname} which was already handled)
-	// Be careful not to match variable names that are part of other words
-	for name, value := range variables {
-		result = replaceSimpleDollarVar(result, name, value)
-	}
-
-	// Replace [[varname]] patterns
-	result = doubleBracketVarRegex.ReplaceAllStringFunc(result, func(match string) string {
-		name := match[2 : len(match)-2]
-		if val, ok := variables[name]; ok {
-			return val
-		}
-		return match
-	})
-
-	return result
-}
-
-// replaceSimpleDollarVar replaces $varName followed by a non-word character or end of string
-func replaceSimpleDollarVar(s, varName, value string) string {
-	prefix := "$" + varName
-	prefixLen := len(prefix)
-
-	var result strings.Builder
-	result.Grow(len(s))
-	i := 0
-	for i < len(s) {
-		if s[i] == '$' && i+prefixLen <= len(s) && s[i:i+prefixLen] == prefix {
-			afterIdx := i + prefixLen
-			if afterIdx == len(s) || !isWordChar(s[afterIdx]) {
-				result.WriteString(value)
-				i = afterIdx
-				continue
-			}
-		}
-		result.WriteByte(s[i])
-		i++
-	}
-	return result.String()
-}
-
-// isWordChar returns true if the byte is a word character [a-zA-Z0-9_]
-func isWordChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }

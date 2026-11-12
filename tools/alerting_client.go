@@ -18,12 +18,16 @@ import (
 	"gopkg.in/yaml.v3"
 
 	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 const (
-	defaultTimeout    = 30 * time.Second
 	rulesEndpointPath = "/api/prometheus/grafana/api/v1/rules"
+)
+
+const (
+	alertRuleUIDLabel          = "__alert_rule_uid__"
+	alertRuleNamespaceUIDLabel = "__alert_rule_namespace_uid__"
 )
 
 type alertingClient struct {
@@ -48,7 +52,7 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		baseURL: parsedBaseURL,
 		httpClient: &http.Client{
 			Transport: transport,
-			Timeout:   defaultTimeout,
+			Timeout:   cfg.TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout),
 		},
 	}, nil
 }
@@ -75,6 +79,15 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string, params ur
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		_ = resp.Body.Close() //nolint:errcheck
+		if resp.StatusCode == http.StatusBadRequest && path != rulesEndpointPath &&
+			strings.HasPrefix(path, "/api/prometheus/") && strings.HasSuffix(path, "/api/v1/rules") {
+			var apiError struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(bodyBytes, &apiError) == nil && apiError.Message == "Authentication to data source failed" {
+				return nil, fmt.Errorf("grafana API returned status code %d: %s; Grafana could not authenticate to the datasource; check the datasource's credentials and ruler configuration in Grafana", resp.StatusCode, string(bodyBytes))
+			}
+		}
 		return nil, fmt.Errorf("grafana API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -102,10 +115,37 @@ type GetRulesOpts struct {
 	States       []string // Filter by rule state (e.g. "firing", "pending", "normal", "nodata", "error")
 	RuleLimit    int      // Maximum number of rules to return (max 200)
 	LimitAlerts  int      // Maximum number of alert instances per rule (max 200)
+	// IncludeInternalLabels asks Grafana to include internal labels such as
+	// rule UID and namespace UID in Prometheus-compatible responses.
+	IncludeInternalLabels bool
 	// Matchers filters alert instances by labels. Each matcher is JSON-encoded
-	// as a Prometheus matcher object (e.g. {"type":0,"name":"severity","value":"critical"}).
+	// in the shape Grafana expects (e.g. {"name":"severity","value":"critical","isRegex":false,"isEqual":true}).
 	// Multiple matchers are AND-ed together.
 	Matchers []*labels.Matcher
+}
+
+// ruleMatcherJSON is the JSON shape Grafana's Prometheus rules API expects for
+// each `matcher` query parameter. Grafana unmarshals it into an
+// alertmanager pkg/labels.Matcher, which reads the lowercase name/value fields
+// plus the isRegex/isEqual booleans. Prometheus' own labels.Matcher marshals
+// with capitalized field names and a numeric Type instead, which Grafana
+// silently ignores — so we cannot json.Marshal the matcher directly.
+type ruleMatcherJSON struct {
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	IsRegex bool   `json:"isRegex"`
+	IsEqual bool   `json:"isEqual"`
+}
+
+// toRuleMatcherJSON converts a Prometheus label matcher into the shape Grafana
+// expects, mapping the match type onto the isRegex/isEqual booleans.
+func toRuleMatcherJSON(m *labels.Matcher) ruleMatcherJSON {
+	return ruleMatcherJSON{
+		Name:    m.Name,
+		Value:   m.Value,
+		IsRegex: m.Type == labels.MatchRegexp || m.Type == labels.MatchNotRegexp,
+		IsEqual: m.Type == labels.MatchEqual || m.Type == labels.MatchRegexp,
+	}
 }
 
 func (o *GetRulesOpts) queryValues() url.Values {
@@ -142,8 +182,14 @@ func (o *GetRulesOpts) queryValues() url.Values {
 	if limitAlerts > 0 {
 		params.Set("limit_alerts", strconv.Itoa(limitAlerts))
 	}
+	if o.IncludeInternalLabels {
+		params.Set("includeInternalLabels", "true")
+	}
 	for _, m := range o.Matchers {
-		b, err := json.Marshal(m)
+		if m == nil {
+			continue
+		}
+		b, err := json.Marshal(toRuleMatcherJSON(m))
 		if err != nil {
 			continue
 		}
@@ -220,14 +266,40 @@ type alert struct {
 	Value       string        `json:"value"`
 }
 
-// GetDatasourceRules queries a datasource's Prometheus ruler API
-func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID string, opts *GetRulesOpts) (*v1.RulesResult, error) {
+const datasourceRulesGroupLimit = 20
+
+type datasourceRulesPage struct {
+	v1.RulesResult
+	NextToken string `json:"groupNextToken,omitempty"`
+}
+
+// GetDatasourceRules queries one page of a datasource's Prometheus rules API.
+func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID string, opts *GetRulesOpts, nextToken string) (*datasourceRulesPage, error) {
 	// use the Grafana unified endpoint - maybe we need to use the datasource proxy endpoint in the future as this
 	// is an api for internal use
 	path := fmt.Sprintf("/api/prometheus/%s/api/v1/rules", datasourceUID)
-	var params url.Values
+	params := url.Values{
+		"group_limit":    {strconv.Itoa(datasourceRulesGroupLimit)},
+		"exclude_alerts": {"true"}, // Rule summaries do not use alert instances.
+	}
+	if nextToken != "" {
+		params.Set("group_next_token", nextToken)
+	}
 	if opts != nil {
-		params = opts.queryValues()
+		// Datasource APIs use Prometheus parameters, not the Grafana-managed
+		// rules parameters in queryValues. RuleName is a substring search, so
+		// it cannot be forwarded as the exact-match rule_name[] filter.
+		if opts.RuleGroup != "" {
+			params.Set("rule_group[]", opts.RuleGroup)
+			// Loki and older Mimir versions use the unbracketed spelling.
+			params.Set("rule_group", opts.RuleGroup)
+		}
+		switch opts.RuleType {
+		case "alerting":
+			params.Set("type", "alert")
+		case "recording":
+			params.Set("type", "record")
+		}
 	}
 	resp, err := c.makeRequest(ctx, path, params)
 	if err != nil {
@@ -238,11 +310,16 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 	}()
 
 	var response struct {
-		Status string         `json:"status"`
-		Data   v1.RulesResult `json:"data"`
+		Status string              `json:"status"`
+		Data   datasourceRulesPage `json:"data"`
 	}
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&response); err != nil {
+	// A single group can be large, and older backends can ignore pagination.
+	// Bound the decompressed body before the JSON decoder allocates for it.
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read datasource rules response: %w", err)
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("failed to decode datasource rules response: %w", err)
 	}
 
@@ -252,6 +329,10 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 
 	return &response.Data, nil
 }
+
+// Grafana treats a missing Alertmanager jsonData.implementation as cortex
+// (defaultImplementation in pkg/services/ngalert/api/lotex_am.go).
+const defaultAlertmanagerImplementation = "cortex"
 
 // GetAlertmanagerConfig queries an Alertmanager datasource for its configuration
 // The implementation type determines the API path:
@@ -265,12 +346,9 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	case "prometheus":
 		apiPath = "/api/v2/status"
 		isPrometheusV2 = true
-	case "mimir", "cortex":
-		apiPath = "/api/v1/alerts"
 	default:
-		// default to prometheus
-		apiPath = "/api/v2/status"
-		isPrometheusV2 = true
+		// mimir, cortex, and unset (defaultAlertmanagerImplementation)
+		apiPath = "/api/v1/alerts"
 	}
 
 	path := fmt.Sprintf("/api/datasources/proxy/uid/%s%s", datasourceUID, apiPath)

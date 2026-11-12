@@ -16,11 +16,13 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const victoriaMetricsDatasourceType = "victoriametrics-metrics-datasource"
 
 // fakeVMServer captures the most recent /api/ds/query payload and returns a
 // canned backend.QueryDataResponse so tests can assert payload shape and response decoding
@@ -51,11 +53,11 @@ func newFakeVMServer(t *testing.T, response backend.QueryDataResponse) *fakeVMSe
 	return f
 }
 
-func newTestVMBackend(t *testing.T, server *httptest.Server) *victoriaMetricsBackend {
+func newTestVMBackend(t *testing.T, server *httptest.Server) *prometheusBackend {
 	t.Helper()
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: server.URL})
 	ds := &models.DataSource{UID: "vm-uid", Type: victoriaMetricsDatasourceType}
-	b, err := newVictoriaMetricsBackend(ctx, "vm-uid", ds)
+	b, err := newPrometheusBackend(ctx, "vm-uid", ds)
 	require.NoError(t, err)
 	// Override baseURL on the test server (defensive — should already match).
 	b.baseURL = server.URL
@@ -116,6 +118,7 @@ func TestVictoriaMetricsBackendQuery_PayloadShape(t *testing.T) {
 			assert.Equal(t, tc.wantRange, q["range"])
 			assert.Equal(t, tc.wantInterval, q["interval"])
 			assert.Equal(t, tc.wantIntervalMs, q["intervalMs"])
+			assert.Equal(t, float64(11000), q["maxDataPoints"])
 
 			ds := q["datasource"].(map[string]interface{})
 			assert.Equal(t, victoriaMetricsDatasourceType, ds["type"])
@@ -236,6 +239,6 @@ func TestVictoriaMetricsBackendQuery_HTTPError(t *testing.T) {
 	b := newTestVMBackend(t, server)
 	_, _, err := b.Query(context.Background(), "up", "instant", time.Time{}, time.Unix(1700000000, 0), 0)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "querying VictoriaMetrics instant")
+	assert.Contains(t, err.Error(), "querying Prometheus instant")
 	assert.Contains(t, err.Error(), "status 500")
 }

@@ -3,7 +3,10 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -70,8 +73,8 @@ func TestCloudWatchQueryParams_AccountIdEmpty(t *testing.T) {
 	assert.Empty(t, params.AccountId)
 }
 
-func TestCloudWatchQueryResult_Structure(t *testing.T) {
-	result := CloudWatchQueryResult{
+func TestCloudWatchSeries_Structure(t *testing.T) {
+	result := CloudWatchSeries{
 		Label:      "AWS/ECS - CPUUtilization",
 		Timestamps: []int64{1705312800000, 1705313100000, 1705313400000},
 		Values:     []float64{25.5, 30.2, 28.7},
@@ -141,12 +144,27 @@ func TestListCloudWatchDimensionsParams_Structure(t *testing.T) {
 	assert.Equal(t, "987654321098", params.AccountId)
 }
 
+func TestListCloudWatchDimensionValuesParams_Structure(t *testing.T) {
+	params := ListCloudWatchDimensionValuesParams{
+		DatasourceUID: "test-uid",
+		Namespace:     "AWS/RDS",
+		MetricName:    "DatabaseConnections",
+		DimensionKey:  "DBInstanceIdentifier",
+		Region:        "ap-southeast-1",
+		AccountId:     "987654321098",
+	}
+
+	assert.Equal(t, "test-uid", params.DatasourceUID)
+	assert.Equal(t, "AWS/RDS", params.Namespace)
+	assert.Equal(t, "DatabaseConnections", params.MetricName)
+	assert.Equal(t, "DBInstanceIdentifier", params.DimensionKey)
+	assert.Equal(t, "ap-southeast-1", params.Region)
+	assert.Equal(t, "987654321098", params.AccountId)
+}
+
 func TestCloudWatchQueryResult_Hints(t *testing.T) {
 	// Test that hints field can be populated
 	result := CloudWatchQueryResult{
-		Label:      "Test",
-		Timestamps: []int64{},
-		Values:     []float64{},
 		Hints: []string{
 			"Hint 1",
 			"Hint 2",
@@ -251,119 +269,111 @@ func TestParseCloudWatchMetricsResponse(t *testing.T) {
 	}
 }
 
-func TestCloudWatchMultiFrameStatistics(t *testing.T) {
-	// Build a backend.QueryDataResponse with 2 frames to verify statistics
-	// are accumulated across all frames, not just the last one.
-	t1 := time.UnixMilli(1000)
-	t2 := time.UnixMilli(2000)
-	t3 := time.UnixMilli(3000)
-	t4 := time.UnixMilli(4000)
+func cloudWatchTestFrame(label string, ms []int64, vals []float64) *data.Frame {
+	times := make([]time.Time, len(ms))
+	for i, m := range ms {
+		times[i] = time.UnixMilli(m)
+	}
+	value := data.NewField("Value", nil, vals)
+	if label != "" {
+		value.Config = &data.FieldConfig{DisplayNameFromDS: label}
+	}
+	return data.NewFrame("", data.NewField("Time", nil, times), value)
+}
 
-	f1 := data.NewFrame("",
-		data.NewField("Time", nil, []time.Time{t1, t2}),
-		data.NewField("Value", nil, []float64{10.0, 20.0}),
-	)
-
-	f2 := data.NewFrame("",
-		data.NewField("Time", nil, []time.Time{t3, t4}),
-		data.NewField("Value", nil, []float64{5.0, 40.0}),
-	)
-
+func cloudWatchResultJSON(t *testing.T, frames ...*data.Frame) string {
+	t.Helper()
 	resp := &backend.QueryDataResponse{
-		Responses: backend.Responses{
-			"A": backend.DataResponse{Frames: data.Frames{f1, f2}},
-		},
+		Responses: backend.Responses{"A": backend.DataResponse{Frames: frames}},
 	}
+	result, err := cloudWatchResultFromResponse(resp, "AWS/EC2 - CPUUtilization")
+	require.NoError(t, err)
+	b, err := json.Marshal(result)
+	require.NoError(t, err)
+	return string(b)
+}
 
-	// Process the response the same way queryCloudWatch does
-	result := &CloudWatchQueryResult{
-		Label:      "Test",
-		Timestamps: []int64{},
-		Values:     []float64{},
-		Statistics: make(map[string]float64),
+func TestCloudWatchResultFromResponse_MultipleFramesStaySeparate(t *testing.T) {
+	got := cloudWatchResultJSON(t,
+		cloudWatchTestFrame("i-aaa", []int64{1000, 2000}, []float64{10, 20}),
+		cloudWatchTestFrame("i-bbb", []int64{1000, 2000}, []float64{5, 40}),
+	)
+
+	assert.JSONEq(t, `{
+		"series": [
+			{
+				"label": "i-aaa",
+				"timestamps": [1000, 2000],
+				"values": [10, 20],
+				"statistics": {"sum": 30, "min": 10, "max": 20, "avg": 15, "count": 2}
+			},
+			{
+				"label": "i-bbb",
+				"timestamps": [1000, 2000],
+				"values": [5, 40],
+				"statistics": {"sum": 45, "min": 5, "max": 40, "avg": 22.5, "count": 2}
+			}
+		]
+	}`, got)
+}
+
+func TestCloudWatchResultFromResponse_SingleFrameUsesSeries(t *testing.T) {
+	got := cloudWatchResultJSON(t,
+		cloudWatchTestFrame("i-aaa", []int64{1000, 2000}, []float64{10, 20}),
+	)
+
+	assert.JSONEq(t, `{
+		"series": [
+			{
+				"label": "i-aaa",
+				"timestamps": [1000, 2000],
+				"values": [10, 20],
+				"statistics": {"sum": 30, "min": 10, "max": 20, "avg": 15, "count": 2}
+			}
+		]
+	}`, got)
+}
+
+func TestCloudWatchResultFromResponse_NoFramesReturnsEmptySeries(t *testing.T) {
+	got := cloudWatchResultJSON(t)
+
+	hints, err := json.Marshal(generateCloudWatchEmptyResultHints())
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"series": [], "hints": `+string(hints)+`}`, got)
+}
+
+func TestCloudWatchSeriesLabel(t *testing.T) {
+	const def = "AWS/EC2 - CPUUtilization"
+	named := cloudWatchTestFrame("", []int64{1000}, []float64{1})
+	named.Name = "i-named"
+
+	labeled := cloudWatchTestFrame("", []int64{1000}, []float64{1})
+	labeled.Fields[1].Labels = data.Labels{"InstanceId": "i-labeled"}
+
+	for name, tc := range map[string]struct {
+		frame *data.Frame
+		want  string
+	}{
+		"display name wins": {cloudWatchTestFrame("i-display", []int64{1000}, []float64{1}), "i-display"},
+		"frame name":        {named, "i-named"},
+		"field labels":      {labeled, "InstanceId=i-labeled"},
+		"default":           {cloudWatchTestFrame("", []int64{1000}, []float64{1}), def},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := cloudWatchSeriesLabel(tc.frame, tc.frame.Fields[1], def)
+			assert.Contains(t, got, tc.want)
+		})
 	}
-
-	for _, r := range resp.Responses {
-		var sum, min, max float64
-		var count int64
-		first := true
-
-		for _, frm := range r.Frames {
-			var timeColIdx, valueColIdx = -1, -1
-			for i, fld := range frm.Fields {
-				switch {
-				case fld.Type() == data.FieldTypeTime || fld.Type() == data.FieldTypeNullableTime:
-					timeColIdx = i
-				case fld.Type().Numeric():
-					valueColIdx = i
-				}
-			}
-			if timeColIdx == -1 || valueColIdx == -1 {
-				continue
-			}
-			rowCount := frm.Rows()
-			for i := 0; i < rowCount; i++ {
-				tsRaw := frm.At(timeColIdx, i)
-				var ts int64
-				switch v := tsRaw.(type) {
-				case time.Time:
-					ts = v.UnixMilli()
-				case float64:
-					ts = int64(v)
-				default:
-					continue
-				}
-
-				val, ok := frm.At(valueColIdx, i).(float64)
-				if !ok {
-					continue
-				}
-				result.Timestamps = append(result.Timestamps, ts)
-				result.Values = append(result.Values, val)
-				sum += val
-				count++
-				if first {
-					min = val
-					max = val
-					first = false
-				} else {
-					if val < min {
-						min = val
-					}
-					if val > max {
-						max = val
-					}
-				}
-			}
-		}
-		if count > 0 {
-			result.Statistics["sum"] = sum
-			result.Statistics["min"] = min
-			result.Statistics["max"] = max
-			result.Statistics["avg"] = sum / float64(count)
-			result.Statistics["count"] = float64(count)
-		}
-	}
-
-	// Verify all 4 data points accumulated across both frames
-	assert.Len(t, result.Timestamps, 4)
-	assert.Len(t, result.Values, 4)
-
-	// Statistics should span both frames: min=5, max=40, sum=75, count=4, avg=18.75
-	assert.Equal(t, 75.0, result.Statistics["sum"])
-	assert.Equal(t, 5.0, result.Statistics["min"])
-	assert.Equal(t, 40.0, result.Statistics["max"])
-	assert.Equal(t, 4.0, result.Statistics["count"])
-	assert.Equal(t, 18.75, result.Statistics["avg"])
 }
 
 func TestCloudWatchURLEncoding(t *testing.T) {
 	tests := []struct {
-		name       string
-		namespace  string
-		metricName string
-		region     string
-		wantParams map[string]string
+		name         string
+		namespace    string
+		metricName   string
+		region       string
+		dimensionKey string
+		wantParams   map[string]string
 	}{
 		{
 			name:       "standard AWS namespace with slash",
@@ -374,6 +384,19 @@ func TestCloudWatchURLEncoding(t *testing.T) {
 				"namespace":  "AWS/EC2",
 				"metricName": "CPUUtilization",
 				"region":     "us-east-1",
+			},
+		},
+		{
+			name:         "dimension key with spaces for dimension-values lookup",
+			namespace:    "Custom Namespace",
+			metricName:   "My Metric",
+			region:       "eu-west-1",
+			dimensionKey: "Instance Name",
+			wantParams: map[string]string{
+				"namespace":    "Custom Namespace",
+				"metricName":   "My Metric",
+				"region":       "eu-west-1",
+				"dimensionKey": "Instance Name",
 			},
 		},
 		{
@@ -408,6 +431,9 @@ func TestCloudWatchURLEncoding(t *testing.T) {
 			params.Set("metricName", tt.metricName)
 			if tt.region != "" {
 				params.Set("region", tt.region)
+			}
+			if tt.dimensionKey != "" {
+				params.Set("dimensionKey", tt.dimensionKey)
 			}
 
 			encoded := params.Encode()
@@ -518,4 +544,32 @@ func TestGenerateCloudWatchEmptyResultHints(t *testing.T) {
 	assert.Contains(t, hintsStr, "list_cloudwatch_namespaces")
 	assert.Contains(t, hintsStr, "list_cloudwatch_metrics")
 	assert.Contains(t, hintsStr, "list_cloudwatch_dimensions")
+}
+
+func TestCloudWatchClient_QuerySendsPercentileStatistic(t *testing.T) {
+	var gotQuery map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Queries []map[string]any `json:"queries"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		require.Len(t, payload.Queries, 1)
+		gotQuery = payload.Queries[0]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":{}}`))
+	}))
+	defer server.Close()
+
+	client := &cloudWatchClient{httpClient: server.Client(), baseURL: server.URL}
+	now := time.Now()
+	_, err := client.query(context.Background(), CloudWatchQueryParams{
+		DatasourceUID: "cw",
+		Namespace:     "AWS/ApplicationELB",
+		MetricName:    "TargetResponseTime",
+		Statistic:     "p99.9",
+		Region:        "us-east-1",
+	}, now.Add(-time.Hour), now)
+	require.NoError(t, err)
+
+	assert.Equal(t, "p99.9", gotQuery["statistic"])
 }

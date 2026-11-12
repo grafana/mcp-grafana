@@ -2,16 +2,16 @@
 
 ## Prerequisites
 
-- Go (latest stable)
+- [mise](https://mise.jdx.dev/getting-started.html): run `mise install` to get the
+  pinned Go, golangci-lint, Node, uv and other tools from `mise.toml`. `mise tasks`
+  lists every task.
 - Docker and docker-compose (for integration/E2E tests)
-- [uv](https://docs.astral.sh/uv/) (for Python E2E tests)
-- [golangci-lint](https://golangci-lint.run/) (for linting)
 
 ## Building
 
 ```bash
-make build          # builds dist/mcp-grafana
-make build-image    # builds Docker image
+mise run build          # builds dist/mcp-grafana
+mise run build-image    # builds Docker image
 ```
 
 ## Running locally
@@ -19,30 +19,46 @@ make build-image    # builds Docker image
 Start the test services (Grafana, Prometheus, etc.):
 
 ```bash
-make run-test-services
+mise run run-test-services
 ```
 
 Then run the server in your preferred transport mode:
 
 ```bash
-make run                 # stdio mode
-make run-sse             # SSE mode (with debug logging + metrics)
-make run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
+mise run run                 # stdio mode
+mise run run-sse             # SSE mode (with debug logging + metrics)
+mise run run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
 ```
 
 ## Testing
 
 ```bash
-make test-unit           # unit tests (no external deps)
-make test-integration    # integration tests (requires docker-compose services)
-make test-cloud          # cloud tests (requires GRAFANA_SERVICE_ACCOUNT_TOKEN)
-make test-python-e2e     # Python E2E tests (requires docker-compose + SSE server)
+mise run test-unit           # unit tests (no external deps)
+mise run test-integration    # integration tests (requires docker-compose services)
+mise run test-cloud          # cloud tests (requires GRAFANA_SERVICE_ACCOUNT_TOKEN)
+mise run test-python-e2e     # Python E2E tests (requires docker-compose + SSE server)
 ```
+
+With the Grafana and Prometheus test services running, the cardinality guardrail
+can also be checked on its own:
+
+```bash
+go test -tags integration ./tools -run '^TestPrometheusCardinalityLive$' -count=1 -v
+```
+
+This test uses `GRAFANA_URL` and the same authentication as the other integration
+tests (defaults to local Grafana with `admin:admin`). It discovers a multi-series
+metric from the real TSDB top 10, verifies enforcement before query dispatch,
+checks cached statistics and successful scoped/shadow/off queries, and injects
+an unavailable metadata endpoint through a forwarding proxy while preserving
+real Grafana query execution. Histogram enforcement is checked when a bucket
+metric is present in the top 10. The standard Prometheus self-scrape fixture
+supplies multi-series metrics; no production-sized cardinality is needed.
 
 ## Linting
 
 ```bash
-make lint                # Go lint + JSON schema lint
+mise run lint                # Go lint + JSON schema lint
 ```
 
 ## Publishing a release

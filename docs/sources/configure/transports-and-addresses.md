@@ -46,6 +46,36 @@ mcp-grafana -t streamable-http --address :9090
 
 Clients connect to the server URL (for example, `http://localhost:8000/sse` for SSE). For streamable-http, the default endpoint path is `/mcp` (override with `--endpoint-path` if your client expects a different path).
 
+To let the operating system allocate a free port, use port `0` and publish the selected address to a file:
+
+```bash
+mcp-grafana -t streamable-http --address 127.0.0.1:0
+```
+
+The server binds the listener before atomically replacing `mcp-grafana-address` in its working directory. The file contains the selected address followed by a newline and uses mode `0600`. This avoids releasing a reserved port before the server starts listening. Run concurrent dynamic-port servers in separate working directories so each one has its own address file.
+
+`--base-path` prefixes the application routes on the listener:
+
+```bash
+mcp-grafana -t sse --address :8000 --base-path /my-base --metrics
+```
+
+serves `/my-base/sse`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers, so they always stay at the server root — never under `--base-path` — regardless of this flag.
+
+{{< admonition type="note" >}}
+Over SSE, per-request headers do not reach tool calls: `X-Grafana-Service-Account-Token` / `X-Grafana-API-Key`, `X-Grafana-Org-Id`, and headers listed in `GRAFANA_FORWARD_HEADERS` have no effect, tool calls use the server's environment credentials, and `X-Grafana-URL` overrides do not work. Use streamable-http when each caller needs its own Grafana URL, credentials, or organization.
+{{< /admonition >}}
+
+### Keep idle SSE sessions alive behind a proxy
+
+Reverse proxies and load balancers close connections that stay idle longer than their timeout, for example, 60 seconds for ingress-nginx's default `proxy-read-timeout`. When that happens to an SSE event stream, the server ends the session, and the client's next tool call fails. Set `--sse-keepalive` to an interval below the proxy's idle timeout, so the server pings each client and the stream never sits idle that long:
+
+```bash
+mcp-grafana -t sse --sse-keepalive 30s
+```
+
+A client is disconnected after 3 pings in a row go unanswered for half the interval each, so one slow reply doesn't end the session. The interval must be at least `1s`. The flag has no effect on the stdio and streamable-http transports.
+
 ## Next steps
 
 - [Server TLS (streamable-http)](../server-tls-streamable-http/) if you need HTTPS for the MCP server.

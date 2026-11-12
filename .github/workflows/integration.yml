@@ -12,11 +12,21 @@ permissions:
 
 jobs:
   test-integration:
-    name: Test Integration
+    # The nightly leg catches Grafana changes that reach Cloud before the
+    # pinned release, e.g. #1368. It is advisory: a nightly regression must
+    # not block PRs, and only the pinned leg is the required check.
+    name: ${{ matrix.grafana-image && 'Test Integration (Grafana nightly)' || 'Test Integration' }}
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.grafana-image != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        grafana-image: ["", "grafana/grafana:nightly"]
+    env:
+      GRAFANA_IMAGE: ${{ matrix.grafana-image }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -28,11 +38,8 @@ jobs:
         with:
           compose-file: "docker-compose.yaml"
 
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version: "1.26"
-          cache: true
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
 
       - name: Wait for Grafana API to be ready
         run: |
@@ -105,7 +112,7 @@ jobs:
           fi
 
       - name: Run integration tests
-        run: make test-integration
+        run: mise run test-integration
 
   test-cloud:
     name: Test Cloud
@@ -116,18 +123,15 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version: "1.26"
-          cache: true
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@2e3743a1f8abfd3e921e53a7726ec0744c11bb01 # get-vault-secrets/v2.0.1
+        uses: grafana/shared-workflows/actions/get-vault-secrets@2f1ddaf3ce1aa677356243d0dd584be33cfa35e3 # get-vault-secrets/v2.1
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
@@ -143,4 +147,4 @@ jobs:
           GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).GRAFANA_SERVICE_ACCOUNT_TOKEN }}
           ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
           DATASOURCEDEV_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).DATASOURCEDEV_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
-        run: make test-cloud
+        run: mise run test-cloud
