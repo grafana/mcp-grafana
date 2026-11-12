@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -53,6 +55,9 @@ func mustLoadVizRegistry() ([]vizChart, []vizPickRule) {
 		if vizChartByName(charts.Charts, rule.Chart) == nil {
 			panic(fmt.Sprintf("pick.json: rule %s has the unknown chart %s", rule.ID, rule.Chart))
 		}
+	}
+	if len(pick.Rules) == 0 || len(pick.Rules[len(pick.Rules)-1].When) != 0 {
+		panic("pick.json: the last rule must have an empty condition")
 	}
 	return charts.Charts, pick.Rules
 }
@@ -108,7 +113,7 @@ func vizSummary(results map[string]vizResult) map[string]any {
 			s["frameCount"] = s["frameCount"].(int) + 1
 			rows := 0
 			if len(f.Data.Values) > 0 {
-				rows = len(f.Data.Values[0])
+				rows = jsonArrayEach(f.Data.Values[0], nil)
 			}
 			s["rowCountTotal"] = s["rowCountTotal"].(int) + rows
 			s["rowCountMax"] = max(s["rowCountMax"].(int), rows)
@@ -125,7 +130,7 @@ func vizSummary(results map[string]vizResult) map[string]any {
 				if typ == "" {
 					typ = "other"
 				}
-				if i < len(f.Data.Enums) && f.Data.Enums[i] != nil {
+				if i < len(f.Data.Enums) && !isJSONNull(f.Data.Enums[i]) {
 					typ = "string"
 				}
 				counts[typ]++
@@ -134,20 +139,23 @@ func vizSummary(results map[string]vizResult) map[string]any {
 					continue
 				}
 				hasTime = true
-				if i >= len(f.Data.Values) {
+				// isInstant needs only the first time and whether another time differs from it, so the scan stops at
+				// the first difference.
+				if i >= len(f.Data.Values) || !instant {
 					continue
 				}
-				for _, v := range f.Data.Values[i] {
-					n, ok := v.(float64)
-					if !ok {
-						continue
+				jsonArrayEach(f.Data.Values[i], func(elem []byte) bool {
+					n, err := strconv.ParseFloat(string(elem), 64)
+					if err != nil {
+						return true // null, or not a number
 					}
 					if first == nil {
 						first = &n
 					} else if n != *first {
 						instant = false
 					}
-				}
+					return instant
+				})
 			}
 		}
 	}
@@ -159,8 +167,10 @@ func vizSummary(results map[string]vizResult) map[string]any {
 	return s
 }
 
-// vizResult is the part of an entry of the results object that the summary reads.
+// vizResult is the part of an entry of the results object that the summary and the notes read. The columns stay raw,
+// so a large response is not decoded value by value.
 type vizResult struct {
+	Error  string `json:"error"`
 	Frames []struct {
 		Schema struct {
 			Meta struct {
@@ -174,8 +184,8 @@ type vizResult struct {
 			} `json:"fields"`
 		} `json:"schema"`
 		Data struct {
-			Values [][]any `json:"values"`
-			Enums  []any   `json:"enums"`
+			Values []json.RawMessage `json:"values"`
+			Enums  []json.RawMessage `json:"enums"`
 		} `json:"data"`
 	} `json:"frames"`
 }
@@ -229,6 +239,66 @@ func vizEqual(a, b any) bool {
 		return ok && x == y
 	}
 	return a == b
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return len(raw) == 0 || string(raw) == "null"
+}
+
+// jsonArrayEach gives each element of a JSON array to fn, without decoding them, until fn returns false. It returns the
+// number of elements it gave, so with a nil fn the length. raw is valid JSON (json.Unmarshal checked it); a value that
+// is not an array has no elements.
+func jsonArrayEach(raw json.RawMessage, fn func(elem []byte) bool) int {
+	n, depth, start := 0, 0, -1
+	inString, escaped := false, false
+	emit := func(end int) bool {
+		elem := bytes.TrimSpace(raw[start:end])
+		start = -1
+		if len(elem) == 0 {
+			return true
+		}
+		n++
+		return fn == nil || fn(elem)
+	}
+	for i, c := range raw {
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '[', '{':
+			depth++
+			if depth == 1 {
+				if c != '[' {
+					return 0
+				}
+				start = i + 1
+			}
+		case ']', '}':
+			depth--
+			if depth == 0 {
+				emit(i)
+				return n
+			}
+		case ',':
+			if depth == 1 {
+				if !emit(i) {
+					return n
+				}
+				start = i + 1
+			}
+		}
+	}
+	return n
 }
 
 func vizFits(summary map[string]any, chart vizChart) bool {

@@ -115,6 +115,7 @@ func TestQueryDatasourceRejectsBadArguments(t *testing.T) {
 		"bad time":        {`{"datasourceUid":"prom","from":"yesterday-ish","queries":[{"refId":"A"}]}`, "from"},
 		"blank title":     {`{"datasourceUid":"prom","title":" \t","queries":[{"refId":"A"}]}`, "white space"},
 		"long title":      {`{"datasourceUid":"prom","title":"` + strings.Repeat("é", 101) + `","queries":[{"refId":"A"}]}`, "at most 100"},
+		"bom title":       {`{"datasourceUid":"prom","title":"\ufeff\u3000","queries":[{"refId":"A"}]}`, "white space"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			queried := false
@@ -144,17 +145,55 @@ func TestQueryDatasourceNullDatasourceGetsTheDefault(t *testing.T) {
 	assert.Equal(t, map[string]any{"uid": "prom"}, query["datasource"])
 }
 
+// dsStringBody is a response whose size is n bytes: one frame with one string.
+func dsStringBody(n int) string {
+	head := `{"results":{"A":{"status":200,"frames":[{"schema":{"fields":[{"name":"v","type":"string"}]},"data":{"values":[["`
+	tail := `"]]}}]}}}`
+	return head + strings.Repeat("x", n-len(head)-len(tail)) + tail
+}
+
 func TestQueryDatasourceTooLarge(t *testing.T) {
-	big := `{"results":{"A":{"status":200,"frames":[{"schema":{"fields":[{"name":"v","type":"string","typeInfo":{"frame":"string"}}]},"data":{"values":[["` + strings.Repeat("x", maxDSResultBytes) + `"]]}}]}}}`
-	result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A"}]}`, big)
+	for name, size := range map[string]int{
+		"body past the budget":            maxDSResultBytes + 1,
+		"body in, result past the budget": maxDSResultBytes - 10,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A"}]}`, dsStringBody(size))
+			require.NoError(t, err)
+			// tool.24, tool.25: the too-large tool error, one text item, and no structured content.
+			require.True(t, result.IsError)
+			assert.Nil(t, result.StructuredContent)
+			require.Len(t, result.Content, 1)
+			assert.Equal(t,
+				"too-large: The result is larger than 1048576 bytes. Use a shorter range, a larger intervalMs or fewer series.",
+				result.Content[0].(*mcp.TextContent).Text)
+		})
+	}
+}
+
+func TestQueryDatasourceResultSizeIsTheMarshaledSize(t *testing.T) {
+	result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","title":"t","unit":"s","queries":[{"refId":"A"}]}`, dsStringBody(4096))
 	require.NoError(t, err)
-	// tool.24, tool.25: the too-large tool error, one text item, and no structured content.
-	require.True(t, result.IsError)
-	assert.Nil(t, result.StructuredContent)
-	require.Len(t, result.Content, 1)
-	assert.Equal(t,
-		"too-large: The result is larger than 1048576 bytes. Use a shorter range, a larger intervalMs or fewer series.",
-		result.Content[0].(*mcp.TextContent).Text)
+	require.False(t, result.IsError)
+	content := result.StructuredContent.(*QueryDatasourceResult)
+	body, err := json.Marshal(content)
+	require.NoError(t, err)
+	size, err := dsResultSize(*content)
+	require.NoError(t, err)
+	assert.Equal(t, len(body), size)
+	assert.NotNil(t, content.Data.Results, "the size does not change the result")
+}
+
+func TestQueryDatasourceSchemaOfTitle(t *testing.T) {
+	var schema struct {
+		Properties map[string]map[string]any `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(QueryDatasource.Tool.InputSchema.(json.RawMessage), &schema))
+	title := schema.Properties["title"]
+	assert.Equal(t, "string", title["type"])
+	assert.Equal(t, `\S`, title["pattern"])
+	assert.Equal(t, float64(maxDSTitleChars), title["maxLength"])
+	assert.NotEmpty(t, title["description"])
 }
 
 func TestQueryDatasourceSchemaAcceptsIntegerTimes(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -26,7 +27,7 @@ const (
 	defaultDSTo            = "now"
 	defaultDSMaxDataPoints = 1000
 	maxDSResultBytes       = 1 << 20
-	maxDSTitleChars        = 100 // maxTitleChars of registry/constants.json
+	maxDSTitleChars        = 100
 )
 
 // dsTime is a time of /api/ds/query: a string, or an integer of epoch milliseconds (tool.6).
@@ -57,7 +58,39 @@ type QueryDatasourceParams struct {
 	To            dsTime           `json:"to,omitempty" jsonschema:"description=End of the time range\\, in a format that /api/ds/query accepts\\, for example now or epoch milliseconds. Defaults to now."`
 	Type          dsChartType      `json:"type,omitempty"`
 	Unit          string           `json:"unit,omitempty" jsonschema:"minLength=1,description=Optional Grafana unit ID for all values\\, for example bytes\\, percent or reqps."`
-	Title         string           `json:"title,omitempty" jsonschema:"maxLength=100,description=Optional title of the chart\\, for example HTTP requests by handler. The chart shows it as a panel title."`
+	Title         dsTitle          `json:"title,omitempty" jsonschema:"description=Optional title of the chart\\, for example HTTP requests by handler. The chart shows it as a panel title."`
+}
+
+// dsTitle is the title of the chart (tool.31). The schema is that of the contract: some text that is not white space,
+// of at most maxTitleChars characters. The field tag gives the description.
+type dsTitle string
+
+func (dsTitle) JSONSchema() *jsonschema.Schema {
+	maxLength := uint64(maxDSTitleChars)
+	return &jsonschema.Schema{Type: "string", Pattern: `\S`, MaxLength: &maxLength}
+}
+
+// validate checks the schema of the title (tool.4). The length is in code points, as in JSON Schema.
+func (t dsTitle) validate() error {
+	if t == "" {
+		return nil
+	}
+	if !strings.ContainsFunc(string(t), func(r rune) bool { return !isECMAScriptSpace(r) }) {
+		return fmt.Errorf("title must not be only white space")
+	}
+	if utf8.RuneCountInString(string(t)) > maxDSTitleChars {
+		return fmt.Errorf("title must be at most %d characters", maxDSTitleChars)
+	}
+	return nil
+}
+
+// isECMAScriptSpace reports whether \s of an ECMAScript regular expression, the dialect of JSON Schema, matches r.
+func isECMAScriptSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
+		return true
+	}
+	return r >= 0x2000 && r <= 0x200a
 }
 
 // dsChartType is a chart of chart-types.json (tool.7). With no type, the Source picks the chart.
@@ -88,13 +121,9 @@ func (r *QueryDatasourceResult) AppNotes() []string { return r.notes }
 
 // failedQueryNotes makes the note of each entry with an error, in the order of the refIds. The text is the
 // query-failed message of notices.json (tool.29).
-func failedQueryNotes(results json.RawMessage) []string {
-	var entries map[string]struct {
-		Error string `json:"error"`
-	}
-	_ = json.Unmarshal(results, &entries)
-	refIDs := make([]string, 0, len(entries))
-	for refID, e := range entries {
+func failedQueryNotes(results map[string]vizResult) []string {
+	refIDs := make([]string, 0, len(results))
+	for refID, e := range results {
 		if e.Error != "" {
 			refIDs = append(refIDs, refID)
 		}
@@ -102,7 +131,7 @@ func failedQueryNotes(results json.RawMessage) []string {
 	slices.Sort(refIDs)
 	notes := make([]string, 0, len(refIDs))
 	for _, refID := range refIDs {
-		notes = append(notes, fmt.Sprintf("Query %s failed: %s", refID, entries[refID].Error))
+		notes = append(notes, fmt.Sprintf("Query %s failed: %s", refID, results[refID].Error))
 	}
 	return notes
 }
@@ -122,8 +151,8 @@ type dsFieldConfig struct {
 
 // dsPanelOf makes the panel of a chart: the panel ID and the options of its row, and the unit and the title of the
 // arguments (tool.22, tool.31).
-func dsPanelOf(chart vizChart, unit, title string) dsPanel {
-	panel := dsPanel{Type: chart.Panel, Title: title, Options: maps.Clone(chart.Options)}
+func dsPanelOf(chart vizChart, unit string, title dsTitle) dsPanel {
+	panel := dsPanel{Type: chart.Panel, Title: string(title), Options: maps.Clone(chart.Options)}
 	if unit != "" {
 		panel.FieldConfig = &dsFieldConfig{}
 		panel.FieldConfig.Defaults.Unit = unit
@@ -157,11 +186,8 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	if args.Type != "" && vizChartByName(vizCharts, string(args.Type)) == nil {
 		return nil, fmt.Errorf("type must be one of: %s", strings.Join(vizChartNames(), ", "))
 	}
-	if args.Title != "" && strings.TrimSpace(args.Title) == "" {
-		return nil, fmt.Errorf("title must not be only white space")
-	}
-	if utf8.RuneCountInString(args.Title) > maxDSTitleChars {
-		return nil, fmt.Errorf("title must be at most %d characters", maxDSTitleChars)
+	if err := args.Title.validate(); err != nil {
+		return nil, err
 	}
 	from, to, err := resolveDSRange(args.From, args.To, dsNow())
 	if err != nil {
@@ -175,12 +201,17 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	if err != nil {
 		return nil, err
 	}
-	// The raw body, so that data.results is the results object of the response with no change (tool.15).
+	// The raw body, so that data.results is the results object of the response with no change (tool.15). The
+	// results are in the structured content as they came, and Grafana writes compact JSON, so a body past the budget
+	// gives a result past it: stop reading there (tool.24).
 	raw, err := doDSQueryRaw(ctx, client, baseURL, map[string]any{
 		"queries": queries,
 		"from":    string(cmp.Or(args.From, defaultDSFrom)),
 		"to":      string(cmp.Or(args.To, defaultDSTo)),
-	}, defaultResponseLimitBytes)
+	}, maxDSResultBytes)
+	if errors.Is(err, errResponseBodyTooLarge) {
+		return dsTooLarge(), nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("querying data source %s: %w", args.DatasourceUID, err)
 	}
@@ -191,15 +222,15 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("reading the response of data source %s: %w", args.DatasourceUID, err)
 	}
-	var entries map[string]json.RawMessage
-	if err := json.Unmarshal(envelope.Results, &entries); err != nil || len(entries) == 0 {
+	var results map[string]vizResult
+	if err := json.Unmarshal(envelope.Results, &results); err != nil {
+		return nil, fmt.Errorf("reading the frames of data source %s: %w", args.DatasourceUID, err)
+	}
+	if len(results) == 0 {
 		return nil, fmt.Errorf("the data source %s returned no results", args.DatasourceUID)
 	}
 
-	chart, alternatives, mismatch, err := chooseDSChart(envelope.Results, args.Type, args.Unit, args.Title)
-	if err != nil {
-		return nil, err
-	}
+	chart, alternatives, mismatch := chooseDSChart(results, args.Type, args.Unit, args.Title)
 	if mismatch != "" {
 		return dsToolError("type-mismatch", mismatch), nil
 	}
@@ -212,15 +243,17 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 			CapturedAt: capturedAt,
 			Results:    envelope.Results,
 		},
-		notes: failedQueryNotes(envelope.Results),
+		notes: failedQueryNotes(results),
 	}
-	// Past the budget the Source gives the too-large tool error, and no structured content (tool.24).
-	body, err := json.Marshal(result)
+	// Past the budget the Source gives the too-large tool error, and no structured content (tool.24). The size is that
+	// of the result with the results as they came, so they are not encoded again here; json.Marshal compacts them
+	// later, so the result is never larger.
+	size, err := dsResultSize(*result)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling the tool result: %w", err)
+		return nil, err
 	}
-	if len(body) > maxDSResultBytes {
-		return dsToolError("too-large", fmt.Sprintf("The result is larger than %d bytes. Use a shorter range, a larger intervalMs or fewer series.", maxDSResultBytes)), nil
+	if size > maxDSResultBytes {
+		return dsTooLarge(), nil
 	}
 	out := mcpgrafana.NewToolResultText(fmt.Sprintf("Queried data source %s.", args.DatasourceUID))
 	out.StructuredContent = result
@@ -230,11 +263,7 @@ func queryDatasource(ctx context.Context, args QueryDatasourceParams) (*mcp.Call
 // chooseDSChart gives the chart of the type, or the chart of the pick, and the other charts that fit the frames
 // (tool.18 to tool.23). If the model gave a type and the frames have rows, the frames must fit it (tool.20). If they
 // do not, the message of type-mismatch is the third value.
-func chooseDSChart(rawResults json.RawMessage, chartType dsChartType, unit, title string) (*vizChart, []dsAlternative, string, error) {
-	var results map[string]vizResult
-	if err := json.Unmarshal(rawResults, &results); err != nil {
-		return nil, nil, "", fmt.Errorf("reading the frames: %w", err)
-	}
+func chooseDSChart(results map[string]vizResult, chartType dsChartType, unit string, title dsTitle) (*vizChart, []dsAlternative, string) {
 	summary := vizSummary(results)
 	picked := vizPick(summary)
 	chart := picked
@@ -250,7 +279,7 @@ func chooseDSChart(rawResults json.RawMessage, chartType dsChartType, unit, titl
 			if len(fitting) == 0 {
 				fitting = []string{picked.Name}
 			}
-			return nil, nil, fmt.Sprintf("%s needs %s. Charts that fit: %s.", chart.Name, chart.DataShape, strings.Join(fitting, ", ")), nil
+			return nil, nil, fmt.Sprintf("%s needs %s. Charts that fit: %s.", chart.Name, chart.DataShape, strings.Join(fitting, ", "))
 		}
 	}
 	alternatives := []dsAlternative{}
@@ -259,7 +288,22 @@ func chooseDSChart(rawResults json.RawMessage, chartType dsChartType, unit, titl
 			alternatives = append(alternatives, dsAlternative{Chart: c.Name, Panel: dsPanelOf(c, unit, title)})
 		}
 	}
-	return chart, alternatives, "", nil
+	return chart, alternatives, ""
+}
+
+// dsResultSize is the size of the JSON of the result: the result with null results, plus the results.
+func dsResultSize(result QueryDatasourceResult) (int, error) {
+	results := result.Data.Results
+	result.Data.Results = nil
+	body, err := json.Marshal(result)
+	if err != nil {
+		return 0, fmt.Errorf("marshaling the tool result: %w", err)
+	}
+	return len(body) - len("null") + len(results), nil
+}
+
+func dsTooLarge() *mcp.CallToolResult {
+	return dsToolError("too-large", fmt.Sprintf("The result is larger than %d bytes. Use a shorter range, a larger intervalMs or fewer series.", maxDSResultBytes))
 }
 
 // dsToolError is a tool error of states.json: one text item, the code, a colon, a space and the message (tool.25).
