@@ -33,6 +33,9 @@
     "react-dom": "^18.3.1 || ^19.0.0"
   },
   "devDependencies": {
+    "@grafana/data": "13.2.2",
+    "@grafana/ui": "13.2.2",
+    "@grafana/viz-contract": "1.6.0",
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.0.0",

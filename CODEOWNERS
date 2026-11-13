@@ -9,6 +9,5 @@
 /ui/mcp-apps/renderer/                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/VizApplication.tsx    @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/vizSpec.ts            @grafana/grafana-assistant-loop @grafana/dataviz-squad
-/ui/mcp-apps/test/viz-*.test.ts        @grafana/grafana-assistant-loop @grafana/dataviz-squad
-/ui/mcp-apps/test/viz-contract/        @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/test/viz*                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/renderer-pin.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
