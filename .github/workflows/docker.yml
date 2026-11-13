@@ -180,9 +180,14 @@ jobs:
             --arg image "docker.io/grafana/mcp-grafana:${{ steps.image-tag.outputs.IMAGE_TAG }}" \
              '.version = $version | .packages[0].identifier = $image' server.json > server.json.tmp
           mv server.json.tmp server.json
+          # The hosted Grafana Cloud entry has no package; it only needs the version
+          jq --arg version "${{ steps.version.outputs.VERSION }}" '.version = $version' server-cloud.json > server-cloud.json.tmp
+          mv server-cloud.json.tmp server-cloud.json
 
       - name: Login to MCP Registry
         run: mcp-publisher login github-oidc
 
       - name: Publish to MCP Registry
-        run: mcp-publisher publish
+        run: |
+          mcp-publisher publish server.json
+          mcp-publisher publish server-cloud.json
