@@ -56,35 +56,6 @@ for dir in ui/*/; do
 done
 """
 
-[tasks.sync-viz-contract]
-description = "Copy the registry and the Source fixtures of @grafana/viz-contract from npm into tools/. They are committed for `go:embed` and the conformance test"
-env = { VIZ_CONTRACT_VERSION = "1.3.0" }
-run = """
-#!/usr/bin/env bash
-set -euo pipefail
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-npm pack --silent --pack-destination "$tmp" "@grafana/viz-contract@$VIZ_CONTRACT_VERSION" >/dev/null
-tar -xzf "$tmp"/grafana-viz-contract-*.tgz -C "$tmp"
-pkg="$tmp/package"
-
-# constants.json is not embedded: a test checks the Go constants against it.
-cp "$pkg/registry/chart-types.json" "$pkg/registry/pick.json" "$pkg/registry/constants.json" "$pkg/LICENSE" tools/viz_contract/
-
-# The Source sets are the ones with a response.json. spec.json and state.json are for the App and the Renderer.
-out=tools/testdata/viz-contract
-rm -rf "$out"
-for dir in "$pkg"/fixtures/*/; do
-  [ -f "$dir/response.json" ] || continue
-  name=$(basename "$dir")
-  mkdir -p "$out/$name"
-  for f in args meta request response result; do
-    [ -f "$dir/$f.json" ] && cp "$dir/$f.json" "$out/$name/"
-  done
-done
-echo "Synced @grafana/viz-contract@$VIZ_CONTRACT_VERSION"
-"""
-
 # =============================================================================
 # LINT
 # =============================================================================

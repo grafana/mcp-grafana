@@ -564,6 +564,8 @@ github.com/grafana/pyroscope/api v1.6.0 h1:jKmHrBxm4AsO9WYgrtiVFSFj6RDC0VP3gicSK
 github.com/grafana/pyroscope/api v1.6.0/go.mod h1:w3BaCNqjBiQ8a4Z9pAXNN095BfnPBcKbicR/NNFNsb4=
 github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 h1:cLN4IBkmkYZNnk7EAJ0BHIethd+J6LqxFNw5mSiI2bM=
 github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853/go.mod h1:+JKpmjMGhpgPL+rXZ5nsZieVzvarn86asRlBg4uNGnk=
+github.com/grafana/viz-contract v1.6.0 h1:nCNCWB3wIpapVx1S+Buuk3EmlZuchIB1g2ZesExR/EY=
+github.com/grafana/viz-contract v1.6.0/go.mod h1:gBbdO02tidVAyEOiXMZnbNw8DHhMTK/EBQXzdhKDksE=
 github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.0 h1:QGLs/O40yoNK9vmy4rhUGBVyMf1lISBGtXRpsu/Qu/o=
 github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.0/go.mod h1:hM2alZsMUni80N33RBe6J0e423LB+odMj7d3EMP9l20=
 github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.1 h1:E4CBXV5a/63B3ugXigjU28gr4HHM/BuMa1DtOYWhEz8=

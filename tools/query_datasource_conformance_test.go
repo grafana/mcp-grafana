@@ -5,27 +5,46 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"path"
 	"testing"
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	vizcontract "github.com/grafana/viz-contract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// The Source test of the viz contract (fixtures.8). The sets come from @grafana/viz-contract on npm, at the version of
-// the sync-viz-contract task in mise.toml.
+// The Source test of the viz contract (fixtures.8). The sets come from github.com/grafana/viz-contract, at the version
+// in go.mod.
+
+var vizFixtures = vizcontract.Fixtures()
+
+// vizSourceFixtures gives the fixture sets for the Source: the ones with a response.json.
+func vizSourceFixtures(t *testing.T) []string {
+	t.Helper()
+	entries, err := fs.ReadDir(vizFixtures, ".")
+	require.NoError(t, err)
+	var dirs []string
+	for _, e := range entries {
+		if _, err := fs.Stat(vizFixtures, path.Join(e.Name(), "response.json")); err == nil {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	require.NotEmpty(t, dirs)
+	return dirs
+}
 
 func readFixtureJSON(t *testing.T, dir, name string, into any) bool {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, name))
-	if os.IsNotExist(err) {
+	data, err := fs.ReadFile(vizFixtures, path.Join(dir, name))
+	if errors.Is(err, fs.ErrNotExist) {
 		return false
 	}
 	require.NoError(t, err)
@@ -34,11 +53,8 @@ func readFixtureJSON(t *testing.T, dir, name string, into any) bool {
 }
 
 func TestQueryDatasourceConformance(t *testing.T) {
-	dirs, err := filepath.Glob("testdata/viz-contract/*")
-	require.NoError(t, err)
-	require.NotEmpty(t, dirs)
-	for _, dir := range dirs {
-		t.Run(filepath.Base(dir), func(t *testing.T) {
+	for _, dir := range vizSourceFixtures(t) {
+		t.Run(dir, func(t *testing.T) {
 			var args json.RawMessage
 			var meta struct{ Now, CapturedAt int64 }
 			var response struct {
