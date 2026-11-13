@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -30,9 +32,9 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 			return nil, fmt.Errorf("alerting_rules_read: %w", err)
 		}
 		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors, args.Cursor)
 		}
-		return listGrafanaRules(ctx, opts, selectors)
+		return listGrafanaRules(ctx, opts, selectors, args.Cursor)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -194,7 +196,10 @@ func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {
 	return nil
 }
 
-func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []Selector) ([]alertRuleSummary, error) {
+func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []Selector, cursor string) (*alertRuleList, error) {
+	// Bound the entire scan, rather than giving every page a fresh timeout.
+	ctx, cancel := context.WithTimeout(ctx, mcpgrafana.GrafanaConfigFromContext(ctx).TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout))
+	defer cancel()
 	client, err := newAlertingClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating alerting client: %w", err)
@@ -202,29 +207,99 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	if opts == nil {
 		opts = &GetRulesOpts{}
 	}
-	opts.IncludeInternalLabels = true
+	limit := ruleLimitOrDefault(opts)
+	pageOpts := *opts
+	pageOpts.IncludeInternalLabels = true
+	// Grafana counts rule_limit before our label filter, so it only sizes a
+	// page; collectRules keeps paging until the limit is met after filtering.
+	pageOpts.RuleLimit = limit
 
-	resp, err := client.GetRules(ctx, opts)
-	if err != nil {
-		return nil, fmt.Errorf("listing alert rules: %w", err)
-	}
-
-	summaries := convertRulesResponseToSummary(resp)
-
-	if len(labelSelectors) > 0 {
-		summaries, err = filterSummaryByLabels(summaries, labelSelectors)
+	fetch := func(ctx context.Context, token string) ([]alertRuleSummary, string, error) {
+		pageOpts.GroupNextToken = token
+		resp, err := client.GetRules(ctx, &pageOpts)
 		if err != nil {
-			return nil, fmt.Errorf("filtering alert rules: %w", err)
+			return nil, "", fmt.Errorf("listing alert rules: %w", err)
 		}
+		page := convertRulesResponseToSummary(resp)
+		if len(labelSelectors) > 0 {
+			page, err = filterSummaryByLabels(page, labelSelectors)
+			if err != nil {
+				return nil, "", fmt.Errorf("filtering alert rules: %w", err)
+			}
+		}
+		return page, resp.Data.NextToken, nil
 	}
+	return collectRules(ctx, fetch, limit, cursor)
+}
 
-	// Server-side rule_limit returns complete groups, so it may exceed the
-	// requested limit. Enforce the limit client-side as well.
-	if opts != nil {
-		summaries = applyRuleLimit(summaries, opts.RuleLimit)
+// rulePageFetcher returns one filtered page of rules starting at token, and
+// the token of the next page ("" on the last page).
+type rulePageFetcher func(ctx context.Context, token string) ([]alertRuleSummary, string, error)
+
+// ruleCursor is the decoded next_cursor: a page token plus how many filtered
+// rules of that page were already returned.
+type ruleCursor struct {
+	Token string `json:"t,omitempty"`
+	Skip  int    `json:"s,omitempty"`
+}
+
+func (c ruleCursor) encode() string {
+	b, _ := json.Marshal(c) // a string and an int cannot fail to marshal
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeRuleCursor(s string) (ruleCursor, error) {
+	var c ruleCursor
+	if s == "" {
+		return c, nil
 	}
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err == nil {
+		err = json.Unmarshal(b, &c)
+	}
+	if err != nil || c.Skip < 0 {
+		return ruleCursor{}, fmt.Errorf("invalid cursor %q: pass next_cursor from a previous list response", s)
+	}
+	return c, nil
+}
 
-	return summaries, nil
+// collectRules pages through fetch until limit rules are collected or the
+// pages run out. A page cut mid-way resumes at the same page with a skip.
+func collectRules(ctx context.Context, fetch rulePageFetcher, limit int, cursor string) (*alertRuleList, error) {
+	at, err := decodeRuleCursor(cursor)
+	if err != nil {
+		return nil, err
+	}
+	list := &alertRuleList{Rules: []alertRuleSummary{}}
+	seenTokens := make(map[string]struct{})
+	for {
+		page, next, err := fetch(ctx, at.Token)
+		if err != nil {
+			return nil, err
+		}
+		page = page[min(at.Skip, len(page)):]
+		room := limit - len(list.Rules)
+		if len(page) > room {
+			list.Rules = append(list.Rules, page[:room]...)
+			list.Truncated = true
+			list.NextCursor = ruleCursor{Token: at.Token, Skip: at.Skip + room}.encode()
+			return list, nil
+		}
+		list.Rules = append(list.Rules, page...)
+		if next == "" {
+			return list, nil
+		}
+		if len(list.Rules) == limit {
+			list.Truncated = true
+			list.NextCursor = ruleCursor{Token: next}.encode()
+			return list, nil
+		}
+		if _, seen := seenTokens[next]; seen {
+			return nil, fmt.Errorf("rules API repeated a pagination token")
+		}
+		seenTokens[next] = struct{}{}
+		at = ruleCursor{Token: next}
+	}
 }
 
 func filterSummaryByRuleType(summaries []alertRuleSummary, ruleType string) []alertRuleSummary {
@@ -251,18 +326,12 @@ func filterSummaryByRuleName(summaries []alertRuleSummary, name string) []alertR
 	return filtered
 }
 
-func applyRuleLimit(summaries []alertRuleSummary, ruleLimit int) []alertRuleSummary {
-	limit := ruleLimit
-	if limit == 0 {
-		limit = DefaultListAlertRulesLimit
+// ruleLimitOrDefault returns the requested rule limit, defaulted and capped.
+func ruleLimitOrDefault(opts *GetRulesOpts) int {
+	if opts == nil || opts.RuleLimit <= 0 {
+		return DefaultListAlertRulesLimit
 	}
-	if limit > maxRulesLimit {
-		limit = maxRulesLimit
-	}
-	if len(summaries) > limit {
-		return summaries[:limit]
-	}
-	return summaries
+	return min(opts.RuleLimit, maxRulesLimit)
 }
 
 func convertRulesResponseToSummary(resp *rulesResponse) []alertRuleSummary {

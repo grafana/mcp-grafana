@@ -92,14 +92,14 @@ func TestListDatasourceAlertRulesPagination(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			ctx := mockDatasourcesCtx(server)
-			result, err := listDatasourceAlertRules(ctx, "prom-ds", &GetRulesOpts{RuleType: "recording", RuleName: "cpu", RuleLimit: tt.limit}, []Selector{{Filters: []LabelMatcher{{Name: "team", Type: "=", Value: "ops"}}}})
+			result, err := listDatasourceAlertRules(ctx, "prom-ds", &GetRulesOpts{RuleType: "recording", RuleName: "cpu", RuleLimit: tt.limit}, []Selector{{Filters: []LabelMatcher{{Name: "team", Type: "=", Value: "ops"}}}}, "")
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				require.Nil(t, result)
 			} else {
 				require.NoError(t, err)
 				var titles []string
-				for _, r := range result {
+				for _, r := range result.Rules {
 					titles = append(titles, r.Title)
 				}
 				require.Equal(t, tt.want, titles)
@@ -168,10 +168,11 @@ func TestListDatasourceAlertRulesLimitDefaults(t *testing.T) {
 				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"groups": []any{map[string]any{"name": "group", "rules": rules}}}}))
 			}))
 			t.Cleanup(server.Close)
-			result, err := listDatasourceAlertRules(mockDatasourcesCtx(server), "prom-ds", &GetRulesOpts{RuleLimit: limit}, nil)
+			result, err := listDatasourceAlertRules(mockDatasourcesCtx(server), "prom-ds", &GetRulesOpts{RuleLimit: limit}, nil, "")
 			require.NoError(t, err)
-			require.Len(t, result, 200)
-			require.Equal(t, "199", result[199].Title)
+			require.Len(t, result.Rules, 200)
+			require.Equal(t, "199", result.Rules[199].Title)
+			require.True(t, result.Truncated)
 		})
 	}
 }
@@ -197,7 +198,7 @@ func TestListDatasourceAlertRulesCancellation(t *testing.T) {
 	cfgCtx := mockDatasourcesCtx(server)
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfigFromContext(cfgCtx))
 	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.GrafanaClientFromContext(cfgCtx))
-	result, err := listDatasourceAlertRules(ctx, "prom-ds", nil, nil)
+	result, err := listDatasourceAlertRules(ctx, "prom-ds", nil, nil, "")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, result)
 }
