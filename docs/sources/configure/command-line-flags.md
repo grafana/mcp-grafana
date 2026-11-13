@@ -216,6 +216,8 @@ This is a scope heuristic, not a series-count limit: `namespace="payments"` or `
 
 Metadata uses a cache of at most 256 entries, isolated by the request's Grafana target and authentication/tenant context. Concurrent refreshes are coalesced, with at most 8 fetches running at once. Failed fetches are cached for the smaller of the configured TTL and 30 seconds. A cache miss while all fetch slots are busy fails open. A later query can retry as soon as a slot is available. Fetches have a 2-second timeout and a 1 MiB response limit. Custom `BaseTransport` and TLS client-certificate configurations bypass the shared cache because their caller identity can change independently. Server-only TLS settings (a custom CA or skipping server-certificate verification) retain caching. A client timeout does not guarantee that the backend stops computing statistics. `off` mode or a zero cardinality threshold adds no TSDB requests. Selectors already carrying an exact scope matcher need no metadata lookup; queries with a static violation also skip metadata, including in shadow mode. Start in `shadow` mode: it records `reason="cardinality"` for would-be blocks, but still executes the query. Enforce mode rejects with guidance to add a real scope matcher. Unknown assessments use `reason="cardinality_unknown"` on the fail-open counter.
 
+For PromQL examples, cause-specific troubleshooting and the shadow-to-enforce procedure, see [Roll out the cardinality policy](../../developer/observability-metrics-and-tracing/#roll-out-the-cardinality-policy).
+
 ## Run without query execution
 
 `--disable-query` removes every tool that executes a query against a datasource, and leaves the metadata and discovery tools in place.
