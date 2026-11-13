@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
+import { sharedModulesPlugin } from './sharedModules.config';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 
@@ -9,7 +10,7 @@ const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 export function appBuildConfig(entry: string) {
   return defineConfig({
     base: './',
-    plugins: [viteSingleFile()],
+    plugins: [sharedModulesPlugin(), viteSingleFile()],
     root: resolve(packageRoot, 'app'),
     build: {
       // MCP hosts read this app as one text resource. Force every font, image,

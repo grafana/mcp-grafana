@@ -9,5 +9,15 @@
 /ui/mcp-apps/renderer/                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/VizApplication.tsx    @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/vizSpec.ts            @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/loadRenderer.ts       @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/iconCache.ts          @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/sharedModules.ts      @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/virtual-shared-modules.d.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/vizRenderer.entry.ts  @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/sharedModules.config.ts   @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/viz-renderer.vite.config.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/dist/viz-renderer.*       @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/viz*                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/renderer-pin.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/test/icon-cache.test.tsx  @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/test/shared-modules.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad

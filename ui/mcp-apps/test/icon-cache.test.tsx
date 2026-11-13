@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { cacheStore } from 'react-inlinesvg';
 import { describe, expect, it, vi } from 'vitest';
 
-import { fillIconCache } from '../app/loadRenderer';
+import { fillIconCache } from '../app/iconCache';
 import icons from '../renderer/icons.json';
 
 // uPlot, which @grafana/ui loads, reads matchMedia at import; jsdom has none.
