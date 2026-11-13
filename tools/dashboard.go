@@ -489,9 +489,15 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		return nil, fmt.Errorf("dashboard is not a JSON object")
 	}
 
-	// Preserve the numeric ID before patching so it survives any
-	// accidental mutation by patch operations (classic v1 dashboards only).
+	// Preserve the numeric ID and the version that was read before patching,
+	// so neither survives a patch operation that replaces or removes it
+	// (classic v1 dashboards only). The version is what the legacy save
+	// compares with the stored one; a patch that changed it would make every
+	// retry fail the version check. For a classic dashboard read through the
+	// k8s API the read already holds metadata.generation here (see
+	// dashboardResultFromK8s).
 	origID := dashboardMap["id"]
+	origVersion, hadVersion := dashboardMap["version"]
 
 	// Apply each patch operation. The JSONPath engine is schema-agnostic, so
 	// the same code patches both classic v1 bodies and v2 specs; only the paths
@@ -536,6 +542,11 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	if origID != nil {
 		dashboardMap["id"] = origID
 	}
+	if hadVersion {
+		dashboardMap["version"] = origVersion
+	} else {
+		delete(dashboardMap, "version")
+	}
 
 	// Use the folder UID from the existing dashboard if not provided
 	folderUID := args.FolderUID
@@ -543,17 +554,6 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		folderUID = res.Meta.FolderUID
 	}
 
-	// A classic dashboard read via the k8s API carries a spec
-	// "version" that is not in the legacy save's version space, so a version-
-	// checked legacy save would 409 spuriously. The legacy version is the k8s
-	// metadata.generation, so use that value for the conflict check.
-	if res.Object != nil {
-		if metadata, ok := res.Object["metadata"].(map[string]interface{}); ok {
-			if generation, ok := metadata["generation"].(float64); ok {
-				dashboardMap["version"] = generation
-			}
-		}
-	}
 	// Update with the patched dashboard
 	return updateDashboardWithFullJSON(ctx, UpdateDashboardParams{
 		Dashboard: dashboardMap,
@@ -752,6 +752,12 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 		var apiErr *runtime.APIError
 		if errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict) {
 			return nil, fmt.Errorf("unable to save dashboard: it already exists and the body's version is missing or not the current one, so it may have changed since it was read. Fetch it again with get_dashboard_by_uid and reapply the change to that copy. overwrite=true would discard whatever changed in between: %w", err)
+		}
+		// A 412 is Grafana's version-mismatch: the dashboard changed since the
+		// version that was sent. Give the same recovery as the k8s 409.
+		var mismatch *dashboards.PostDashboardPreconditionFailed
+		if errors.As(err, &mismatch) {
+			return nil, fmt.Errorf("unable to save dashboard: it changed since it was read (version mismatch), so the change was not saved. For a patch, send the same patch again (it is applied to a fresh read); for a full body, fetch the dashboard with get_dashboard_by_uid and reapply the edit to that copy. overwrite=true would discard whatever changed in between: %w", err)
 		}
 		return nil, fmt.Errorf("unable to save dashboard: %w", err)
 	}

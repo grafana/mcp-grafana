@@ -135,7 +135,27 @@ func TestUpdateDashboardPatch_SaveIsVersionChecked(t *testing.T) {
 		assert.Contains(t, err.Error(), "unable to save dashboard")
 		assert.Contains(t, err.Error(), "412")
 		assert.Contains(t, err.Error(), "The dashboard has been changed by someone else")
+		assert.Contains(t, err.Error(), "changed since it was read", "a 412 carries the same recovery hint as a 409")
+		assert.Contains(t, err.Error(), "send the same patch again")
 		assert.False(t, rec.only(t).Overwrite, "the rejected save must not have been retried with overwrite")
+	})
+
+	t.Run("a patch that replaces or removes version still sends the version that was read", func(t *testing.T) {
+		for _, op := range []PatchOperation{
+			{Op: "replace", Path: "$.version", Value: 99},
+			{Op: "remove", Path: "$.version"},
+		} {
+			rec := &legacySaveRecorder{}
+			ctx := legacyDashboardContext(t, rec)
+
+			_, err := updateDashboard(ctx, UpdateDashboardParams{UID: "dash-1", Operations: append([]PatchOperation{op}, retitle...)})
+			require.NoError(t, err, op.Op)
+
+			saved := rec.only(t)
+			assert.Equal(t, float64(3), saved.Dashboard["version"], "%s of $.version must not change the version the save is checked against", op.Op)
+			assert.False(t, saved.Overwrite)
+			assert.Equal(t, "After", saved.Dashboard["title"])
+		}
 	})
 
 	t.Run("a 409 for a stale version is returned to the caller", func(t *testing.T) {
