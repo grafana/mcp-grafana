@@ -31,6 +31,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--base-path`: Base path for the SSE or streamable-http server. With `--base-path /my-base`, SSE is at `/my-base/sse` and streamable-http at `/my-base/mcp`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers and always stay at the server root, never under this prefix.
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint, appended to `--base-path`. Default: `/mcp`.
 - `--sse-keepalive`: Interval between ping requests the server sends to each SSE client, so a reverse proxy or load balancer doesn't close an idle event stream and end the session. Set it below the proxy's idle timeout, for example, `30s` behind ingress-nginx's default 60-second `proxy-read-timeout`. A client is disconnected after 3 pings in a row go unanswered for half the interval each. Accepts Go duration strings, minimum `1s`. Default: `0` (disabled). Applies only to `--transport sse`.
+- `--server-name`: Server name used in the MCP handshake and OTel `service.name`. Default: `mcp-grafana`. Overrides the `GRAFANA_MCP_SERVER_NAME` environment variable.
 - `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
 When `--address` uses port `0`, the operating system allocates a free port and the server atomically writes the bound address to `mcp-grafana-address` in its working directory. The file contains the address followed by a newline and is created with mode `0600`.
@@ -97,6 +98,8 @@ Without `--allowed-grafana-urls`, the server logs a security error at startup. O
 - `--metrics`: Expose a Prometheus metrics endpoint at `/metrics` (SSE and streamable-http only).
 - `--metrics-address`: Optional separate listen address for metrics (for example, `:9090`). If empty, metrics are served on the main HTTP server.
 - `--healthz-address`: Optional separate listen address for `/healthz` (for example, `:8080`). If empty, `/healthz` is served on the main HTTP server. If this matches `--metrics-address`, both routes share one extra listener. The side listener is not wrapped by Host/Origin validation, so Kubernetes probes can reach it while `--address` stays on loopback.
+- `--slow-request-threshold`: Log an event when any MCP request (tool invocation, list, resource read, and so on) takes longer than this duration. Accepts Go duration strings (for example, `500ms`, `5s`). Default: `0` (disabled).
+- `--slow-request-log-level`: Log level for slow-request events (`info` or `warn`). Default: `warn`.
 
 ## Configure anonymous usage statistics
 
@@ -141,9 +144,13 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-examples`: Disable query examples tools.
 - `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
+- `--disable-graphite`: Disable Graphite tools.
 - `--disable-dsquery`: Disable the `query_datasource` source of `render_grafana_app`.
 - `--disable-annotations`: Disable annotation tools.
-- `--disable-tempo`: Disable Tempo tracing tools.
+- `--disable-tempo`: Disable Tempo tracing tools. The deprecated alias `--disable-proxied` also works.
+- `--disable-plugin`: Disable plugin tools.
+- `--disable-api`: Disable API tools.
+- `--disable-config`: Disable config-generation tools.
 - `--disable-provisioning`: Disable provisioning tools.
 - `--disable-agento11y`: Disable Agent Observability tools.
 - `--disable-assistant`: Disable Grafana Assistant tools.
@@ -155,6 +162,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call.
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs`: `off` (default), `shadow` (log queries that would be blocked, but let them run), or `enforce` (reject them with rewrite guidance). The guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. On VictoriaLogs it applies only to selector-shaped (`{...}`) queries — brace-less LogsQL passes through entirely and the byte-budget check never applies. Falls back to the `GRAFANA_LOKI_GUARDRAIL_MODE` environment variable.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API. Defaults to 100 GiB; `0` disables the byte-budget check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-on-estimate-failure`: What the Loki guardrail does when it cannot assess a query (no stream selector it understands, or the index/stats estimate failed): `allow` (default) runs the query, `block` rejects it in `enforce` mode. `block` has no effect on VictoriaLogs, where such queries always run. Only applies when the guardrail is not `off`. Falls back to `GRAFANA_LOKI_GUARDRAIL_ON_ESTIMATE_FAILURE`.
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 
 The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
@@ -335,6 +343,11 @@ Each alerting write tool can be kept individually with `--enable-write-tools=<na
 - `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
 Read operations (queries, lists, searches) stay available.
+
+## Configure Grafana client options
+
+- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (for example, `10s`, `500ms`). Default: `30s`.
+- `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII. Default: `false`.
 
 ## Configure Grafana HTTP redirects
 

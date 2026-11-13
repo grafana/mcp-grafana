@@ -522,6 +522,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-on-estimate-failure`: What the Loki guardrail does when it cannot assess a query (no stream selector it understands, or the index/stats estimate failed) - default: `allow`. `allow` runs the query; `block` rejects it in `enforce` mode. `block` has no effect on VictoriaLogs, where such queries always run. Only applies when the guardrail is not `off`. Env fallback: `GRAFANA_LOKI_GUARDRAIL_ON_ESTIMATE_FAILURE`.
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations - default: `24h`. Accepts Go duration strings. `0` disables the range check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 - `--prometheus-guardrail-mode`: Prometheus query guardrail for `query_prometheus`, `query_prometheus_histogram`, and the Prometheus queries of `run_panel_query` - default: `off`. The guardrail caps the effective time range of a query and the number of points per series it requests, before the query reaches the datasource. An independent opt-in selector policy can require a non-empty positive label constraint beyond the metric name in every vector selector; see [selector policy](docs/sources/configure/command-line-flags.md#prometheus-selector-policy) for examples and limits. `shadow` logs queries that would be blocked but lets them run; `enforce` rejects them with rewrite guidance the LLM can act on (`run_panel_query` reports it in the result's `errors` entry for that panel). Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MODE`.
 - `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
@@ -536,6 +537,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
 - `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
 - `--dashboard-schema`: Set to `v2` to make `update_dashboard` reject a classic v1 (`panels[]`) body that would create a new dashboard when Grafana serves dashboard schema v2; the error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable, and a Grafana without v2 is unaffected. Default: empty (no change). Env fallback: `GRAFANA_DASHBOARD_SCHEMA`.
+- `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Dynamic (per-call) organization selection](#dynamic-per-call-organization-selection).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -550,11 +552,14 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-influxdb`: Disable InfluxDB tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
+- `--disable-folder`: Disable folder tools
 - `--disable-oncall`: Disable oncall tools
 - `--disable-asserts`: Disable asserts tools
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
+- `--disable-tempo`: Disable Tempo tracing tools. The deprecated alias `--disable-proxied` also works.
+- `--disable-annotations`: Disable annotation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 - `--disable-snapshot`: Disable snapshot tools
 - `--disable-cloudwatch`: Disable CloudWatch tools
@@ -564,10 +569,14 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
 - `--disable-dsquery`: Disable the `query_datasource` source of `render_grafana_app`
+- `--disable-plugin`: Disable plugin tools
+- `--disable-api`: Disable API tools
+- `--disable-config`: Disable config-generation tools
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
 - `--disable-docs`: Disable documentation tools
+- `--disable-user`: Disable user info tools
 
 ### Read-Only Mode
 
@@ -698,6 +707,9 @@ Note that `--disable-query` gates the query tools and the `grafana_api_request` 
 **Server TLS Configuration (streamable-http transport only):**
 - `--server.tls-cert-file`: Path to TLS certificate file for server HTTPS
 - `--server.tls-key-file`: Path to TLS private key file for server HTTPS
+
+**Version Information:**
+- `--version`: Print the version and exit
 
 ## Usage
 
