@@ -29,6 +29,9 @@ func externalScripts(page string) []string {
 	return srcs
 }
 
+// maxAppSize caps the inlined app, about 5 MB with the Renderer, so a growth in the bundle is a decision.
+const maxAppSize = 6 << 20
+
 func TestMCPAppResources(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
 	RegisterAppResources(s)
@@ -59,6 +62,7 @@ func TestMCPAppResources(t *testing.T) {
 			require.Equal(t, appMIMEType, content.MIMEType)
 			require.Contains(t, strings.ToLower(content.Text), "<!doctype html>")
 			require.Empty(t, externalScripts(content.Text), "the app loads no script file")
+			require.Less(t, len(content.Text), maxAppSize, "the app grew past %d bytes", maxAppSize)
 			ui, ok := content.Meta["ui"].(map[string]any)
 			require.True(t, ok)
 			csp, ok := ui["csp"].(map[string]any)
