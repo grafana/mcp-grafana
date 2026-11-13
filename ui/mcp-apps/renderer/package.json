@@ -12,8 +12,8 @@
   "peerDependencies": {
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "@grafana/ui": "^13.2.2",
-    "@grafana/data": "^13.2.2",
+    "@grafana/ui": "^13.3.0",
+    "@grafana/data": "^13.3.0",
     "@emotion/css": "^11.10.6"
   }
 }
