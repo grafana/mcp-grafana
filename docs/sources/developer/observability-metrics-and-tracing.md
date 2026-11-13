@@ -154,6 +154,76 @@ Built-in Grafana macros such as `$__rate_interval` are substituted before parsin
 
 The expression is never a label. Blocked queries are logged at `WARN` with the reasons, and the expression is logged at `DEBUG` only.
 
+#### Roll out the cardinality policy
+
+Start with a build that includes the [cardinality policy](../../configure/command-line-flags/#prometheus-cardinality-policy) and its [fail-open diagnostics](https://github.com/grafana/mcp-grafana/pull/1583). Check the deployed version with `./mcp-grafana --version` and its release notes; v2.3.0 predates these diagnostics. If building from source, use a revision containing that change. An absent diagnostic metric alone does not establish whether the deployed build supports it.
+
+Using your existing Grafana connection and authentication settings, enable metrics and start in shadow mode:
+
+```bash
+./mcp-grafana -t streamable-http --metrics \
+  --prometheus-guardrail-mode=shadow \
+  --prometheus-guardrail-max-metric-cardinality=100000
+```
+
+The threshold is an example, not a recommended limit for every deployment. Choose it and the scope labels for your workload. Configure Prometheus to scrape `/metrics` from the server's HTTP listener (or the separate `--metrics-address` listener). Metrics require an HTTP transport; stdio does not expose this endpoint.
+
+Observe a representative workload before enforcing. The following queries group by the Prometheus scrape label `job`, assuming each job contains instances with the same build and guardrail settings. Filter to the deployment under evaluation. If jobs span clusters or policies, retain the relevant scrape labels in every aggregation and on both sides of a ratio. Guardrail counters have no datasource or mode label, so a combined fleet view cannot identify an individual datasource or separate shadow from enforce traffic.
+
+Read the number of queries per second that end with each cardinality fail-open cause:
+
+```promql
+sum by (job, cause) (
+  rate(mcp_prometheus_guardrail_cardinality_fail_open_total[5m])
+)
+```
+
+To see the percentage of all evaluated guardrail decisions that end with cardinality unknown:
+
+```promql
+100 *
+sum by (job) (
+  rate(mcp_prometheus_guardrail_cardinality_fail_open_total[5m])
+)
+/
+(
+  sum by (job) (
+    rate({__name__=~"mcp_prometheus_guardrail_(admitted|would_block|blocked|fail_open)_total"}[5m])
+  ) > 0
+)
+```
+
+Only the four final decision counters belong in the denominator. Adding the diagnostic counter would count those fail-open queries twice. This percentage describes the evaluated query population, not the fraction of selectors whose cardinality is known: scoped selectors need no metadata, static violations skip the cardinality check, and a known violation takes precedence over unknown selectors. It also excludes calls that never reach the guardrail and calls made with the guardrail off.
+
+In shadow mode, inspect which checks would reject traffic:
+
+```promql
+sum by (job, reason) (
+  rate(mcp_prometheus_guardrail_would_block_total[5m])
+)
+```
+
+Use `reason="cardinality"` to focus on this policy, while reviewing the other reasons before switching modes. `--prometheus-guardrail-mode` controls the enabled selector, range and points checks too; promoting to enforce changes their behavior as well.
+
+Counters can be absent until their first event. `rate` also needs at least two samples. A missing cause series is not proof of working metadata or a reason to treat missing scrapes as zero. Check scrape health, the deployed build, nonzero evaluated traffic and the opt-in threshold. With existing samples but no traffic, the positive-denominator filter omits the percentage instead of dividing by zero. Keep `rate` inside `sum` so counter resets from individual process restarts are handled before aggregation. A low would-block rate is useful only alongside the fail-open rates and an understanding of the queries that bypass metadata.
+
+#### Respond to cardinality fail-open causes
+
+Use sustained rates and a minimum traffic volume appropriate to the deployment when setting alerts. Establish a baseline in shadow mode before choosing thresholds. Separate metadata availability and local capacity signals from limitations of the policy's coverage:
+
+| Cause | Check | Response |
+|-------|-------|----------|
+| `metadata_unavailable` | Does the backend expose `/api/v1/status/tsdb` through the Grafana datasource proxy for the same caller and tenant? Check datasource resolution, permissions, HTTP status, latency and response format. | Repair the route, authorization or backend problem. An unsupported endpoint is an expected coverage limitation; static checks still apply. Failures are cached for up to the smaller of the configured cache TTL and 30 seconds, so diagnostic increments are not metadata HTTP error counts. |
+| `fetch_slots_saturated` | Are slow metadata fetches or simultaneous misses across distinct authentication/tenant cache keys occupying the eight local slots? Custom transports and TLS client certificates bypass the shared cache. | Investigate backend latency and bursts of uncached lookups. Saturation is not cached; a later query can retry when a slot is free. Do not assume that increasing concurrency would reduce backend load. |
+| `not_in_top_n` | Is the exact metric absent from otherwise valid TSDB top-10 statistics? | Treat the count as unknown. This does not prove low cardinality and is not, by itself, a metadata outage. Review the workload and retain backend query limits. |
+| `unresolved_metric_name` | Does the selector use a regex metric name or omit an exact metric name? | Review whether the intended query can name a metric explicitly without changing its meaning. An exact name can still be absent from the top 10; changing it does not guarantee an assessment. Do not classify this cause as a backend outage. |
+
+The metadata timeout is two seconds, with a 1 MiB response limit. After a backend repair, queries can continue to see a cached failure until its shorter failure TTL expires. Successful snapshots default to a ten-minute cache TTL, so changed series counts may also take time to appear. The counter records final query decisions: two queries sharing one cached metadata failure produce two diagnostic increments but only one metadata fetch; a legacy proxy fallback can instead make two HTTP attempts for one lookup. Known violations produce `would_block` or `blocked` without a diagnostic increment, even when another selector is unknown.
+
+After investigating the causes and reviewing would-be blocks, test representative queries: a known high-cardinality unscoped metric, an intended exact scope, and an unavailable-metadata case. Confirm that scope labels match the intended workload boundaries. An exact scope matcher is a policy exemption, not a bound on matched series or query cost.
+
+Promote a limited deployment to `--prometheus-guardrail-mode=enforce` while keeping its other settings unchanged. Watch `blocked` by reason, fail-open causes, tool errors and backend query behavior. Queries whose cardinality remains unknown still fail open in enforce mode. If valid traffic is rejected unexpectedly, restore `--prometheus-guardrail-mode=shadow` using the same deployment mechanism and investigate the policy before expanding enforcement. Returning to shadow permits would-be blocked queries to run; backend query limits remain necessary in both modes.
+
 ## Enable OpenTelemetry tracing
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, the server exports traces via OTLP/gRPC.
