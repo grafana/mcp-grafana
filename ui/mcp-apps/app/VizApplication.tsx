@@ -4,6 +4,7 @@ import type { RenderHandle } from '../renderer/renderer.js';
 import { McpAppShell } from '../src/McpAppShell';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
+import { loadRenderer } from './loadRenderer';
 import { buildVizSpec, type VizArgs, type VizSpec } from './vizSpec';
 
 // The query text of the common data sources: Prometheus and Loki, SQL, and others.
@@ -68,8 +69,8 @@ export function VizApplication({ host }: { host: AppHostState }) {
 
 /**
  * Owns one Renderer handle: render once the module loads, update on a new spec, destroy on unmount (renderer.2 to
- * renderer.5). The module loads on first use, so the other views and their tests do not load @grafana/ui. A failure
- * there is async, so it is thrown on the next render for AppErrorBoundary.
+ * renderer.5). The module loads on first use (loadRenderer), so the other views and their tests do not load @grafana/ui.
+ * A failure there is async, so it is thrown on the next render for AppErrorBoundary.
  */
 function RendererView({ spec }: { spec: VizSpec }) {
   const el = useRef<HTMLDivElement>(null);
@@ -80,7 +81,7 @@ function RendererView({ spec }: { spec: VizSpec }) {
 
   useEffect(() => {
     let destroyed = false;
-    import('../renderer/renderer.js')
+    loadRenderer()
       .then(({ render }) => {
         if (destroyed || !el.current) return;
         handle.current = render(el.current, latest.current);
