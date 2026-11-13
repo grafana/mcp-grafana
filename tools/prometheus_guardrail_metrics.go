@@ -11,13 +11,14 @@ import (
 const promGuardrailMeterName = "mcp-grafana"
 
 // promGuardrailMetrics holds the OTel instruments for Prometheus guardrail
-// decisions. The four counters partition every guarded query exactly once.
-// Cardinality metadata is optional and may be unavailable for a backend.
+// decisions. The four decision counters partition every guarded query exactly
+// once; cardinalityFailOpen diagnoses a subset without changing that partition.
 type promGuardrailMetrics struct {
-	admitted   metric.Int64Counter // Passed every enabled check
-	wouldBlock metric.Int64Counter // Failed a check in shadow mode; ran anyway
-	blocked    metric.Int64Counter // Failed a check in enforce mode; rejected
-	failOpen   metric.Int64Counter // Assessment incomplete; admitted
+	admitted            metric.Int64Counter // Passed every enabled check
+	wouldBlock          metric.Int64Counter // Failed a check in shadow mode; ran anyway
+	blocked             metric.Int64Counter // Failed a check in enforce mode; rejected
+	failOpen            metric.Int64Counter // Assessment incomplete; admitted
+	cardinalityFailOpen metric.Int64Counter // Diagnostic subset of failOpen
 }
 
 var (
@@ -54,12 +55,17 @@ func newPromGuardrailMetrics(mp metric.MeterProvider) promGuardrailMetrics {
 		metric.WithDescription("Number of Prometheus queries admitted with an incomplete guardrail assessment"),
 		metric.WithUnit("{query}"),
 	)
+	cardinalityFailOpen, _ := meter.Int64Counter("mcp.prometheus_guardrail.cardinality_fail_open",
+		metric.WithDescription("Number of Prometheus queries admitted with an incomplete cardinality assessment, by cause"),
+		metric.WithUnit("{query}"),
+	)
 
 	return promGuardrailMetrics{
-		admitted:   admitted,
-		wouldBlock: wouldBlock,
-		blocked:    blocked,
-		failOpen:   failOpen,
+		admitted:            admitted,
+		wouldBlock:          wouldBlock,
+		blocked:             blocked,
+		failOpen:            failOpen,
+		cardinalityFailOpen: cardinalityFailOpen,
 	}
 }
 
@@ -78,4 +84,12 @@ func (m promGuardrailMetrics) recordBlocked(ctx context.Context, enforced bool, 
 
 func (m promGuardrailMetrics) recordFailOpen(ctx context.Context, reason promGuardReason) {
 	m.failOpen.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", string(reason))))
+}
+
+func (m promGuardrailMetrics) recordCardinalityFailOpen(ctx context.Context, cause promCardinalityFailOpenCause) {
+	// Keep the diagnostic dimension bounded even if a caller supplies a new value.
+	switch cause {
+	case promCardinalityNotInTopN, promCardinalityUnresolvedMetricName, promCardinalityMetadataUnavailable, promCardinalityFetchSlotsSaturated:
+		m.cardinalityFailOpen.Add(ctx, 1, metric.WithAttributes(attribute.String("cause", string(cause))))
+	}
 }

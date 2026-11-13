@@ -169,3 +169,33 @@ func TestPrometheusGuardrailMetricsExportedName(t *testing.T) {
 	}
 	assert.True(t, found, "mcp_prometheus_guardrail_blocked_total{reason=\"range\"} not exported")
 }
+
+func TestPrometheusCardinalityMetricsExportedName(t *testing.T) {
+	registry := promclient.NewRegistry()
+	// Exclude exporter-added scope labels to check the instrument's attributes.
+	exporter, err := otelprom.New(otelprom.WithRegisterer(registry), otelprom.WithoutScopeInfo())
+	require.NoError(t, err)
+	ctx := newPromGuardMetricsContext(t, exporter, mcpgrafana.PrometheusGuardrailEnforce, 0, 0)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	cfg.PrometheusGuardrailMaxMetricCardinality = 100000
+	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
+	require.NoError(t, guardPrometheusQuery(ctx, "missing", "instant", time.Time{}, promGuardEnd, 0, func() promGuardDecision {
+		return cardinalityUnknown(promCardinalityNotInTopN)
+	}))
+
+	families, err := registry.Gather()
+	require.NoError(t, err)
+	var found bool
+	for _, f := range families {
+		if f.GetName() == "mcp_prometheus_guardrail_cardinality_fail_open_total" {
+			found = true
+			require.Len(t, f.GetMetric(), 1)
+			m := f.GetMetric()[0]
+			assert.Equal(t, 1.0, m.GetCounter().GetValue())
+			require.Len(t, m.GetLabel(), 1)
+			assert.Equal(t, "cause", m.GetLabel()[0].GetName())
+			assert.Equal(t, "not_in_top_n", m.GetLabel()[0].GetValue())
+		}
+	}
+	assert.True(t, found, "cardinality diagnostic counter not exported")
+}
