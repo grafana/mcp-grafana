@@ -6,6 +6,7 @@ import * as jsxRuntime from 'react/jsx-runtime';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { packageOf, SHARED_MODULE_IDS, sharedPackageCopies } from '../sharedModules.config';
 import { exposeSharedModules, SHARED_MODULES_GLOBAL, sharedModules } from '../app/sharedModules';
 
 describe('sharedModules', () => {
@@ -22,13 +23,30 @@ describe('sharedModules', () => {
     expect(Object.isFrozen(exposed)).toBe(true);
   });
 
-  it('covers every Renderer import except the packages the Renderer resource will bundle', () => {
-    const source = readFileSync(join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-    // Bare package specifiers only; the minified code also has strings that follow the word "from".
-    const imports = new Set([...source.matchAll(/\bfrom\s*["']((?:@[\w-]+\/)?[\w-]+(?:\/[\w-]+)*)["']/g)].map((m) => m[1]));
-    const bundledByRenderer = new Set(['@grafana/ui', '@grafana/data']);
+  it('exposes each package of the list, in order', () => {
+    expect(Object.keys(sharedModules)).toEqual([...SHARED_MODULE_IDS]);
+  });
 
-    expect(imports.size).toBeGreaterThan(bundledByRenderer.size);
-    expect([...imports].filter((id) => !bundledByRenderer.has(id) && !(id in sharedModules))).toEqual([]);
+  it('finds a bundled copy of a shared package at any path', () => {
+    expect(
+      sharedPackageCopies([
+        '/x/node_modules/react-dom/cjs/react-dom-server.production.js',
+        '/x/node_modules/@grafana/ui/node_modules/@emotion/css/dist/emotion-css.esm.js',
+        '/x/node_modules/@emotion/react/dist/emotion-react.esm.js',
+        '/x/node_modules/lodash.debounce/index.js',
+        '/x/app/vizRenderer.entry.ts',
+      ])
+    ).toEqual([
+      '/x/node_modules/react-dom/cjs/react-dom-server.production.js',
+      '/x/node_modules/@grafana/ui/node_modules/@emotion/css/dist/emotion-css.esm.js',
+    ]);
+    expect(packageOf('/x/node_modules/lodash.debounce/index.js')).toBe('lodash.debounce');
+  });
+
+  it('reads only listed packages from the global in the built Renderer resource', () => {
+    const source = readFileSync(join(__dirname, '..', 'dist', 'viz-renderer.js'), 'utf8');
+    const read = new Set([...source.matchAll(/__grafanaMcpAppModules(?:\.(\w+)|\[`([^`]+)`\])/g)].map((m) => m[1] ?? m[2]));
+
+    expect([...read].sort()).toEqual([...SHARED_MODULE_IDS].sort());
   });
 });

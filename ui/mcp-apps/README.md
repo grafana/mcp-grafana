@@ -11,7 +11,7 @@ npm test
 npm run build
 ```
 
-`npm run build` creates the reusable library (`dist/index.js` and declarations) and the shared `dist/app.html` resource embedded by Go. Regenerate and commit the HTML after app source changes. `npm run build:apps` builds only the resource; `mise run build-ui` builds all UI packages.
+`npm run build` creates the reusable library (`dist/index.js` and declarations) and the two resources embedded by Go: the shared `dist/app.html` and the viz Renderer script `dist/viz-renderer.js`, with `dist/viz-renderer.hash` for its URI. Regenerate and commit all three after app source changes. `npm run build:apps` builds only the resources; `mise run build-ui` builds all UI packages.
 
 Run `npm run dev` for component and host previews. The preview fixtures are synthetic and do not query a Grafana server.
 

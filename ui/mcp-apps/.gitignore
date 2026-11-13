@@ -1,5 +1,7 @@
 /node_modules/
 /dist/*
 !/dist/app.html
+!/dist/viz-renderer.js
+!/dist/viz-renderer.hash
 !/dist/service-health.html
 /dist-preview/

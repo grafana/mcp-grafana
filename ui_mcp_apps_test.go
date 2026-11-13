@@ -1,6 +1,8 @@
 package mcpgrafana
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -76,4 +78,42 @@ func TestMCPAppResources(t *testing.T) {
 			}
 		})
 	}
+}
+
+// maxVizRendererSize caps the Renderer resource below 4 MiB, a size limit a host may set on one resource (#1589).
+const maxVizRendererSize = 4 << 20
+
+func TestVizRendererResource(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
+	RegisterGrafanaAppResource(s)
+	ctx := t.Context()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	go func() { _ = s.Run(ctx, serverTransport) }()
+	c, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil).Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	sum := sha256.Sum256([]byte(vizRendererJS))
+	require.Equal(t, "ui://grafana/viz-renderer-"+hex.EncodeToString(sum[:8])+".js", VizRendererResourceURI,
+		"dist/viz-renderer.hash is the hash of dist/viz-renderer.js; run mise run build-ui")
+
+	resources, err := c.ListResources(ctx, nil)
+	require.NoError(t, err)
+	var listed *mcp.Resource
+	for _, resource := range resources.Resources {
+		if resource.URI == VizRendererResourceURI {
+			listed = resource
+		}
+	}
+	require.NotNil(t, listed, "RegisterGrafanaAppResource registers the Renderer, so embedders get it too")
+	require.Equal(t, vizRendererMIMEType, listed.MIMEType)
+
+	result, err := c.ReadResource(ctx, &mcp.ReadResourceParams{URI: VizRendererResourceURI})
+	require.NoError(t, err)
+	require.Len(t, result.Contents, 1)
+	require.Equal(t, vizRendererMIMEType, result.Contents[0].MIMEType)
+	require.Equal(t, vizRendererJS, result.Contents[0].Text)
+	require.Equal(t, vizRendererTTLMs, result.TTLMs)
+	require.True(t, strings.HasPrefix(vizRendererJS, "var __grafanaVizRenderer="), "a classic script that sets the Renderer global")
+	require.Less(t, len(vizRendererJS), maxVizRendererSize, "the Renderer grew past %d bytes", maxVizRendererSize)
 }
