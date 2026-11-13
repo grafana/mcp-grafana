@@ -65,4 +65,19 @@ describe('RendererView', () => {
     expect(await screen.findByText('This view failed to render')).toBeTruthy();
     log.mockRestore();
   });
+
+  it('draws the next result after a Renderer failure', async () => {
+    renderer.render.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { app } = view();
+    await screen.findByText('This view failed to render');
+    act(() => {
+      app.ontoolresult?.({ structuredContent: readVizFixture('prometheus-line', 'result.json'), content: [] } as never);
+    });
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('This view failed to render')).toBeNull();
+    log.mockRestore();
+  });
 });
