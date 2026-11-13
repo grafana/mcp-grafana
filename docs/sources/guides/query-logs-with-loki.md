@@ -31,7 +31,7 @@ In your MCP client, ask the assistant to query Loki. For example, “Show me rec
 
 ## Read results in Loki's format
 
-Besides its text output, `query_loki_logs` returns the result in the tool result's `structuredContent`, in the shape of Loki's `/loki/api/v1/query_range` response: `{"status":"success","data":{"resultType":...,"result":[...]}}`. Scripts written for the Loki HTTP API can read it without converting. Log results are `streams`, and each `stream` holds the stream labels, structured metadata and parsed labels together, as Loki returns them without the `categorize-labels` encoding flag. Metric results are `matrix` for range queries and `vector` for instant queries. Loki's `stats` object is not included. The text output's `metadata` field shows whether the results were truncated.
+Set `format` to `loki` and `query_loki_logs` returns its text output in the shape of Loki's `/loki/api/v1/query_range` response: `{"status":"success","data":{"resultType":...,"result":[...]}}`, with the tool's `metadata` and `hints` fields next to `data`. Scripts written for the Loki HTTP API can read it without converting. Log results are `streams`, and each `stream` holds the stream labels, structured metadata and parsed labels together, as Loki returns them without the `categorize-labels` encoding flag. Metric results are `matrix` for range queries and `vector` for instant queries. The log limit applies as in the other formats, and `metadata.resultsTruncated` shows whether lines were cut. Loki's `stats` object is not included.
 
 ## Explore labels and patterns
 
