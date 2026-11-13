@@ -2,6 +2,9 @@
  * The Renderer API. The App imports the Renderer as an ES module. 3-renderer.md, 4-states-and-notices.md and
  * 5-refresh.md give the rules.
  *
+ * This file has types only. The package has no JavaScript. Import it with `import type`. The values that it
+ * declares, for example render, come from the Renderer.
+ *
  * The Renderer takes React and the Grafana packages from the App. The peerDependencies of the Renderer give
  * them.
  */

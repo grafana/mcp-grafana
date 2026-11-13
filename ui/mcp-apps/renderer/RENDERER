@@ -1,5 +1,5 @@
 repository: grafana/dataViz
-commit: 93da0686731be3c9aa81f8e91120e568b4322a74
+commit: a88c07c006eb13f1dd414a99ef017479fd546c8d
 version: 0.0.1
-contractVersion: 1.0.0
-sha256 renderer.js: e3f8f0d4333c302ecf6248bc858db42abb49815ca067ba7faf33173501d48dbb
+contractVersion: 1.2.0
+sha256 renderer.js: 3fa8aa76cacb1f95fa8298b38aa6ecc25575c2ac17ffb98a43a827af2fa2fd87

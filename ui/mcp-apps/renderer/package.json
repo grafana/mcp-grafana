@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./renderer.js",
-    "./renderer.manifest.json": "./renderer.manifest.json"
+    "./renderer.manifest.json": "./renderer.manifest.json",
+    "./icons.json": "./icons.json"
   },
   "peerDependencies": {
     "react": "^19.2.7",
