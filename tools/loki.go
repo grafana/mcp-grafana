@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -383,7 +385,7 @@ type QueryLokiLogsParams struct {
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value. On VictoriaLogs\\, 'instant' returns the newest log lines from the hour before endRfc3339 (default now)."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
-	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries."`
+	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,enum=loki,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries. 'loki' returns Loki's query_range JSON\\, also for metric queries."`
 
 	// step overrides StepSeconds for run_panel_query, whose $__auto can be sub-second.
 	step time.Duration
@@ -405,6 +407,32 @@ type QueryLokiLogsResult struct {
 	Streams  []CompactStream   `json:"streams,omitempty"` // Populated instead of per-entry labels when format=compact
 	Hints    *EmptyResultHints `json:"hints,omitempty"`
 	Metadata *QueryMetadata    `json:"metadata,omitempty"`
+
+	loki *lokiFormatResult // set when format=loki, returned instead of the fields above
+}
+
+// lokiFormatResult is Loki's /loki/api/v1/query_range body (without stats), plus hints and metadata.
+type lokiFormatResult struct {
+	Status   string            `json:"status"`
+	Data     lokiNativeData    `json:"data"`
+	Hints    *EmptyResultHints `json:"hints,omitempty"`
+	Metadata *QueryMetadata    `json:"metadata,omitempty"`
+}
+
+type lokiNativeData struct {
+	ResultType string `json:"resultType"`
+	Result     []any  `json:"result"`
+}
+
+type lokiNativeStream struct {
+	Stream map[string]string `json:"stream"`
+	Values [][2]string       `json:"values"`
+}
+
+type lokiNativeSeries struct {
+	Metric map[string]string `json:"metric"`
+	Values [][2]any          `json:"values,omitempty"` // matrix
+	Value  []any             `json:"value,omitempty"`  // vector
 }
 
 // CompactStream groups log lines that share the same label set. The compact
@@ -598,6 +626,80 @@ func varyingOnly(entry, constant map[string]string) map[string]string {
 	return out
 }
 
+// newLokiNativeData rebuilds the data field of Loki's query_range response from entries.
+// Streams use the uncategorized form: stream labels, structured metadata and parsed labels in one set.
+func newLokiNativeData(resultType string, entries []LogEntry) (lokiNativeData, error) {
+	result := []any{}
+	streams := map[string]*lokiNativeStream{}
+	for _, e := range entries {
+		metric := e.Labels
+		if metric == nil {
+			metric = map[string]string{} // Loki emits {} for a series without labels
+		}
+		switch resultType {
+		case "streams":
+			labels := maps.Clone(metric)
+			maps.Copy(labels, e.StructuredMetadata)
+			maps.Copy(labels, e.Parsed)
+			key := labelsKey(labels)
+			s, ok := streams[key]
+			if !ok {
+				s = &lokiNativeStream{Stream: labels}
+				streams[key] = s
+				result = append(result, s)
+			}
+			s.Values = append(s.Values, [2]string{e.Timestamp, e.Line})
+		case "vector":
+			if e.Value == nil {
+				continue
+			}
+			ts, err := lokiNativeTime(e.Timestamp)
+			if err != nil {
+				return lokiNativeData{}, err
+			}
+			value := []any{ts, strconv.FormatFloat(*e.Value, 'f', -1, 64)}
+			result = append(result, &lokiNativeSeries{Metric: metric, Value: value})
+		default:
+			series := &lokiNativeSeries{Metric: metric}
+			for _, v := range e.Values {
+				ts, err := lokiNativeTime(v.Timestamp)
+				if err != nil {
+					return lokiNativeData{}, err
+				}
+				series.Values = append(series.Values, [2]any{ts, strconv.FormatFloat(v.Value, 'f', -1, 64)})
+			}
+			result = append(result, series)
+		}
+	}
+	return lokiNativeData{ResultType: resultType, Result: result}, nil
+}
+
+// isLogQLLogQuery reports whether logql is a log query. In LogQL grammar only a
+// log query starts with a stream selector, after comments and parentheses.
+func isLogQLLogQuery(logql string) bool {
+	s := logql
+	for {
+		s = strings.TrimLeft(s, " \t\r\n(")
+		switch {
+		case strings.HasPrefix(s, "#"), strings.HasPrefix(s, "//"):
+			_, s, _ = strings.Cut(s, "\n")
+		case strings.HasPrefix(s, "/*"):
+			_, s, _ = strings.Cut(s[2:], "*/")
+		default:
+			return strings.HasPrefix(s, "{")
+		}
+	}
+}
+
+// lokiNativeTime turns a "seconds.millis" sample timestamp into the JSON number Loki emits.
+func lokiNativeTime(ts string) (json.Number, error) {
+	f, err := strconv.ParseFloat(ts, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid Loki sample timestamp %q: %w", ts, err)
+	}
+	return json.Number(strconv.FormatFloat(f, 'f', -1, 64)), nil
+}
+
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLogsResult, error) {
 	if strings.TrimSpace(args.LogQL) == "" {
 		return nil, fmt.Errorf("logql is required")
@@ -605,9 +707,9 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 
 	format := strings.ToLower(strings.TrimSpace(args.Format))
 	switch format {
-	case "", "full", "compact":
+	case "", "full", "compact", "loki":
 	default:
-		return nil, fmt.Errorf("invalid format %q: must be 'full' or 'compact'", args.Format)
+		return nil, fmt.Errorf("invalid format %q: must be 'full', 'compact' or 'loki'", args.Format)
 	}
 
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
@@ -716,6 +818,20 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		}
 	}
 
+	if format == "loki" {
+		resultType := result.ResultType
+		if len(entries) == 0 && isLogQLLogQuery(args.LogQL) {
+			// No log frame came back, so the frames path guessed matrix or vector.
+			resultType = "streams"
+		}
+		data, err := newLokiNativeData(resultType, entries)
+		if err != nil {
+			return nil, err
+		}
+		out.loki = &lokiFormatResult{Status: "success", Data: data, Hints: out.Hints, Metadata: out.Metadata}
+		return out, nil
+	}
+
 	// Compact format only applies to log (streams) responses; metric results
 	// carry values rather than log lines and are left untouched. Data is kept
 	// as an empty array so the field's "always a JSON array" contract holds.
@@ -727,11 +843,23 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	return out, nil
 }
 
+// queryLokiLogsTool returns Loki's native shape when format=loki, else the usual result.
+func queryLokiLogsTool(ctx context.Context, args QueryLokiLogsParams) (any, error) {
+	out, err := queryLokiLogs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	if out.loki != nil {
+		return out.loki, nil
+	}
+	return out, nil
+}
+
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
 	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line. Query cost is the bytes scanned, which the index statistics for the stream selector over the same time range estimate before a broad selector or long time range is run. If this server enables the Loki cost guardrail, expensive queries are rejected before execution: query cost is bytes SCANNED, determined only by the stream selector and time range — line filters (|=) and parsers (| json) reduce what is returned, not what is scanned. Use a stream selector with at least one selective positive label matcher (never `{}`, `=~\".*\"`/`=~\".+\"`, or negative-only matchers), keep time ranges narrow; rejected queries return rewrite guidance.",
-	queryLokiLogs,
+	queryLokiLogsTool,
 	mcpgrafana.WithTitleAnnotation("Query Loki logs"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
