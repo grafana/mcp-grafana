@@ -3,3 +3,4 @@ commit: a88c07c006eb13f1dd414a99ef017479fd546c8d
 version: 0.0.1
 contractVersion: 1.2.0
 sha256 renderer.js: 3fa8aa76cacb1f95fa8298b38aa6ecc25575c2ac17ffb98a43a827af2fa2fd87
+sha256 icons.json: 6f6637a6f4c8415584bd25963133f0086e8ec1b8997acb8b36cd4ce2dcab193c

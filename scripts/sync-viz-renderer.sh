@@ -41,7 +41,10 @@ types="$work/src/$package/node_modules/@grafana/viz-contract/renderer-api.d.ts"
 [ -f "$types" ] || types="$work/src/$package/src/renderer/contract/renderer-api.d.ts"
 [ -f "$types" ] || { echo "no renderer-api.d.ts in the build of $sha" >&2; exit 1; }
 
-cp "$dist/renderer.js" "$dist/renderer.manifest.json" "$dist/package.json" "$work/src/LICENSE" "$out/"
+# delivery.9: the icons that the App puts in the icon cache of its @grafana/ui (renderer.15).
+[ -f "$dist/icons.json" ] || { echo "no icons.json in the build of $sha" >&2; exit 1; }
+
+cp "$dist/renderer.js" "$dist/renderer.manifest.json" "$dist/icons.json" "$dist/package.json" "$work/src/LICENSE" "$out/"
 cp "$types" "$out/renderer.d.ts"
 cat >"$out/RENDERER" <<PIN
 repository: grafana/dataViz
@@ -49,6 +52,7 @@ commit: $sha
 version: $(manifest version)
 contractVersion: $(manifest contractVersion)
 sha256 renderer.js: $bundle_sha
+sha256 icons.json: $(hash "$dist/icons.json")
 PIN
 
 echo "Synced the Renderer $(manifest version) (contract $(manifest contractVersion)) of grafana/dataViz ($sha)."

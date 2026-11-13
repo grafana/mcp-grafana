@@ -6,6 +6,6 @@ export default defineConfig({
     include: ['test/**/*.test.{ts,tsx}'],
     restoreMocks: true,
     // Design packages import their token CSS; let Vite transform those imports in jsdom.
-
+    server: { deps: { inline: ['@grafana/ui', '@grafana/data'] } },
   },
 });
