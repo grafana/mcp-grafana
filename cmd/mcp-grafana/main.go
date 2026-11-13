@@ -101,6 +101,7 @@ var categoryDescription = map[string]string{
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
 	"cloudlogging":  "Google Cloud Logging: Query logs with the Cloud Logging query language and list projects, log buckets, and views.",
+	"azuremonitor":  "Azure Monitor: Query Azure Log Analytics workspaces and Azure Resource Graph with KQL.",
 	"examples":      "Examples: Query example tools.",
 	"sql":           "SQL: Query supported SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery) via Grafana with macro substitution, schema discovery, and variable support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
@@ -127,7 +128,7 @@ var categoryDescriptionNoQuery = map[string]string{
 
 const navigationDescriptionNoShortening = "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries."
 
-var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo"}
+var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor"}
 
 var mutatingQueryCategories = []string{"sql", "influxdb"}
 
@@ -182,7 +183,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, admin,
-	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, write, query, enableQuery,
+	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, azuremonitor, write, query, enableQuery,
 	snapshot, examples, sql, graphite, dsquery,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -259,6 +260,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.cloudlogging, "disable-cloudlogging", false, "Disable Google Cloud Logging tools")
+	flag.BoolVar(&dt.azuremonitor, "disable-azuremonitor", false, "Disable Azure Monitor tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.sql, "disable-sql", false, "Disable SQL tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery)")
 	flag.BoolVar(&dt.sql, "disable-clickhouse", false, "Deprecated: use --disable-sql instead")
@@ -541,6 +543,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(s *mcp.Server) { tools.AddSnapshotTools(s, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{func(s *mcp.Server) { tools.AddCloudWatchTools(s, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
 		{func(s *mcp.Server) { tools.AddCloudLoggingTools(s, enableQueryTools) }, dt.cloudlogging, "cloudlogging"},
+		{func(s *mcp.Server) { tools.AddAzureMonitorTools(s, enableQueryTools) }, dt.azuremonitor, "azuremonitor"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
 		{func(s *mcp.Server) { tools.AddSQLTools(s, dt.queryToolsEnabled("sql")) }, dt.sql, "sql"},
 		{func(s *mcp.Server) { tools.AddRunPanelQueryTools(s, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
