@@ -2,6 +2,9 @@ import { App } from '@modelcontextprotocol/ext-apps';
 import { createRoot } from 'react-dom/client';
 import { GrafanaApplication } from './GrafanaApplication';
 import { createAppHostState } from './appHostState';
+import { exposeSharedModules } from './sharedModules';
+
+exposeSharedModules();
 
 const app = new App({ name: 'Grafana App', version: '0.1.0' });
 // Handlers are attached here, not in an effect: the host can finish the
