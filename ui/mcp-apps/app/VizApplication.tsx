@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { RenderHandle } from '../renderer/renderer.js';
 import { McpAppShell } from '../src/McpAppShell';
@@ -68,20 +68,26 @@ export function VizApplication({ host }: { host: AppHostState }) {
 
 /**
  * Owns one Renderer handle: render once the module loads, update on a new spec, destroy on unmount (renderer.2 to
- * renderer.5). The module loads on first use, so the other views and their tests do not load @grafana/ui.
+ * renderer.5). The module loads on first use, so the other views and their tests do not load @grafana/ui. A failure
+ * there is async, so it is thrown on the next render for AppErrorBoundary.
  */
 function RendererView({ spec }: { spec: VizSpec }) {
   const el = useRef<HTMLDivElement>(null);
   const handle = useRef<RenderHandle | null>(null);
   // The spec to draw when the module loads, if it changed while the module was loading.
   const latest = useRef(spec);
+  const [failure, setFailure] = useState<Error>();
 
   useEffect(() => {
     let destroyed = false;
-    void import('../renderer/renderer.js').then(({ render }) => {
-      if (destroyed || !el.current) return;
-      handle.current = render(el.current, latest.current);
-    });
+    import('../renderer/renderer.js')
+      .then(({ render }) => {
+        if (destroyed || !el.current) return;
+        handle.current = render(el.current, latest.current);
+      })
+      .catch((cause: unknown) => {
+        if (!destroyed) setFailure(cause instanceof Error ? cause : new Error(String(cause)));
+      });
     return () => {
       destroyed = true;
       handle.current?.destroy();
@@ -94,5 +100,6 @@ function RendererView({ spec }: { spec: VizSpec }) {
     handle.current?.update(spec);
   }, [spec]);
 
+  if (failure) throw failure;
   return <div ref={el} data-testid="viz-renderer" />;
 }
