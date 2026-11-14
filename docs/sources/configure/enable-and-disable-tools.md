@@ -33,6 +33,7 @@ Some tool categories are disabled by default:
 - **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
 - **cloudwatch** – CloudWatch tools.
 - **cloudlogging** – Google Cloud Logging tools (requires the `googlecloud-logging-datasource` plugin, version 1.8.0 or later).
+- **azuremonitor** – Azure Monitor tools for Log Analytics and Resource Graph KQL queries.
 - **elasticsearch** – Elasticsearch query tool.
 - **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).

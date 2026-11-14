@@ -98,6 +98,11 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getCloudLoggingCauses(ctx)
 		hints.SuggestedActions = getCloudLoggingActions(ctx)
 
+	case "azureloganalytics":
+		hints.Summary = "The Azure Log Analytics query returned no rows for the specified time range."
+		hints.PossibleCauses = getAzureLogAnalyticsCauses(ctx)
+		hints.SuggestedActions = getAzureLogAnalyticsActions()
+
 	default:
 		hints.Summary = "The query returned no data for the specified parameters."
 		hints.PossibleCauses = getGenericCauses()
@@ -268,6 +273,30 @@ func getCloudLoggingActions(ctx HintContext) []string {
 		"Broaden the filter, e.g. start from resource.type=\"k8s_container\" alone, then add labels one at a time",
 		"Expand the time range to check whether data exists earlier",
 		"If the project uses custom log buckets or sinks, list them with list_cloud_logging_buckets and pass bucketId",
+	}
+}
+
+// getAzureLogAnalyticsCauses returns possible causes for empty Azure Log Analytics results
+func getAzureLogAnalyticsCauses(ctx HintContext) []string {
+	causes := []string{
+		"The table may not exist in these workspaces, or the resources may send their logs to a different workspace",
+		"The where clauses may not match any rows (column names and string comparisons are case-sensitive with ==)",
+		"No logs were ingested in the time range; Log Analytics ingestion can lag by several minutes",
+	}
+	if strings.Contains(strings.ToLower(ctx.Query), "ago(") {
+		causes = append(causes, "The query contains an ago() filter that may conflict with the automatically applied time range")
+	}
+	return causes
+}
+
+// getAzureLogAnalyticsActions returns suggested actions for empty Azure Log Analytics results
+func getAzureLogAnalyticsActions() []string {
+	return []string{
+		"Check which tables have data with: search * | summarize count() by $table",
+		"Remove ago() filters; the time range comes from start/end",
+		"Use =~ or has for case-insensitive matching",
+		"Expand the time range to check whether data exists earlier",
+		"Find other workspaces with query_azure_resource_graph: resources | where type == \"microsoft.operationalinsights/workspaces\"",
 	}
 }
 

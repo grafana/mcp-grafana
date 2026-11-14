@@ -70,6 +70,14 @@ type alertRuleSummary struct {
 	DatasourceUIDs       []string                              `json:"datasource_uids,omitempty"`
 }
 
+// alertRuleList is the 'list' result. Truncated means more rules may match;
+// pass NextCursor as cursor to continue.
+type alertRuleList struct {
+	Rules      []alertRuleSummary `json:"rules"`
+	Truncated  bool               `json:"truncated"`
+	NextCursor string             `json:"next_cursor,omitempty"`
+}
+
 // alertRuleDetail is the enriched response for a single rule, combining
 // full configuration from the Provisioning API with runtime state from the
 // Prometheus rules API.
@@ -579,6 +587,7 @@ func (f listFilterParams) parseLabelSelectors() ([]Selector, error) {
 // listFilterParams contains list operation filter fields shared between read and read-write param structs.
 type listFilterParams struct {
 	RuleLimit      int      `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
+	Cursor         string   `json:"cursor,omitempty" jsonschema:"description=Pagination cursor from a previous 'list' response. Set it to next_cursor and resend the same filters to get the next page."`
 	LabelSelectors []string `json:"label_selectors,omitempty" jsonschema:"description=Prometheus-style selectors to filter alert rules by labels. Each string is a selector e.g. '{severity=\"critical\"\\, team=~\"backend.*\"}'. All selectors must match (AND)."`
 	LimitAlerts    int      `json:"limit_alerts,omitempty" jsonschema:"description=Number of alert instances to include per rule (0 or omitted = none\\, max 200)."`
 	SearchFolder   string   `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid."`

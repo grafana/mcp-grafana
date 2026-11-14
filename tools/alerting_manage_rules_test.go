@@ -140,8 +140,9 @@ func TestManageRules_List(t *testing.T) {
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -150,8 +151,9 @@ func TestManageRules_List(t *testing.T) {
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		byUID := make(map[string]alertRuleSummary, len(rules))
 		for _, rule := range rules {
 			byUID[rule.UID] = rule
@@ -172,8 +174,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		for _, rule := range rules {
 			require.NotEqual(t, "inactive", rule.State, "state should be normalized from 'inactive' to 'normal'")
 		}
@@ -189,8 +192,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		// Only the three alerting rules carry severity=info; the recording rule does not.
 		alertingRules := []alertRuleSummary{rule1, rule2, rulePaused}
 		require.ElementsMatch(t, alertingRules, clearState(rules))
@@ -206,8 +210,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -221,8 +226,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, []alertRuleSummary{rule2}, clearState(rules))
 	})
 
@@ -236,8 +242,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, []alertRuleSummary{rule1}, clearState(rules))
 	})
 
@@ -251,8 +258,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -266,8 +274,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -281,8 +290,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -296,8 +306,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -309,8 +320,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -328,8 +340,9 @@ func TestManageRules_List(t *testing.T) {
 		// Discover the folder UID from a known provisioned rule.
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
 		require.NoError(t, err)
-		allRules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		allRules := list.Rules
 
 		var folderUID string
 		for _, r := range allRules {
@@ -345,8 +358,9 @@ func TestManageRules_List(t *testing.T) {
 			FolderUID: folderUID,
 		})
 		require.NoError(t, err)
-		rules, ok := result.([]alertRuleSummary)
+		list, ok = result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.NotEmpty(t, rules)
 		for _, r := range rules {
 			require.Equal(t, folderUID, r.FolderUID)
@@ -360,8 +374,9 @@ func TestManageRules_List(t *testing.T) {
 			FolderUID: "empty-alerts-folder",
 		})
 		require.NoError(t, err)
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -373,8 +388,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -386,8 +402,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Len(t, rules, 1)
 		require.Equal(t, rulePausedUID, rules[0].UID)
 	})
@@ -400,8 +417,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -413,8 +431,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.NotEmpty(t, rules)
 	})
 
@@ -426,8 +445,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Len(t, rules, 1)
 	})
 }
@@ -1830,8 +1850,9 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.NotEmpty(t, rules, "Expected Prometheus to have alert rules configured")
 
 		foundFiring := false
@@ -1859,8 +1880,9 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		for _, rule := range rules {
 			require.Equal(t, "warning", rule.Labels["severity"])
 		}
@@ -1901,8 +1923,9 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		if err != nil {
 			t.Logf("Loki ruler query failed (this may be expected): %v", err)
 		} else {
-			rules, ok := result.([]alertRuleSummary)
+			list, ok := result.(*alertRuleList)
 			require.True(t, ok)
+			rules := list.Rules
 			t.Logf("Loki ruler returned %d rules", len(rules))
 		}
 	})
@@ -2080,8 +2103,9 @@ func TestManageRules_SearchFolder(t *testing.T) {
 		})
 		require.NoError(t, err)
 		// Should not error regardless of whether the folder exists
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		_ = rules
 	})
 

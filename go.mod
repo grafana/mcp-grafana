@@ -17,6 +17,7 @@ require (
 	github.com/grafana/mcp-grafana/lokiguard v0.1.0
 	github.com/grafana/pyroscope/api v1.6.0
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853
+	github.com/grafana/viz-contract v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.20
@@ -198,7 +199,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect

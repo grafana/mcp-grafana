@@ -28,8 +28,19 @@ const (
 
 var promCardinalityDefaultScope = []string{"job", "instance", "namespace", "pod", "service", "cluster"}
 
-func cardinalityUnknown() promGuardDecision {
-	return promGuardDecision{Verdict: promGuardUnknown, UnknownReason: promGuardReasonCardinalityUnknown}
+type promCardinalityFailOpenCause string
+
+const (
+	promCardinalityNotInTopN            promCardinalityFailOpenCause = "not_in_top_n"
+	promCardinalityUnresolvedMetricName promCardinalityFailOpenCause = "unresolved_metric_name"
+	promCardinalityMetadataUnavailable  promCardinalityFailOpenCause = "metadata_unavailable"
+	promCardinalityFetchSlotsSaturated  promCardinalityFailOpenCause = "fetch_slots_saturated"
+)
+
+var errPromCardinalityFetchSlotsSaturated = errors.New("TSDB metadata concurrency limit")
+
+func cardinalityUnknown(cause promCardinalityFailOpenCause) promGuardDecision {
+	return promGuardDecision{Verdict: promGuardUnknown, UnknownReason: promGuardReasonCardinalityUnknown, CardinalityFailOpenCause: cause}
 }
 
 // Only exact metric names are assessed in this first policy. Regex/name-less
@@ -43,14 +54,14 @@ func assessPromCardinality(ctx context.Context, expr, queryType string, start, e
 	}
 	ast, err := promGuardParser.ParseExpr(promGuardSubstituteMacros(expr, window, step))
 	if err != nil {
-		return cardinalityUnknown()
+		return cardinalityUnknown(promCardinalityUnresolvedMetricName)
 	}
 	scope := cfg.PrometheusGuardrailCardinalityScopeLabels
 	if len(scope) == 0 {
 		scope = promCardinalityDefaultScope
 	}
 	names := map[string]struct{}{}
-	unknown := false
+	var cause promCardinalityFailOpenCause
 	parser.Inspect(ast, func(n parser.Node, _ []parser.Node) error {
 		vs, ok := n.(*parser.VectorSelector)
 		if !ok {
@@ -77,7 +88,7 @@ func assessPromCardinality(ctx context.Context, expr, queryType string, start, e
 			}
 		}
 		if name == "" {
-			unknown = true
+			cause = promCardinalityUnresolvedMetricName
 			return nil
 		}
 		// An exact name excluded by any other name matcher selects no series.
@@ -90,24 +101,31 @@ func assessPromCardinality(ctx context.Context, expr, queryType string, start, e
 		return nil
 	})
 	if len(names) == 0 {
-		if unknown {
-			return cardinalityUnknown()
+		if cause != "" {
+			return cardinalityUnknown(cause)
 		}
 		return promGuardDecision{}
 	}
 	b, err := backend()
 	if err != nil {
-		return cardinalityUnknown()
+		return cardinalityUnknown(promCardinalityMetadataUnavailable)
 	}
 	stats, err := cachedPromCardinality(ctx, b, cfg)
 	if err != nil {
-		return cardinalityUnknown()
+		if errors.Is(err, errPromCardinalityFetchSlotsSaturated) {
+			return cardinalityUnknown(promCardinalityFetchSlotsSaturated)
+		}
+		return cardinalityUnknown(promCardinalityMetadataUnavailable)
 	}
 	var high uint64
 	for name := range names {
 		count, ok := stats[name]
 		if !ok {
-			unknown = true
+			// Unresolved names take precedence over missing top-N entries,
+			// independent of selector order and map iteration order.
+			if cause == "" {
+				cause = promCardinalityNotInTopN
+			}
 			continue
 		}
 		if count > uint64(cfg.PrometheusGuardrailMaxMetricCardinality) {
@@ -121,8 +139,8 @@ func assessPromCardinality(ctx context.Context, expr, queryType string, start, e
 			Hint:    fmt.Sprintf("add a non-empty exact matcher on one of [%s] to each high-cardinality selector, using a value appropriate to the intended scope, or use a lower-cardinality recording rule; scope labels are a heuristic and do not guarantee a cheap query", strings.Join(scope, ", ")),
 		}}}
 	}
-	if unknown {
-		return cardinalityUnknown()
+	if cause != "" {
+		return cardinalityUnknown(cause)
 	}
 	return promGuardDecision{}
 }
@@ -201,7 +219,7 @@ func (c *promCardinalityCache) get(ctx context.Context, key [32]byte, ttl time.D
 		defer func() { <-c.slots }()
 	default:
 		c.mu.Unlock()
-		return nil, errors.New("TSDB metadata concurrency limit")
+		return nil, errPromCardinalityFetchSlotsSaturated
 	}
 	var entry *promCardinalityEntry
 	if cacheable {

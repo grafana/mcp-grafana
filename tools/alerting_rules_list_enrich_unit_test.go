@@ -68,7 +68,7 @@ func listRulesForTest(ctx context.Context, receiver string) ([]alertRuleSummary,
 	if err != nil {
 		return nil, err
 	}
-	return result.([]alertRuleSummary), nil
+	return result.(*alertRuleList).Rules, nil
 }
 
 func TestManageRulesRead_ListEnrichment(t *testing.T) {

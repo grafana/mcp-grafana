@@ -150,6 +150,19 @@ datasources:
     jsonData:
       authenticationType: gce
     isDefault: false
+  - name: Azure Monitor
+    uid: azure-monitor
+    type: grafana-azure-monitor-datasource
+    access: proxy
+    jsonData:
+      cloudName: azuremonitor
+      azureAuthType: clientsecret
+      tenantId: 00000000-0000-0000-0000-000000000000
+      clientId: 00000000-0000-0000-0000-000000000000
+      subscriptionId: 00000000-0000-0000-0000-000000000000
+    secureJsonData:
+      clientSecret: integration-test-not-a-secret
+    isDefault: false
   - name: MySQL
     uid: mysql
     type: mysql

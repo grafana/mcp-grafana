@@ -122,6 +122,8 @@ type GetRulesOpts struct {
 	// in the shape Grafana expects (e.g. {"name":"severity","value":"critical","isRegex":false,"isEqual":true}).
 	// Multiple matchers are AND-ed together.
 	Matchers []*labels.Matcher
+	// GroupNextToken resumes a paged listing at the group after this token.
+	GroupNextToken string
 }
 
 // ruleMatcherJSON is the JSON shape Grafana's Prometheus rules API expects for
@@ -187,6 +189,9 @@ func (o *GetRulesOpts) queryValues() url.Values {
 	params.Set("limit_alerts", strconv.Itoa(limitAlerts))
 	if o.IncludeInternalLabels {
 		params.Set("includeInternalLabels", "true")
+	}
+	if o.GroupNextToken != "" {
+		params.Set("group_next_token", o.GroupNextToken)
 	}
 	for _, m := range o.Matchers {
 		if m == nil {

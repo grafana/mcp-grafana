@@ -53,6 +53,7 @@ const (
 	skipNoSQL          = "mcptests has no SQL datasource"
 	skipNoCloudWatch   = "mcptests has no CloudWatch datasource"
 	skipNoCloudLogging = "mcptests has no Google Cloud Logging datasource"
+	skipNoAzureMonitor = "mcptests has no Azure Monitor datasource"
 	skipIncident       = "needs a live incident; list_incidents covers the same declared permissions"
 )
 
@@ -368,6 +369,9 @@ var rbacFixtures = map[string]rbacFixture{
 	"list_cloud_logging_projects": {skip: skipNoCloudLogging},
 	"list_cloud_logging_buckets":  {skip: skipNoCloudLogging},
 	"list_cloud_logging_views":    {skip: skipNoCloudLogging},
+
+	"query_azure_log_analytics":  {skip: skipNoAzureMonitor},
+	"query_azure_resource_graph": {skip: skipNoAzureMonitor},
 
 	"query_elasticsearch": {skip: "mcptests has no Elasticsearch datasource"},
 	"query_quickwit":      {skip: "mcptests has no Quickwit datasource"},

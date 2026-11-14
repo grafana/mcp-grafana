@@ -20,7 +20,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// appHostCapabilities are the capabilities of a client that shows MCP Apps.
+var appHostCapabilities = &mcp.ClientCapabilities{Extensions: map[string]any{
+	appsExtensionID: map[string]any{"mimeTypes": []any{"text/html;profile=mcp-app"}},
+}}
+
 func appSession(t *testing.T, ctx context.Context, sources ...mcpgrafana.Tool) *mcp.ClientSession {
+	t.Helper()
+	return clientSession(t, ctx, appHostCapabilities, sources...)
+}
+
+func clientSession(t *testing.T, ctx context.Context, caps *mcp.ClientCapabilities, sources ...mcpgrafana.Tool) *mcp.ClientSession {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	t.Cleanup(cancel)
@@ -35,7 +45,7 @@ func appSession(t *testing.T, ctx context.Context, sources ...mcpgrafana.Tool) *
 	mcpgrafana.RegisterGrafanaAppResource(s)
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	go func() { _ = s.Run(ctx, serverTransport) }()
-	c, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
+	c, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, &mcp.ClientOptions{Capabilities: caps}).Connect(ctx, clientTransport, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	return c
