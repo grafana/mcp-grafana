@@ -612,6 +612,11 @@ type ManageRulesReadParams struct {
 func (p ManageRulesReadParams) validate() error {
 	switch p.Operation {
 	case "list":
+		// Only Grafana-managed rules carry notification settings; datasource-managed
+		// rules are routed by their labels, so there is no receiver to filter on.
+		if p.Receiver != nil && *p.Receiver != "" && p.DatasourceUID != nil && *p.DatasourceUID != "" {
+			return fmt.Errorf("receiver filters Grafana-managed rules only and cannot be combined with datasource_uid")
+		}
 		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 		return err
 	case "get":

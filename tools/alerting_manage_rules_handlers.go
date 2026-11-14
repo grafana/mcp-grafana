@@ -217,6 +217,21 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	// page; collectRules keeps paging until the limit is met after filtering.
 	pageOpts.RuleLimit = limit
 
+	// The receiver filter needs each rule's notification settings, which only
+	// the provisioning API has. Read them once up front and filter every page
+	// as it is fetched, so collectRules keeps paging until the limit is met
+	// after filtering, as it does for label selectors. Without the provisioning
+	// config the filter cannot be answered: filtering unenriched rules would
+	// match nothing and read as "no rule uses this receiver".
+	filterByReceiver := receiver != nil && *receiver != ""
+	var provisioned map[string]*models.ProvisionedAlertRule
+	if filterByReceiver {
+		provisioned, err = getProvisionedRulesByUID(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing alert rules: cannot filter by receiver %q because the rules' notification settings could not be read: %w", *receiver, err)
+		}
+	}
+
 	fetch := func(ctx context.Context, token string) ([]alertRuleSummary, string, error) {
 		pageOpts.GroupNextToken = token
 		resp, err := client.GetRules(ctx, &pageOpts)
@@ -230,11 +245,17 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 				return nil, "", fmt.Errorf("filtering alert rules: %w", err)
 			}
 		}
+		if filterByReceiver {
+			page = filterSummariesByReceiver(applyProvisionedRules(page, provisioned), *receiver)
+		}
 		return page, resp.Data.NextToken, nil
 	}
 	list, err := collectRules(ctx, fetch, limit, cursor)
 	if err != nil {
 		return nil, err
+	}
+	if filterByReceiver {
+		return list, nil
 	}
 
 	// Enrich each rule with its provisioning config (paused state,
@@ -248,18 +269,6 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
 			"listing alert rules: could not enrich with provisioning config", "error", enrichErr)
 	}
-
-	// Receiver filter applies after enrichment (notification_settings is only
-	// populated there). It cannot be answered without the provisioning config:
-	// filtering unenriched rules would match nothing and read as "no rule uses
-	// this receiver".
-	if receiver != nil && *receiver != "" {
-		if enrichErr != nil {
-			return nil, fmt.Errorf("listing alert rules: cannot filter by receiver %q because the rules' notification settings could not be read: %w", *receiver, enrichErr)
-		}
-		list.Rules = filterSummariesByReceiver(list.Rules, *receiver)
-	}
-
 	return list, nil
 }
 
@@ -343,15 +352,25 @@ func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSum
 	if len(summaries) == 0 {
 		return summaries, nil
 	}
+	byUID, err := getProvisionedRulesByUID(ctx)
+	if err != nil {
+		return summaries, err
+	}
+	return applyProvisionedRules(summaries, byUID), nil
+}
+
+// getProvisionedRulesByUID reads every provisioned alert rule in one bulk GET
+// and indexes it by UID.
+func getProvisionedRulesByUID(ctx context.Context) (map[string]*models.ProvisionedAlertRule, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	if c == nil || c.GrafanaHTTPAPI == nil || c.Provisioning == nil {
-		return summaries, fmt.Errorf("no Grafana provisioning client available")
+		return nil, fmt.Errorf("no Grafana provisioning client available")
 	}
 	resp, err := c.Provisioning.GetAlertRulesWithParams(
 		provisioning.NewGetAlertRulesParamsWithContext(ctx),
 	)
 	if err != nil {
-		return summaries, fmt.Errorf("get provisioned alert rules: %w", err)
+		return nil, fmt.Errorf("get provisioned alert rules: %w", err)
 	}
 	byUID := make(map[string]*models.ProvisionedAlertRule, len(resp.Payload))
 	for _, p := range resp.Payload {
@@ -359,6 +378,12 @@ func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSum
 			byUID[p.UID] = p
 		}
 	}
+	return byUID, nil
+}
+
+// applyProvisionedRules fills each summary's provisioning-derived fields from
+// byUID. Summaries without a provisioned rule are left as they are.
+func applyProvisionedRules(summaries []alertRuleSummary, byUID map[string]*models.ProvisionedAlertRule) []alertRuleSummary {
 	for i := range summaries {
 		p, ok := byUID[summaries[i].UID]
 		if !ok {
@@ -369,7 +394,7 @@ func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSum
 		summaries[i].NotificationSettings = p.NotificationSettings
 		summaries[i].DatasourceUIDs = datasourceUIDsFromQueries(p.Data)
 	}
-	return summaries, nil
+	return summaries
 }
 
 // datasourceUIDsFromQueries returns the distinct datasource UIDs a rule queries,

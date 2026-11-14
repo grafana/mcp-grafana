@@ -132,3 +132,79 @@ func TestManageRulesRead_ReceiverFilter(t *testing.T) {
 		require.Nil(t, rules)
 	})
 }
+
+// TestManageRulesRead_ReceiverFilterPagesBeforeLimit checks that the receiver
+// filter runs on each page, so paging continues until rule_limit rules match.
+// The first page holds only a rule for another receiver.
+func TestManageRulesRead_ReceiverFilterPagesBeforeLimit(t *testing.T) {
+	rule := func(uid string) map[string]any { return map[string]any{"name": uid, "uid": uid} }
+	pages := map[string]map[string]any{
+		"": {"groupNextToken": "p2", "groups": []any{
+			map[string]any{"name": "a", "rules": []any{rule("email-rule")}},
+		}},
+		"p2": {"groups": []any{
+			map[string]any{"name": "b", "rules": []any{rule("oncall-rule"), rule("oncall-rule-2")}},
+		}},
+	}
+	var tokens []string
+	provisioningReads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/prometheus/grafana/api/v1/rules":
+			require.Equal(t, "1", r.URL.Query().Get("rule_limit"))
+			token := r.URL.Query().Get("group_next_token")
+			tokens = append(tokens, token)
+			page, ok := pages[token]
+			require.True(t, ok, "unknown token %q", token)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": page}))
+		case "/api/v1/provisioning/alert-rules":
+			provisioningReads++
+			_, _ = w.Write([]byte(`[
+  {"uid": "email-rule", "notification_settings": {"receiver": "email"}},
+  {"uid": "oncall-rule", "notification_settings": {"receiver": "oncall"}},
+  {"uid": "oncall-rule-2", "notification_settings": {"receiver": "oncall"}}
+]`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	ctx := mcpgrafana.WithGrafanaConfig(mockCtxWithClient(server), mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"})
+
+	list := func(cursor string) *alertRuleList {
+		t.Helper()
+		receiver := "oncall"
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			Operation:        "list",
+			listFilterParams: listFilterParams{RuleLimit: 1, Receiver: &receiver, Cursor: cursor},
+		})
+		require.NoError(t, err)
+		return result.(*alertRuleList)
+	}
+
+	first := list("")
+	require.Len(t, first.Rules, 1)
+	require.Equal(t, "oncall-rule", first.Rules[0].UID, "the match on the second page is found")
+	require.NotNil(t, first.Rules[0].NotificationSettings)
+	require.True(t, first.Truncated)
+	require.Equal(t, []string{"", "p2"}, tokens)
+	require.Equal(t, 1, provisioningReads, "provisioning config is read once per list call")
+
+	second := list(first.NextCursor)
+	require.Len(t, second.Rules, 1)
+	require.Equal(t, "oncall-rule-2", second.Rules[0].UID, "cursor resumes inside the filtered page")
+	require.False(t, second.Truncated)
+}
+
+func TestManageRulesRead_ReceiverWithDatasourceUID(t *testing.T) {
+	receiver := "oncall"
+	datasourceUID := "prom-uid"
+	_, err := manageRulesRead(context.Background(), ManageRulesReadParams{
+		Operation:        "list",
+		DatasourceUID:    &datasourceUID,
+		listFilterParams: listFilterParams{Receiver: &receiver},
+	})
+	require.ErrorContains(t, err, "receiver filters Grafana-managed rules only and cannot be combined with datasource_uid")
+}
