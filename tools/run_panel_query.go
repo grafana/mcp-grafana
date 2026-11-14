@@ -18,7 +18,6 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	sqldialect "github.com/grafana/mcp-grafana/v2/tools/sql"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/common/model"
 )
 
@@ -1361,12 +1360,3 @@ var RunPanelQuery = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions(dashboardRead...),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddRunPanelQueryTools registers run panel query tools with the MCP server.
-// Every tool in this category executes a query, so nothing is registered when
-// enableQueryTools is false.
-func AddRunPanelQueryTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		RunPanelQuery.Register(s)
-	}
-}

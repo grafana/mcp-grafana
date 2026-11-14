@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/observability"
 	"github.com/grafana/mcp-grafana/v2/resources"
+	"github.com/grafana/mcp-grafana/v2/tools"
 	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -1592,11 +1594,7 @@ func registerAllCategories(t *testing.T, dt disabledTools) map[string]bool {
 func listAllCategoryTools(t *testing.T, dt disabledTools) map[string]*mcp.Tool {
 	t.Helper()
 
-	categories := make([]string, 0, len(dt.toolEntries()))
-	for _, e := range dt.toolEntries() {
-		categories = append(categories, e.category)
-	}
-	dt.enabledTools = strings.Join(categories, ",")
+	dt.enabledTools = strings.Join(tools.CategoryNames(), ",")
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	dt.processTools(srv)
@@ -1683,12 +1681,12 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	}
 }
 
-func TestWriteToolOverridden_TrimsWhitespaceAroundNames(t *testing.T) {
-	dt := &disabledTools{write: true, writeToolOverrides: "query_sql, query_influxdb"}
-	assert.True(t, dt.writeToolOverridden("query_influxdb"), "trailing name after a space-separated comma should still match")
+func TestProcessTools_EnableWriteToolsTrimsWhitespaceAroundNames(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "query_sql, query_influxdb"})
+	assert.True(t, names["query_influxdb"], "trailing name after a space-separated comma should still match")
 
-	dt = &disabledTools{write: true, writeToolOverrides: " query_sql"}
-	assert.True(t, dt.writeToolOverridden("query_sql"), "leading whitespace before a name should still match")
+	names = registerAllCategories(t, disabledTools{write: true, writeToolOverrides: " query_sql"})
+	assert.True(t, names["query_sql"], "leading whitespace before a name should still match")
 }
 
 func TestProcessTools_EnableWriteToolsAloneChangesNothing(t *testing.T) {
@@ -1732,6 +1730,40 @@ func TestProcessTools_EnableWriteToolsRestoresSingleAlertingWriteTool(t *testing
 	}
 }
 
+func TestProcessTools_EnableWriteToolsRestoresUpdateDashboard(t *testing.T) {
+	readWrite := listAllCategoryTools(t, disabledTools{})
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "update_dashboard"})
+	require.Contains(t, listed, "update_dashboard")
+	assert.Equal(t, readWrite["update_dashboard"], listed["update_dashboard"])
+	assert.NotContains(t, listed, "create_folder", "the override must not re-enable other write tools")
+}
+
+func TestProcessTools_EnableWriteToolsRestoresFullAPIRequest(t *testing.T) {
+	full := listAllCategoryTools(t, disabledTools{})["grafana_api_request"]
+	readOnly := listAllCategoryTools(t, disabledTools{write: true})["grafana_api_request"]
+	require.NotEqual(t, full, readOnly, "--disable-write should register a read-only variant")
+
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "grafana_api_request"})
+	assert.Equal(t, full, listed["grafana_api_request"])
+	assert.NotContains(t, listed, "update_dashboard", "the override must not re-enable other write tools")
+
+	noQuery := listAllCategoryTools(t, disabledTools{write: true, query: true, writeToolOverrides: "grafana_api_request"})
+	assert.Equal(t, full, noQuery["grafana_api_request"], "the full variant runs no query tool, so --disable-query keeps it, as it does without --disable-write")
+}
+
+func TestWarnEnforcementBypasses_AllowedAssistant(t *testing.T) {
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(orig)
+
+	warnPrometheusEnforcementBypasses(disabledTools{enabledTools: "prometheus,assistant", write: true})
+	assert.NotContains(t, buf.String(), "--disable-assistant")
+
+	warnPrometheusEnforcementBypasses(disabledTools{enabledTools: "prometheus,assistant", write: true, writeToolOverrides: "ask_assistant"})
+	assert.Contains(t, buf.String(), "--disable-assistant")
+}
+
 func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 	listed := listAllCategoryTools(t, disabledTools{write: true})
 	require.Contains(t, listed, "generate_deeplink")
@@ -1740,11 +1772,11 @@ func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 
 func TestBuildInstructions_NavigationShorteningFollowsWriteOverride(t *testing.T) {
 	readOnly := (&disabledTools{enabledTools: "navigation", write: true}).buildInstructions()
-	assert.Contains(t, readOnly, navigationDescriptionNoShortening)
+	assert.Contains(t, readOnly, "Navigation: Generate deeplink URLs")
 	assert.NotContains(t, readOnly, "shortening")
 
 	overridden := (&disabledTools{enabledTools: "navigation", write: true, writeToolOverrides: "generate_deeplink"}).buildInstructions()
-	assert.Contains(t, overridden, categoryDescription["navigation"])
+	assert.Contains(t, overridden, "with optional built-in shortening")
 }
 
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
@@ -1881,6 +1913,11 @@ func TestCategoryReportNormalisesAliases(t *testing.T) {
 	assert.NotContains(t, enabled, "clickhouse")
 }
 
+func TestDisabledByFlagCoversEveryCategory(t *testing.T) {
+	var dt disabledTools
+	assert.ElementsMatch(t, tools.CategoryNames(), slices.Collect(maps.Keys(dt.disabledByFlag())))
+}
+
 // TestCategoryReportHonoursWriteAndQueryGates: a category can survive
 // --enabled-tools and still register no tool, because --disable-write empties
 // assistant and --disable-query empties the query-only categories.
@@ -1898,6 +1935,15 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 		assert.NotContains(t, disabled, "assistant")
 	})
 
+	t.Run("folder is empty without write tools", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "folder,search", write: true}
+		enabled, _ := dt.categoryReport()
+		instructions := (&disabledTools{enabledTools: "folder,search", write: true}).buildInstructions()
+
+		assert.NotContains(t, enabled, "folder")
+		assert.NotContains(t, instructions, "Folders")
+	})
+
 	t.Run("assistant is reported when write tools are enabled", func(t *testing.T) {
 		dt := disabledTools{enabledTools: "assistant"}
 		enabled, _ := dt.categoryReport()
@@ -1906,6 +1952,7 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 	})
 
 	t.Run("query-only categories are empty without query tools", func(t *testing.T) {
+		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor"}
 		dt := disabledTools{enabledTools: strings.Join(queryOnlyCategories, ",") + ",search", query: true}
 		enabled, _ := dt.categoryReport()
 

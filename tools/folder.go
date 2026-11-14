@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"github.com/grafana/grafana-openapi-client-go/client/folders"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -51,9 +49,3 @@ var CreateFolder = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("folders:read", "folders:create", "folders:write"),
 )
-
-func AddFolderTools(s *mcp.Server, enableWriteTools bool) {
-	if enableWriteTools {
-		CreateFolder.Register(s)
-	}
-}

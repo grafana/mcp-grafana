@@ -17,7 +17,6 @@ import (
 	"github.com/PaesslerAG/jsonpath"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/dashboards"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -1584,15 +1583,4 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 		Type:  safeString(variable, "type"),
 		Label: safeString(variable, "label"),
 	}
-}
-
-func AddDashboardTools(s *mcp.Server, enableWriteTools bool) {
-	GetDashboardByUID.Register(s)
-	ListDashboardVersions.Register(s)
-	if enableWriteTools {
-		UpdateDashboard.Register(s)
-	}
-	GetDashboardPanelQueries.Register(s)
-	GetDashboardProperty.Register(s)
-	GetDashboardSummary.Register(s)
 }

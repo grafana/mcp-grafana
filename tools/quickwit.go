@@ -15,7 +15,6 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const quickwitDatasourceType = "quickwit-quickwit-datasource"
@@ -373,12 +372,3 @@ var QueryQuickwit = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddQuickwitTools registers all Quickwit tools with the MCP server.
-// Every tool in this category executes a query, so nothing is registered when
-// enableQueryTools is false.
-func AddQuickwitTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		QueryQuickwit.Register(s)
-	}
-}

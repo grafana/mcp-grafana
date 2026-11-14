@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/itchyny/gojq"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
@@ -249,13 +248,3 @@ var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
 	// Runs with whatever the caller holds; it needs no fixed action of its own.
 	mcpgrafana.RequiresPermissions(),
 )
-
-func AddAPITools(s *mcp.Server, enableWriteTools bool, enableQueryTools bool) {
-	if enableWriteTools {
-		APIRequest.Register(s)
-	} else if enableQueryTools {
-		APIRequestReadOnly.Register(s)
-	} else {
-		APIRequestReadOnlyGetOnly.Register(s)
-	}
-}

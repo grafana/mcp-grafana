@@ -12,7 +12,6 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -873,22 +872,3 @@ var ManageAgento11yTestSuitesReadWrite = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(agento11yWrite...),
 )
-
-func AddAgento11yTools(s *mcp.Server, enableWriteTools bool) {
-	ManageAgento11yConversations.Register(s)
-	ManageAgento11yGenerations.Register(s)
-	ManageAgento11yAgents.Register(s)
-	if enableWriteTools {
-		ManageAgento11yEvaluatorsReadWrite.Register(s)
-		ManageAgento11yEvalRulesReadWrite.Register(s)
-		ManageAgento11yEvalCollectionsReadWrite.Register(s)
-		ManageAgento11yExperimentsReadWrite.Register(s)
-		ManageAgento11yTestSuitesReadWrite.Register(s)
-	} else {
-		ManageAgento11yEvaluatorsRead.Register(s)
-		ManageAgento11yEvalRulesRead.Register(s)
-		ManageAgento11yEvalCollectionsRead.Register(s)
-		ManageAgento11yExperimentsRead.Register(s)
-		ManageAgento11yTestSuitesRead.Register(s)
-	}
-}

@@ -829,14 +829,3 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.
-func AddDatasourceTools(s *mcp.Server, enableWriteTools bool) {
-	ListDatasources.Register(s)
-	GetDatasource.Register(s)
-	CheckDatasourcesHealth.Register(s)
-	if enableWriteTools {
-		CreateDatasource.Register(s)
-		UpdateDatasource.Register(s)
-	}
-}

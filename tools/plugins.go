@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -436,11 +434,3 @@ var SearchPlugins = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(true),
 	mcpgrafana.RequiresPermissions(), // grafana.com catalog
 )
-
-func AddPluginTools(s *mcp.Server, enableWrite bool) {
-	SearchPlugins.Register(s)
-	GetPlugin.Register(s)
-	if enableWrite {
-		InstallPlugin.Register(s)
-	}
-}

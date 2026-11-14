@@ -121,7 +121,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
 - `--enable-query`: Keep the raw-SQL query tools, and `query_datasource` (a source of `render_grafana_app`), available under `--disable-write` (refer to the following section).
-- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `query_sql`, `query_influxdb`, `generate_deeplink`, or the alerting write tools `alerting_rules_write`, `alerting_routing_write`, and `alerting_silences_write`. Has no effect on a tool whose whole category is disabled.
+- `--enable-write-tools`: Comma-separated list of individual tool names to keep registered under `--disable-write`, for example, `update_dashboard`, `query_sql`, or `generate_deeplink`. Any tool that `--disable-write` removes can be named. For a tool with a read-only variant, such as `generate_deeplink` or `grafana_api_request`, it keeps the full variant. Has no effect on a tool whose whole category is disabled, and `--disable-query` still removes query tools.
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
 - `--disable-quickwit`: Disable Quickwit tools.
@@ -263,7 +263,7 @@ Enforcement applies only to the Prometheus query tools. Other tools can reach Pr
 
 - `--disable-api`: `grafana_api_request` can query the Prometheus datasource proxy directly (full bypass).
 - `--disable-rendering`: `get_panel_image` can render unrestricted metric data. `render_grafana_app` can also use `query_datasource` to submit Prometheus queries without these matchers. `--disable-dsquery` closes the latter path only.
-- `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Prometheus server-side across all series. It is only registered when write tools are enabled, so `--disable-write` closes it too.
+- `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Prometheus server-side across all series. It is only registered when write tools are enabled, so `--disable-write` closes it too, unless `--enable-write-tools=ask_assistant` keeps it.
 
 The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Prometheus datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Dashboard snapshots (`--disable-snapshot`) can embed panel data captured outside enforcement.
 {{< /admonition >}}
@@ -278,7 +278,7 @@ Enforcement applies only to the Loki query tools. Other tools can reach Loki log
 
 - `--disable-api`: `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 - `--disable-rendering`: `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-- `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too.
+- `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too, unless `--enable-write-tools=ask_assistant` keeps it.
 
 The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Loki datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Tempo tools expose only traces, not Loki logs, so they are not a bypass. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
 {{< /admonition >}}
@@ -289,7 +289,7 @@ The server logs a warning at startup naming each of these that is still enabled.
 
 In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through `POST /api/short-urls`. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
 
-When enabled, the following writes are disabled:
+When enabled, the following writes are disabled. Each one can be kept individually with `--enable-write-tools=<name>`:
 
 **Dashboard tools**
 
@@ -310,8 +310,6 @@ When enabled, the following writes are disabled:
 - `alerting_rules_write` (create, update, delete)
 - `alerting_silences_write` (create, update, delete)
 - `alerting_routing_write` (create_contact_point)
-
-Each alerting write tool can be kept individually with `--enable-write-tools=<name>`.
 
 **OnCall tools**
 

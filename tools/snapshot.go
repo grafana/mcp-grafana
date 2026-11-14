@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -272,12 +270,3 @@ var DeleteSnapshotTool = mcpgrafana.MustTool(
 	// dashboards:write lets a non-creator delete a snapshot of an existing dashboard.
 	mcpgrafana.RequiresPermissions("snapshots:delete", "dashboards:write"),
 )
-
-func AddSnapshotTools(s *mcp.Server, enableWriteTools bool) {
-	ListSnapshotsTool.Register(s)
-	GetSnapshotTool.Register(s)
-	if enableWriteTools {
-		CreateSnapshotTool.Register(s)
-		DeleteSnapshotTool.Register(s)
-	}
-}

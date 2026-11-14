@@ -552,7 +552,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`, and keep `query_datasource`, a source of `render_grafana_app`, available. For the raw-SQL tools it is equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
-- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
+- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. It works for every tool `--disable-write` removes, and for a tool with a read-only variant it keeps the full one. Has no effect on a tool whose whole category is disabled, and `--disable-query` still removes query tools. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -588,7 +588,7 @@ The `--disable-write` flag provides a way to run the MCP server in read-only mod
 - Running in production environments where write access should be restricted
 - Testing and development scenarios where you want to prevent accidental modifications
 
-When `--disable-write` is enabled, the following write operations are disabled:
+When `--disable-write` is enabled, the following write operations are disabled. Each one can be kept individually with `--enable-write-tools=<name>`:
 
 **Dashboard Tools:**
 - `update_dashboard`
@@ -605,8 +605,6 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `alerting_rules_write` (create, update, delete operations)
 - `alerting_silences_write` (create, update, delete operations)
 - `alerting_routing_write` (create_contact_point operation)
-
-Each alerting write tool can be kept individually with `--enable-write-tools=<name>`.
 
 **OnCall Tools:**
 - `update_alert_group`
@@ -1495,7 +1493,8 @@ How it works:
 > [!IMPORTANT]
 > Other enabled tools can bypass these matchers. Disable `grafana_api_request`
 > with `--disable-api`, rendering tools with `--disable-rendering`, and Grafana
-> Assistant with `--disable-assistant` (or `--disable-write`). In particular,
+> Assistant with `--disable-assistant` (or `--disable-write`, unless
+> `--enable-write-tools` names `ask_assistant`). In particular,
 > `render_grafana_app` can send unfiltered Prometheus queries through its
 > `query_datasource` source. `--disable-dsquery` closes that source, but does not
 > disable server-side panel rendering. Existing dashboard snapshots can also
@@ -1545,7 +1544,7 @@ How it works:
 >
 > - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 > - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-> - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too.
+> - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too, unless `--enable-write-tools=ask_assistant` keeps it.
 >
 > The server logs a warning at startup naming each of these that is still enabled.
 > `run_panel_query` is safe (it reuses the enforced query path). Tempo tools

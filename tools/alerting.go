@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -62,21 +60,3 @@ var AlertRulesWrite = mcpgrafana.MustTool(
 		"datasources:read", "alert.rules.external:read", "alert.rules.external:write",
 	),
 )
-
-// AddAlertingTools registers the alerting tools. Each write tool is registered
-// only when writeEnabled reports its name as enabled, so it can be opted back in
-// individually under --disable-write.
-func AddAlertingTools(s *mcp.Server, writeEnabled func(name string) bool) {
-	AlertRulesRead.Register(s)
-	if writeEnabled(AlertRulesWrite.Tool.Name) {
-		AlertRulesWrite.Register(s)
-	}
-	ManageRouting.Register(s)
-	if writeEnabled(AlertRoutingWrite.Tool.Name) {
-		AlertRoutingWrite.Register(s)
-	}
-	AlertSilencesRead.Register(s)
-	if writeEnabled(AlertSilencesWrite.Tool.Name) {
-		AlertSilencesWrite.Register(s)
-	}
-}
