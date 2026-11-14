@@ -125,6 +125,10 @@ func clearState(rules []alertRuleSummary) []alertRuleSummary {
 		rules[i].For = ""
 		rules[i].LastEvaluation = ""
 		rules[i].Annotations = nil
+		// Enrichment from the provisioning API, asserted separately.
+		rules[i].IsPaused = nil
+		rules[i].NotificationSettings = nil
+		rules[i].DatasourceUIDs = nil
 	}
 
 	return rules
@@ -140,6 +144,27 @@ func TestManageRules_List(t *testing.T) {
 		require.True(t, ok)
 		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
+	})
+
+	t.Run("list alert rules carries paused state and datasources", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
+		require.NoError(t, err)
+
+		list, ok := result.(*alertRuleList)
+		require.True(t, ok)
+		rules := list.Rules
+		byUID := make(map[string]alertRuleSummary, len(rules))
+		for _, rule := range rules {
+			byUID[rule.UID] = rule
+		}
+		require.Contains(t, byUID, rule1UID)
+		require.Contains(t, byUID, rulePausedUID)
+		require.NotNil(t, byUID[rule1UID].IsPaused)
+		require.False(t, *byUID[rule1UID].IsPaused)
+		require.Equal(t, []string{"prometheus"}, byUID[rule1UID].DatasourceUIDs)
+		require.NotNil(t, byUID[rulePausedUID].IsPaused)
+		require.True(t, *byUID[rulePausedUID].IsPaused)
 	})
 
 	t.Run("list alert rules normalizes state", func(t *testing.T) {
@@ -1016,8 +1041,8 @@ func TestManageRules_Update(t *testing.T) {
 				"team": "updated-team",
 			},
 			KeepFiringFor:               "5m",
-			IsPaused:                    false,
-			MissingSeriesEvalsToResolve: 2,
+			IsPaused:                    ptrBool(false),
+			MissingSeriesEvalsToResolve: ptrInt64(2),
 			OrgID:                       1,
 		})
 		require.NoError(t, err)
@@ -1329,10 +1354,10 @@ func TestManageRules_Update(t *testing.T) {
 			ExecErrState:                "OK",
 			For:                         "5m",
 			KeepFiringFor:               "10m",
-			IsPaused:                    true,
+			IsPaused:                    ptrBool(true),
 			Annotations:                 map[string]string{"summary": "test"},
 			Labels:                      map[string]string{"team": "test"},
-			MissingSeriesEvalsToResolve: 3,
+			MissingSeriesEvalsToResolve: ptrInt64(3),
 			OrgID:                       1,
 			DisableProvenance:           &disableProvenance,
 			NotificationSettings: toMap(t, &NotificationSettings{
@@ -1348,7 +1373,7 @@ func TestManageRules_Update(t *testing.T) {
 		updateParams.Operation = "update"
 		updateParams.Title = "Identical Test Alert - Updated"
 		updateParams.For = "15m"
-		updateParams.IsPaused = false
+		updateParams.IsPaused = ptrBool(false)
 		updateParams.NotificationSettings["receiver"] = "Email2"
 
 		_, err = manageRulesWrite(ctx, updateParams)
@@ -2096,3 +2121,5 @@ func TestManageRules_SearchFolder(t *testing.T) {
 	})
 }
 func ptrString(s string) *string { return &s }
+func ptrBool(b bool) *bool       { return &b }
+func ptrInt64(i int64) *int64    { return &i }

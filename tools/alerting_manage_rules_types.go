@@ -59,6 +59,15 @@ type alertRuleSummary struct {
 	// rules API "file" field). Mimir and Loki identify a rule group by
 	// namespace + group name, so group names alone can collide.
 	Namespace string `json:"namespace,omitempty"`
+
+	// Enrichment from the provisioning API for Grafana-managed rules, so a
+	// list exposes paused state, the notification target and the queried
+	// datasources without a per-rule 'get'. Left empty when provisioning config
+	// is unavailable (e.g. the token lacks provisioning read) or for
+	// datasource-managed rules.
+	IsPaused             *bool                                 `json:"is_paused,omitempty"`
+	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty"`
+	DatasourceUIDs       []string                              `json:"datasource_uids,omitempty"`
 }
 
 // alertRuleList is the 'list' result. Truncated means more rules may match;
@@ -73,6 +82,7 @@ type alertRuleList struct {
 // full configuration from the Provisioning API with runtime state from the
 // Prometheus rules API.
 type alertRuleDetail struct {
+	OrgID        int64             `json:"org_id,omitempty"`
 	UID          string            `json:"uid"`
 	Title        string            `json:"title"`
 	FolderUID    string            `json:"folder_uid"`
@@ -424,63 +434,43 @@ func (p CreateAlertRuleParams) validate() error {
 	return nil
 }
 
+// UpdateAlertRuleParams describes a partial update: only UID is required. Every
+// other field left at its zero value is taken from the existing rule.
 type UpdateAlertRuleParams struct {
 	UID                         string                `json:"uid" jsonschema:"required,description=The UID of the alert rule to update"`
-	Title                       string                `json:"title" jsonschema:"required,description=The title of the alert rule"`
-	RuleGroup                   string                `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
-	FolderUID                   string                `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
-	Condition                   string                `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
-	Data                        []*AlertQuery         `json:"data" jsonschema:"required,description=Array of alert query objects. RefID and relativeTimeRange are auto-assigned if omitted."`
-	NoDataState                 string                `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
-	ExecErrState                string                `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
-	For                         string                `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
-	KeepFiringFor               string                `json:"keepFiringFor,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
-	IsPaused                    bool                  `json:"isPaused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive"`
-	NotificationSettings        *NotificationSettings `json:"notificationSettings,omitempty" jsonschema:"description=Alert rule notification settings"`
-	Record                      *Record               `json:"record,omitempty" jsonschema:"description=Settings for a recording type alert rule"`
-	MissingSeriesEvalsToResolve int64                 `json:"missingSeriesEvalsToResolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
-	Annotations                 map[string]string     `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
-	Labels                      map[string]string     `json:"labels,omitempty" jsonschema:"description=Optional labels"`
-	OrgID                       int64                 `json:"orgID" jsonschema:"required,description=The organization ID"`
+	Title                       string                `json:"title,omitempty" jsonschema:"description=The title of the alert rule. Omit to keep the current value"`
+	RuleGroup                   string                `json:"ruleGroup,omitempty" jsonschema:"description=The rule group name. Omit to keep the current value"`
+	FolderUID                   string                `json:"folderUID,omitempty" jsonschema:"description=The folder UID. Omit to keep the current value"`
+	Condition                   string                `json:"condition,omitempty" jsonschema:"description=The query condition identifier (e.g. 'A'\\, 'B'). Omit to keep the current value"`
+	Data                        []*AlertQuery         `json:"data,omitempty" jsonschema:"description=Array of alert query objects. RefID and relativeTimeRange are auto-assigned if omitted. Omit to keep the current queries"`
+	NoDataState                 string                `json:"noDataState,omitempty" jsonschema:"description=State when no data (NoData\\, Alerting\\, OK). Omit to keep the current value"`
+	ExecErrState                string                `json:"execErrState,omitempty" jsonschema:"description=State on execution error (NoData\\, Alerting\\, OK). Omit to keep the current value"`
+	For                         string                `json:"for,omitempty" jsonschema:"description=Duration before alert fires (e.g. '5m'). Omit to keep the current value"`
+	KeepFiringFor               string                `json:"keepFiringFor,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Omit to keep the current value"`
+	IsPaused                    *bool                 `json:"isPaused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive. Omit to keep the current state"`
+	NotificationSettings        *NotificationSettings `json:"notificationSettings,omitempty" jsonschema:"description=Alert rule notification settings. Omit to keep the current settings"`
+	Record                      *Record               `json:"record,omitempty" jsonschema:"description=Settings for a recording type alert rule. Omit to keep the current settings"`
+	MissingSeriesEvalsToResolve *int64                `json:"missingSeriesEvalsToResolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Omit to keep the current value"`
+	Annotations                 map[string]string     `json:"annotations,omitempty" jsonschema:"description=Optional annotations. Omit to keep the current annotations"`
+	Labels                      map[string]string     `json:"labels,omitempty" jsonschema:"description=Optional labels. Omit to keep the current labels"`
+	OrgID                       int64                 `json:"orgID,omitempty" jsonschema:"description=The organization ID. Omit to keep the current value"`
 	DisableProvenance           *bool                 `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
 }
 
+// validate checks only what an update needs up front: the rule UID, plus the
+// shape of any field that was supplied. Fields that were not supplied are taken
+// from the existing rule in updateAlertRule, nested notification settings and
+// record fields included, and the merged rule is validated there before it is
+// sent.
 func (p UpdateAlertRuleParams) validate() error {
 	if p.UID == "" {
 		return fmt.Errorf("rule_uid is required")
 	}
-	if p.Title == "" {
-		return fmt.Errorf("title is required")
+	if p.Data != nil && len(p.Data) == 0 {
+		return fmt.Errorf("data must contain at least one query when supplied; omit it to keep the current queries")
 	}
-	if p.RuleGroup == "" {
-		return fmt.Errorf("rule_group is required")
-	}
-	if p.FolderUID == "" {
-		return fmt.Errorf("folder_uid is required")
-	}
-	if p.Condition == "" {
-		return fmt.Errorf("condition is required")
-	}
-	if p.Data == nil {
-		return fmt.Errorf("data is required")
-	}
-	if p.NoDataState == "" {
-		return fmt.Errorf("no_data_state is required")
-	}
-	if p.ExecErrState == "" {
-		return fmt.Errorf("exec_err_state is required")
-	}
-
-	if p.Record != nil {
-		if err := p.Record.validate(); err != nil {
-			return err
-		}
-	}
-	if p.For == "" {
-		return fmt.Errorf("for duration is required")
-	}
-	if p.OrgID <= 0 {
-		return fmt.Errorf("org_id is required and must be greater than 0")
+	if p.OrgID < 0 {
+		return fmt.Errorf("org_id must be greater than 0 when supplied")
 	}
 	return nil
 }
@@ -599,12 +589,13 @@ type listFilterParams struct {
 	RuleLimit      int      `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
 	Cursor         string   `json:"cursor,omitempty" jsonschema:"description=Pagination cursor from a previous 'list' response. Set it to next_cursor and resend the same filters to get the next page."`
 	LabelSelectors []string `json:"label_selectors,omitempty" jsonschema:"description=Prometheus-style selectors to filter alert rules by labels. Each string is a selector e.g. '{severity=\"critical\"\\, team=~\"backend.*\"}'. All selectors must match (AND)."`
-	LimitAlerts    int      `json:"limit_alerts,omitempty" jsonschema:"description=Limit alert instances per rule. For list: 0 omits alerts. For get: <=0 defaults to 200. Max 200."`
+	LimitAlerts    int      `json:"limit_alerts,omitempty" jsonschema:"description=Number of alert instances to include per rule (0 or omitted = none\\, max 200)."`
 	SearchFolder   string   `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid."`
 	SearchRuleName string   `json:"search_rule_name,omitempty" jsonschema:"description=Search alert rule names/titles using partial matching. Requires Grafana 12.4+ (for 'list' operation)"`
 	States         []string `json:"states,omitempty" jsonschema:"description=Filter by alert state: firing\\, pending\\, normal\\, recovering\\, nodata\\, error (for 'list' operation)"`
 	RuleType       string   `json:"rule_type,omitempty" jsonschema:"enum=alerting,enum=recording,description=Filter by rule type (for 'list' operation)"`
 	Matchers       []string `json:"matchers,omitempty" jsonschema:"description=Label matchers to filter alert instances. Each string is a Prometheus-style matcher e.g. 'severity=\"critical\"'\\, 'env!=\"dev\"'\\, 'team=~\"backend.*\"'. Requires Grafana 12.4+."`
+	Receiver       *string  `json:"receiver,omitempty" jsonschema:"description=Filter Grafana-managed rules by notification receiver/contact point name (for 'list' operation). Matches the per-rule notification_settings.receiver now included in list output."`
 }
 
 // ManageRulesReadParams is the param struct for alerting_rules_read.
@@ -621,6 +612,11 @@ type ManageRulesReadParams struct {
 func (p ManageRulesReadParams) validate() error {
 	switch p.Operation {
 	case "list":
+		// Only Grafana-managed rules carry notification settings; datasource-managed
+		// rules are routed by their labels, so there is no receiver to filter on.
+		if p.Receiver != nil && *p.Receiver != "" && p.DatasourceUID != nil && *p.DatasourceUID != "" {
+			return fmt.Errorf("receiver filters Grafana-managed rules only and cannot be combined with datasource_uid")
+		}
 		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 		return err
 	case "get":
@@ -649,25 +645,25 @@ type ManageRulesWriteParams struct {
 	Expression         string `json:"expression,omitempty" jsonschema:"description=PromQL or LogQL expression for datasource-managed creation."`
 	EvaluationInterval string `json:"evaluation_interval,omitempty" jsonschema:"description=Interval for a new datasource rule group (default 1m). Must match an existing group's interval if supplied."`
 
-	Operation                   string            `json:"operation" jsonschema:"required,enum=create,enum=update,enum=delete,description=The operation to perform: 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, use 'update' with the rule's full current configuration plus your changes."`
+	Operation                   string            `json:"operation" jsonschema:"required,enum=create,enum=update,enum=delete,description=The operation to perform: 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, use 'update' with rule_uid and only the fields to change; omitted fields keep their current values."`
 	RuleUID                     string            `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'update' and 'delete'; optional for 'create')"`
 	DatasourceUID               *string           `json:"datasource_uid,omitempty" jsonschema:"description=Datasource UID for managed_by=datasource creation. Omit to select the sole compatible datasource. Ambiguity returns candidates for selection."`
-	Title                       string            `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create'\\, 'update')"`
-	RuleGroup                   string            `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
-	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. Required destination folder for Grafana-managed 'create'/'update'."`
-	Condition                   string            `json:"condition,omitempty" jsonschema:"description=Grafana-managed only. The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
-	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Grafana-managed only. Array of alert query objects (required for 'create'/'update'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
-	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=Grafana-managed only. State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=Grafana-managed only. State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m'. Required for Grafana-managed create/update. Optional for datasource-managed rules (default 0s)."`
+	Title                       string            `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create')"`
+	RuleGroup                   string            `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create')"`
+	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. Required destination folder for Grafana-managed 'create'."`
+	Condition                   string            `json:"condition,omitempty" jsonschema:"description=Grafana-managed only. The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create')"`
+	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Grafana-managed only. Array of alert query objects (required for 'create'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
+	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=Grafana-managed only. State when no data: NoData\\, Alerting\\, OK (required for 'create')"`
+	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=Grafana-managed only. State on execution error: NoData\\, Alerting\\, OK (required for 'create')"`
+	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m'. Required for Grafana-managed create. Optional for datasource-managed rules (default 0s)."`
 	KeepFiringFor               string            `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
-	IsPaused                    bool              `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
-	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string). snake_case keys are also accepted."`
-	Record                      map[string]any    `json:"record,omitempty" jsonschema:"description=Recording rule config. Fields: from (string\\, required - ref ID e.g. 'A')\\, metric (string\\, required - metric name)\\, targetDatasourceUid (string\\, optional)."`
-	MissingSeriesEvalsToResolve int64             `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
+	IsPaused                    *bool             `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive. Default false on create"`
+	NotificationSettings        map[string]any    `json:"notification_settings,omitempty" jsonschema:"description=Notification settings object. Fields: receiver (string\\, required)\\, groupBy ([]string)\\, groupWait/groupInterval/repeatInterval (duration strings)\\, muteTimeIntervals/activeTimeIntervals ([]string). snake_case keys are also accepted. On 'update' only the fields supplied change."`
+	Record                      map[string]any    `json:"record,omitempty" jsonschema:"description=Recording rule config. Fields: from (string\\, required - ref ID e.g. 'A')\\, metric (string\\, required - metric name)\\, targetDatasourceUid (string\\, optional). On 'update' only the fields supplied change."`
+	MissingSeriesEvalsToResolve *int64            `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
-	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=Grafana-managed organization ID (required for 'create'\\, 'update')"`
+	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=Grafana-managed organization ID (required for 'create')"`
 	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
 }
 
@@ -810,6 +806,11 @@ func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) 
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid record: %w", err)
 	}
+	isPaused := p.IsPaused != nil && *p.IsPaused
+	missingEvals := int64(0)
+	if p.MissingSeriesEvalsToResolve != nil {
+		missingEvals = *p.MissingSeriesEvalsToResolve
+	}
 	params := CreateAlertRuleParams{
 		Title:                       p.Title,
 		RuleGroup:                   p.RuleGroup,
@@ -824,10 +825,10 @@ func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) 
 		OrgID:                       p.OrgID,
 		DisableProvenance:           p.DisableProvenance,
 		KeepFiringFor:               p.KeepFiringFor,
-		IsPaused:                    p.IsPaused,
+		IsPaused:                    isPaused,
 		NotificationSettings:        ns,
 		Record:                      rec,
-		MissingSeriesEvalsToResolve: p.MissingSeriesEvalsToResolve,
+		MissingSeriesEvalsToResolve: missingEvals,
 	}
 	if p.RuleUID != "" {
 		params.UID = &p.RuleUID

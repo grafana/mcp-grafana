@@ -285,7 +285,24 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 		}
 		err := params.validate()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "org_id is required and must be greater than 0")
+		require.Contains(t, err.Error(), "org_id must be greater than 0 when supplied")
+	})
+
+	t.Run("only UID is required", func(t *testing.T) {
+		paused := true
+		require.NoError(t, UpdateAlertRuleParams{UID: "test-uid"}.validate())
+		require.NoError(t, UpdateAlertRuleParams{UID: "test-uid", IsPaused: &paused}.validate())
+	})
+
+	t.Run("supplied data must not be empty", func(t *testing.T) {
+		err := UpdateAlertRuleParams{UID: "test-uid", Data: []*AlertQuery{}}.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "data must contain at least one query")
+	})
+
+	t.Run("a partial record is accepted and merged with the stored one later", func(t *testing.T) {
+		metric := "m"
+		require.NoError(t, UpdateAlertRuleParams{UID: "test-uid", Record: &Record{Metric: &metric}}.validate())
 	})
 
 	t.Run("with disableProvenance true", func(t *testing.T) {

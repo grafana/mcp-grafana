@@ -34,7 +34,7 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
 			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors, args.Cursor)
 		}
-		return listGrafanaRules(ctx, opts, selectors, args.Cursor)
+		return listGrafanaRules(ctx, opts, selectors, args.Receiver, args.Cursor)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -135,6 +135,9 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 		MissingSeriesEvalsToResolve: provisioned.MissingSeriesEvalsToResolve,
 	}
 
+	if provisioned.OrgID != nil {
+		detail.OrgID = *provisioned.OrgID
+	}
 	if provisioned.Title != nil {
 		detail.Title = *provisioned.Title
 	}
@@ -196,7 +199,7 @@ func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {
 	return nil
 }
 
-func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []Selector, cursor string) (*alertRuleList, error) {
+func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []Selector, receiver *string, cursor string) (*alertRuleList, error) {
 	// Bound the entire scan, rather than giving every page a fresh timeout.
 	ctx, cancel := context.WithTimeout(ctx, mcpgrafana.GrafanaConfigFromContext(ctx).TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout))
 	defer cancel()
@@ -214,6 +217,21 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	// page; collectRules keeps paging until the limit is met after filtering.
 	pageOpts.RuleLimit = limit
 
+	// The receiver filter needs each rule's notification settings, which only
+	// the provisioning API has. Read them once up front and filter every page
+	// as it is fetched, so collectRules keeps paging until the limit is met
+	// after filtering, as it does for label selectors. Without the provisioning
+	// config the filter cannot be answered: filtering unenriched rules would
+	// match nothing and read as "no rule uses this receiver".
+	filterByReceiver := receiver != nil && *receiver != ""
+	var provisioned map[string]*models.ProvisionedAlertRule
+	if filterByReceiver {
+		provisioned, err = getProvisionedRulesByUID(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing alert rules: cannot filter by receiver %q because the rules' notification settings could not be read: %w", *receiver, err)
+		}
+	}
+
 	fetch := func(ctx context.Context, token string) ([]alertRuleSummary, string, error) {
 		pageOpts.GroupNextToken = token
 		resp, err := client.GetRules(ctx, &pageOpts)
@@ -227,9 +245,31 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 				return nil, "", fmt.Errorf("filtering alert rules: %w", err)
 			}
 		}
+		if filterByReceiver {
+			page = filterSummariesByReceiver(applyProvisionedRules(page, provisioned), *receiver)
+		}
 		return page, resp.Data.NextToken, nil
 	}
-	return collectRules(ctx, fetch, limit, cursor)
+	list, err := collectRules(ctx, fetch, limit, cursor)
+	if err != nil {
+		return nil, err
+	}
+	if filterByReceiver {
+		return list, nil
+	}
+
+	// Enrich each rule with its provisioning config (paused state,
+	// notification settings, queried datasources) using a single bulk
+	// provisioning call, so callers no longer issue one 'get' per rule.
+	// Enrichment is best-effort for a plain list: the core list already
+	// succeeded, so it is returned unenriched when provisioning is unavailable.
+	var enrichErr error
+	list.Rules, enrichErr = enrichGrafanaManagedSummaries(ctx, list.Rules)
+	if enrichErr != nil {
+		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
+			"listing alert rules: could not enrich with provisioning config", "error", enrichErr)
+	}
+	return list, nil
 }
 
 // rulePageFetcher returns one filtered page of rules starting at token, and
@@ -300,6 +340,95 @@ func collectRules(ctx context.Context, fetch rulePageFetcher, limit int, cursor 
 		seenTokens[next] = struct{}{}
 		at = ruleCursor{Token: next}
 	}
+}
+
+// enrichGrafanaManagedSummaries fills each summary's provisioning-derived
+// fields (is_paused, notification_settings, datasource_uids) from a single bulk
+// GET of all provisioned rules, joined by UID. When the provisioning config
+// cannot be read (e.g. the token lacks provisioning read) it returns the
+// summaries unenriched together with the error, and the caller decides whether
+// the unenriched list is still a valid answer.
+func enrichGrafanaManagedSummaries(ctx context.Context, summaries []alertRuleSummary) ([]alertRuleSummary, error) {
+	if len(summaries) == 0 {
+		return summaries, nil
+	}
+	byUID, err := getProvisionedRulesByUID(ctx)
+	if err != nil {
+		return summaries, err
+	}
+	return applyProvisionedRules(summaries, byUID), nil
+}
+
+// getProvisionedRulesByUID reads every provisioned alert rule in one bulk GET
+// and indexes it by UID.
+func getProvisionedRulesByUID(ctx context.Context) (map[string]*models.ProvisionedAlertRule, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	if c == nil || c.GrafanaHTTPAPI == nil || c.Provisioning == nil {
+		return nil, fmt.Errorf("no Grafana provisioning client available")
+	}
+	resp, err := c.Provisioning.GetAlertRulesWithParams(
+		provisioning.NewGetAlertRulesParamsWithContext(ctx),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get provisioned alert rules: %w", err)
+	}
+	byUID := make(map[string]*models.ProvisionedAlertRule, len(resp.Payload))
+	for _, p := range resp.Payload {
+		if p != nil && p.UID != "" {
+			byUID[p.UID] = p
+		}
+	}
+	return byUID, nil
+}
+
+// applyProvisionedRules fills each summary's provisioning-derived fields from
+// byUID. Summaries without a provisioned rule are left as they are.
+func applyProvisionedRules(summaries []alertRuleSummary, byUID map[string]*models.ProvisionedAlertRule) []alertRuleSummary {
+	for i := range summaries {
+		p, ok := byUID[summaries[i].UID]
+		if !ok {
+			continue
+		}
+		paused := p.IsPaused
+		summaries[i].IsPaused = &paused
+		summaries[i].NotificationSettings = p.NotificationSettings
+		summaries[i].DatasourceUIDs = datasourceUIDsFromQueries(p.Data)
+	}
+	return summaries
+}
+
+// datasourceUIDsFromQueries returns the distinct datasource UIDs a rule queries,
+// skipping the server-side expression node (__expr__ / -100).
+func datasourceUIDsFromQueries(queries []*models.AlertQuery) []string {
+	seen := make(map[string]struct{})
+	var uids []string
+	for _, q := range queries {
+		if q == nil || q.DatasourceUID == "" {
+			continue
+		}
+		if q.DatasourceUID == "__expr__" || q.DatasourceUID == "-100" {
+			continue
+		}
+		if _, dup := seen[q.DatasourceUID]; dup {
+			continue
+		}
+		seen[q.DatasourceUID] = struct{}{}
+		uids = append(uids, q.DatasourceUID)
+	}
+	return uids
+}
+
+// filterSummariesByReceiver keeps rules whose notification receiver matches name.
+func filterSummariesByReceiver(summaries []alertRuleSummary, name string) []alertRuleSummary {
+	filtered := make([]alertRuleSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if s.NotificationSettings != nil &&
+			s.NotificationSettings.Receiver != nil &&
+			*s.NotificationSettings.Receiver == name {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
 }
 
 func filterSummaryByRuleType(summaries []alertRuleSummary, ruleType string) []alertRuleSummary {
@@ -494,47 +623,22 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
-	duration, err := time.ParseDuration(args.For)
+	// The provisioning PUT replaces the whole rule, so any field the caller omits
+	// would be reset. Fetch the existing rule first and overlay only the fields
+	// that were supplied, so a partial update (e.g. pausing a rule or changing
+	// one label) leaves everything else exactly as stored.
+	existing, err := c.Provisioning.GetAlertRuleWithParams(
+		provisioning.NewGetAlertRuleParamsWithContext(ctx).WithUID(args.UID),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("update alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
+		return nil, fmt.Errorf("update alert rule: fetch existing %s: %w", args.UID, err)
 	}
-
-	convertedData, err := convertAlertQueries(args.Data)
-	if err != nil {
+	rule := existing.Payload
+	if rule == nil {
+		return nil, fmt.Errorf("update alert rule: fetch existing %s: empty response", args.UID)
+	}
+	if err := applyAlertRuleUpdate(rule, args); err != nil {
 		return nil, fmt.Errorf("update alert rule: %w", err)
-	}
-
-	keepFiringFor := time.Duration(0)
-	if args.KeepFiringFor != "" {
-		keepFiringFor, err = time.ParseDuration(args.KeepFiringFor)
-		if err != nil {
-			return nil, fmt.Errorf("update alert rule: invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
-		}
-	}
-
-	notificationSettings := convertNotificationSettings(args.NotificationSettings)
-
-	record := convertRecord(args.Record)
-
-	// MissingSeriesEvalsToResolve, Provenance are set to defaults
-	rule := &models.ProvisionedAlertRule{
-		UID:                         args.UID,
-		Title:                       &args.Title,
-		RuleGroup:                   &args.RuleGroup,
-		FolderUID:                   &args.FolderUID,
-		Condition:                   &args.Condition,
-		Data:                        convertedData,
-		NoDataState:                 &args.NoDataState,
-		ExecErrState:                &args.ExecErrState,
-		For:                         func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
-		Annotations:                 args.Annotations,
-		Labels:                      args.Labels,
-		OrgID:                       &args.OrgID,
-		IsPaused:                    args.IsPaused,
-		MissingSeriesEvalsToResolve: args.MissingSeriesEvalsToResolve,
-		KeepFiringFor:               func() strfmt.Duration { d := strfmt.Duration(keepFiringFor); return d }(),
-		NotificationSettings:        notificationSettings,
-		Record:                      record,
 	}
 
 	if err := rule.Validate(strfmt.Default); err != nil {
@@ -558,6 +662,150 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 	}
 
 	return response.Payload, nil
+}
+
+// applyAlertRuleUpdate overlays the fields supplied in args onto rule, which is
+// the rule as currently stored. A field left at its zero value in args was not
+// supplied and keeps the stored value.
+func applyAlertRuleUpdate(rule *models.ProvisionedAlertRule, args UpdateAlertRuleParams) error {
+	rule.UID = args.UID
+	if args.Title != "" {
+		rule.Title = &args.Title
+	}
+	if args.RuleGroup != "" {
+		rule.RuleGroup = &args.RuleGroup
+	}
+	if args.FolderUID != "" {
+		rule.FolderUID = &args.FolderUID
+	}
+	if args.Condition != "" {
+		rule.Condition = &args.Condition
+	}
+	if args.Data != nil {
+		convertedData, err := convertAlertQueries(args.Data)
+		if err != nil {
+			return err
+		}
+		rule.Data = convertedData
+	}
+	if args.NoDataState != "" {
+		rule.NoDataState = &args.NoDataState
+	}
+	if args.ExecErrState != "" {
+		rule.ExecErrState = &args.ExecErrState
+	}
+	if args.For != "" {
+		duration, err := time.ParseDuration(args.For)
+		if err != nil {
+			return fmt.Errorf("invalid duration format for parameter for: %q: %w", args.For, err)
+		}
+		d := strfmt.Duration(duration)
+		rule.For = &d
+	}
+	if args.OrgID > 0 {
+		rule.OrgID = &args.OrgID
+	}
+	if args.Labels != nil {
+		rule.Labels = args.Labels
+	}
+	if args.Annotations != nil {
+		rule.Annotations = args.Annotations
+	}
+	if args.IsPaused != nil {
+		rule.IsPaused = *args.IsPaused
+	}
+	if args.KeepFiringFor != "" {
+		keepFiringFor, err := time.ParseDuration(args.KeepFiringFor)
+		if err != nil {
+			return fmt.Errorf("invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
+		}
+		rule.KeepFiringFor = strfmt.Duration(keepFiringFor)
+	}
+	if args.NotificationSettings != nil {
+		rule.NotificationSettings = mergeNotificationSettings(rule.NotificationSettings, args.NotificationSettings)
+	}
+	if args.Record != nil {
+		rule.Record = mergeRecord(rule.Record, args.Record)
+	}
+	if args.MissingSeriesEvalsToResolve != nil {
+		rule.MissingSeriesEvalsToResolve = *args.MissingSeriesEvalsToResolve
+	}
+
+	// Grafana ignores noDataState and execErrState on recording rules and returns
+	// them empty, which the client-side enum validation rejects. Send the same
+	// placeholder a full update has to pass for these ignored fields.
+	if rule.Record != nil {
+		if rule.NoDataState == nil || *rule.NoDataState == "" {
+			noData := "OK"
+			rule.NoDataState = &noData
+		}
+		if rule.ExecErrState == nil || *rule.ExecErrState == "" {
+			execErr := "OK"
+			rule.ExecErrState = &execErr
+		}
+	}
+	return nil
+}
+
+// mergeNotificationSettings overlays the supplied notification settings onto
+// the stored ones by the same rule as the top level: a field left at its zero
+// value was not supplied and keeps the stored value. An empty list is a
+// supplied value and clears the stored list. Replacing the object as a whole
+// would silently drop grouping, timing and mute intervals when a caller changes
+// only the receiver.
+func mergeNotificationSettings(stored *models.AlertRuleNotificationSettings, in *NotificationSettings) *models.AlertRuleNotificationSettings {
+	if stored == nil {
+		if in.Receiver == nil && in.GroupBy == nil && in.GroupWait == "" && in.GroupInterval == "" &&
+			in.RepeatInterval == "" && in.MuteTimeIntervals == nil && in.ActiveTimeIntervals == nil {
+			return nil
+		}
+		return convertNotificationSettings(in)
+	}
+	merged := *stored
+	if in.Receiver != nil {
+		merged.Receiver = in.Receiver
+	}
+	if in.GroupBy != nil {
+		merged.GroupBy = in.GroupBy
+	}
+	if in.GroupWait != "" {
+		merged.GroupWait = in.GroupWait
+	}
+	if in.GroupInterval != "" {
+		merged.GroupInterval = in.GroupInterval
+	}
+	if in.RepeatInterval != "" {
+		merged.RepeatInterval = in.RepeatInterval
+	}
+	if in.MuteTimeIntervals != nil {
+		merged.MuteTimeIntervals = in.MuteTimeIntervals
+	}
+	if in.ActiveTimeIntervals != nil {
+		merged.ActiveTimeIntervals = in.ActiveTimeIntervals
+	}
+	return &merged
+}
+
+// mergeRecord overlays the supplied recording-rule settings onto the stored
+// ones; fields that were not supplied keep their stored values.
+func mergeRecord(stored *models.Record, in *Record) *models.Record {
+	if stored == nil {
+		if in.From == nil && in.Metric == nil && in.TargetDatasourceUID == "" {
+			return nil
+		}
+		return convertRecord(in)
+	}
+	merged := *stored
+	if in.From != nil {
+		merged.From = in.From
+	}
+	if in.Metric != nil {
+		merged.Metric = in.Metric
+	}
+	if in.TargetDatasourceUID != "" {
+		merged.TargetDatasourceUID = in.TargetDatasourceUID
+	}
+	return &merged
 }
 
 func deleteAlertRule(ctx context.Context, args DeleteAlertRuleParams) (string, error) {

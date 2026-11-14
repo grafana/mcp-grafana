@@ -19,6 +19,8 @@ When to use:
 - Finding alert rules by state, folder, group, or name
 - Comparing rule versions to see what changed
 
+The 'list' operation returns per-rule is_paused, notification_settings (receiver) and datasource_uids, so a paused-state or notification-target audit usually needs no follow-up 'get' per rule. Filter the list by 'receiver' to find rules notifying a given contact point.
+
 Read-only: does not create, update, or delete rules, and does not show notification routing.`
 
 const alertRulesWriteDescription = `Create, update, and delete Grafana alert rules.
@@ -26,7 +28,7 @@ const alertRulesWriteDescription = `Create, update, and delete Grafana alert rul
 When to use:
 - Creating, updating, or deleting alert rules
 
-Operation 'update' replaces the whole rule: it takes all required fields, not only the changed ones.
+Operation 'update' is a partial update: supply rule_uid and only the fields to change. Every omitted field keeps its current value from the existing rule; only 'create' requires the full set of rule fields. Set is_paused explicitly (true/false) to change the paused state.
 
 Creation defaults to Grafana-managed, even when queries use an external datasource.
 Use managed_by='datasource' when requested or when established conversation or environment context clearly identifies a datasource-managed workflow. An external query datasource or an empty Grafana rule list alone is insufficient. Ask if context conflicts.
