@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -17,6 +18,63 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// create_annotation accepts ISO-8601 timestamps.
+func TestParseISOToEpochMs(t *testing.T) {
+	want := time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC).UnixMilli()
+
+	t.Run("RFC3339", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02T15:04:05Z")
+		require.NoError(t, err)
+		assert.Equal(t, want, ms)
+	})
+
+	t.Run("RFC3339 with offset", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02T10:04:05-05:00")
+		require.NoError(t, err)
+		assert.Equal(t, want, ms)
+	})
+
+	t.Run("date only", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02")
+		require.NoError(t, err)
+		assert.Equal(t, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC).UnixMilli(), ms)
+	})
+
+	t.Run("sub-second precision", func(t *testing.T) {
+		ms, err := parseISOToEpochMs("2026-01-02T15:04:05.250Z")
+		require.NoError(t, err)
+		assert.Equal(t, want+250, ms)
+	})
+
+	t.Run("no offset is read as UTC", func(t *testing.T) {
+		for value, wantMs := range map[string]int64{
+			"2026-01-02T15:04:05":     want,
+			"2026-01-02T15:04:05.250": want + 250,
+			"2026-01-02T15:04":        want - 5000,
+		} {
+			ms, err := parseISOToEpochMs(value)
+			require.NoError(t, err, value)
+			assert.Equal(t, wantMs, ms, value)
+		}
+	})
+
+	t.Run("minute precision with Z or an offset", func(t *testing.T) {
+		for _, value := range []string{"2026-01-02T15:04Z", "2026-01-02T10:04-05:00", "2026-01-02T16:04+01:00"} {
+			ms, err := parseISOToEpochMs(value)
+			require.NoError(t, err, value)
+			assert.Equal(t, want-5000, ms, value)
+		}
+	})
+
+	t.Run("invalid errors", func(t *testing.T) {
+		for _, value := range []string{"not-a-time", "2026-01-02 15:04:05", "2026-13-02T15:04:05", "1767366245000", ""} {
+			_, err := parseISOToEpochMs(value)
+			require.Error(t, err, value)
+			assert.Contains(t, err.Error(), "ISO-8601", value)
+		}
+	})
+}
 
 func mockCtxWithClient(server *httptest.Server) context.Context {
 	u, _ := url.Parse(server.URL)
@@ -136,6 +194,15 @@ func TestCreateAnnotation_GraphiteFormat_WithTagsAndData(t *testing.T) {
 
 func TestCreateAnnotation_SendsCorrectBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// createAnnotation reads the stored annotation back by id.
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/api/annotations/1", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":1,"panelId":7,"text":"hello"}`))
+			return
+		}
+
 		assert.Equal(t, "/api/annotations", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
 
@@ -225,6 +292,15 @@ func TestUpdateAnnotation_UsesPatchMethod(t *testing.T) {
 	timeEnd := int64(222)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// updateAnnotation reads the stored annotation back by id.
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/api/annotations/55", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":55,"text":"hello"}`))
+			return
+		}
+
 		assert.Equal(t, "/api/annotations/"+strconv.Itoa(55), r.URL.Path)
 		assert.Equal(t, "PATCH", r.Method)
 
@@ -256,6 +332,15 @@ func TestUpdateAnnotation_UsesPatchMethod(t *testing.T) {
 
 func TestUpdateAnnotation_SendsOnlyProvidedFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// updateAnnotation reads the stored annotation back by id.
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/api/annotations/9", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":9,"text":"patched"}`))
+			return
+		}
+
 		assert.Equal(t, "/api/annotations/"+strconv.Itoa(9), r.URL.Path)
 		assert.Equal(t, "PATCH", r.Method)
 
