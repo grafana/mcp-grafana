@@ -637,8 +637,8 @@ func (dt *disabledTools) categoryRegistersTools(e toolEntry, enabledTools []stri
 	if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
 		return false
 	}
-	// AddAssistantTools registers nothing when write tools are disabled.
-	if e.category == "assistant" && dt.write {
+	// AddAssistantTools and AddFolderTools register nothing when write tools are disabled.
+	if (e.category == "assistant" || e.category == "folder") && dt.write {
 		return false
 	}
 	// query_datasource is a source of render_grafana_app, so it is as visible as that source and that tool.

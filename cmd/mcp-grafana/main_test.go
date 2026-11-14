@@ -1898,6 +1898,15 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 		assert.NotContains(t, disabled, "assistant")
 	})
 
+	t.Run("folder is empty without write tools", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "folder,search", write: true}
+		enabled, _ := dt.categoryReport()
+		instructions := (&disabledTools{enabledTools: "folder,search", write: true}).buildInstructions()
+
+		assert.NotContains(t, enabled, "folder")
+		assert.NotContains(t, instructions, "Folders")
+	})
+
 	t.Run("assistant is reported when write tools are enabled", func(t *testing.T) {
 		dt := disabledTools{enabledTools: "assistant"}
 		enabled, _ := dt.categoryReport()
