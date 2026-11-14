@@ -86,11 +86,12 @@ type CreateAnnotationInput struct {
 }
 
 // parseISOToEpochMs parses an ISO-8601 timestamp into epoch milliseconds: an
-// RFC3339 timestamp with an offset or Z, a timestamp without an offset, or a
-// bare date, each with or without sub-second precision where that applies. A
-// value without an offset is taken as UTC, as elsewhere in this package.
+// RFC3339 timestamp with an offset or Z, a timestamp without an offset, a
+// minute-precision timestamp with or without an offset, or a bare date, each
+// with or without sub-second precision where that applies. A value without an
+// offset is taken as UTC, as elsewhere in this package.
 func parseISOToEpochMs(s string) (int64, error) {
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999999999", "2006-01-02T15:04", "2006-01-02"} {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999999999", "2006-01-02T15:04Z07:00", "2006-01-02T15:04", "2006-01-02"} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t.UnixMilli(), nil
 		}

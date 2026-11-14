@@ -59,6 +59,14 @@ func TestParseISOToEpochMs(t *testing.T) {
 		}
 	})
 
+	t.Run("minute precision with Z or an offset", func(t *testing.T) {
+		for _, value := range []string{"2026-01-02T15:04Z", "2026-01-02T10:04-05:00", "2026-01-02T16:04+01:00"} {
+			ms, err := parseISOToEpochMs(value)
+			require.NoError(t, err, value)
+			assert.Equal(t, want-5000, ms, value)
+		}
+	})
+
 	t.Run("invalid errors", func(t *testing.T) {
 		for _, value := range []string{"not-a-time", "2026-01-02 15:04:05", "2026-13-02T15:04:05", "1767366245000", ""} {
 			_, err := parseISOToEpochMs(value)
