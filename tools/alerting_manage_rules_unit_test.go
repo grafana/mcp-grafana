@@ -1911,3 +1911,34 @@ func TestParseSelectorStrings_UnquotedValueShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateAlertRule_ConflictSaysWhy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPut, r.Method)
+		require.Equal(t, "/api/v1/provisioning/alert-rules/test-uid", r.URL.Path)
+		require.Equal(t, "true", r.Header.Get("X-Disable-Provenance"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"message":"cannot update with provided provenance '', needs 'api'"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: server.URL})
+	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, server.URL, "test-api-key", nil))
+
+	_, err := updateAlertRule(ctx, UpdateAlertRuleParams{
+		UID:          "test-uid",
+		Title:        "Test Rule",
+		RuleGroup:    "test-group",
+		FolderUID:    "test-folder",
+		Condition:    "A",
+		Data:         []*AlertQuery{{RefID: "A"}},
+		NoDataState:  "OK",
+		ExecErrState: "OK",
+		For:          "5m",
+		OrgID:        1,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disable_provenance=false")
+	require.Contains(t, err.Error(), "status 409")
+}

@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -554,6 +557,12 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 
 	response, err := c.Provisioning.PutAlertRule(params)
 	if err != nil {
+		// The client has no type for 409, so Grafana's message is lost. It is
+		// returned when the rule's stored provenance differs from the one sent.
+		var apiErr *runtime.APIError
+		if disableProvenance && errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict) {
+			return nil, fmt.Errorf("update alert rule %s: the rule's provenance does not match the one sent. disable_provenance defaults to true, which clears it, and Grafana rejects that for a rule provisioned through the API (provenance 'api'). Retry with disable_provenance=false: %w", args.UID, err)
+		}
 		return nil, fmt.Errorf("update alert rule %s: %w", args.UID, err)
 	}
 
