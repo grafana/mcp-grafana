@@ -1051,29 +1051,10 @@ func effectiveSSEKeepAlive(transport string, interval time.Duration) time.Durati
 // taken before any proxied tool is registered: those names come from a remote
 // MCP server and collapse to a single pseudo-name instead.
 func nativeToolNames(dt disabledTools) map[string]struct{} {
-	bare := mcp.NewServer(&mcp.Implementation{Name: "enumerator", Version: "0"}, nil)
-	dt.processTools(bare)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	go func() { _ = bare.Run(ctx, serverTransport) }()
-	client := mcp.NewClient(&mcp.Implementation{Name: "tool-enumerator", Version: "0"}, nil)
-	session, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		slog.Warn("failed to enumerate native tools for usage stats", "error", err)
-		return nil
-	}
-	defer func() { _ = session.Close() }()
-	result, err := session.ListTools(ctx, nil)
-	if err != nil {
-		slog.Warn("failed to list native tools for usage stats", "error", err)
-		return nil
-	}
-	names := make(map[string]struct{}, len(result.Tools))
-	for _, t := range result.Tools {
-		names[t.Name] = struct{}{}
+	selected := tools.Resolve(dt.policy()).Tools
+	names := make(map[string]struct{}, len(selected))
+	for _, t := range selected {
+		names[t.Tool.Name] = struct{}{}
 	}
 	return names
 }
