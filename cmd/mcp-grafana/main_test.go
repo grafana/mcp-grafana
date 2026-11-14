@@ -1730,6 +1730,40 @@ func TestProcessTools_EnableWriteToolsRestoresSingleAlertingWriteTool(t *testing
 	}
 }
 
+func TestProcessTools_EnableWriteToolsRestoresUpdateDashboard(t *testing.T) {
+	readWrite := listAllCategoryTools(t, disabledTools{})
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "update_dashboard"})
+	require.Contains(t, listed, "update_dashboard")
+	assert.Equal(t, readWrite["update_dashboard"], listed["update_dashboard"])
+	assert.NotContains(t, listed, "create_folder", "the override must not re-enable other write tools")
+}
+
+func TestProcessTools_EnableWriteToolsRestoresFullAPIRequest(t *testing.T) {
+	full := listAllCategoryTools(t, disabledTools{})["grafana_api_request"]
+	readOnly := listAllCategoryTools(t, disabledTools{write: true})["grafana_api_request"]
+	require.NotEqual(t, full, readOnly, "--disable-write should register a read-only variant")
+
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "grafana_api_request"})
+	assert.Equal(t, full, listed["grafana_api_request"])
+	assert.NotContains(t, listed, "update_dashboard", "the override must not re-enable other write tools")
+
+	noQuery := listAllCategoryTools(t, disabledTools{write: true, query: true, writeToolOverrides: "grafana_api_request"})
+	assert.Equal(t, full, noQuery["grafana_api_request"], "the full variant runs no query tool, so --disable-query keeps it, as it does without --disable-write")
+}
+
+func TestWarnEnforcementBypasses_AllowedAssistant(t *testing.T) {
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(orig)
+
+	warnPrometheusEnforcementBypasses(disabledTools{enabledTools: "prometheus,assistant", write: true})
+	assert.NotContains(t, buf.String(), "--disable-assistant")
+
+	warnPrometheusEnforcementBypasses(disabledTools{enabledTools: "prometheus,assistant", write: true, writeToolOverrides: "ask_assistant"})
+	assert.Contains(t, buf.String(), "--disable-assistant")
+}
+
 func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 	listed := listAllCategoryTools(t, disabledTools{write: true})
 	require.Contains(t, listed, "generate_deeplink")

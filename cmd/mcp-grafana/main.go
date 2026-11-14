@@ -101,13 +101,6 @@ func (dt *disabledTools) disabledByFlag() map[string]bool {
 	}
 }
 
-// honouredWriteToolOverrides are the names --enable-write-tools acted on
-// before every tool moved into the catalog.
-var honouredWriteToolOverrides = []string{
-	"alerting_rules_write", "alerting_routing_write", "alerting_silences_write",
-	"query_sql", "query_influxdb", "query_datasource", "generate_deeplink",
-}
-
 func (dt *disabledTools) policy() tools.Policy {
 	dt.normalizeEnabledTools()
 	disabled := dt.disabledByFlag()
@@ -120,9 +113,7 @@ func (dt *disabledTools) policy() tools.Policy {
 	p.ReadOnly = dt.write
 	p.NoQuery = dt.query
 	for _, name := range strings.Split(dt.writeToolOverrides, ",") {
-		if name = strings.TrimSpace(name); slices.Contains(honouredWriteToolOverrides, name) {
-			p.Allow = append(p.Allow, name)
-		}
+		p.Allow = append(p.Allow, strings.TrimSpace(name))
 	}
 	if dt.enableQuery {
 		p.Allow = append(p.Allow, tools.MutatingQueryToolNames()...)
@@ -209,7 +200,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write, and keep query_datasource, a source of render_grafana_app, available. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. For the raw-SQL tools it is equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
-	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.")
+	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. For a tool with a read-only variant, it keeps the full one. Has no effect on a tool whose whole category is disabled, and --disable-query still removes query tools.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
