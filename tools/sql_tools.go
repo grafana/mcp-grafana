@@ -15,7 +15,6 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/grafana/mcp-grafana/v2/tools/sql"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // queryRunner implements sql.QueryRunner using the tools-internal HTTP helpers.
@@ -342,12 +341,3 @@ var DescribeSQLTable = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-func AddSQLTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		QuerySQL.Register(s)
-	}
-	ListSQLDatabases.Register(s)
-	ListSQLTables.Register(s)
-	DescribeSQLTable.Register(s)
-}

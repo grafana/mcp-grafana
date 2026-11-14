@@ -102,8 +102,7 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 s := mcp.NewServer(&mcp.Implementation{Name: "mcp-grafana", Version: "1.0.0"}, nil)
 
 // Add tools
-tools.AddSearchTools(s)
-tools.AddDatasourceTools(s, false)
+tools.Resolve(tools.Policy{Categories: []string{"search", "datasource"}, ReadOnly: true}).Register(s)
 
 // Set up context and run
 cf := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
@@ -133,9 +132,7 @@ func runServerWithTLS() {
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "mcp-grafana-tls-example", Version: "1.0.0"}, nil)
 
-	tools.AddSearchTools(s)
-	tools.AddDatasourceTools(s, false)
-	tools.AddDashboardTools(s, false)
+	tools.Resolve(tools.Policy{Categories: []string{"search", "datasource", "dashboard"}, ReadOnly: true}).Register(s)
 
 	cf := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 	ctx := cf(context.Background())

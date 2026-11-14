@@ -11,7 +11,6 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -276,11 +275,3 @@ Query examples:
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddAzureMonitorTools registers the Azure Monitor tools with the MCP server.
-func AddAzureMonitorTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		QueryAzureLogAnalytics.Register(s)
-		QueryAzureResourceGraph.Register(s)
-	}
-}

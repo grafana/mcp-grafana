@@ -15,7 +15,6 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -911,22 +910,3 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddLokiTools registers all Loki tools with the MCP server.
-// Config-generation tools (e.g. suggest_loki_alloy_label_config) live in
-// the separate "config" category — see tools.AddConfigTools.
-// The tools that return log content are registered only when enableQueryTools
-// is true. The metadata tools stay available either way, including
-// query_loki_stats and the label analyzer: both send a selector to the
-// datasource, but they read the index and return stream/chunk/byte counts, never
-// log lines.
-func AddLokiTools(s *mcp.Server, enableQueryTools bool) {
-	ListLokiLabelNames.Register(s)
-	ListLokiLabelValues.Register(s)
-	QueryLokiStats.Register(s)
-	if enableQueryTools {
-		QueryLokiLogs.Register(s)
-		QueryLokiPatterns.Register(s)
-	}
-	AddLokiLabelAnalyzerTools(s)
-}

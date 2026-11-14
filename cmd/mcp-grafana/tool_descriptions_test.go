@@ -8,6 +8,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+
+	"github.com/grafana/mcp-grafana/v2/tools"
 )
 
 // directivePatterns match wording that instructs the model how to behave
@@ -28,9 +30,7 @@ var directivePatterns = []*regexp.Regexp{
 // description names another tool or tells the model how to behave.
 func TestToolDescriptionsAreSelfContained(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-	for _, entry := range (&disabledTools{}).toolEntries() {
-		entry.adder(s)
-	}
+	tools.Resolve(tools.Policy{Categories: tools.CategoryNames()}).Register(s)
 	result, err := connectTestClient(t, s).ListTools(t.Context(), nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Tools)

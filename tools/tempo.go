@@ -861,21 +861,3 @@ var GetTempoTraceQLDocsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(), // embedded docs
 )
-
-// AddTempoTools registers all Tempo tools on the MCP server. Search, metrics
-// and trace-by-ID queries go through Grafana's /api/ds/query endpoint; trace
-// diffs and attribute discovery call Tempo's REST API through the Grafana
-// datasource proxy. The TraceQL docs tool returns static reference material
-// inlined in the binary.
-func AddTempoTools(s *mcp.Server, enableQueryTools bool) {
-	if !enableQueryTools {
-		return
-	}
-	SearchTempoTracesTool.Register(s)
-	QueryTempoMetricsTool.Register(s)
-	GetTempoTraceTool.Register(s)
-	DiffTempoTracesTool.Register(s)
-	ListTempoAttributeNamesTool.Register(s)
-	ListTempoAttributeValuesTool.Register(s)
-	GetTempoTraceQLDocsTool.Register(s)
-}

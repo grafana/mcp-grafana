@@ -12,7 +12,6 @@ import (
 
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -278,9 +277,3 @@ var GetDocTool = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(true),
 	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
-
-// AddDocsTools registers all documentation tools on the MCP server.
-func AddDocsTools(s *mcp.Server) {
-	SearchDocsTool.Register(s)
-	GetDocTool.Register(s)
-}

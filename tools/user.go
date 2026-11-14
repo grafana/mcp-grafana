@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // UserInfoParams takes no arguments.
@@ -53,7 +52,3 @@ var UserInfoTool = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(),
 )
-
-func AddUserTools(s *mcp.Server) {
-	UserInfoTool.Register(s)
-}
