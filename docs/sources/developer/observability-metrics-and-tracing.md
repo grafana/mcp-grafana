@@ -188,12 +188,25 @@ sum by (job) (
 /
 (
   sum by (job) (
-    rate({__name__=~"mcp_prometheus_guardrail_(admitted|would_block|blocked|fail_open)_total"}[5m])
+    label_replace(
+      rate(mcp_prometheus_guardrail_admitted_total[5m]), "__tmp_guardrail_decision", "admitted", "job", ".*"
+    )
+    or label_replace(
+      rate(mcp_prometheus_guardrail_would_block_total[5m]), "__tmp_guardrail_decision", "would_block", "job", ".*"
+    )
+    or label_replace(
+      rate(mcp_prometheus_guardrail_blocked_total[5m]), "__tmp_guardrail_decision", "blocked", "job", ".*"
+    )
+    or label_replace(
+      rate(mcp_prometheus_guardrail_fail_open_total[5m]), "__tmp_guardrail_decision", "fail_open", "job", ".*"
+    )
   ) > 0
 )
 ```
 
 Only the four final decision counters belong in the denominator. Adding the diagnostic counter would count those fail-open queries twice. This percentage describes the evaluated query population, not the fraction of selectors whose cardinality is known: scoped selectors need no metadata, static violations skip the cardinality check, and a known violation takes precedence over unknown selectors. It also excludes calls that never reach the guardrail and calls made with the guardrail off.
+
+`rate()` drops the metric name. During a shadow-to-enforce rollout, `would_block` and `blocked` samples can share the same labels within the rate window. Calculating each rate separately and adding a temporary decision label keeps both series distinct until the sum. The `or` includes the rates that are present even when some counters have yet to emit samples.
 
 In shadow mode, inspect which checks would reject traffic:
 
