@@ -110,7 +110,7 @@ func TestUnmarshalWithIntConversion(t *testing.T) {
 		{
 			name:    "rejects non-numeric string for int field",
 			data:    `{"name":"test","count":"not-a-number"}`,
-			wantErr: "invalid character", // stripped value is not valid JSON; fails at re-marshal
+			wantErr: `count must be an integer, got string "not-a-number"`,
 		},
 		{
 			name: `accepts string "null" for non-pointer int field (strips to JSON null, which zeroes the field)`,
@@ -120,12 +120,42 @@ func TestUnmarshalWithIntConversion(t *testing.T) {
 		{
 			name:    `rejects string "true" for int field`,
 			data:    `{"name":"test","count":"true"}`,
-			wantErr: "cannot unmarshal",
+			wantErr: `count must be an integer, got string "true"`,
 		},
 		{
 			name:    `rejects string "false" for int field`,
 			data:    `{"name":"test","count":"false"}`,
-			wantErr: "cannot unmarshal",
+			wantErr: `count must be an integer, got string "false"`,
+		},
+		{
+			name:    "rejects an empty string for int field, naming the argument",
+			data:    `{"name":"test","count":""}`,
+			wantErr: `count must be an integer, got string ""`,
+		},
+		{
+			name:    "rejects a decimal string for int field, naming the argument",
+			data:    `{"name":"test","count":"4.5"}`,
+			wantErr: `count must be an integer, got string "4.5"`,
+		},
+		{
+			name:    "rejects a non-numeric string for a pointer int field, naming the argument",
+			data:    `{"name":"test","optionalInt":"abc"}`,
+			wantErr: `optionalInt must be an integer, got string "abc"`,
+		},
+		{
+			name:    "rejects a boolean for int field, naming the argument and type",
+			data:    `{"name":"test","count":true}`,
+			wantErr: "count must be an integer, got boolean",
+		},
+		{
+			name:    "rejects a fraction for int field, naming the argument and type",
+			data:    `{"name":"test","count":4.5}`,
+			wantErr: "count must be an integer, got number 4.5",
+		},
+		{
+			name:    "rejects a number for a string field, naming the argument and type",
+			data:    `{"name":7,"count":1}`,
+			wantErr: "name must be a string, got number",
 		},
 	}
 
@@ -301,27 +331,27 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 		{
 			name:    "returns error for int8 overflow",
 			data:    `{"int8Field":"128","int16Field":"1","int32Field":"1","int64Field":"1","uintField":"1","uint8Field":"1","uint16Field":"1","uint32Field":"1","uint64Field":"1"}`,
-			wantErr: "cannot unmarshal",
+			wantErr: "int8Field must be an integer from -128 to 127, got number 128",
 		},
 		{
 			name:    "returns error for int16 overflow",
 			data:    `{"int8Field":"1","int16Field":"32768","int32Field":"1","int64Field":"1","uintField":"1","uint8Field":"1","uint16Field":"1","uint32Field":"1","uint64Field":"1"}`,
-			wantErr: "cannot unmarshal",
+			wantErr: "int16Field must be an integer from -32768 to 32767, got number 32768",
 		},
 		{
 			name:    "returns error for int32 overflow",
 			data:    `{"int8Field":"1","int16Field":"1","int32Field":"2147483648","int64Field":"1","uintField":"1","uint8Field":"1","uint16Field":"1","uint32Field":"1","uint64Field":"1"}`,
-			wantErr: "cannot unmarshal",
+			wantErr: "int32Field must be an integer from -2147483648 to 2147483647, got number 2147483648",
 		},
 		{
 			name:    "returns error for uint8 overflow",
 			data:    `{"int8Field":"1","int16Field":"1","int32Field":"1","int64Field":"1","uintField":"1","uint8Field":"256","uint16Field":"1","uint32Field":"1","uint64Field":"1"}`,
-			wantErr: "cannot unmarshal",
+			wantErr: "uint8Field must be an integer from 0 to 255, got number 256",
 		},
 		{
 			name:    "returns error for negative uint values",
 			data:    `{"int8Field":"1","int16Field":"1","int32Field":"1","int64Field":"1","uintField":"-1","uint8Field":"1","uint16Field":"1","uint32Field":"1","uint64Field":"1"}`,
-			wantErr: "cannot unmarshal",
+			wantErr: "uintField must be an integer from 0 to 18446744073709551615, got number -1",
 		},
 		{
 			name: "handles real-world case with OrgID int64",

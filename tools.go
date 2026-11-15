@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -181,7 +183,15 @@ type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, er
 //
 // Fast path: tries standard json.Unmarshal first (the common case — types already match).
 // Only on failure does it apply coercions and retry.
+//
+// A value that still does not fit is refused with an error that names the
+// argument and the type it needs, e.g. "expectedVersion must be an integer,
+// got string", rather than the JSON decoder's message.
 func unmarshalWithIntConversion(data []byte, target any) error {
+	return describeArgumentTypeError(unmarshalWithCoercion(data, target))
+}
+
+func unmarshalWithCoercion(data []byte, target any) error {
 	if err := json.Unmarshal(data, target); err == nil {
 		return nil
 	}
@@ -207,7 +217,11 @@ func unmarshalWithIntConversion(data []byte, target any) error {
 	for name := range intFields {
 		v, ok := raw[name]
 		if ok && len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
-			raw[name] = v[1 : len(v)-1] // strip quotes: "42" → 42
+			var s string
+			if err := json.Unmarshal(v, &s); err != nil || !isIntegerLiteral(s) {
+				return &ArgumentTypeError{Argument: name, Want: "an integer", Got: fmt.Sprintf("string %q", s)}
+			}
+			raw[name] = json.RawMessage(s) // strip quotes: "42" → 42
 			changed = true
 		}
 	}
@@ -227,6 +241,97 @@ func unmarshalWithIntConversion(data []byte, target any) error {
 		return err
 	}
 	return json.Unmarshal(fixed, target)
+}
+
+// isIntegerLiteral reports whether s, a string sent for an integer argument,
+// can stand in for it: an optional minus sign and digits. "null" is kept as
+// JSON null, as before, which leaves the argument unset.
+func isIntegerLiteral(s string) bool {
+	if s == "null" {
+		return true
+	}
+	digits := strings.TrimPrefix(s, "-")
+	if digits == "" {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// ArgumentTypeError is a tool argument of the wrong JSON type. Its message
+// names the argument, the type it needs and what was sent.
+type ArgumentTypeError struct {
+	Argument string // the argument's name, or its path for a nested field
+	Want     string // e.g. "an integer"
+	Got      string // e.g. "string \"abc\"", "boolean"
+}
+
+func (e *ArgumentTypeError) Error() string {
+	return fmt.Sprintf("%s must be %s, got %s", e.Argument, e.Want, e.Got)
+}
+
+// describeArgumentTypeError turns the JSON decoder's type error into an
+// ArgumentTypeError; any other error is returned as it is.
+func describeArgumentTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if err == nil || !errors.As(err, &typeErr) || typeErr.Field == "" || typeErr.Type == nil {
+		return err
+	}
+	got := typeErr.Value
+	switch {
+	case got == "bool":
+		got = "boolean"
+	case got == "array", got == "object", got == "string", strings.HasPrefix(got, "number"):
+	default:
+		got = "a " + got
+	}
+	want := describeJSONType(typeErr.Type)
+	if r, ok := integerRange(typeErr.Type); ok && isIntegerLiteral(strings.TrimPrefix(got, "number ")) {
+		want = "an integer from " + r // the value is an integer, but out of range
+	}
+	return &ArgumentTypeError{Argument: typeErr.Field, Want: want, Got: got}
+}
+
+// integerRange gives the range of an integer type as "min to max".
+func integerRange(t reflect.Type) (string, bool) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if !isIntegerKind(t.Kind()) {
+		return "", false
+	}
+	bits := t.Bits()
+	switch t.Kind() {
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "0 to " + strconv.FormatUint(uint64(math.MaxUint64)>>(64-bits), 10), true
+	}
+	return strconv.FormatInt(int64(math.MinInt64)>>(64-bits), 10) + " to " + strconv.FormatInt(int64(math.MaxInt64)>>(64-bits), 10), true
+}
+
+// describeJSONType names the JSON type a Go type is decoded from.
+func describeJSONType(t reflect.Type) string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch {
+	case isIntegerKind(t.Kind()):
+		return "an integer"
+	case t.Kind() == reflect.Float32 || t.Kind() == reflect.Float64:
+		return "a number"
+	case t.Kind() == reflect.String:
+		return "a string"
+	case t.Kind() == reflect.Bool:
+		return "a boolean"
+	case t.Kind() == reflect.Slice || t.Kind() == reflect.Array:
+		return "an array"
+	case t.Kind() == reflect.Map || t.Kind() == reflect.Struct:
+		return "an object"
+	}
+	return "of type " + t.String()
 }
 
 // collectIntFieldNames uses reflect.VisibleFields to walk a struct type and returns

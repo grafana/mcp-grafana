@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -557,6 +558,7 @@ func TestUpdateDashboardFullBody_ExpectedVersionOnClassicBody(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), tc.want)
+			assert.Contains(t, err.Error(), "expectedVersion 2 is not the dashboard's current version", "the error names the argument that did not match")
 			saved := rec.only(t)
 			assert.False(t, saved.Overwrite, "the rejected save must not have been retried with overwrite")
 			assert.Equal(t, float64(2), saved.Dashboard["version"])
@@ -571,5 +573,60 @@ func TestUpdateDashboardFullBody_ExpectedVersionOnClassicBody(t *testing.T) {
 		saved := rec.only(t)
 		assert.True(t, saved.Overwrite)
 		assert.Equal(t, float64(99), saved.Dashboard["version"], "the body is sent as given")
+	})
+}
+
+// A wrongly typed expectedVersion is refused before anything is sent, with an
+// error that names the argument and the type it needs (not the JSON decoder's
+// message).
+func TestUpdateDashboard_WrongTypedExpectedVersionNamesTheArgument(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"non-numeric string", "abc", `expectedVersion must be an integer, got string "abc"`},
+		{"empty string", "", `expectedVersion must be an integer, got string ""`},
+		{"fraction in a string", "1.5", `expectedVersion must be an integer, got string "1.5"`},
+		{"boolean", true, "expectedVersion must be an integer, got boolean"},
+		{"fraction", 1.5, "expectedVersion must be an integer, got number 1.5"},
+		{"object", map[string]any{"v": 1}, "expectedVersion must be an integer, got object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, mode := range []map[string]any{
+				{"dashboard": map[string]any{"uid": "dash-1", "title": "T", "panels": []any{}}},
+				{"uid": "dash-1", "operations": []any{map[string]any{"op": "replace", "path": "$.title", "value": "T"}}},
+			} {
+				args := map[string]any{"expectedVersion": tc.value}
+				for k, v := range mode {
+					args[k] = v
+				}
+				argsJSON, err := json.Marshal(args)
+				require.NoError(t, err)
+				// No Grafana in the context: the call must fail on the argument
+				// before any request would be made.
+				result, err := UpdateDashboard.Handler(context.Background(), &mcp.CallToolRequest{
+					Params: &mcp.CallToolParamsRaw{Name: "update_dashboard", Arguments: argsJSON},
+				})
+				require.NoError(t, err, "an argument error is a tool error, not a protocol error")
+				require.NotNil(t, result)
+				require.True(t, result.IsError)
+				text := resultText(t, result)
+				assert.Contains(t, text, tc.want)
+				assert.NotContains(t, text, "json:", "no JSON decoder message")
+				assert.NotContains(t, text, "Go struct", "no Go type names")
+			}
+		})
+	}
+
+	t.Run("a numeric string is still accepted as the integer", func(t *testing.T) {
+		argsJSON := []byte(`{"dashboard":{"uid":"dash-1","title":"T"},"expectedVersion":"5"}`)
+		rec := &legacySaveRecorder{}
+		result, err := UpdateDashboard.Handler(legacyDashboardContext(t, rec), &mcp.CallToolRequest{
+			Params: &mcp.CallToolParamsRaw{Name: "update_dashboard", Arguments: argsJSON},
+		})
+		require.NoError(t, err)
+		require.False(t, result.IsError, resultText(t, result))
+		assert.Equal(t, float64(5), rec.only(t).Dashboard["version"])
 	})
 }

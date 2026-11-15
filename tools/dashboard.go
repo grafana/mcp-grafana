@@ -750,12 +750,18 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 		// save without overwrite it means the stored version differs from the
 		// one sent, usually because the dashboard changed since it was read.
 		var apiErr *runtime.APIError
-		if errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict) {
+		var mismatch *dashboards.PostDashboardPreconditionFailed
+		isConflict := errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict)
+		// With expectedVersion the version sent is the caller's, so say which
+		// argument did not match.
+		if args.ExpectedVersion != nil && (isConflict || errors.As(err, &mismatch)) {
+			return nil, fmt.Errorf("unable to save dashboard: expectedVersion %d is not the dashboard's current version, so it changed since that version was read and the change was not saved. Fetch it with get_dashboard_by_uid, reapply the edit to that copy and send its version as expectedVersion: %w", *args.ExpectedVersion, err)
+		}
+		if isConflict {
 			return nil, fmt.Errorf("unable to save dashboard: it already exists and the body's version is missing or not the current one, so it may have changed since it was read. Fetch it again with get_dashboard_by_uid and reapply the change to that copy. overwrite=true would discard whatever changed in between: %w", err)
 		}
 		// A 412 is Grafana's version-mismatch: the dashboard changed since the
 		// version that was sent. Give the same recovery as the k8s 409.
-		var mismatch *dashboards.PostDashboardPreconditionFailed
 		if errors.As(err, &mismatch) {
 			return nil, fmt.Errorf("unable to save dashboard: it changed since it was read (version mismatch), so the change was not saved. For a patch, send the same patch again (it is applied to a fresh read); for a full body, fetch the dashboard with get_dashboard_by_uid and reapply the edit to that copy. overwrite=true would discard whatever changed in between: %w", err)
 		}
