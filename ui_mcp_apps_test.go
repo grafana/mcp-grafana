@@ -83,6 +83,16 @@ func TestMCPAppResources(t *testing.T) {
 // maxVizRendererSize caps the Renderer resource below 4 MiB, a size limit a host may set on one resource (#1589).
 const maxVizRendererSize = 4 << 20
 
+// maxGrafanaAppSize caps app.html at 1.5 MiB. It is about 1.3 MB without the Renderer, so a Renderer that is bundled
+// into it again (3.7 MB) fails here (#1589).
+const maxGrafanaAppSize = 3 << 19
+
+func TestGrafanaAppReadsVizRenderer(t *testing.T) {
+	require.Contains(t, grafanaAppHTML, vizRendererURI,
+		"app.html reads the Renderer at the URI the server registers; run mise run build-ui")
+	require.Less(t, len(grafanaAppHTML), maxGrafanaAppSize, "app.html grew past %d bytes", maxGrafanaAppSize)
+}
+
 func TestVizRendererResource(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
 	RegisterVizRendererResource(s)

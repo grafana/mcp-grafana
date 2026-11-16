@@ -16,8 +16,11 @@
 /ui/mcp-apps/app/vizRenderer.entry.ts  @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/sharedModules.config.ts   @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/viz-renderer.vite.config.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/vizRenderer.config.ts     @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/vizRendererUri.d.ts  @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/dist/viz-renderer.*       @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/viz*                 @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/renderer-pin.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/icon-cache.test.tsx  @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/shared-modules.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/test/load-renderer.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad

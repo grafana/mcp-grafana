@@ -4,7 +4,7 @@ import type { RenderHandle } from '../renderer/renderer.js';
 import { McpAppShell } from '../src/McpAppShell';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
-import { loadRenderer } from './loadRenderer';
+import type { Renderer } from './loadRenderer';
 import { buildVizSpec, type VizArgs, type VizSpec } from './vizSpec';
 
 // The query text of the common data sources: Prometheus and Loki, SQL, and others.
@@ -32,6 +32,8 @@ export function VizApplication({ host }: { host: AppHostState }) {
     [viz, vizArgs, colorMode, timeZone],
   );
   const grafanaUrl = viz?.grafanaUrl;
+  // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
+  const [loadFailure, setLoadFailure] = useState<string>();
 
   return (
     <McpAppShell
@@ -48,7 +50,16 @@ export function VizApplication({ host }: { host: AppHostState }) {
             ? `${viz.chart} · ${vizArgs.datasourceUid}`
             : state.status,
       }}
-      feedback={state.isError ? { tone: 'error', message: state.status } : undefined}
+      feedback={
+        state.isError
+          ? { tone: 'error', message: state.status }
+          : loadFailure
+            ? {
+                tone: 'error',
+                message: `${loadFailure.replace(/\.$/, '')}.${grafanaUrl ? ' Open the query in Grafana to see it.' : ''}`,
+              }
+            : undefined
+      }
       openInGrafana={
         grafanaUrl
           ? {
@@ -62,33 +73,50 @@ export function VizApplication({ host }: { host: AppHostState }) {
           : undefined
       }
     >
-      {spec ? <RendererView key={state.generation} spec={spec} /> : null}
+      {spec && !loadFailure ? (
+        <RendererView spec={spec} load={host.loadRenderer} onLoadError={setLoadFailure} />
+      ) : null}
     </McpAppShell>
   );
 }
 
 /**
  * Owns one Renderer handle: render once the module loads, update on a new spec, destroy on unmount (renderer.2 to
- * renderer.5). The module loads on first use (loadRenderer), so the other views and their tests do not load @grafana/ui.
- * A failure there is async, so it is thrown on the next render for AppErrorBoundary.
+ * renderer.5). The module loads on first use (loadRenderer), so the other views do not load it. A failed load goes to
+ * onLoadError. A failure of render is async, so it is thrown on the next render for AppErrorBoundary.
  */
-function RendererView({ spec }: { spec: VizSpec }) {
+function RendererView({
+  spec,
+  load,
+  onLoadError,
+}: {
+  spec: VizSpec;
+  load: () => Promise<Renderer>;
+  onLoadError: (message: string) => void;
+}) {
   const el = useRef<HTMLDivElement>(null);
   const handle = useRef<RenderHandle | null>(null);
   // The spec to draw when the module loads, if it changed while the module was loading.
   const latest = useRef(spec);
   const [failure, setFailure] = useState<Error>();
 
+  // Runs once: GrafanaApplication remounts the view for each new result.
   useEffect(() => {
     let destroyed = false;
-    loadRenderer()
-      .then(({ render }) => {
-        if (destroyed || !el.current) return;
-        handle.current = render(el.current, latest.current);
-      })
-      .catch((cause: unknown) => {
-        if (!destroyed) setFailure(cause instanceof Error ? cause : new Error(String(cause)));
-      });
+    load()
+      .then(
+        ({ render }) => {
+          if (destroyed || !el.current) return;
+          try {
+            handle.current = render(el.current, latest.current);
+          } catch (cause) {
+            setFailure(cause instanceof Error ? cause : new Error(String(cause)));
+          }
+        },
+        (cause: unknown) => {
+          if (!destroyed) onLoadError(cause instanceof Error ? cause.message : String(cause));
+        },
+      );
     return () => {
       destroyed = true;
       handle.current?.destroy();

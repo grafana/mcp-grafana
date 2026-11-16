@@ -34,6 +34,8 @@ Tools use the configured Grafana connection and caller identity. Credentials
 stay on the server. Apps are self-contained HTML with no external connection or
 resource domains; trace sharing requests host-controlled clipboard permission.
 
+The `query_datasource` view draws with the viz Renderer, which is not in the App HTML. On its first chart the App reads the Renderer resource through the host (`resources/read`) and runs it as an inline script, so metrics and trace views never load it. This needs a host that passes resource reads to the server (the `serverResources` host capability). Claude Desktop, Cursor and VS Code do. In a host without it, the view shows an error and keeps the link to open the query in Grafana.
+
 ## Embed in another MCP server
 
 The Go module exports the same tools and UI used by the standalone server:

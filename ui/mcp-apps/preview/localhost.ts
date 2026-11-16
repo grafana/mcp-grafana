@@ -141,7 +141,8 @@ async function main() {
   const bridge = new AppBridge(
     null,
     { name: 'local-debug-host', version: '0.1.0' },
-    { /* host capabilities: none needed to deliver a tool result */ }
+    // serverResources: the viz view reads the Renderer resource through the host (#1589).
+    { serverResources: {} }
   );
 
   bridge.onsizechange = (params) => record(`size-changed: ${JSON.stringify(params)}`);
@@ -157,6 +158,14 @@ async function main() {
     return toolResult(refreshes);
   };
 
+  // The viz view reads the Renderer resource. dist/ is served at /, so answer with the built file.
+  bridge.onreadresource = async ({ uri }) => {
+    record(`app → readServerResource: ${uri}`);
+    if (!/^ui:\/\/grafana\/viz-renderer-[0-9a-f]+\.js$/.test(uri)) throw new Error(`unknown resource ${uri}`);
+    const text = await (await fetch('/viz-renderer.js')).text();
+    return { contents: [{ uri, mimeType: 'text/javascript', text }] };
+  };
+
   // "Ask about a window" sends a user message to the agent.
   bridge.onmessage = async (params) => {
     const text = params.content.map((block) => ('text' in block ? block.text : block.type)).join(' ');
@@ -165,8 +174,14 @@ async function main() {
   };
 
   const transport = new PostMessageTransport(iframe.contentWindow!, iframe.contentWindow!);
+  // A host sends the tool input after the view has initialized (ui/notifications/initialized).
+  const initialized = new Promise<void>((resolve) => {
+    bridge.oninitialized = () => resolve();
+  });
   await bridge.connect(transport);
   record('bridge connected');
+  await initialized;
+  record('app initialized');
 
   bridge.setHostContext({ theme });
   record(`host context set (theme=${theme})`);
