@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // QueryElasticsearchParams defines the parameters for querying Elasticsearch or OpenSearch
@@ -87,12 +86,3 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddElasticsearchTools registers all Elasticsearch and OpenSearch tools with the MCP server.
-// Every tool in this category executes a query, so nothing is registered when
-// enableQueryTools is false.
-func AddElasticsearchTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		QueryElasticsearch.Register(s)
-	}
-}

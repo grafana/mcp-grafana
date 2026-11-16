@@ -10,7 +10,6 @@ import (
 
 	aapi "github.com/grafana/amixr-api-go-client"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
@@ -718,19 +717,6 @@ var UpdateAlertGroup = mcpgrafana.MustTool(
 		"plugins.app:access", "grafana-irm-app.alert-groups:read", "grafana-irm-app.alert-groups:write",
 	),
 )
-
-func AddOnCallTools(s *mcp.Server, enableWriteTools bool) {
-	ListOnCallSchedules.Register(s)
-	GetOnCallShift.Register(s)
-	GetCurrentOnCallUsers.Register(s)
-	ListOnCallTeams.Register(s)
-	ListOnCallUsers.Register(s)
-	ListAlertGroups.Register(s)
-	GetAlertGroup.Register(s)
-	if enableWriteTools {
-		UpdateAlertGroup.Register(s)
-	}
-}
 
 // helpers for converting amixr pointer types
 

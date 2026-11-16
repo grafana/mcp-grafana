@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/tools"
 )
 
 // TestToolPermissions checks every tool's declared RBAC permissions against
@@ -298,9 +299,7 @@ func newRBACSession(t *testing.T, token string, dt disabledTools) *rbacSession {
 	header.Set("X-Grafana-Service-Account-Token", token)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	for _, e := range dt.toolEntries() {
-		dt.enabledTools += e.category + ","
-	}
+	dt.enabledTools = strings.Join(tools.CategoryNames(), ",")
 	dt.processTools(srv)
 	srv.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {

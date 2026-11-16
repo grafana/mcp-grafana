@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/access_control"
 	"github.com/grafana/grafana-openapi-client-go/client/orgs"
@@ -311,15 +310,3 @@ var GetResourceDescription = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(resourcePermissionsRead...),
 )
-
-func AddAdminTools(s *mcp.Server) {
-	ListTeams.Register(s)
-	ListUsersByOrg.Register(s)
-	ListAllRoles.Register(s)
-	GetRoleDetails.Register(s)
-	GetRoleAssignments.Register(s)
-	ListUserRoles.Register(s)
-	ListTeamRoles.Register(s)
-	GetResourcePermissions.Register(s)
-	GetResourceDescription.Register(s)
-}

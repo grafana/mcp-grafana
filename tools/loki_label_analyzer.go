@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // The functions in this file translate the Grafana Professional Services
@@ -922,12 +921,6 @@ func buildPerfSummary(findings []QueryPerfFinding, stats *Stats) string {
 // ---------------------------------------------------------------------------
 // Registration helper
 // ---------------------------------------------------------------------------
-
-// AddLokiLabelAnalyzerTools registers the label-analyzer tool set.
-// AddLokiTools calls this so the standard Loki bundle includes them.
-func AddLokiLabelAnalyzerTools(s *mcp.Server) {
-	AnalyzeLokiLabels.Register(s)
-}
 
 // ---------------------------------------------------------------------------
 // analyze_loki_labels — unified entry point

@@ -21,20 +21,7 @@ import (
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	"github.com/grafana/pyroscope/api/gen/proto/go/querier/v1/querierv1connect"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// AddPyroscopeTools registers the Pyroscope tools on the MCP server.
-// query_pyroscope is registered only when enableQueryTools is true; the
-// label and profile-type listing tools stay available either way.
-func AddPyroscopeTools(s *mcp.Server, enableQueryTools bool) {
-	ListPyroscopeLabelNames.Register(s)
-	ListPyroscopeLabelValues.Register(s)
-	ListPyroscopeProfileTypes.Register(s)
-	if enableQueryTools {
-		QueryPyroscope.Register(s)
-	}
-}
 
 const listPyroscopeLabelNamesToolPrompt = `
 Lists all available label names (keys) found in profiles within a specified Pyroscope datasource, time range, and

@@ -47,8 +47,7 @@ import (
 // s is an existing *mcp.Server. Its request context must provide the
 // normal mcp-grafana configuration and Grafana client.
 mcpgrafana.RegisterAppResources(s)
-tools.AddTempoTools(s, true)
-tools.AddPrometheusTools(s, true)
+tools.Resolve(tools.Policy{Categories: []string{"prometheus", "tempo"}}).Register(s)
 tools.AddAppTool(s, tools.QueryPrometheus, tools.GetTempoTraceTool)
 ```
 

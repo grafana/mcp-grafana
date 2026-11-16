@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/search"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -348,8 +347,3 @@ var SearchFolders = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("folders:read"),
 )
-
-func AddSearchTools(s *mcp.Server) {
-	SearchDashboards.Register(s)
-	SearchFolders.Register(s)
-}

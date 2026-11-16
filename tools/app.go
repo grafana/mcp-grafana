@@ -57,6 +57,11 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 	if len(sources) == 0 {
 		return
 	}
+	tool := newAppTool(sources...)
+	tool.Register(s)
+}
+
+func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {
 	var names []any
 	var schemas []*jsonschema.Schema
 	var permissions []string
@@ -136,7 +141,7 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 		mcpgrafana.RequiresPermissions(permissions...),
 	)
 	tool.Handler = requireAppHost(tool.Handler)
-	tool.Register(s)
+	return tool
 }
 
 // appsExtensionID is the client capability of MCP Apps (EXTENSION_ID of ext-apps).
