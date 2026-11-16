@@ -54,7 +54,11 @@ func TestToolPermissions(t *testing.T) {
 	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
 	t.Setenv("GRAFANA_API_KEY", "")
 
-	admin := &rbacAdmin{url: grafanaURL, token: adminToken}
+	// The admin client retries rate-limited requests the same way the tools'
+	// clients do, so fixture setup doesn't fail on a busy stack.
+	adminTransport, err := mcpgrafana.BuildTransport(&mcpgrafana.GrafanaConfig{}, nil, mcpgrafana.WithoutAuth())
+	require.NoError(t, err)
+	admin := &rbacAdmin{url: grafanaURL, token: adminToken, client: &http.Client{Transport: adminTransport}}
 	admin.loadPermissions(t)
 	admin.skipUnlessPermitted(t, "roles:write", "roles:delete", "serviceaccounts:create", "serviceaccounts:delete", "users.roles:add")
 	require.NoError(t, admin.api("POST", "/api/dashboards/db", map[string]any{
@@ -168,6 +172,7 @@ func grantable(tool *mcp.Tool) ([]string, bool) {
 // rbacAdmin provisions roles and service accounts with the admin token.
 type rbacAdmin struct {
 	url, token string
+	client     *http.Client
 	// held maps each action the admin token holds to its scopes.
 	held map[string][]string
 }
@@ -187,7 +192,7 @@ func (a *rbacAdmin) api(method, path string, body, out any) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+a.token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return err
 	}
