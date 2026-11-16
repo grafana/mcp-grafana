@@ -28,7 +28,7 @@ func listTeams(ctx context.Context, args ListTeamsParams) (*models.SearchTeamQue
 	}
 	search, err := c.Teams.SearchTeams(params)
 	if err != nil {
-		return nil, fmt.Errorf("search teams for %+v: %w", c, err)
+		return nil, fmt.Errorf("search teams for query %q: %w", args.Query, err)
 	}
 	return search.Payload, nil
 }
