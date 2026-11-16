@@ -6,12 +6,19 @@ import type { TraceViewResult } from '../src/trace/types';
 import { applyHostContext } from './hostContext';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
+import { parseLogsResult, type LogsViewResult } from '../src/logs/parseLogsResult';
 import { parseVizArgs, parseVizResult, type VizArgs, type VizResult } from './vizSpec';
 
 // Attach handlers before connecting: hosts may deliver results before React's first commit.
 /** Source query inputs retained for refresh and range selection. */
 export type QueryArgs = {
   expr?: string;
+  logql?: string;
+  startRfc3339?: string;
+  endRfc3339?: string;
+  limit?: number;
+  direction?: string;
+  format?: string;
   datasourceUid?: string;
   queryType?: string;
   startTime?: string;
@@ -23,6 +30,7 @@ export type QueryArgs = {
 export type AppHostSnapshot = {
   result?: ParsedMetrics;
   trace?: TraceViewResult;
+  logs?: LogsViewResult;
   /** The result of query_datasource, which the Renderer draws. */
   viz?: VizResult;
   toolName?: string;
@@ -61,7 +69,7 @@ const WAITING = 'Waiting for query results…';
 const UNAVAILABLE = 'Interactive view unavailable; data remains available in the tool output.';
 
 /** The fields that hold a view. A new call or a failure clears all of them, so no old view stays under the new one. */
-const NO_VIEW = { result: undefined, trace: undefined, viz: undefined } as const;
+const NO_VIEW = { result: undefined, trace: undefined, logs: undefined, viz: undefined } as const;
 
 const error = (message: string): McpAppFeedback => ({ tone: 'error', message });
 
@@ -104,6 +112,16 @@ export function createAppHostState(app: App): AppHostState {
           'The host delivered a result with no readable payload (neither structuredContent nor a JSON text block).',
       });
       return false;
+    }
+
+    if (snapshot.toolName === 'query_loki_logs') {
+      const logs = parseLogsResult(payload);
+      if (!logs) {
+        set({ ...patch, isError: true, status: 'Interactive view unavailable; use query_loki_logs directly for the query output.' });
+        return false;
+      }
+      set({ ...patch, ...NO_VIEW, logs, isError: false });
+      return true;
     }
 
     if (snapshot.toolName === 'query_datasource') {
@@ -207,7 +225,9 @@ export function createAppHostState(app: App): AppHostState {
 
   const refresh = async () => {
     const args = snapshot.args;
-    if (!args?.expr || !args.datasourceUid || snapshot.toolName !== 'query_prometheus') return;
+    if (!args?.datasourceUid || snapshot.refreshing) return;
+    if (!(snapshot.toolName === 'query_prometheus' && args.expr) &&
+        !(snapshot.toolName === 'query_loki_logs' && args.logql)) return;
     const generation = snapshot.generation;
     // Once the host has delivered a newer call, this refresh's outcome is stale.
     const superseded = () => snapshot.generation !== generation;
@@ -216,7 +236,9 @@ export function createAppHostState(app: App): AppHostState {
       const response = await app.callServerTool({ name: snapshot.toolName, arguments: { ...args } });
       if (superseded()) return;
       if (response.isError) {
-        set({ notice: error('The refresh query failed. The chart still shows the previous result.') });
+        set({ notice: error(snapshot.logs || snapshot.result
+          ? 'The refresh query failed. The view still shows the previous result.'
+          : 'The query failed. Check the query inputs and datasource access, then retry.') });
       } else if (!applyResult(response)) {
         set({ notice: error('Refresh returned a result the app could not read.') });
       }

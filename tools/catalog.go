@@ -97,7 +97,7 @@ var catalog = []category{
 		reducedDescription: "Loki: Retrieve log metadata and index stats, explore label names/values, and audit label strategy. Log query execution is disabled.",
 		tools: []toolSpec{
 			read(ListLokiLabelNames), read(ListLokiLabelValues), read(QueryLokiStats), read(AnalyzeLokiLabels),
-			query(QueryLokiLogs), query(QueryLokiPatterns),
+			asAppSource(query(QueryLokiLogs)), query(QueryLokiPatterns),
 		},
 	},
 	{name: "elasticsearch", description: "Elasticsearch and OpenSearch: Query Elasticsearch and OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.", tools: []toolSpec{

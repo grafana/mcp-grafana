@@ -17,6 +17,11 @@ func TestExplicitAppRegistration(t *testing.T) {
 		config  disabledTools
 		sources []string
 	}{
+		{"logs", disabledTools{enabledTools: "loki,rendering"}, []string{"query_loki_logs"}},
+		{"logs read only", disabledTools{enabledTools: "loki,rendering", write: true}, []string{"query_loki_logs"}},
+		{"logs disabled", disabledTools{enabledTools: "loki,rendering", loki: true}, nil},
+		{"logs query disabled", disabledTools{enabledTools: "loki,rendering", query: true}, nil},
+		{"logs rendering disabled", disabledTools{enabledTools: "loki,rendering", rendering: true}, nil},
 		{"metrics", disabledTools{enabledTools: "prometheus,rendering"}, []string{"query_prometheus"}},
 		{"trace", disabledTools{enabledTools: "tempo,rendering"}, []string{"get_tempo_trace"}},
 		{"both", disabledTools{enabledTools: "tempo,prometheus,rendering"}, []string{"query_prometheus", "get_tempo_trace"}},
@@ -45,7 +50,7 @@ func TestExplicitAppRegistration(t *testing.T) {
 			for _, tool := range result.Tools {
 				registered[tool.Name] = tool
 			}
-			for _, name := range []string{"query_prometheus", "get_tempo_trace", "query_datasource"} {
+			for _, name := range []string{"query_prometheus", "get_tempo_trace", "query_datasource", "query_loki_logs"} {
 				if source := registered[name]; source != nil {
 					require.NotContains(t, source.Meta, "ui")
 				}

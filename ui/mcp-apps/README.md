@@ -78,3 +78,15 @@ can miss them.
 ## Trace app
 
 `render_grafana_app` with `toolName: "get_tempo_trace"` displays a Tempo trace with span search, error filtering, a focused ancestor path, and a virtualized waterfall. Selecting a span shows attributes and events, with exception information first. Wide layouts show the inspector beside the waterfall; narrow layouts switch between Trace and Span views. The MCP host supplies result data, color mode, and navigation. The browser does not query Grafana directly.
+
+### Logs preview
+
+The shared app supports `query_loki_logs` with the existing shell and host state.
+`src/logs/LogsView.tsx` consumes the normalized, bounded viewer payload; compact
+stream expansion and nanosecond ordering happen on the server. No additional
+frontend dependencies are required.
+
+After `npm run build`, run
+`npx vite --config localhost.vite.config.ts --host 127.0.0.1 --port 5188` and visit
+`http://127.0.0.1:5188/localhost.html?fixture=logs&mode=dark&drive=refresh`.
+This uses synthetic logs over a real AppBridge, including a refresh handler.

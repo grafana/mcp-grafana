@@ -8,7 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// GrafanaAppResourceURI identifies the shared metrics and trace viewer.
+// GrafanaAppResourceURI identifies the shared metrics, trace and logs viewer.
 const GrafanaAppResourceURI = "ui://grafana/app.html"
 
 //go:embed ui/mcp-apps/dist/app.html
@@ -41,7 +41,7 @@ func RegisterGrafanaAppResource(s *mcp.Server) {
 			URI:         GrafanaAppResourceURI,
 			Name:        "Grafana App",
 			Title:       "Grafana App",
-			Description: "Interactive metrics charts and trace waterfall",
+			Description: "Interactive metrics charts, trace waterfall and logs",
 			MIMEType:    appMIMEType,
 			Size:        int64(len(grafanaAppHTML)),
 		},

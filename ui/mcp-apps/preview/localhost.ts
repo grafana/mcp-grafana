@@ -1,3 +1,4 @@
+import { logsResult, logsArgs } from './logsFixture';
 /**
  * Minimal MCP App host, for debugging an app outside a real host.
  *
@@ -150,6 +151,10 @@ async function main() {
   // the round trip is exercised, not stubbed out.
   bridge.oncalltool = async (params) => {
     record(`app → callServerTool: ${params.name} ${JSON.stringify(params.arguments)}`);
+    if (params.name === 'query_loki_logs') {
+      refreshes += 1;
+      return logsResult(refreshes);
+    }
     if (params.name !== 'query_prometheus') {
       return { content: [{ type: 'text', text: `unknown tool ${params.name}` }], isError: true };
     }
@@ -197,7 +202,7 @@ async function main() {
 
   await bridge.sendToolInput({
     toolName: 'render_grafana_app',
-    arguments: { toolName: 'query_prometheus', arguments: {
+    arguments: fixtureName === 'logs' ? { toolName: 'query_loki_logs', arguments: logsArgs } : { toolName: 'query_prometheus', arguments: {
       expr: fixtureName ? (fixtureExpr[fixtureName] ?? fixtureName) : 'node_load1',
       datasourceUid: 'grafanacloud-prom',
       queryType: fixtureName && fixtureName !== 'buckets' ? 'instant' : 'range',
@@ -206,7 +211,7 @@ async function main() {
   record('tool-input sent');
 
   const payload =
-    fixtureName === 'buckets' ? bucketResult() : fixtureName ? instantResult(fixtureName) : toolResult();
+    fixtureName === 'logs' ? logsResult() : fixtureName === 'buckets' ? bucketResult() : fixtureName ? instantResult(fixtureName) : toolResult();
   await bridge.sendToolResult(payload as never);
   record(`tool-result sent${fixtureName ? ` (fixture=${fixtureName})` : ''}`);
 

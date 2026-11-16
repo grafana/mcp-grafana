@@ -21,6 +21,9 @@ export { isBoundedUnit, pickViz } from './metrics/pickViz';
 export { VizPicker, vizLabel } from './metrics/VizPicker';
 export type { MetricsResult, ParsedMetrics, VizChoice, VizKind } from './metrics/pickViz';
 
+export { LogsView } from './logs/LogsView';
+export type { LogsViewResult } from './logs/parseLogsResult';
+
 // Visualization library — shared across apps.
 export { BarChart } from './viz/BarChart';
 export { Bullet, BulletGroup, thresholdBands } from './viz/Bullet';

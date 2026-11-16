@@ -1,9 +1,9 @@
 # MCP Apps
 
-MCP Apps render interactive views inside compatible MCP hosts. Metrics and traces share one explicit `render_grafana_app` tool in the `rendering` category:
+MCP Apps render interactive views inside compatible MCP hosts. Metrics, traces and logs share one explicit `render_grafana_app` tool in the `rendering` category:
 
 ```sh
-mcp-grafana --enabled-tools=tempo,prometheus,rendering
+mcp-grafana --enabled-tools=tempo,prometheus,loki,rendering
 ```
 
 Add other categories to the comma-separated list as needed. `--disable-query` removes source queries and the App tool. Disabling a source category removes it from the App tool; the App tool is omitted when no supported source remains. `--disable-rendering` leaves data queries available. `--disable-write` retains these read-only tools.
@@ -11,8 +11,9 @@ Add other categories to the comma-separated list as needed. `--disable-query` re
 ## Tools
 
 - `get_tempo_trace(trace_id, datasourceUid, focus_span_id?, start?, end?)` returns trace text and structured data for analysis. The optional focus span selects an initial span without filtering the trace. The datasource must be Tempo.
+- `query_loki_logs(logql, datasourceUid, …)` returns logs or Loki metric samples for analysis without opening a view.
 - `query_prometheus(expr, datasourceUid, …)` returns data for analysis without opening a view.
-- `render_grafana_app(toolName, arguments)` executes an enabled `query_prometheus` or `get_tempo_trace` call through its existing handler and displays its result. `arguments` reuses the selected tool's input schema. Set a dynamic `orgId` on the outer call. Trace results display a waterfall with span filtering, attributes and exception details. Metrics select a visualization from the response shape and unit:
+- `render_grafana_app(toolName, arguments)` executes an enabled `query_prometheus`, `get_tempo_trace` or `query_loki_logs` call through its existing handler and displays its result. `arguments` reuses the selected tool's input schema. Set a dynamic `orgId` on the outer call. Trace results display a waterfall with span filtering, attributes and exception details. Metrics select a visualization from the response shape and unit:
 
   | Response | View |
   | --- | --- |
@@ -86,3 +87,45 @@ One constraint is easy to miss when adding an app:
 iframe same-origin, so its console and errors are reachable. Hosts sandbox apps
 and may refuse to expose a debugger, which makes an in-host failure otherwise
 invisible; `npm run dev` serves this page.
+
+## Logs
+
+Display log lines through the same renderer:
+
+```json
+{
+  "toolName": "query_loki_logs",
+  "arguments": {
+    "datasourceUid": "my-loki",
+    "logql": "{service_name=\"checkout\"} |= \"error\"",
+    "startRfc3339": "now-15m",
+    "endRfc3339": "now",
+    "limit": 100
+  }
+}
+```
+
+The log view shows timestamps at their original precision, single-line messages,
+and colored severity levels. Expanding a row reveals its complete multiline message
+in place, followed by Indexed labels,
+Parsed fields and Structured metadata in collapsible sections.
+Full and compact source output produce the same chronological view;
+`direction` controls oldest or newest first. The query time range and returned
+line count appear above the results, and a notice identifies truncated results.
+Loki metric queries explain that a log query is required for this view.
+
+Refresh and Retry use the host's authenticated MCP session, preserving query
+arguments and any outer `orgId`. Open in Grafana uses the configured public URL
+when a range query has known bounds and the link can resolve in the query organization. The existing Loki query limits,
+permissions and cost guardrails apply. Source-query JSON remains unchanged;
+viewer data is supplied separately within the shared 1 MiB budget.
+
+Enable `loki,rendering` to use logs without the other app sources. Embedding
+servers can pass `tools.QueryLokiLogs` to `tools.AddAppTool` after registering
+Loki tools and the shared app resource. Pattern discovery and log-volume charts
+are outside this release.
+
+For a synthetic AppBridge preview, build `ui/mcp-apps`, run
+`npx vite --config localhost.vite.config.ts --host 127.0.0.1 --port 5188`, and open
+`http://127.0.0.1:5188/localhost.html?fixture=logs&mode=dark`.
+The preview does not query Grafana; `&drive=refresh` exercises the refresh round trip.
