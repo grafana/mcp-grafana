@@ -7,7 +7,6 @@ import (
 
 	"github.com/grafana/incident-go"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // IncidentResult is a single incident as returned by the incident tools.
@@ -255,15 +254,15 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	mcpgrafana.RequiresPermissions(incidentAccess...),
 )
 
-func AddIncidentTools(s *mcp.Server, enableWriteTools bool) {
-	ListIncidents.Register(s)
-	if enableWriteTools {
-		CreateIncident.Register(s)
-		AddActivityToIncident.Register(s)
-		UpdateIncident.Register(s)
-	}
-	GetIncident.Register(s)
-	ListIncidentCustomFields.Register(s)
+// ActiveIncidents returns up to limit active, non-drill incidents, most
+// recent first.
+func ActiveIncidents(ctx context.Context, limit int) (*ListIncidentsResult, error) {
+	return listIncidents(ctx, ListIncidentsParams{Status: "active", Limit: limit})
+}
+
+// Incident returns the incident with the given ID.
+func Incident(ctx context.Context, id string) (*IncidentResult, error) {
+	return getIncident(ctx, GetIncidentParams{ID: id})
 }
 
 type GetIncidentParams struct {

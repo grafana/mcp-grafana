@@ -257,6 +257,22 @@ const (
 	LokiGuardrailFailureBlock = "block"
 )
 
+// Prometheus guardrail modes for GrafanaConfig.PrometheusGuardrailMode.
+const (
+	// PrometheusGuardrailOff disables the Prometheus query guardrail (default).
+	PrometheusGuardrailOff = "off"
+	// PrometheusGuardrailShadow evaluates the guardrail and logs queries
+	// that would be blocked, but always lets them run.
+	PrometheusGuardrailShadow = "shadow"
+	// PrometheusGuardrailEnforce rejects blocked queries with a tool error
+	// containing rewrite guidance.
+	PrometheusGuardrailEnforce = "enforce"
+)
+
+// DashboardSchemaV2 is the GrafanaConfig.DashboardSchema value that requires
+// new dashboards to use dashboard schema v2.
+const DashboardSchemaV2 = "v2"
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -361,6 +377,59 @@ type GrafanaConfig struct {
 	// shape and is always run.
 	LokiGuardrailOnEstimateFailure string
 
+	// PrometheusGuardrailMode controls the query guardrail for PromQL queries
+	// (query_prometheus, query_prometheus_histogram, and the Prometheus
+	// queries of run_panel_query). One of PrometheusGuardrailOff (default),
+	// PrometheusGuardrailShadow, or PrometheusGuardrailEnforce. The
+	// guardrail bounds the time range a query reads and the resolution it
+	// asks for, before the query reaches the datasource.
+	PrometheusGuardrailMode string
+
+	// PrometheusGuardrailRequireSelectiveLabels requires each vector selector
+	// to have a non-empty positive label constraint beyond the metric name.
+	// Blanket regexes and negative matchers do not provide scope; selectors
+	// proven empty by a negative universal regex are exempt. Default false.
+	// Independent of MaxRange and MaxPoints; only active when mode is not off.
+	PrometheusGuardrailRequireSelectiveLabels bool
+
+	// PrometheusGuardrailMaxRange is the maximum effective time range for a
+	// single PromQL query: the query's own range plus the longest range
+	// vector or subquery window in the expression. Zero disables the range
+	// check.
+	PrometheusGuardrailMaxRange time.Duration
+
+	// PrometheusGuardrailMaxPoints is the maximum number of points per
+	// series a range query may request, computed from its time range and
+	// step. Zero disables the points check.
+	PrometheusGuardrailMaxPoints int64
+
+	// PrometheusEnforcedMatchers, when non-empty, is a set of label matchers that are
+	// AND-ed into every vector selector of every native-Prometheus query the server
+	// issues (query, histogram percentiles, and run_panel_query Prometheus targets).
+	// It lets an operator restrict which metric series the MCP can ever read (e.g.
+	// `namespace!~"vault|payments"` to exclude series that may contain sensitive labels).
+	// Parsed once at startup; an empty slice disables enforcement.
+	// NOTE: this is only effective if raw datasource-proxy access is disabled
+	// (see --disable-api); otherwise a query can bypass the Prometheus tools entirely.
+	PrometheusEnforcedMatchers []*labels.Matcher
+
+	// PrometheusGuardrailMaxMetricCardinality enables a best-effort TSDB
+	// cardinality policy when positive and the guardrail mode is not off.
+	// An exact metric name reported above this threshold must have a non-empty
+	// exact matcher on a CardinalityScopeLabels label. This is a scope heuristic,
+	// not a bound on matched series or query cost. Zero disables the check.
+	PrometheusGuardrailMaxMetricCardinality int64
+
+	// PrometheusGuardrailCardinalityCacheTTL controls the lifetime of cached
+	// TSDB snapshots. Zero uses 10 minutes. Metadata failures fail open.
+	PrometheusGuardrailCardinalityCacheTTL time.Duration
+
+	// PrometheusGuardrailCardinalityScopeLabels names labels whose non-empty
+	// exact matchers satisfy the cardinality policy. Nil or empty uses job,
+	// instance, namespace, pod, service and cluster. Regex and negative matchers
+	// do not satisfy this policy; __name__ is never a scope label.
+	PrometheusGuardrailCardinalityScopeLabels []string
+
 	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
 	// AND-ed into every stream selector of every native-Loki query the server
 	// issues (query, stats, patterns, and label enumeration). It lets an
@@ -381,6 +450,12 @@ type GrafanaConfig struct {
 	// "unfiltered" (allow unscoped enumeration; never exposes log lines, only
 	// low-cardinality label metadata). Empty means "reject".
 	LokiLabelEnumerationFallback string
+
+	// DashboardSchema, when DashboardSchemaV2, makes update_dashboard reject a
+	// classic v1 (panels[]) body that would create a new dashboard on a Grafana
+	// that serves a v2 dashboard API. Existing dashboards, v2 bodies and
+	// Grafanas without v2 are unaffected. Empty (default) changes nothing.
+	DashboardSchema string
 
 	// BaseTransport is an optional base HTTP transport used as the innermost
 	// layer of the middleware chain in NewGrafanaClient. When set, it replaces
@@ -449,7 +524,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
-	DefaultGrafanaClientTimeout = 10 * time.Second
+	DefaultGrafanaClientTimeout = 30 * time.Second
 )
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -509,6 +584,14 @@ func isLocalHostPort(hostPort string) bool {
 	host = strings.ToLower(strings.Trim(host, "[]"))
 	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
 		host == "127.0.0.1" || host == "::1"
+}
+
+// TimeoutOr returns the --grafana-timeout value, or def when it is unset.
+func (c GrafanaConfig) TimeoutOr(def time.Duration) time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return def
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.
@@ -861,30 +944,85 @@ func WithoutUserAgent() TransportOption {
 	return func(o *transportOptions) { o.withoutUserAgent = true }
 }
 
-// BuildTransport constructs an http.RoundTripper with the standard middleware
-// chain derived from cfg. The default chain (innermost to outermost) is:
-//
-//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
-//
-// Auth is innermost among the header-setting layers so that credentials take
-// precedence over any forwarded/extra headers with the same keys.
-//
-// When cfg.Debug is true a debug-logging layer is added just above the base
-// transport. It sees the fully-decorated request (all headers set by outer
-// layers) and redacts sensitive values (Authorization, X-Access-Token, etc.)
-// before writing request/response details to the logger.
-//
-// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
-func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
-	var options transportOptions
-	for _, o := range opts {
-		o(&options)
+// transportCacheKey identifies the settings a cached transport was built from.
+type transportCacheKey struct {
+	socks5ProxyURL string
+	hasTLSConfig   bool
+	tlsConfig      TLSConfig
+}
+
+// fileStamp tells whether a file changed since it was read.
+type fileStamp struct {
+	size    int64
+	modTime int64
+}
+
+// cachedTransport is a transport with the state of the TLS files it was built from.
+type cachedTransport struct {
+	transport http.RoundTripper
+	files     [3]fileStamp
+}
+
+var (
+	transportCacheMu sync.Mutex
+	transportCache   = map[transportCacheKey]cachedTransport{}
+)
+
+// fileStamps returns the state of the certificate, key and CA files.
+func (tc *TLSConfig) fileStamps() [3]fileStamp {
+	var stamps [3]fileStamp
+	if tc == nil {
+		return stamps
+	}
+	for i, path := range []string{tc.CertFile, tc.KeyFile, tc.CAFile} {
+		if path == "" {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil {
+			stamps[i] = fileStamp{size: info.Size(), modTime: info.ModTime().UnixNano()}
+		}
+	}
+	return stamps
+}
+
+// baseTransport returns base with the SOCKS5 proxy and TLS settings from cfg
+// applied. An *http.Transport owns its connection pool and tools build a
+// transport on every call, so the one derived from http.DefaultTransport is
+// shared until the TLS files change on disk. A transport passed in by the
+// caller is not cached, because its lifetime belongs to the caller.
+func baseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+	if (cfg.SOCKS5ProxyURL == "" && cfg.TLSConfig == nil) || base != http.DefaultTransport {
+		return newBaseTransport(cfg, base)
 	}
 
-	if base == nil {
-		base = cfg.HTTPTransport()
+	key := transportCacheKey{socks5ProxyURL: cfg.SOCKS5ProxyURL}
+	if cfg.TLSConfig != nil {
+		key.hasTLSConfig = true
+		key.tlsConfig = *cfg.TLSConfig
 	}
+	files := cfg.TLSConfig.fileStamps()
 
+	transportCacheMu.Lock()
+	defer transportCacheMu.Unlock()
+
+	cached, ok := transportCache[key]
+	if ok && cached.files == files {
+		return cached.transport, nil
+	}
+	transport, err := newBaseTransport(cfg, base)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if t, isTransport := cached.transport.(*http.Transport); isTransport {
+			t.CloseIdleConnections()
+		}
+	}
+	transportCache[key] = cachedTransport{transport: transport, files: files}
+	return transport, nil
+}
+
+func newBaseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
 	// SOCKS5 proxy (applied to the innermost *http.Transport so the TLS layer
 	// below clones it with the proxy already in place).
 	if cfg.SOCKS5ProxyURL != "" {
@@ -914,6 +1052,40 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
 		}
 	}
+	return transport, nil
+}
+
+// BuildTransport constructs an http.RoundTripper with the standard middleware
+// chain derived from cfg. The default chain (innermost to outermost) is:
+//
+//	base → TLS → redirectGuard → debugLogging → rateLimitRetry → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//
+// rateLimitRetry retries 429s (and 503s with Retry-After) below the header
+// layers, so every attempt carries the same headers and is debug-logged.
+//
+// Auth is innermost among the header-setting layers so that credentials take
+// precedence over any forwarded/extra headers with the same keys.
+//
+// When cfg.Debug is true a debug-logging layer is added just above the base
+// transport. It sees the fully-decorated request (all headers set by outer
+// layers) and redacts sensitive values (Authorization, X-Access-Token, etc.)
+// before writing request/response details to the logger.
+//
+// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
+func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
+	var options transportOptions
+	for _, o := range opts {
+		o(&options)
+	}
+
+	if base == nil {
+		base = cfg.HTTPTransport()
+	}
+
+	transport, err := baseTransport(cfg, base)
+	if err != nil {
+		return nil, err
+	}
 	if !cfg.AllowCrossOriginRedirects {
 		transport = &redirectGuardTransport{next: transport}
 	}
@@ -926,6 +1098,8 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 			logger:     cfg.LoggerOrDefault(),
 		}
 	}
+
+	transport = &rateLimitRetryTransport{next: transport}
 
 	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
 	if !options.withoutAuth {
@@ -1815,6 +1989,17 @@ func KubernetesClientFromContext(ctx context.Context) *KubernetesClient {
 
 type incidentClientKey struct{}
 
+// newIncidentClient returns an incident client and its transport options.
+// incident-go only sends bearer tokens, so without one AuthRoundTripper handles auth.
+func newIncidentClient(incidentURL, apiKey string) (*incident.Client, []TransportOption) {
+	client := incident.NewClient(incidentURL, apiKey)
+	if apiKey == "" {
+		client.BeforeRequest = nil
+		return client, nil
+	}
+	return client, []TransportOption{WithoutAuth()}
+}
+
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
 // It configures the client using environment variables and applies any custom TLS settings from the context.
 var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) context.Context {
@@ -1830,11 +2015,11 @@ var ExtractIncidentClientFromEnv StdioContextFunc = func(ctx context.Context) co
 		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
 	}
 	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
 	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
 	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))
@@ -1851,14 +2036,14 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	logger := config.LoggerOrDefault()
 	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
-	client := incident.NewClient(incidentURL, apiKey)
+	client, opts := newIncidentClient(incidentURL, apiKey)
 
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
 	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
 	// build failure it returns ok=false and we keep the client's default.
-	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
+	if transport, ok := config.clientTransport(nil, opts...); ok {
 		client.HTTPClient.Transport = transport
 	} else if config.OverrideURL != "" {
 		client.HTTPClient.Transport = failClosedTransport(fmt.Errorf("grafana URL override transport could not be built"))

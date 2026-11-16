@@ -413,6 +413,39 @@ func TestExtractPanelQueries(t *testing.T) {
 		assert.Equal(t, "loki", queries[0].Datasource.Type)
 	})
 
+	t.Run("does not inherit panel datasource type for a different target uid", func(t *testing.T) {
+		panel := map[string]interface{}{
+			"datasource": map[string]interface{}{
+				"uid":  "prom-uid",
+				"type": "prometheus",
+			},
+			"targets": []interface{}{
+				map[string]interface{}{
+					"refId":  "A",
+					"rawSql": "SELECT 1",
+					"datasource": map[string]interface{}{
+						"uid": "other-uid",
+					},
+				},
+				map[string]interface{}{
+					"refId": "B",
+					"expr":  "up",
+					"datasource": map[string]interface{}{
+						"uid": "prom-uid",
+					},
+				},
+			},
+		}
+
+		queries := extractPanelQueries(panel)
+
+		require.Len(t, queries, 2)
+		assert.Equal(t, "other-uid", queries[0].Datasource.UID)
+		assert.Empty(t, queries[0].Datasource.Type)
+		assert.Equal(t, "prom-uid", queries[1].Datasource.UID)
+		assert.Equal(t, "prometheus", queries[1].Datasource.Type)
+	})
+
 	t.Run("substitutes datasource variable", func(t *testing.T) {
 		panel := map[string]interface{}{
 			"datasource": map[string]interface{}{

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // This file hosts config-generation tools — outputs that operators paste
@@ -123,8 +122,3 @@ var SuggestLokiAlloyLabelConfig = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
-
-// AddConfigTools registers the config-generation tool set.
-func AddConfigTools(s *mcp.Server) {
-	SuggestLokiAlloyLabelConfig.Register(s)
-}

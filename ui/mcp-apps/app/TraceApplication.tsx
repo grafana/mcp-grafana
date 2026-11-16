@@ -1,131 +1,56 @@
-import type { App } from '@modelcontextprotocol/ext-apps';
-import { Button } from '../src/design';
-import { LoadingIndicator } from '../src/design';
-import { useEffect, useState } from 'react';
-import { McpAppShell, type McpAppColorMode } from '../src/McpAppShell';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Button, LoadingIndicator } from '../src/design';
+import { McpAppShell } from '../src/McpAppShell';
 import { RenderTraceApp } from '../src/trace/RenderTraceApp';
-import type { TraceViewResult } from '../src/trace/types';
-import '../styles.css';
-import { applyHostContext } from './hostContext';
-import { parseTraceResult } from './parseTraceResult';
+import type { AppHostState } from './appHostState';
 
-export function TraceApplication({ app }: { app: App }) {
-  const [result, setResult] = useState<TraceViewResult>();
+export function TraceApplication({ host }: { host: AppHostState }) {
+  const state = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string>();
-  const [colorMode, setColorMode] = useState<McpAppColorMode>('light');
-
+  const [copyError, setCopyError] = useState<string>();
+  const result = state.trace;
   useEffect(() => {
-    app.ontoolresult = (response) => {
-      if (response.isError) {
-        setResult(undefined);
-        setCopied(false);
-        setError('Could not load the trace. Check the trace ID and datasource access, then run get_tempo_trace again.');
-        return;
-      }
-      const value = parseTraceResult(response.structuredContent);
-      if (!value) {
-        setResult(undefined);
-        setCopied(false);
-        setError('Interactive view unavailable; trace data remains available in the tool output.');
-        return;
-      }
-      setResult(value);
-      setCopied(false);
-      setError(undefined);
-    };
-    app.ontoolcancelled = () => {
-      setResult(undefined);
-      setCopied(false);
-      setError('Trace loading was cancelled.');
-    };
-    app.onhostcontextchanged = (context) => {
-      const theme = applyHostContext(context);
-      if (theme) {
-        setColorMode(theme);
-      }
-    };
-    app.onteardown = async () => {
-      setResult(undefined);
-      setCopied(false);
-      setError('Trace app closed.');
-      return {};
-    };
-    app
-      .connect()
-      .then(() => {
-        const context = app.getHostContext();
-        if (context) {
-          app.onhostcontextchanged?.(context);
-        }
-      })
-      .catch(() => {
-        setResult(undefined);
-        setCopied(false);
-        setError('Could not connect to the MCP host. Reopen the trace app to try again.');
-      });
-    return () => {
-      void app.close();
-    };
-  }, [app]);
+    setCopied(false);
+    setCopyError(undefined);
+  }, [result]);
 
   if (result) {
     return (
-      <>
-        <RenderTraceApp
-          result={result}
-          colorMode={colorMode}
-          feedback={error ? { tone: 'error', message: error } : undefined}
-          share={result.grafanaUrl ? (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(result.grafanaUrl);
-                  setCopied(true);
-                  setError(undefined);
-                } catch {
-                  setError('Could not copy the trace link. Use Open in Grafana to share it from Grafana.');
-                }
-              }}
-            >
-              {copied ? 'Link copied' : 'Share'}
-            </Button>
-          ) : undefined}
-          onOpenInGrafana={async ({ url }) => {
-            if (!url) {
-              return;
-            }
-            try {
-              const response = await app.openLink({ url });
-              if (response.isError) {
-                setError('The host could not open Grafana. Try the link again.');
-              } else {
-                setError(undefined);
+      <RenderTraceApp
+        result={result}
+        colorMode={state.colorMode}
+        feedback={copyError ? { tone: 'error', message: copyError } : state.notice}
+        share={result.grafanaUrl ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(result.grafanaUrl);
+                setCopied(true);
+                setCopyError(undefined);
+              } catch {
+                setCopyError('Could not copy the trace link. Use Open in Grafana to share it from Grafana.');
               }
-            } catch {
-              setError('Could not open Grafana. Try the link again.');
-            }
-          }}
-        />
-      </>
+            }}
+          >
+            {copied ? 'Link copied' : 'Share'}
+          </Button>
+        ) : undefined}
+        onOpenInGrafana={({ url }) => { if (url) host.openInGrafana({ url }); }}
+      />
     );
   }
   return (
     <McpAppShell
       product="Grafana"
-      colorMode={colorMode}
+      colorMode={state.colorMode}
       layout="wide"
       density="compact"
-      summary={{ label: 'Trace', title: error ? 'Trace unavailable' : 'Loading trace…' }}
-      feedback={error ? { tone: 'error', message: error } : undefined}
+      summary={{ label: 'Trace', title: state.isError ? 'Trace unavailable' : 'Loading trace…' }}
+      feedback={state.isError ? { tone: 'error', message: state.status } : undefined}
     >
-      {!error && (
-        <div role="status" aria-label="Loading trace">
-          <LoadingIndicator />
-        </div>
-      )}
+      {!state.isError && <div role="status" aria-label="Loading trace"><LoadingIndicator /></div>}
     </McpAppShell>
   );
 }

@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 // This file holds helpers for the dashboard schema v2 (dashboard.grafana.app
@@ -16,6 +18,57 @@ import (
 //     the datasource type is `group` and the uid is `datasource.name`.
 //   - template variables live under `variables` (an array of {kind, spec}).
 //   - the time range lives under `timeSettings` (from/to).
+
+// dashboardV2Skeleton is the minimal v2 body quoted in the update_dashboard
+// description and in the rejectNewV1Dashboard error, so the two cannot drift.
+// TestDashboardV2DescriptionSkeleton saves it against a real Grafana.
+const dashboardV2Skeleton = `{"title":"T","timeSettings":{"from":"now-6h","to":"now"},"variables":[],"links":[],"elements":{"p1":{"kind":"Panel","spec":{"id":1,"title":"Up","vizConfig":{"kind":"VizConfig","group":"timeseries","spec":{}},"data":{"kind":"QueryGroup","spec":{"queries":[{"kind":"PanelQuery","spec":{"refId":"A","query":{"kind":"DataQuery","group":"prometheus","datasource":{"name":"<ds uid>"},"spec":{"expr":"up"}}}}],"transformations":[]}}}}},"layout":{"kind":"GridLayout","spec":{"items":[{"kind":"GridLayoutItem","spec":{"x":0,"y":0,"width":24,"height":8,"element":{"kind":"ElementReference","name":"p1"}}}]}}}`
+
+// rejectNewV1Dashboard refuses a classic v1 (panels[]) body that would create a
+// new dashboard when the server requires schema v2 for new dashboards
+// (GrafanaConfig.DashboardSchema) and this Grafana serves a v2 dashboard API.
+// A body whose uid names an existing dashboard is an update and passes, as does
+// a body with an id and no uid, and everything when the setting is off or v2 is
+// not served. Like rejectV1BodyOverV2Stored, it fails closed when discovery is
+// inconclusive.
+func rejectNewV1Dashboard(ctx context.Context, dashboard map[string]interface{}) error {
+	if mcpgrafana.GrafanaConfigFromContext(ctx).DashboardSchema != mcpgrafana.DashboardSchemaV2 || isV2DashboardJSON(dashboard) {
+		return nil
+	}
+	uid, _ := dashboard["uid"].(string)
+	// Grafana saves a body with an id and no uid over that dashboard, or fails
+	// with "not found"; it never creates one. With a uid it goes by the uid and
+	// creates the dashboard when the uid is new, so the uid is checked below.
+	if id, _ := dashboard["id"].(float64); id != 0 && uid == "" {
+		return nil
+	}
+	k8s := mcpgrafana.KubernetesClientFromContext(ctx)
+	if k8s == nil {
+		return nil // no dashboard API, so no v2 to require
+	}
+	versions, err := k8s.GroupVersions(ctx, dashboardAPIGroup)
+	if err != nil {
+		return fmt.Errorf("cannot check whether this Grafana serves dashboard schema v2, which this server requires for new dashboards, so the save was refused: %w", err)
+	}
+	version := preferredV2Version(versions)
+	if version == "" {
+		return nil
+	}
+	if uid != "" {
+		ns, err := mcpgrafana.GrafanaNamespace(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = k8s.Get(ctx, dashboardDescriptor(version), ns, uid)
+		if err == nil {
+			return nil
+		}
+		if !isK8sNotFound(err) {
+			return fmt.Errorf("check whether dashboard %q exists: %w", uid, err)
+		}
+	}
+	return fmt.Errorf("this server requires new dashboards to use dashboard schema v2, so a classic v1 (panels[]) body cannot create one. Existing v1 dashboards stay editable as v1: send the body with their uid, or use patches. Send a v2 body (top-level elements/layout) instead, with <ds uid> set to a datasource uid. Minimal v2 body: %s", dashboardV2Skeleton)
+}
 
 // v2Element is a single entry from a v2 dashboard's `elements` map.
 type v2Element struct {
@@ -60,7 +113,7 @@ func collectElementsV2(spec map[string]interface{}) []v2Element {
 }
 
 // collectAllPanelsV2 returns the inner spec of every Panel element (excluding
-// library panels, which carry no inline queries), for query extraction.
+// library panels, whose queries are resolved separately), for query extraction.
 func collectAllPanelsV2(spec map[string]interface{}) []map[string]interface{} {
 	var out []map[string]interface{}
 	for _, el := range collectElementsV2(spec) {
@@ -69,6 +122,17 @@ func collectAllPanelsV2(spec map[string]interface{}) []map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// findLibraryPanelByIDV2 returns the spec of the LibraryPanel element with the
+// given id.
+func findLibraryPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]interface{}, bool) {
+	for _, el := range collectElementsV2(spec) {
+		if el.Kind == "LibraryPanel" && safeInt(el.Spec, "id") == panelID {
+			return el.Spec, true
+		}
+	}
+	return nil, false
 }
 
 // findPanelByIDV2 returns the spec of the Panel element with the given id.
@@ -82,21 +146,35 @@ func findPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]inter
 }
 
 // getPanelQueriesV2 implements get_dashboard_panel_queries for v2 dashboards.
-func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	var panels []map[string]interface{}
-	if args.PanelID != nil {
-		panel, err := findPanelByIDV2(spec, *args.PanelID)
-		if err != nil {
-			return nil, err
-		}
-		panels = []map[string]interface{}{panel}
-	} else {
-		panels = collectAllPanelsV2(spec)
-	}
-
+// A LibraryPanel element holds no queries; they are read from its library
+// element, whose model has the classic panel shape.
+func getPanelQueriesV2(ctx context.Context, spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
 	result := make([]panelQuery, 0)
-	for _, panel := range panels {
-		result = append(result, extractPanelQueriesV2(panel)...)
+	cache := newLibraryPanelCache()
+	found := false
+	for _, el := range collectElementsV2(spec) {
+		if args.PanelID != nil && safeInt(el.Spec, "id") != *args.PanelID {
+			continue
+		}
+		switch el.Kind {
+		case "Panel":
+			found = true
+			result = append(result, extractPanelQueriesV2(el.Spec)...)
+		case "LibraryPanel":
+			found = true
+			resolved, err := resolveLibraryPanel(ctx, cache, el.Spec)
+			if err != nil {
+				if args.PanelID != nil {
+					return nil, err
+				}
+				result = append(result, libraryPanelFailure(el.Spec, err))
+				continue
+			}
+			result = append(result, extractPanelQueries(resolved)...)
+		}
+	}
+	if args.PanelID != nil && !found {
+		return nil, fmt.Errorf("panel with ID %d not found", *args.PanelID)
 	}
 	return preparePanelQueries(templatingV1FromV2(spec), args, result, extractDashboardVariablesV2(spec))
 }
@@ -149,6 +227,7 @@ func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 			rawTarget:  queryTargetFields(safeObject(query, "spec")),
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
+			interval:   panelIntervalOptionsV2(panel),
 		}
 
 		// As in v1, a target built in a visual editor has no string expression;
@@ -300,8 +379,9 @@ func extractVariableSummaryV2(vk map[string]interface{}) VariableSummary {
 // the refId and datasource the panel query executors read.
 func extractPanelInfoV2(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
 	info := &panelInfo{
-		ID:    safeInt(panel, "id"),
-		Title: safeString(panel, "title"),
+		ID:       safeInt(panel, "id"),
+		Title:    safeString(panel, "title"),
+		Interval: panelIntervalOptionsV2(panel),
 	}
 
 	var queries []interface{}
@@ -364,7 +444,7 @@ func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
 		}
 
 		variable := map[string]interface{}{}
-		for _, key := range []string{"name", "current", "query"} {
+		for _, key := range []string{"name", "current", "query", "multi", "includeAll", "auto", "auto_min", "auto_count"} {
 			if val, ok := vspec[key]; ok {
 				variable[key] = val
 			}
@@ -376,6 +456,15 @@ func templatingV1FromV2(spec map[string]interface{}) map[string]interface{} {
 			variable["type"] = "constant"
 		case "TextVariable":
 			variable["type"] = "textbox"
+		case "IntervalVariable":
+			variable["type"] = "interval"
+		case "DatasourceVariable":
+			// v2 names the plugin type pluginId; v1 keeps it in query.
+			variable["type"] = "datasource"
+			variable["query"] = vspec["pluginId"]
+			if regex, ok := vspec["regex"]; ok {
+				variable["regex"] = regex
+			}
 		}
 		list = append(list, variable)
 	}

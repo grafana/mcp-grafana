@@ -25,7 +25,6 @@ import (
 
 	"github.com/google/uuid"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -184,14 +183,6 @@ var AskAssistant = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("plugins.app:access", "grafana-assistant-app.chats:access"),
 )
-
-// AddAssistantTools registers the assistant tools with the MCP server. The
-// assistant may perform write operations, so it is gated behind enableWriteTools.
-func AddAssistantTools(s *mcp.Server, enableWriteTools bool) {
-	if enableWriteTools {
-		AskAssistant.Register(s)
-	}
-}
 
 // assistantClient issues authenticated requests to the assistant A2A endpoint.
 type assistantClient struct {

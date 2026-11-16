@@ -54,9 +54,14 @@ func TestFindPanelByIDV2(t *testing.T) {
 func TestGetPanelQueriesV2(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 
-	queries, err := getPanelQueriesV2(spec, DashboardPanelQueriesParams{UID: "v2-test-uid"})
+	queries, err := getPanelQueriesV2(context.Background(), spec, DashboardPanelQueriesParams{UID: "v2-test-uid"})
 	require.NoError(t, err)
-	require.Len(t, queries, 2)
+	// The library panel cannot be resolved without a Grafana client, so it is
+	// reported with a warning instead of being dropped.
+	require.Len(t, queries, 3)
+	assert.Equal(t, "Shared graph", queries[2].Title)
+	require.Len(t, queries[2].Warnings, 1)
+	assert.Contains(t, queries[2].Warnings[0], `library panel "lib-uid"`)
 
 	assert.Equal(t, "CPU usage", queries[0].Title)
 	assert.Equal(t, `rate(cpu_seconds_total{job="$job"}[5m])`, queries[0].Query)
@@ -72,7 +77,7 @@ func TestGetPanelQueriesV2(t *testing.T) {
 func TestGetPanelQueriesV2_WithVariableSubstitution(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 
-	queries, err := getPanelQueriesV2(spec, DashboardPanelQueriesParams{
+	queries, err := getPanelQueriesV2(context.Background(), spec, DashboardPanelQueriesParams{
 		UID:       "v2-test-uid",
 		PanelID:   intPtrV2(1),
 		Variables: map[string]string{"job": "web"},
@@ -257,10 +262,61 @@ func TestRunSinglePanelQuery_V2Dashboard(t *testing.T) {
 
 	// An unsupported datasource type fails only after the panel, its query and
 	// the dashboard variables are read, so no Grafana client is needed.
-	_, err := runSinglePanelQuery(context.Background(), singlePanelQueryParams{DB: spec, IsV2: true, PanelID: 7})
+	_, err := runSinglePanelQuery(context.Background(), singlePanelQueryParams{DB: spec, IsV2: true, PanelID: 7, Start: "now-1h", End: "now"})
 	assert.ErrorContains(t, err, "datasource type 'test-unsupported' is not supported by run_panel_query")
 
 	// The v1 lookup cannot read a v2 spec.
 	_, err = runSinglePanelQuery(context.Background(), singlePanelQueryParams{DB: spec, PanelID: 7})
 	assert.ErrorContains(t, err, "finding panel: dashboard has no panels")
+}
+
+func TestFillV2ListDefaults(t *testing.T) {
+	// The tool description's minimal v2 body before this change: no links, no
+	// transformations. Grafana stored both as null and the dashboard did not
+	// load (grafana/grafana#136859).
+	in := map[string]interface{}{
+		"title": "T",
+		"elements": map[string]interface{}{
+			"p1": map[string]interface{}{"kind": "Panel", "spec": map[string]interface{}{
+				"title": "Up",
+				"data":  map[string]interface{}{"kind": "QueryGroup", "spec": map[string]interface{}{"queries": []interface{}{}}},
+			}},
+			"lib": map[string]interface{}{"kind": "LibraryPanel", "spec": map[string]interface{}{"id": 2}},
+		},
+	}
+	out := fillV2ListDefaults(in)
+
+	for _, k := range []string{"links", "tags", "variables"} {
+		assert.Equal(t, []interface{}{}, out[k], k)
+	}
+	// annotations is left alone: filling it exposes an omitted cursorSync to
+	// Grafana's validation (see fillV2ListDefaults).
+	assert.NotContains(t, out, "annotations")
+	assert.NotContains(t, out, "cursorSync")
+	p1 := out["elements"].(map[string]interface{})["p1"].(map[string]interface{})["spec"].(map[string]interface{})
+	assert.Equal(t, []interface{}{}, p1["links"])
+	assert.Equal(t, []interface{}{}, p1["data"].(map[string]interface{})["spec"].(map[string]interface{})["transformations"])
+	assert.Equal(t, "Up", p1["title"])
+
+	// A non-panel element is passed through, and the input is not mutated.
+	assert.Equal(t, map[string]interface{}{"kind": "LibraryPanel", "spec": map[string]interface{}{"id": 2}},
+		out["elements"].(map[string]interface{})["lib"])
+	_, had := in["links"]
+	assert.False(t, had)
+	inP1 := in["elements"].(map[string]interface{})["p1"].(map[string]interface{})["spec"].(map[string]interface{})
+	_, had = inP1["links"]
+	assert.False(t, had)
+	_, had = inP1["data"].(map[string]interface{})["spec"].(map[string]interface{})["transformations"]
+	assert.False(t, had)
+
+	// An explicit null is filled; a list that is present is kept as given.
+	out2 := fillV2ListDefaults(map[string]interface{}{"links": nil, "tags": []interface{}{"a"}})
+	assert.Equal(t, []interface{}{}, out2["links"])
+	assert.Equal(t, []interface{}{"a"}, out2["tags"])
+
+	// A spec without elements is only filled at the top level.
+	assert.NotContains(t, fillV2ListDefaults(map[string]interface{}{"title": "x"}), "elements")
+
+	// A nil spec is returned as is rather than panicking on the clone.
+	assert.Nil(t, fillV2ListDefaults(nil))
 }

@@ -1,5 +1,5 @@
 import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
-import traceAppHTML from '../dist/trace.html?raw';
+import traceAppHTML from '../dist/app.html?raw';
 import { trace } from './traceFixture';
 
 const frame = document.querySelector<HTMLIFrameElement>('#trace-app');
@@ -38,11 +38,11 @@ bridge.onopenlink = async ({ url }) => {
 
 bridge.oninitialized = async () => {
   await bridge.sendToolInput({
-    arguments: {
+    arguments: { toolName: 'get_tempo_trace', arguments: {
       trace_id: trace.traceId,
       datasourceUid: trace.datasourceUid,
       focus_span_id: trace.focusSpanId,
-    },
+    } },
   });
   await bridge.sendToolResult({
     content: [{ type: 'text', text: `Displaying trace ${trace.traceId}.` }],

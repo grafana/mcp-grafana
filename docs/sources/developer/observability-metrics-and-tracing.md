@@ -111,6 +111,49 @@ Watch `mcp_loki_guardrail_fail_open_total` alongside them: a quiet `would_block`
 
 Neither the stream selector nor the LogQL is exported as a label: both are unbounded, and line filters can carry sensitive literals. The extracted selectors are logged at `WARN` and the full query at `DEBUG` instead.
 
+### Prometheus guardrail metrics
+
+When the [Prometheus query guardrail](../../configure/command-line-flags/) is enabled (`--prometheus-guardrail-mode` is `shadow` or `enforce`), every PromQL query it evaluates increments exactly one of four counters:
+
+| Metric | Type | Incremented when |
+|--------|------|------------------|
+| `mcp_prometheus_guardrail_admitted_total` | Counter | The query passed every enabled check |
+| `mcp_prometheus_guardrail_would_block_total` | Counter | The query failed a check in `shadow` mode and ran anyway |
+| `mcp_prometheus_guardrail_blocked_total` | Counter | The query failed a check in `enforce` mode and was rejected |
+| `mcp_prometheus_guardrail_fail_open_total` | Counter | No check failed, but parsing or an enabled cardinality assessment was unavailable |
+
+**Labels:**
+
+| Label | On | Values |
+|-------|-----|--------|
+| `reason` | `would_block`, `blocked` | `selector` (a vector selector lacks a selective positive label constraint when the selector policy is enabled), `range` (effective time range over `--prometheus-guardrail-max-range`), `points` (requested points per series over `--prometheus-guardrail-max-points`), `cardinality` (a known high-cardinality metric lacks an exact scope matcher) |
+| `reason` | `fail_open` | `unparseable`, `cardinality_unknown` (metric cardinality or TSDB metadata unavailable) |
+
+The diagnostic OTel counter `mcp.prometheus_guardrail.cardinality_fail_open` (unit `{query}`, exported as `mcp_prometheus_guardrail_cardinality_fail_open_total`) increments once only when the final decision is `fail_open{reason="cardinality_unknown"}`. It is a subset of the existing fail-open counter, not a fifth decision counter; do not add it to the four decision counters when counting queries. Its only attribute is the bounded `cause`:
+
+| `cause` | Meaning |
+|---------|---------|
+| `not_in_top_n` | Metadata was valid, but an exact metric name was absent from the TSDB top-N statistics |
+| `unresolved_metric_name` | A selector's exact metric name could not be resolved, for example a regex or name-less selector |
+| `metadata_unavailable` | Backend resolution or metadata access failed, including unsupported endpoints, timeouts, invalid responses and cached failures |
+| `fetch_slots_saturated` | All local TSDB fetch slots were occupied; no metadata HTTP request was started for this lookup |
+
+Cause selection is deterministic: when exact names require metadata, a fetch-slot or metadata failure takes precedence over unresolved names; with valid metadata, unresolved names take precedence over missing top-N entries. Known cardinality violations still take precedence over unknown selectors and produce `blocked` or `would_block` without incrementing this diagnostic counter. Static checks, `off` mode and scoped selectors retain their existing behavior. Saturation is not cached, so the same request can retry metadata lookup as soon as a slot is free. Cached metadata failures still increment the diagnostic counter per final query decision, rather than per HTTP attempt. Legacy proxy fallback can make two HTTP attempts for one decision.
+
+Metric names, PromQL, datasource UIDs and error strings are never attributes of this diagnostic counter.
+
+A query that fails multiple checks is counted once, under the first failure in the order `selector`, `range`, `points`, `cardinality`. Selector checks are enabled independently of the numeric budgets. The time range and step are checked even when the expression does not parse, so a macro-bearing query over too long a range is still blocked rather than counted as a fail-open. Unlike the Loki counters, these have no `backend` label. Static checks apply to every Prometheus-compatible backend; unsupported TSDB metadata fails open for the opt-in cardinality policy.
+
+Built-in Grafana macros such as `$__rate_interval` are substituted before parsing. A steady `fail_open` rate can indicate unresolved dashboard variables such as `$window` or unsupported syntax; a low `would_block` rate is meaningful only alongside a low fail-open rate. The guardrail has these limits:
+
+- The optional selector check is a static heuristic, not a bound on series count or backend work. Neither query text nor label names/values are exported as metric attributes.
+- The cardinality policy requires exact scope for known high-cardinality metrics from cached TSDB top-N statistics. It does not estimate matched series; missing metrics are unknown, and a scope matcher can still select many series. Watch `cardinality_unknown` alongside blocks when evaluating coverage.
+- The points check budgets the requested resolution, `floor(range / step) + 1`. It does not bound the number of series, samples, or subquery evaluations, and Grafana may align the range or widen the step.
+- `offset` and `@` modifiers are ignored. `offset` shifts a window without widening it; ignoring `@` can only overestimate.
+- Expressions that need Grafana macro substitution or a dialect-only feature fail open on the expression part.
+
+The expression is never a label. Blocked queries are logged at `WARN` with the reasons, and the expression is logged at `DEBUG` only.
+
 ## Enable OpenTelemetry tracing
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, the server exports traces via OTLP/gRPC.

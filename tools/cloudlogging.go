@@ -14,7 +14,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 )
 
 const (
@@ -36,7 +36,7 @@ type cloudLoggingClient struct {
 
 // newCloudLoggingClient validates the datasource type and returns a client for it.
 func newCloudLoggingClient(ctx context.Context, uid string) (*cloudLoggingClient, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -488,13 +488,3 @@ var ListCloudLoggingViews = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddCloudLoggingTools registers the Google Cloud Logging tools with the MCP server.
-func AddCloudLoggingTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		QueryCloudLogging.Register(s)
-	}
-	ListCloudLoggingProjects.Register(s)
-	ListCloudLoggingBuckets.Register(s)
-	ListCloudLoggingViews.Register(s)
-}

@@ -6,12 +6,15 @@
  * `AppBridge` over `PostMessageTransport`, the same handshake — so the app runs
  * in an iframe with a reachable console and the error can be read.
  *
- * Load with `?app=metrics.html` (default) and open the console, or drive it
+ * Load with `?app=app.html` (default) and open the console, or drive it
  * headlessly and read the captured log from `window.__hostLog`.
  */
 
 import { AppBridge } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { PostMessageTransport } from '@modelcontextprotocol/ext-apps';
+
+import vizArgs from '@grafana/viz-contract/fixtures/prometheus-line/args.json';
+import vizResult from '@grafana/viz-contract/fixtures/prometheus-line/result.json';
 
 const log: string[] = [];
 (window as unknown as { __hostLog: string[] }).__hostLog = log;
@@ -64,7 +67,7 @@ function instantResult(kind: string) {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
     structuredContent: payload,
     isError: false,
-    _meta: { ui: { resourceUri: 'ui://grafana/metrics.html' } },
+    _meta: { ui: { resourceUri: 'ui://grafana/app.html' } },
   };
 }
 
@@ -91,7 +94,7 @@ function bucketResult() {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
     structuredContent: payload,
     isError: false,
-    _meta: { ui: { resourceUri: 'ui://grafana/metrics.html' } },
+    _meta: { ui: { resourceUri: 'ui://grafana/app.html' } },
   };
 }
 
@@ -115,13 +118,13 @@ function toolResult(generation = 0) {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
     structuredContent: payload,
     isError: false,
-    _meta: { ui: { resourceUri: 'ui://grafana/metrics.html' } },
+    _meta: { ui: { resourceUri: 'ui://grafana/app.html' } },
   };
 }
 
 async function main() {
   const params = new URLSearchParams(location.search);
-  const appFile = params.get('app') ?? 'metrics.html';
+  const appFile = params.get('app') ?? 'app.html';
   const theme = params.get('mode') === 'dark' ? 'dark' : 'light';
 
   const iframe = document.getElementById('app') as HTMLIFrameElement;
@@ -176,13 +179,29 @@ async function main() {
     single: 'go_goroutines',
     buckets: 'rate(http_request_duration_seconds_bucket[5m])',
   };
+  // `?fixture=viz` sends the prometheus-line set of the viz contract as a query_datasource call.
+  if (fixtureName === 'viz') {
+    await bridge.sendToolInput({
+      toolName: 'render_grafana_app',
+      arguments: { toolName: 'query_datasource', arguments: vizArgs },
+    } as never);
+    record('tool-input sent (query_datasource)');
+    await bridge.sendToolResult({
+      content: [{ type: 'text', text: 'Queried data source lgtm-prometheus.' }],
+      structuredContent: vizResult,
+      isError: false,
+    } as never);
+    record('tool-result sent (fixture=viz)');
+    return;
+  }
+
   await bridge.sendToolInput({
-    toolName: 'query_prometheus',
-    arguments: {
+    toolName: 'render_grafana_app',
+    arguments: { toolName: 'query_prometheus', arguments: {
       expr: fixtureName ? (fixtureExpr[fixtureName] ?? fixtureName) : 'node_load1',
       datasourceUid: 'grafanacloud-prom',
       queryType: fixtureName && fixtureName !== 'buckets' ? 'instant' : 'range',
-    },
+    } },
   } as never);
   record('tool-input sent');
 

@@ -33,7 +33,9 @@ func TestRejectIncidentErrorStatuses(t *testing.T) {
 		t.Cleanup(srv.Close)
 
 		_, err := queryIncidents(t, srv.URL)
-		require.Error(t, err)
+		var apiErr *IncidentAPIError
+		require.ErrorAs(t, err, &apiErr)
+		assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
 		assert.Contains(t, err.Error(), "403")
 		assert.Contains(t, err.Error(), "Permissions needed: plugins.app:access")
 	})

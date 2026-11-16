@@ -47,6 +47,7 @@ type QuerySQLParams struct {
 	Schema                     string            `json:"schema,omitempty" jsonschema:"description=Schema override (Snowflake\\, PostgreSQL\\, MSSQL). Defaults to datasource config."`
 	Catalog                    string            `json:"catalog,omitempty" jsonschema:"description=Data catalog override (Athena only). Defaults to datasource config."`
 	Region                     string            `json:"region,omitempty" jsonschema:"description=AWS region override (Athena only). Defaults to datasource config."`
+	Location                   string            `json:"location,omitempty" jsonschema:"description=BigQuery processing location (e.g. US or europe-west1). Defaults to datasource config."`
 	ResultReuseEnabled         bool              `json:"resultReuseEnabled,omitempty" jsonschema:"description=Enable Athena query result reuse. Requires Athena engine version 3."`
 	ResultReuseMaxAgeInMinutes int               `json:"resultReuseMaxAgeInMinutes,omitempty" jsonschema:"description=Max age in minutes for reused Athena results. Only applies when resultReuseEnabled is true."`
 }
@@ -54,8 +55,8 @@ type QuerySQLParams struct {
 // ListSQLTablesParams are the parameters for the list_sql_tables tool.
 type ListSQLTablesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource."`
-	Database      string `json:"database,omitempty" jsonschema:"description=Database name to filter tables. Behavior varies by datasource type."`
-	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name to filter tables (Snowflake\\, PostgreSQL\\, MSSQL)."`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name to filter tables; BigQuery project (defaults to datasource defaultProject)."`
+	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name to filter tables (Snowflake\\, PostgreSQL\\, MSSQL); required dataset for BigQuery."`
 	Catalog       string `json:"catalog,omitempty" jsonschema:"description=Data catalog name (Athena only)."`
 	Region        string `json:"region,omitempty" jsonschema:"description=AWS region override (Athena only)."`
 }
@@ -64,8 +65,8 @@ type ListSQLTablesParams struct {
 type DescribeSQLTableParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource."`
 	Table         string `json:"table" jsonschema:"required,description=Table name to describe."`
-	Database      string `json:"database,omitempty" jsonschema:"description=Database name. Behavior varies by datasource type."`
-	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name (Snowflake\\, PostgreSQL\\, MSSQL)."`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name; BigQuery project (defaults to datasource defaultProject)."`
+	Schema        string `json:"schema,omitempty" jsonschema:"description=Schema name (Snowflake\\, PostgreSQL\\, MSSQL); required dataset for BigQuery."`
 	Catalog       string `json:"catalog,omitempty" jsonschema:"description=Data catalog name (Athena only)."`
 	Region        string `json:"region,omitempty" jsonschema:"description=AWS region override (Athena only)."`
 }
@@ -74,7 +75,7 @@ type DescribeSQLTableParams struct {
 type ListSQLDatabasesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=UID of the SQL datasource."`
 	Catalog       string `json:"catalog,omitempty" jsonschema:"description=Catalog name. For Athena: when empty returns catalogs; when set returns databases in that catalog."`
-	Database      string `json:"database,omitempty" jsonschema:"description=Database name. For Snowflake: when set returns schemas in that database."`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name. For Snowflake: when set returns schemas in that database. For BigQuery: project to list datasets from; defaults to datasource config."`
 	Region        string `json:"region,omitempty" jsonschema:"description=AWS region override (Athena)."`
 }
 
@@ -168,6 +169,8 @@ func supportedDialectTypes() string {
 
 var sqlIdentifierRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
+var trailingLineCommentRe = regexp.MustCompile(`(--|#|//)[^\n]*$`)
+
 // grafanaMacroRe matches a whole $__name token. replaceWholeMacros looks the name up, so a
 // macro that merely starts with a substituted name ($__toTime, $__interval_s, $__to_date) is
 // never touched.
@@ -204,23 +207,95 @@ func EnforceSQLLimit(query string, requestedLimit, defaultLimit, maxLimit int) s
 		limit = maxLimit
 	}
 
-	limitRe := regexp.MustCompile(`(?i)\bLIMIT\s+\d+`)
-	if limitRe.MatchString(query) {
-		query = limitRe.ReplaceAllStringFunc(query, func(match string) string {
-			numRe := regexp.MustCompile(`\d+`)
-			numStr := numRe.FindString(match)
-			existingLimit, _ := strconv.Atoi(numStr)
-			if existingLimit > maxLimit {
-				return fmt.Sprintf("LIMIT %d", maxLimit)
+	// Only LIMITs outside parentheses bound the rows returned. A LIMIT inside a
+	// comment, a string or a subquery neither caps the result nor may be
+	// rewritten, since that would change what the subquery computes. Every
+	// top-level LIMIT is capped, because ClickHouse applies the LIMIT of each
+	// unparenthesized UNION ALL arm on its own.
+	if limits := topLevelLimits(query); len(limits) > 0 {
+		for i := len(limits) - 1; i >= 0; i-- {
+			l := limits[i]
+			if existingLimit, _ := strconv.Atoi(query[l.start:l.end]); existingLimit > maxLimit {
+				query = fmt.Sprintf("%sLIMIT %d%s", query[:l.clause], maxLimit, query[l.end:])
 			}
-			return match
-		})
+		}
 		return query
 	}
 
 	query = strings.TrimSpace(query)
 	query = strings.TrimSuffix(query, ";")
+	if trailingLineCommentRe.MatchString(query) {
+		return fmt.Sprintf("%s\nLIMIT %d", query, limit)
+	}
 	return fmt.Sprintf("%s LIMIT %d", query, limit)
+}
+
+var limitCountRe = regexp.MustCompile(`(?i)^LIMIT\s+(\d+)`)
+
+// sqlLimit is a LIMIT clause in a query: the offset of the keyword and the
+// span of its row count.
+type sqlLimit struct{ clause, start, end int }
+
+// topLevelLimits finds the LIMIT clauses outside comments, quoted text and
+// parentheses, in order.
+func topLevelLimits(query string) []sqlLimit {
+	var limits []sqlLimit
+	depth := 0
+	for i := 0; i < len(query); {
+		switch c := query[i]; {
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			for j < len(query) {
+				if query[j] == c {
+					if j+1 < len(query) && query[j+1] == c {
+						j += 2
+						continue
+					}
+					break
+				}
+				if query[j] == '\\' && c == '\'' {
+					j++
+				}
+				j++
+			}
+			if j >= len(query) {
+				// An unterminated quote is not a string; read past it.
+				i++
+				continue
+			}
+			i = j + 1
+		case c == '-' && strings.HasPrefix(query[i:], "--"), c == '/' && strings.HasPrefix(query[i:], "//"), c == '#':
+			for i < len(query) && query[i] != '\n' {
+				i++
+			}
+		case c == '/' && strings.HasPrefix(query[i:], "/*"):
+			if j := strings.Index(query[i+2:], "*/"); j >= 0 {
+				i += j + 4
+			} else {
+				i = len(query)
+			}
+		case c == '(':
+			depth++
+			i++
+		case c == ')':
+			depth--
+			i++
+		default:
+			if depth == 0 && (i == 0 || !isSQLWordByte(query[i-1])) {
+				if m := limitCountRe.FindStringSubmatchIndex(query[i:]); m != nil {
+					limits = append(limits, sqlLimit{clause: i, start: i + m[2], end: i + m[3]})
+					i += m[1]
+					continue
+				}
+			}
+			i++
+		}
+	}
+	return limits
+}
+
+func isSQLWordByte(b byte) bool {
+	return b == '_' || b == '$' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
 // ToStringFromRow extracts a string from a row value that may be string or

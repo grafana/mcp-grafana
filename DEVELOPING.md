@@ -39,6 +39,22 @@ mise run test-cloud          # cloud tests (requires GRAFANA_SERVICE_ACCOUNT_TOK
 mise run test-python-e2e     # Python E2E tests (requires docker-compose + SSE server)
 ```
 
+With the Grafana and Prometheus test services running, the cardinality guardrail
+can also be checked on its own:
+
+```bash
+go test -tags integration ./tools -run '^TestPrometheusCardinalityLive$' -count=1 -v
+```
+
+This test uses `GRAFANA_URL` and the same authentication as the other integration
+tests (defaults to local Grafana with `admin:admin`). It discovers a multi-series
+metric from the real TSDB top 10, verifies enforcement before query dispatch,
+checks cached statistics and successful scoped/shadow/off queries, and injects
+an unavailable metadata endpoint through a forwarding proxy while preserving
+real Grafana query execution. Histogram enforcement is checked when a bucket
+metric is present in the top 10. The standard Prometheus self-scrape fixture
+supplies multi-series metrics; no production-sized cardinality is needed.
+
 ## Linting
 
 ```bash

@@ -52,6 +52,13 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric metadata: %w", err)
 	}
+	if args.LimitPerMetric > 0 {
+		for name, entries := range metadata {
+			if len(entries) > args.LimitPerMetric {
+				metadata[name] = entries[:args.LimitPerMetric]
+			}
+		}
+	}
 	return metadata, nil
 }
 
@@ -153,12 +160,45 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 		}
 	}
 
-	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
+	var backend promBackend
+	var backendErr error
+	var backendLoaded bool
+	loadBackend := func() error {
+		if !backendLoaded {
+			backendLoaded = true
+			backend, backendErr = backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
+		}
+		return backendErr
+	}
+	if err := guardPrometheusQuery(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds, func() promGuardDecision {
+		return assessPromCardinality(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds, func() (*prometheusBackend, error) {
+			if err := loadBackend(); err != nil {
+				return nil, err
+			}
+			b, ok := backend.(*prometheusBackend)
+			if !ok {
+				return nil, fmt.Errorf("backend does not support TSDB metadata")
+			}
+			return b, nil
+		})
+	}); err != nil {
+		return nil, nil, err
+	}
+
+	window := time.Duration(0)
+	if !startTime.IsZero() && !endTime.IsZero() && endTime.After(startTime) {
+		window = endTime.Sub(startTime)
+	}
+	expr, err := enforcePromQL(ctx, args.Expr, window, args.StepSeconds)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := loadBackend(); err != nil {
 		return nil, nil, fmt.Errorf("getting backend: %w", err)
 	}
 
-	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
+	return backend.Query(ctx, expr, queryType, startTime, endTime, args.StepSeconds)
 }
 
 // queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.
@@ -257,9 +297,8 @@ func exploreTimeRangeForQuery(args QueryPrometheusParams) *TimeRange {
 // interactive view, rather than handing a host something it cannot render.
 const maxMetricsViewBytes = 1 << 20
 
-// queryPrometheusForApp runs the query and returns the normal text result,
-// enriched with an interactive view when one is possible.
-func queryPrometheusForApp(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
+// queryPrometheusTool returns text and structured data shared by query and chart calls.
+func queryPrometheusTool(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
 	result, err := queryPrometheusWithHints(ctx, args)
 	if err != nil {
 		return nil, err
@@ -289,9 +328,8 @@ func newMetricsAppResult(result *QueryPrometheusResult) (*mcp.CallToolResult, er
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
-	queryPrometheusForApp,
-	mcpgrafana.WithUIResource(mcpgrafana.MetricsViewerResourceURI),
+	"Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Returns data without opening a chart. Supports instant and range queries. Time: RFC3339 or relative expressions like 'now', 'now-1h'.",
+	queryPrometheusTool,
 	mcpgrafana.WithTitleAnnotation("Query Prometheus metrics"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithReadOnlyHintAnnotation(true),
@@ -739,17 +777,3 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddPrometheusTools registers the Prometheus tools on the MCP server. The
-// tools that execute PromQL are registered only when enableQueryTools is true;
-// the metadata tools stay available either way.
-func AddPrometheusTools(s *mcp.Server, enableQueryTools bool) {
-	ListPrometheusMetricMetadata.Register(s)
-	if enableQueryTools {
-		QueryPrometheus.Register(s)
-		QueryPrometheusHistogram.Register(s)
-	}
-	ListPrometheusMetricNames.Register(s)
-	ListPrometheusLabelNames.Register(s)
-	ListPrometheusLabelValues.Register(s)
-}

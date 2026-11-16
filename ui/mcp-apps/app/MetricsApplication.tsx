@@ -4,17 +4,17 @@ import { McpAppShell } from '../src/McpAppShell';
 import { RenderMetricsApp } from '../src/metrics/RenderMetricsApp';
 import '../styles.css';
 import { AppErrorBoundary } from './AppErrorBoundary';
-import type { MetricsHostState } from './metricsHostState';
+import type { AppHostState } from './appHostState';
 
 /**
  * Renders whatever the host has told us so far.
  *
- * All MCP interaction lives in `metricsHostState`, which attaches its handlers
+ * All MCP interaction lives in `appHostState`, which attaches its handlers
  * when the `App` is constructed — before React commits — because the host does
  * not replay `tool-input` / `tool-result` and an effect-registered handler
  * misses them whenever the handshake wins the race.
  */
-export function MetricsApplication({ host }: { host: MetricsHostState }) {
+export function MetricsApplication({ host }: { host: AppHostState }) {
   const state = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
   const canRefresh = Boolean(state.args?.expr && state.args.datasourceUid);
 

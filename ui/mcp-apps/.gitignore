@@ -1,6 +1,5 @@
 /node_modules/
 /dist/*
-!/dist/trace.html
-!/dist/metrics.html
+!/dist/app.html
 !/dist/service-health.html
 /dist-preview/

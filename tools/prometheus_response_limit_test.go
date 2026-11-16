@@ -5,6 +5,7 @@ package tools
 import (
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +28,6 @@ func TestPrometheusBackendResponseLimit(t *testing.T) {
 		size     int64
 		encoding string
 		instant  bool
-		fallback bool
 		wantErr  bool
 	}{
 		{name: "below limit", size: defaultResponseLimitBytes - 1},
@@ -37,19 +39,17 @@ func TestPrometheusBackendResponseLimit(t *testing.T) {
 		{name: "gzip above limit", size: defaultResponseLimitBytes + 1, encoding: "gzip", wantErr: true},
 		{name: "instant at limit", size: defaultResponseLimitBytes, instant: true},
 		{name: "instant above limit", size: defaultResponseLimitBytes + 1, instant: true, wantErr: true},
-		{name: "fallback above limit", size: defaultResponseLimitBytes + 1, fallback: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result := `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"__name__":"up"},"values":[[1700000000,"1"]]}]}}`
-			if tc.instant {
-				result = `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"up"},"value":[1700000000,"1"]}]}}`
-			}
-			body := result + strings.Repeat(" ", int(tc.size)-len(result))
+			result, err := json.Marshal(backend.QueryDataResponse{Responses: backend.Responses{
+				"A": backend.DataResponse{Frames: data.Frames{data.NewFrame("",
+					data.NewField("Time", nil, []time.Time{time.Unix(1700000000, 0)}),
+					data.NewField("Value", data.Labels{"__name__": "up"}, []float64{1}),
+				)}},
+			}})
+			require.NoError(t, err)
+			body := string(result) + strings.Repeat(" ", int(tc.size)-len(result))
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if tc.fallback && strings.Contains(r.URL.Path, "/resources/") {
-					http.Error(w, "use the proxy endpoint", http.StatusForbidden)
-					return
-				}
 				w.Header().Set("Content-Type", "application/json")
 				switch tc.encoding {
 				case "gzip":
@@ -68,7 +68,6 @@ func TestPrometheusBackendResponseLimit(t *testing.T) {
 			t.Cleanup(server.Close)
 			ctx := mockDatasourcesCtx(server)
 			uid := "response-limit-" + strings.ReplaceAll(tc.name, " ", "-")
-			t.Cleanup(func() { fallbackEndpoints.Delete("/api/datasources/uid/" + uid + "/resources/api/v1/query_range") })
 			backend, err := newPrometheusBackend(ctx, uid, &models.DataSource{})
 			require.NoError(t, err)
 			queryType := "range"

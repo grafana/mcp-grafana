@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // The functions in this file translate the Grafana Professional Services
@@ -923,12 +922,6 @@ func buildPerfSummary(findings []QueryPerfFinding, stats *Stats) string {
 // Registration helper
 // ---------------------------------------------------------------------------
 
-// AddLokiLabelAnalyzerTools registers the label-analyzer tool set.
-// AddLokiTools calls this so the standard Loki bundle includes them.
-func AddLokiLabelAnalyzerTools(s *mcp.Server) {
-	AnalyzeLokiLabels.Register(s)
-}
-
 // ---------------------------------------------------------------------------
 // analyze_loki_labels — unified entry point
 // ---------------------------------------------------------------------------
@@ -961,6 +954,8 @@ func analyzeLokiLabels(ctx context.Context, args AnalyzeLokiLabelsParams) (*Anal
 	if args.DatasourceUID == "" && len(args.Labels) == 0 {
 		return nil, fmt.Errorf("either datasourceUid or labels must be supplied")
 	}
+	// VictoriaLogs reads a missing start as all of retention, so pin the window here.
+	args.StartRFC3339, args.EndRFC3339 = getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	audit, err := auditLokiLabelStrategy(ctx, AuditLokiLabelStrategyParams{
 		DatasourceUID:      args.DatasourceUID,

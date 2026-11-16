@@ -28,42 +28,17 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:   "list is valid with no params",
-			params: ManageSilencesParams{Operation: "list"},
+			name:    "list is rejected",
+			params:  ManageSilencesParams{Operation: "list"},
+			wantErr: "unknown operation",
 		},
 		{
-			name: "list with rule_uid filter is valid",
-			params: ManageSilencesParams{
-				Operation: "list",
-				RuleUID:   strPtr("abc123"),
-			},
-		},
-		{
-			name: "list with matcher filter is valid",
-			params: ManageSilencesParams{
-				Operation: "list",
-				Matchers:  validMatchers,
-			},
-		},
-		{
-			name: "get with silence_id is valid",
+			name: "get is rejected",
 			params: ManageSilencesParams{
 				Operation: "get",
 				SilenceID: strPtr("sil-1"),
 			},
-		},
-		{
-			name:    "get without silence_id",
-			params:  ManageSilencesParams{Operation: "get"},
-			wantErr: "silence_id is required",
-		},
-		{
-			name: "get with empty silence_id",
-			params: ManageSilencesParams{
-				Operation: "get",
-				SilenceID: strPtr(""),
-			},
-			wantErr: "silence_id is required",
+			wantErr: "unknown operation",
 		},
 		{
 			name: "create with all required fields is valid",
@@ -86,31 +61,6 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 				Comment:   &comment,
 			},
 			wantErr: "silence_id must not be set for 'create'",
-		},
-		{
-			name: "create with rule_uid is rejected",
-			params: ManageSilencesParams{
-				Operation: "create",
-				RuleUID:   strPtr("abc123"),
-				Matchers:  validMatchers,
-				StartsAt:  &start,
-				EndsAt:    &end,
-				Comment:   &comment,
-			},
-			wantErr: "rule_uid must not be set for 'create'",
-		},
-		{
-			name: "update with rule_uid is rejected",
-			params: ManageSilencesParams{
-				Operation: "update",
-				SilenceID: strPtr("sil-1"),
-				RuleUID:   strPtr("abc123"),
-				Matchers:  validMatchers,
-				StartsAt:  &start,
-				EndsAt:    &end,
-				Comment:   &comment,
-			},
-			wantErr: "rule_uid must not be set for 'update'",
 		},
 		{
 			name: "create without matchers",

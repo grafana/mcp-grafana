@@ -6,14 +6,16 @@ import (
 	"strings"
 	"time"
 
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
-func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesOpts, labelSelectors []Selector) ([]alertRuleSummary, error) {
+func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesOpts, labelSelectors []Selector, cursor string) (*alertRuleList, error) {
 	// Bound the entire scan, rather than giving every page a fresh timeout.
-	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, mcpgrafana.GrafanaConfigFromContext(ctx).TimeoutOr(mcpgrafana.DefaultGrafanaClientTimeout))
 	defer cancel()
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
+	ds, err := datasource.ByUID(ctx, dsUID)
 	if err != nil {
 		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
 	}
@@ -27,17 +29,10 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 		return nil, fmt.Errorf("creating alerting client: %w", err)
 	}
 
-	limit := DefaultListAlertRulesLimit
-	if opts != nil && opts.RuleLimit > 0 {
-		limit = min(opts.RuleLimit, maxRulesLimit)
-	}
-	var summaries []alertRuleSummary
-	nextToken := ""
-	seenTokens := make(map[string]struct{})
-	for {
-		rulesResp, err := client.GetDatasourceRules(ctx, dsUID, opts, nextToken)
+	fetch := func(ctx context.Context, token string) ([]alertRuleSummary, string, error) {
+		rulesResp, err := client.GetDatasourceRules(ctx, dsUID, opts, token)
 		if err != nil {
-			return nil, fmt.Errorf("querying datasource %s rules: %w", dsUID, err)
+			return nil, "", fmt.Errorf("querying rules: %w", err)
 		}
 		page := convertPrometheusRulesToSummary(&rulesResp.RulesResult)
 		// Keep local filtering for backends that ignore type, and preserve
@@ -51,20 +46,16 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 		if len(labelSelectors) > 0 {
 			page, err = filterSummaryByLabels(page, labelSelectors)
 			if err != nil {
-				return nil, fmt.Errorf("filtering rules: %w", err)
+				return nil, "", fmt.Errorf("filtering rules: %w", err)
 			}
 		}
-		remaining := limit - len(summaries)
-		summaries = append(summaries, page[:min(len(page), remaining)]...)
-		if len(summaries) == limit || rulesResp.NextToken == "" {
-			return summaries, nil
-		}
-		if _, seen := seenTokens[rulesResp.NextToken]; seen {
-			return nil, fmt.Errorf("datasource %s rules API repeated a pagination token", dsUID)
-		}
-		seenTokens[rulesResp.NextToken] = struct{}{}
-		nextToken = rulesResp.NextToken
+		return page, rulesResp.NextToken, nil
 	}
+	list, err := collectRules(ctx, fetch, ruleLimitOrDefault(opts), cursor)
+	if err != nil {
+		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
+	}
+	return list, nil
 }
 
 func isRulerDatasource(dsType string) bool {
@@ -75,7 +66,7 @@ func isRulerDatasource(dsType string) bool {
 
 // convertPrometheusRulesToSummary flattens a ruler rules response into
 // alertRuleSummary entries. Both alerting and recording rules are emitted —
-// recording rules populate Query/Labels/Health/LastEvaluation but leave the
+// recording rules populate Query/Labels/Health/LastEvaluation/LastError but leave the
 // alerting-only fields (state, for, annotations) empty.
 func convertPrometheusRulesToSummary(result *v1.RulesResult) []alertRuleSummary {
 	if result == nil {
@@ -90,6 +81,7 @@ func convertPrometheusRulesToSummary(result *v1.RulesResult) []alertRuleSummary 
 				rules = append(rules, alertRuleSummary{
 					Title:          r.Name,
 					Type:           "alerting",
+					Namespace:      group.File,
 					RuleGroup:      group.Name,
 					Query:          r.Query,
 					Labels:         labelMap(r.Labels),
@@ -97,17 +89,20 @@ func convertPrometheusRulesToSummary(result *v1.RulesResult) []alertRuleSummary 
 					State:          normalizeState(string(r.State)),
 					Health:         string(r.Health),
 					LastEvaluation: formatRuleEvalTime(r.LastEvaluation),
+					LastError:      r.LastError,
 					For:            formatDuration(r.Duration),
 				})
 			case v1.RecordingRule:
 				rules = append(rules, alertRuleSummary{
 					Title:          r.Name,
 					Type:           "recording",
+					Namespace:      group.File,
 					RuleGroup:      group.Name,
 					Query:          r.Query,
 					Labels:         labelMap(r.Labels),
 					Health:         string(r.Health),
 					LastEvaluation: formatRuleEvalTime(r.LastEvaluation),
+					LastError:      r.LastError,
 				})
 			}
 		}

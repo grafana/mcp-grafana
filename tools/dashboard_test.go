@@ -131,6 +131,31 @@ func TestDashboardTools(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("update dashboard - no overwrite takes the current copy, refuses a stale one", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+		stale := getTestDashboardJSON(t, ctx, dashboard)
+		current := getTestDashboardJSON(t, ctx, dashboard)
+		// Grafana only bumps the version when the content changes.
+		current["description"] = "saved without overwrite"
+
+		params := UpdateDashboardParams{
+			Dashboard: current,
+			FolderUID: dashboard.FolderUID,
+			Message:   "saving a copy that was just read",
+			UserID:    1,
+		}
+		_, err := updateDashboard(ctx, params)
+		require.NoError(t, err)
+
+		// The first read is now one version behind.
+		params.Dashboard = stale
+		params.Message = "saving a copy read before the last save"
+		_, err = updateDashboard(ctx, params)
+		require.ErrorContains(t, err, "changed since it was read")
+	})
+
 	t.Run("get dashboard panel queries", func(t *testing.T) {
 		ctx := newTestContext()
 

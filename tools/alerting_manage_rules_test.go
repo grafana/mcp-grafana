@@ -93,7 +93,7 @@ var (
 	}
 )
 
-// toDataMaps converts typed []*AlertQuery to []map[string]any for use in ManageRulesReadWriteParams.
+// toDataMaps converts typed []*AlertQuery to []map[string]any for use in ManageRulesWriteParams.
 func toDataMaps(t *testing.T, queries []*AlertQuery) []map[string]any {
 	t.Helper()
 	b, err := json.Marshal(queries)
@@ -103,7 +103,7 @@ func toDataMaps(t *testing.T, queries []*AlertQuery) []map[string]any {
 	return result
 }
 
-// toMap converts a typed struct to map[string]any for use in ManageRulesReadWriteParams.
+// toMap converts a typed struct to map[string]any for use in ManageRulesWriteParams.
 func toMap(t *testing.T, v any) map[string]any {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -136,8 +136,9 @@ func TestManageRules_List(t *testing.T) {
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -148,8 +149,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		for _, rule := range rules {
 			require.NotEqual(t, "inactive", rule.State, "state should be normalized from 'inactive' to 'normal'")
 		}
@@ -165,8 +167,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		// Only the three alerting rules carry severity=info; the recording rule does not.
 		alertingRules := []alertRuleSummary{rule1, rule2, rulePaused}
 		require.ElementsMatch(t, alertingRules, clearState(rules))
@@ -182,8 +185,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -197,8 +201,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, []alertRuleSummary{rule2}, clearState(rules))
 	})
 
@@ -212,8 +217,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, []alertRuleSummary{rule1}, clearState(rules))
 	})
 
@@ -227,8 +233,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -242,8 +249,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -257,8 +265,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -272,8 +281,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -285,8 +295,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.ElementsMatch(t, allExpectedRules, clearState(rules))
 	})
 
@@ -304,8 +315,9 @@ func TestManageRules_List(t *testing.T) {
 		// Discover the folder UID from a known provisioned rule.
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{Operation: "list"})
 		require.NoError(t, err)
-		allRules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		allRules := list.Rules
 
 		var folderUID string
 		for _, r := range allRules {
@@ -321,8 +333,9 @@ func TestManageRules_List(t *testing.T) {
 			FolderUID: folderUID,
 		})
 		require.NoError(t, err)
-		rules, ok := result.([]alertRuleSummary)
+		list, ok = result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.NotEmpty(t, rules)
 		for _, r := range rules {
 			require.Equal(t, folderUID, r.FolderUID)
@@ -336,8 +349,9 @@ func TestManageRules_List(t *testing.T) {
 			FolderUID: "empty-alerts-folder",
 		})
 		require.NoError(t, err)
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -349,8 +363,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -362,8 +377,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Len(t, rules, 1)
 		require.Equal(t, rulePausedUID, rules[0].UID)
 	})
@@ -376,8 +392,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Empty(t, rules)
 	})
 
@@ -389,8 +406,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.NotEmpty(t, rules)
 	})
 
@@ -402,8 +420,9 @@ func TestManageRules_List(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.Len(t, rules, 1)
 	})
 }
@@ -633,10 +652,10 @@ func TestManageRules_Create(t *testing.T) {
 
 		testUID := "test_create_alert_rule"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Created Alert Rule",
@@ -703,10 +722,10 @@ func TestManageRules_Create(t *testing.T) {
 
 		testUID := "test_create_reduce_threshold"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Reduce+Threshold Rule",
@@ -767,10 +786,10 @@ func TestManageRules_Create(t *testing.T) {
 
 		testUID := "test_create_math_expr"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Math Expression Rule",
@@ -828,10 +847,10 @@ func TestManageRules_Create(t *testing.T) {
 
 		testUID := "test_create_auto_refid"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Auto RefID Rule",
@@ -860,7 +879,7 @@ func TestManageRules_Create(t *testing.T) {
 
 		testUID := ruleIDRecording + "_create"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
 		recordParams := &Record{
@@ -869,7 +888,7 @@ func TestManageRules_Create(t *testing.T) {
 			TargetDatasourceUID: "prometheus",
 		}
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Recording Rule",
@@ -917,7 +936,7 @@ func TestManageRules_Create(t *testing.T) {
 	t.Run("create alert rule with missing required fields", func(t *testing.T) {
 		ctx := newTestContext()
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation: "create",
 			Title:     "Incomplete Rule",
 		})
@@ -929,7 +948,7 @@ func TestManageRules_Create(t *testing.T) {
 	t.Run("create alert rule with empty title", func(t *testing.T) {
 		ctx := newTestContext()
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation: "create",
 			Title:     "",
 		})
@@ -959,11 +978,11 @@ func TestManageRules_Update(t *testing.T) {
 
 		testUID := "test_update_alert_rule"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
 		// Create the rule first
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Original Title",
@@ -979,7 +998,7 @@ func TestManageRules_Update(t *testing.T) {
 		require.NoError(t, err)
 
 		// Update basic fields
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "update",
 			RuleUID:      testUID,
 			Title:        "Updated Title",
@@ -1033,10 +1052,10 @@ func TestManageRules_Update(t *testing.T) {
 
 		testUID := "test_update_notification_settings"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Notification Settings Test Rule",
@@ -1052,7 +1071,7 @@ func TestManageRules_Update(t *testing.T) {
 		require.NoError(t, err)
 
 		// Update rule with notification settings
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "update",
 			RuleUID:      testUID,
 			Title:        "Notification Settings Test Rule",
@@ -1108,11 +1127,11 @@ func TestManageRules_Update(t *testing.T) {
 
 		testUID := "test_update_record"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
 		// Create initial rule (alerting rule)
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Record Test Rule",
@@ -1130,7 +1149,7 @@ func TestManageRules_Update(t *testing.T) {
 		// Update rule with Record (converts to recording rule).
 		// Grafana ignores NoDataState/ExecErrState for recording rules, but our
 		// validator requires them, so we pass dummy values.
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "update",
 			RuleUID:      testUID,
 			Title:        "Record Test Rule",
@@ -1166,11 +1185,11 @@ func TestManageRules_Update(t *testing.T) {
 
 		testUID := ruleIDRecording + "_update_query"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
 		// Create a recording rule
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Recording Rule Update Query Test",
@@ -1205,7 +1224,7 @@ func TestManageRules_Update(t *testing.T) {
 			},
 		}
 
-		updateResult, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		updateResult, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "update",
 			RuleUID:      testUID,
 			Title:        "Recording Rule Update Query Test - Updated",
@@ -1247,7 +1266,7 @@ func TestManageRules_Update(t *testing.T) {
 	t.Run("update non-existent alert rule", func(t *testing.T) {
 		ctx := newTestContext()
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "update",
 			RuleUID:      "non-existent-uid",
 			Title:        "Updated Title",
@@ -1266,7 +1285,7 @@ func TestManageRules_Update(t *testing.T) {
 	t.Run("update alert rule with empty rule_uid", func(t *testing.T) {
 		ctx := newTestContext()
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation: "update",
 			RuleUID:   "",
 		})
@@ -1294,11 +1313,11 @@ func TestManageRules_Update(t *testing.T) {
 
 		testUID := "test_identical_alert_rule"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
 		disableProvenance := false
-		initialParams := ManageRulesReadWriteParams{
+		initialParams := ManageRulesWriteParams{
 			Operation:                   "create",
 			RuleUID:                     testUID,
 			Title:                       "Identical Test Alert",
@@ -1322,7 +1341,7 @@ func TestManageRules_Update(t *testing.T) {
 			}),
 		}
 
-		_, err := manageRulesReadWrite(ctx, initialParams)
+		_, err := manageRulesWrite(ctx, initialParams)
 		require.NoError(t, err, "should create the alert rule")
 
 		updateParams := initialParams
@@ -1332,7 +1351,7 @@ func TestManageRules_Update(t *testing.T) {
 		updateParams.IsPaused = false
 		updateParams.NotificationSettings["receiver"] = "Email2"
 
-		_, err = manageRulesReadWrite(ctx, updateParams)
+		_, err = manageRulesWrite(ctx, updateParams)
 		require.NoError(t, err, "should update the alert rule")
 
 		fetchResult, err := manageRulesRead(ctx, ManageRulesReadParams{
@@ -1365,11 +1384,11 @@ func TestManageRules_Update(t *testing.T) {
 
 		testUID := "test_identical_recording_rule"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
 		disableProvenance := true
-		initialParams := ManageRulesReadWriteParams{
+		initialParams := ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Identical Test Recording",
@@ -1395,7 +1414,7 @@ func TestManageRules_Update(t *testing.T) {
 			DisableProvenance: &disableProvenance,
 		}
 
-		_, err := manageRulesReadWrite(ctx, initialParams)
+		_, err := manageRulesWrite(ctx, initialParams)
 		require.NoError(t, err, "should create the recording rule")
 
 		updateParams := initialParams
@@ -1404,7 +1423,7 @@ func TestManageRules_Update(t *testing.T) {
 		updateParams.Record["metric"] = "test_metric_updated"
 		updateParams.Labels["team"] = "recording-updated"
 
-		_, err = manageRulesReadWrite(ctx, updateParams)
+		_, err = manageRulesWrite(ctx, updateParams)
 		require.NoError(t, err, "should update the recording rule")
 
 		fetchResult, err := manageRulesRead(ctx, ManageRulesReadParams{
@@ -1447,11 +1466,11 @@ func TestManageRules_Delete(t *testing.T) {
 
 		testUID := "test_delete_alert_rule"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
 		// Create the rule first
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Rule to Delete",
@@ -1467,7 +1486,7 @@ func TestManageRules_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		// Now delete it
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation: "delete",
 			RuleUID:   testUID,
 		})
@@ -1489,7 +1508,7 @@ func TestManageRules_Delete(t *testing.T) {
 	t.Run("delete non-existent alert rule", func(t *testing.T) {
 		ctx := newTestContext()
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation: "delete",
 			RuleUID:   "non-existent-uid",
 		})
@@ -1504,7 +1523,7 @@ func TestManageRules_Delete(t *testing.T) {
 	t.Run("delete alert rule with empty rule_uid", func(t *testing.T) {
 		ctx := newTestContext()
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation: "delete",
 			RuleUID:   "",
 		})
@@ -1558,10 +1577,10 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 
 		testUID := "test_provenance_default"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Provenance Default",
@@ -1591,10 +1610,10 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		disableProvenance := true
 		testUID := "test_provenance_true"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:         "create",
 			RuleUID:           testUID,
 			Title:             "Test Provenance True",
@@ -1624,10 +1643,10 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		disableProvenance := false
 		testUID := "test_provenance_false"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:         "create",
 			RuleUID:           testUID,
 			Title:             "Test Provenance False",
@@ -1656,10 +1675,10 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 
 		testUID := "test_update_provenance_default"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Update Provenance Default",
@@ -1675,7 +1694,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 		require.NoError(t, err)
 
 		// Now update it without setting disable_provenance (should default to true)
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "update",
 			RuleUID:      testUID,
 			Title:        "Test Update Provenance Default - Updated",
@@ -1703,10 +1722,10 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 
 		testUID := "test_update_provenance"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Update Provenance",
@@ -1723,7 +1742,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 
 		// Now update it with disable_provenance true
 		disableProvenance := true
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:         "update",
 			RuleUID:           testUID,
 			Title:             "Test Update Provenance - Updated",
@@ -1752,10 +1771,10 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 
 		testUID := "test_update_provenance_false"
 		t.Cleanup(func() {
-			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+			manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
 			Title:        "Test Update Provenance False",
@@ -1772,7 +1791,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 
 		// Now update it with disable_provenance false (should set provenance to "api")
 		disableProvenance := false
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesWrite(ctx, ManageRulesWriteParams{
 			Operation:         "update",
 			RuleUID:           testUID,
 			Title:             "Test Update Provenance False - Updated",
@@ -1806,8 +1825,9 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		require.NotEmpty(t, rules, "Expected Prometheus to have alert rules configured")
 
 		foundFiring := false
@@ -1835,8 +1855,9 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		for _, rule := range rules {
 			require.Equal(t, "warning", rule.Labels["severity"])
 		}
@@ -1877,8 +1898,9 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		if err != nil {
 			t.Logf("Loki ruler query failed (this may be expected): %v", err)
 		} else {
-			rules, ok := result.([]alertRuleSummary)
+			list, ok := result.(*alertRuleList)
 			require.True(t, ok)
+			rules := list.Rules
 			t.Logf("Loki ruler returned %d rules", len(rules))
 		}
 	})
@@ -2029,7 +2051,7 @@ func TestManageRules_Versions(t *testing.T) {
 
 	t.Run("get rule versions via read-write handler", func(t *testing.T) {
 		ctx := newTestContext()
-		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			Operation: "versions",
 			RuleUID:   rule1UID,
 		})
@@ -2056,8 +2078,9 @@ func TestManageRules_SearchFolder(t *testing.T) {
 		})
 		require.NoError(t, err)
 		// Should not error regardless of whether the folder exists
-		rules, ok := result.([]alertRuleSummary)
+		list, ok := result.(*alertRuleList)
 		require.True(t, ok)
+		rules := list.Rules
 		_ = rules
 	})
 

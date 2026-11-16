@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/itchyny/gojq"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
@@ -207,7 +206,7 @@ func applyJQ(ctx context.Context, code *gojq.Code, input any) (any, error) {
 
 var APIRequest = mcpgrafana.MustTool(
 	"grafana_api_request",
-	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
+	"Make an authenticated HTTP request to the Grafana API. "+
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool.",
 	apiRequest,
@@ -221,7 +220,7 @@ var APIRequest = mcpgrafana.MustTool(
 
 var APIRequestReadOnly = mcpgrafana.MustTool(
 	"grafana_api_request",
-	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
+	"Make an authenticated HTTP request to the Grafana API. "+
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool. "+
 		"Only GET requests are allowed, except POST to read-only query endpoints such as /api/ds/query.",
@@ -236,7 +235,7 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 
 var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
 	"grafana_api_request",
-	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
+	"Make an authenticated HTTP request to the Grafana API. "+
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool. "+
 		"Only GET requests are allowed.",
@@ -249,13 +248,3 @@ var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
 	// Runs with whatever the caller holds; it needs no fixed action of its own.
 	mcpgrafana.RequiresPermissions(),
 )
-
-func AddAPITools(s *mcp.Server, enableWriteTools bool, enableQueryTools bool) {
-	if enableWriteTools {
-		APIRequest.Register(s)
-	} else if enableQueryTools {
-		APIRequestReadOnly.Register(s)
-	} else {
-		APIRequestReadOnlyGetOnly.Register(s)
-	}
-}

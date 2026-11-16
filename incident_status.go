@@ -44,5 +44,17 @@ func (t incidentStatusTransport) RoundTrip(req *http.Request) (*http.Response, e
 		}
 	}
 	msg, _ := io.ReadAll(io.LimitReader(body, 4096))
-	return nil, fmt.Errorf("incident API returned %s: %s", resp.Status, strings.TrimSpace(string(msg)))
+	return nil, &IncidentAPIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(msg))}
+}
+
+// IncidentAPIError is an error (4xx or 5xx) response from the incident API.
+// Match it with errors.As, for example to recognise a 404.
+type IncidentAPIError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *IncidentAPIError) Error() string {
+	return fmt.Sprintf("incident API returned %s: %s", e.Status, e.Body)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -221,6 +222,8 @@ func (c *cloudWatchClient) runLogsQuery(parent context.Context, args QueryCloudW
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
+	httpClient := skipQueryCache(c.httpClient)
+
 	logGroupsField, logGroups, err := cloudWatchLogGroupsQueryField(args.LogGroups)
 	if err != nil {
 		return nil, err
@@ -247,7 +250,7 @@ func (c *cloudWatchClient) runLogsQuery(parent context.Context, args QueryCloudW
 		"maxDataPoints": 1,
 	}
 
-	resp, err := doDSQuery(ctx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
+	resp, err := doDSQuery(ctx, httpClient, c.baseURL, dsQueryPayload(from, to, query))
 	if err != nil {
 		return nil, fmt.Errorf("starting CloudWatch Logs query: %w", err)
 	}
@@ -270,7 +273,7 @@ func (c *cloudWatchClient) runLogsQuery(parent context.Context, args QueryCloudW
 		stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stopCancel()
 		query["subtype"] = "StopQuery"
-		_, _ = doDSQuery(stopCtx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
+		_, _ = doDSQuery(stopCtx, httpClient, c.baseURL, dsQueryPayload(from, to, query))
 	}()
 
 	query["subtype"] = "GetQueryResults"
@@ -282,7 +285,7 @@ func (c *cloudWatchClient) runLogsQuery(parent context.Context, args QueryCloudW
 
 	interval := 200 * time.Millisecond
 	for {
-		resp, err := doDSQuery(ctx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
+		resp, err := doDSQuery(ctx, httpClient, c.baseURL, dsQueryPayload(from, to, query))
 		if err != nil {
 			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return nil, fmt.Errorf("CloudWatch Logs query timed out after %s", timeout)
@@ -314,6 +317,29 @@ func (c *cloudWatchClient) runLogsQuery(parent context.Context, args QueryCloudW
 		}
 		interval = min(interval*2, cloudWatchLogsMaxPollInterval)
 	}
+}
+
+// cacheSkipTransport marks every request X-Cache-Skip, as the CloudWatch
+// frontend does for log actions.
+type cacheSkipTransport struct{ http.RoundTripper }
+
+func (t cacheSkipTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("X-Cache-Skip", "true")
+	return t.RoundTripper.RoundTrip(req)
+}
+
+// skipQueryCache returns a copy of client that bypasses Grafana's query cache.
+// Logs Insights polls send identical GetQueryResults requests, so a cached
+// "Running" reply would be served until its TTL expires.
+func skipQueryCache(client *http.Client) *http.Client {
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	c := *client
+	c.Transport = cacheSkipTransport{transport}
+	return &c
 }
 
 // logsQueryFrames returns the frames for refId A, or that query's error.

@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +24,8 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/observability"
+	"github.com/grafana/mcp-grafana/v2/resources"
+	"github.com/grafana/mcp-grafana/v2/tools"
 	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -36,6 +40,49 @@ func newTestObservability(t *testing.T) *observability.Observability {
 		_ = obs.Shutdown(context.Background())
 	})
 	return obs
+}
+
+func TestDynamicHTTPAddressIsPublishedAndServed(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile(dynamicAddressFileName, []byte("stale\n"), 0o644))
+	requestedAddress := "localhost:0"
+	listener, err := listenHTTP(requestedAddress)
+	require.NoError(t, err)
+
+	document, err := os.ReadFile(dynamicAddressFileName)
+	require.NoError(t, err)
+	address := strings.TrimSpace(string(document))
+	assert.Equal(t, listener.Addr().String(), address)
+	_, port, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0", port)
+	info, err := os.Stat(dynamicAddressFileName)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", handleHealthz)
+	server := &http.Server{
+		Handler: mcpgrafana.DNSRebindingProtectionMiddleware(
+			(httpSecurityConfig{}).policy(address, addressWithBoundPort(requestedAddress, address)),
+		)(mux),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- runHTTPServer(ctx, server, listener, "test", tlsConfig{}) }()
+
+	_, port, err = net.SplitHostPort(address)
+	require.NoError(t, err)
+	requestURL := "http://" + net.JoinHostPort("localhost", port) + "/healthz"
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, requestURL, nil)
+	require.NoError(t, err)
+	response, err := (&http.Client{Timeout: time.Second}).Do(request)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	require.NoError(t, response.Body.Close())
+	cancel()
+	require.NoError(t, <-done)
 }
 
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
@@ -688,6 +735,236 @@ func TestValidateLokiGuardrail(t *testing.T) {
 	}
 }
 
+// TestApplyPrometheusGuardrailEnv locks in the same flag-over-env precedence
+// as the Loki guardrail.
+func TestApplyPrometheusGuardrailEnv(t *testing.T) {
+	// Flag defaults as registered in addFlags.
+	defaults := grafanaConfig{
+		prometheusGuardrailMode:      "off",
+		prometheusGuardrailMaxRange:  192 * time.Hour,
+		prometheusGuardrailMaxPoints: 11000,
+	}
+
+	tests := []struct {
+		name          string
+		env           map[string]string
+		setFlags      map[string]bool
+		wantMode      string
+		wantMaxRange  time.Duration
+		wantMaxPoints int64
+		wantErrSubstr string
+	}{
+		{
+			name: "env-only applies to all three settings",
+			env: map[string]string{
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MODE":       "enforce",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE":  "24h",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "500",
+			},
+			wantMode:      "enforce",
+			wantMaxRange:  24 * time.Hour,
+			wantMaxPoints: 500,
+		},
+		{
+			name: "flag-set wins over env",
+			env: map[string]string{
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MODE":       "enforce",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE":  "24h",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "500",
+			},
+			setFlags: map[string]bool{
+				"prometheus-guardrail-mode":       true,
+				"prometheus-guardrail-max-range":  true,
+				"prometheus-guardrail-max-points": true,
+			},
+			wantMode:      defaults.prometheusGuardrailMode,
+			wantMaxRange:  defaults.prometheusGuardrailMaxRange,
+			wantMaxPoints: defaults.prometheusGuardrailMaxPoints,
+		},
+		{
+			name: "flag-set is per setting",
+			env: map[string]string{
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MODE":       "shadow",
+				"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "500",
+			},
+			setFlags:      map[string]bool{"prometheus-guardrail-max-points": true},
+			wantMode:      "shadow",
+			wantMaxRange:  defaults.prometheusGuardrailMaxRange,
+			wantMaxPoints: defaults.prometheusGuardrailMaxPoints,
+		},
+		{
+			name:          "empty env ignored",
+			env:           map[string]string{"GRAFANA_PROMETHEUS_GUARDRAIL_MODE": ""},
+			wantMode:      defaults.prometheusGuardrailMode,
+			wantMaxRange:  defaults.prometheusGuardrailMaxRange,
+			wantMaxPoints: defaults.prometheusGuardrailMaxPoints,
+		},
+		{
+			// Go durations have no day unit, so the docs say 192h, not 8d.
+			name:          "day unit in MAX_RANGE errors",
+			env:           map[string]string{"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE": "8d"},
+			wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE",
+		},
+		{
+			name:          "invalid MAX_POINTS errors",
+			env:           map[string]string{"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS": "11k"},
+			wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS",
+		},
+	}
+
+	envVars := []string{
+		"GRAFANA_PROMETHEUS_GUARDRAIL_MODE",
+		"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE",
+		"GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS",
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range envVars {
+				t.Setenv(k, tc.env[k])
+			}
+			gc := defaults
+			err := gc.applyPrometheusGuardrailEnv(tc.setFlags)
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMode, gc.prometheusGuardrailMode)
+			assert.Equal(t, tc.wantMaxRange, gc.prometheusGuardrailMaxRange)
+			assert.Equal(t, tc.wantMaxPoints, gc.prometheusGuardrailMaxPoints)
+		})
+	}
+}
+
+func TestValidatePrometheusGuardrail(t *testing.T) {
+	tests := []struct {
+		name          string
+		gc            grafanaConfig
+		wantErrSubstr string
+	}{
+		{name: "off is valid", gc: grafanaConfig{prometheusGuardrailMode: "off"}},
+		{name: "shadow with limits is valid", gc: grafanaConfig{prometheusGuardrailMode: "shadow", prometheusGuardrailMaxRange: 192 * time.Hour, prometheusGuardrailMaxPoints: 11000}},
+		{name: "zero limits disable checks", gc: grafanaConfig{prometheusGuardrailMode: "enforce"}},
+		{name: "unknown mode rejected", gc: grafanaConfig{prometheusGuardrailMode: "Enforce"}, wantErrSubstr: "invalid Prometheus guardrail mode"},
+		{name: "negative max range rejected", gc: grafanaConfig{prometheusGuardrailMode: "enforce", prometheusGuardrailMaxRange: -time.Hour}, wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_RANGE"},
+		{name: "negative max points rejected", gc: grafanaConfig{prometheusGuardrailMode: "enforce", prometheusGuardrailMaxPoints: -1}, wantErrSubstr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_POINTS"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.gc.validatePrometheusGuardrail()
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestWarnPrometheusEnforcementBypasses(t *testing.T) {
+	t.Run("all bypass tools enabled logs warnings", func(t *testing.T) {
+		var buf bytes.Buffer
+		orig := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(orig)
+
+		dt := disabledTools{
+			enabledTools: "prometheus,api,rendering,assistant,snapshot",
+		}
+		warnPrometheusEnforcementBypasses(dt)
+		out := buf.String()
+		assert.Contains(t, out, "--disable-api")
+		assert.Contains(t, out, "--disable-rendering")
+		assert.Contains(t, out, "--disable-assistant")
+		assert.Contains(t, out, "--disable-snapshot")
+	})
+
+	t.Run("disabled bypass tools logs no warnings", func(t *testing.T) {
+		var buf bytes.Buffer
+		orig := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer slog.SetDefault(orig)
+
+		dt := disabledTools{
+			enabledTools: "prometheus",
+			api:          true,
+			rendering:    true,
+			assistant:    true,
+			snapshot:     true,
+		}
+		warnPrometheusEnforcementBypasses(dt)
+		out := buf.String()
+		assert.NotContains(t, out, "--disable-api")
+		assert.NotContains(t, out, "--disable-rendering")
+		assert.NotContains(t, out, "--disable-assistant")
+		assert.NotContains(t, out, "--disable-snapshot")
+	})
+}
+
+func TestWarnPrometheusEnforcementDatasourceApp(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dt   disabledTools
+		want bool
+	}{
+		{name: "source enabled", dt: disabledTools{enabledTools: "rendering,dsquery"}, want: true},
+		{name: "datasource source disabled", dt: disabledTools{enabledTools: "rendering,dsquery", dsquery: true}},
+		{name: "rendering disabled", dt: disabledTools{enabledTools: "rendering,dsquery", rendering: true}},
+		{name: "write disabled", dt: disabledTools{enabledTools: "rendering,dsquery", write: true}},
+		{name: "write disabled with query override", dt: disabledTools{enabledTools: "rendering,dsquery", write: true, enableQuery: true}, want: true},
+		{name: "query disabled", dt: disabledTools{enabledTools: "rendering,dsquery", query: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			orig := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+			defer slog.SetDefault(orig)
+
+			warnPrometheusEnforcementBypasses(tc.dt)
+			if tc.want {
+				assert.Contains(t, buf.String(), "--disable-dsquery")
+				assert.Contains(t, buf.String(), "query_datasource")
+			} else {
+				assert.NotContains(t, buf.String(), "--disable-dsquery")
+			}
+		})
+	}
+}
+
+func TestApplyDashboardSchemaEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    string
+		env     string
+		flagSet bool
+		want    string
+		wantErr bool
+	}{
+		{name: "default is empty"},
+		{name: "flag v2", flag: "v2", flagSet: true, want: "v2"},
+		{name: "env fills an unset flag", env: "v2", want: "v2"},
+		{name: "explicit empty flag wins over env", env: "v2", flagSet: true},
+		{name: "unknown flag value rejected", flag: "v3", flagSet: true, wantErr: true},
+		{name: "unknown env value rejected", env: "V2", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GRAFANA_DASHBOARD_SCHEMA", tc.env)
+			gc := grafanaConfig{dashboardSchema: tc.flag}
+			err := gc.applyDashboardSchemaEnv(map[string]bool{"dashboard-schema": tc.flagSet})
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "--dashboard-schema or GRAFANA_DASHBOARD_SCHEMA")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, gc.dashboardSchema)
+		})
+	}
+}
+
 func TestSplitAndTrim(t *testing.T) {
 	cases := []struct {
 		name string
@@ -721,6 +998,18 @@ func TestHTTPSecurityConfigPolicy(t *testing.T) {
 			name:        "unset --allowed-hosts falls back to defaults",
 			address:     "localhost:8000",
 			wantHosts:   []string{"localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			name:        "IPv4 wildcard bind also allows the published address",
+			address:     "0.0.0.0:8000",
+			wantHosts:   []string{"0.0.0.0:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			name:        "IPv6 wildcard bind also allows the published address",
+			address:     "[::]:8000",
+			wantHosts:   []string{"[::]:8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
 			wantOrigins: nil,
 		},
 		{
@@ -1229,6 +1518,7 @@ func TestSOCKS5ProxyFromEnv(t *testing.T) {
 // data. --disable-query removes them; --disable-write must not.
 var safeQueryToolNames = []string{
 	"query_prometheus",
+	"render_grafana_app",
 	"query_prometheus_histogram",
 	"query_loki_logs",
 	"query_loki_patterns",
@@ -1239,6 +1529,8 @@ var safeQueryToolNames = []string{
 	"query_cloudwatch",
 	"query_cloudwatch_logs",
 	"query_cloud_logging",
+	"query_azure_log_analytics",
+	"query_azure_resource_graph",
 	"query_pyroscope",
 	"run_panel_query",
 }
@@ -1302,11 +1594,7 @@ func registerAllCategories(t *testing.T, dt disabledTools) map[string]bool {
 func listAllCategoryTools(t *testing.T, dt disabledTools) map[string]*mcp.Tool {
 	t.Helper()
 
-	categories := make([]string, 0, len(dt.toolEntries()))
-	for _, e := range dt.toolEntries() {
-		categories = append(categories, e.category)
-	}
-	dt.enabledTools = strings.Join(categories, ",")
+	dt.enabledTools = strings.Join(tools.CategoryNames(), ",")
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	dt.processTools(srv)
@@ -1393,12 +1681,12 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	}
 }
 
-func TestWriteToolOverridden_TrimsWhitespaceAroundNames(t *testing.T) {
-	dt := &disabledTools{write: true, writeToolOverrides: "query_sql, query_influxdb"}
-	assert.True(t, dt.writeToolOverridden("query_influxdb"), "trailing name after a space-separated comma should still match")
+func TestProcessTools_EnableWriteToolsTrimsWhitespaceAroundNames(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, writeToolOverrides: "query_sql, query_influxdb"})
+	assert.True(t, names["query_influxdb"], "trailing name after a space-separated comma should still match")
 
-	dt = &disabledTools{write: true, writeToolOverrides: " query_sql"}
-	assert.True(t, dt.writeToolOverridden("query_sql"), "leading whitespace before a name should still match")
+	names = registerAllCategories(t, disabledTools{write: true, writeToolOverrides: " query_sql"})
+	assert.True(t, names["query_sql"], "leading whitespace before a name should still match")
 }
 
 func TestProcessTools_EnableWriteToolsAloneChangesNothing(t *testing.T) {
@@ -1442,6 +1730,40 @@ func TestProcessTools_EnableWriteToolsRestoresSingleAlertingWriteTool(t *testing
 	}
 }
 
+func TestProcessTools_EnableWriteToolsRestoresUpdateDashboard(t *testing.T) {
+	readWrite := listAllCategoryTools(t, disabledTools{})
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "update_dashboard"})
+	require.Contains(t, listed, "update_dashboard")
+	assert.Equal(t, readWrite["update_dashboard"], listed["update_dashboard"])
+	assert.NotContains(t, listed, "create_folder", "the override must not re-enable other write tools")
+}
+
+func TestProcessTools_EnableWriteToolsRestoresFullAPIRequest(t *testing.T) {
+	full := listAllCategoryTools(t, disabledTools{})["grafana_api_request"]
+	readOnly := listAllCategoryTools(t, disabledTools{write: true})["grafana_api_request"]
+	require.NotEqual(t, full, readOnly, "--disable-write should register a read-only variant")
+
+	listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: "grafana_api_request"})
+	assert.Equal(t, full, listed["grafana_api_request"])
+	assert.NotContains(t, listed, "update_dashboard", "the override must not re-enable other write tools")
+
+	noQuery := listAllCategoryTools(t, disabledTools{write: true, query: true, writeToolOverrides: "grafana_api_request"})
+	assert.Equal(t, full, noQuery["grafana_api_request"], "the full variant runs no query tool, so --disable-query keeps it, as it does without --disable-write")
+}
+
+func TestWarnEnforcementBypasses_AllowedAssistant(t *testing.T) {
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(orig)
+
+	warnPrometheusEnforcementBypasses(disabledTools{enabledTools: "prometheus,assistant", write: true})
+	assert.NotContains(t, buf.String(), "--disable-assistant")
+
+	warnPrometheusEnforcementBypasses(disabledTools{enabledTools: "prometheus,assistant", write: true, writeToolOverrides: "ask_assistant"})
+	assert.Contains(t, buf.String(), "--disable-assistant")
+}
+
 func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 	listed := listAllCategoryTools(t, disabledTools{write: true})
 	require.Contains(t, listed, "generate_deeplink")
@@ -1450,11 +1772,11 @@ func TestProcessTools_DisableWriteRegistersReadOnlyDeeplink(t *testing.T) {
 
 func TestBuildInstructions_NavigationShorteningFollowsWriteOverride(t *testing.T) {
 	readOnly := (&disabledTools{enabledTools: "navigation", write: true}).buildInstructions()
-	assert.Contains(t, readOnly, navigationDescriptionNoShortening)
+	assert.Contains(t, readOnly, "Navigation: Generate deeplink URLs")
 	assert.NotContains(t, readOnly, "shortening")
 
 	overridden := (&disabledTools{enabledTools: "navigation", write: true, writeToolOverrides: "generate_deeplink"}).buildInstructions()
-	assert.Contains(t, overridden, categoryDescription["navigation"])
+	assert.Contains(t, overridden, "with optional built-in shortening")
 }
 
 func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
@@ -1591,6 +1913,11 @@ func TestCategoryReportNormalisesAliases(t *testing.T) {
 	assert.NotContains(t, enabled, "clickhouse")
 }
 
+func TestDisabledByFlagCoversEveryCategory(t *testing.T) {
+	var dt disabledTools
+	assert.ElementsMatch(t, tools.CategoryNames(), slices.Collect(maps.Keys(dt.disabledByFlag())))
+}
+
 // TestCategoryReportHonoursWriteAndQueryGates: a category can survive
 // --enabled-tools and still register no tool, because --disable-write empties
 // assistant and --disable-query empties the query-only categories.
@@ -1608,6 +1935,15 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 		assert.NotContains(t, disabled, "assistant")
 	})
 
+	t.Run("folder is empty without write tools", func(t *testing.T) {
+		dt := disabledTools{enabledTools: "folder,search", write: true}
+		enabled, _ := dt.categoryReport()
+		instructions := (&disabledTools{enabledTools: "folder,search", write: true}).buildInstructions()
+
+		assert.NotContains(t, enabled, "folder")
+		assert.NotContains(t, instructions, "Folders")
+	})
+
 	t.Run("assistant is reported when write tools are enabled", func(t *testing.T) {
 		dt := disabledTools{enabledTools: "assistant"}
 		enabled, _ := dt.categoryReport()
@@ -1616,6 +1952,7 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 	})
 
 	t.Run("query-only categories are empty without query tools", func(t *testing.T) {
+		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor"}
 		dt := disabledTools{enabledTools: strings.Join(queryOnlyCategories, ",") + ",search", query: true}
 		enabled, _ := dt.categoryReport()
 
@@ -2100,4 +2437,125 @@ func TestApplyLokiGuardrailEnvOnEstimateFailure(t *testing.T) {
 	gc = grafanaConfig{lokiGuardrailOnFailure: "allow"}
 	require.NoError(t, gc.applyLokiGuardrailEnv(map[string]bool{"loki-guardrail-on-estimate-failure": true}))
 	assert.Equal(t, "allow", gc.lokiGuardrailOnFailure, "an explicit flag wins over the environment")
+}
+
+func TestResourceKindsFollowToolCategories(t *testing.T) {
+	const (
+		datasources = "grafana://datasources/{uid}"
+		incidents   = "grafana://irm/incidents/{id}"
+	)
+	for _, tc := range []struct {
+		name   string
+		config disabledTools
+		want   []string
+	}{
+		{"all", disabledTools{enabledTools: "datasource,incident"}, []string{datasources, incidents}},
+		{"datasource disabled", disabledTools{enabledTools: "datasource,incident", datasource: true}, []string{incidents}},
+		{"incident disabled", disabledTools{enabledTools: "datasource,incident", incident: true}, []string{datasources}},
+		{"none enabled", disabledTools{enabledTools: "search"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			mcpgrafana.RegisterAppResources(s) // advertises the resources capability either way
+			resources.Register(s, tc.config.resourceKinds()...)
+			result, err := connectTestClient(t, s).ListResourceTemplates(t.Context(), nil)
+			require.NoError(t, err)
+			var got []string
+			for _, rt := range result.ResourceTemplates {
+				got = append(got, rt.URITemplate)
+			}
+			assert.ElementsMatch(t, tc.want, got)
+		})
+	}
+}
+
+func TestPrometheusSelectiveLabelsEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name, value                       string
+		flagSet, initial, want, wantError bool
+	}{
+		{"default off", "", false, false, false, false},
+		{"env enables", "true", false, false, true, false},
+		{"env disables", "false", false, true, false, false},
+		{"explicit false wins", "true", true, false, false, false},
+		{"explicit true wins", "false", true, true, true, false},
+		{"invalid env", "enabled", false, false, false, true},
+		{"explicit flag ignores invalid env", "enabled", true, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range []string{"MODE", "MAX_RANGE", "MAX_POINTS"} {
+				t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_"+name, "")
+			}
+			t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS", tc.value)
+			gc := grafanaConfig{prometheusGuardrailRequireSelectiveLabels: tc.initial}
+			err := gc.applyPrometheusGuardrailEnv(map[string]bool{"prometheus-guardrail-require-selective-labels": tc.flagSet})
+			if tc.wantError {
+				require.ErrorContains(t, err, "GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, gc.prometheusGuardrailRequireSelectiveLabels)
+			}
+		})
+	}
+}
+
+func TestPrometheusSelectiveLabelsFlag(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	for _, args := range [][]string{nil, {"--prometheus-guardrail-require-selective-labels"}, {"--prometheus-guardrail-require-selective-labels=false"}} {
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		gc := grafanaConfig{}
+		gc.addFlags()
+		require.NoError(t, flag.CommandLine.Parse(args))
+		assert.Equal(t, len(args) > 0 && args[0] == "--prometheus-guardrail-require-selective-labels", gc.prometheusGuardrailRequireSelectiveLabels)
+	}
+}
+
+func TestPrometheusCardinalityFlagsAndEnv(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		env        map[string]string
+		wantMax    int64
+		wantTTL    time.Duration
+		wantLabels []string
+		wantErr    string
+	}{
+		{name: "disabled by default", wantTTL: 10 * time.Minute, wantLabels: []string{"job", "instance", "namespace", "pod", "service", "cluster"}},
+		{name: "environment", env: map[string]string{"MAX_METRIC_CARDINALITY": "100000", "CARDINALITY_CACHE_TTL": "5m", "CARDINALITY_SCOPE_LABELS": " team, namespace,team "}, wantMax: 100000, wantTTL: 5 * time.Minute, wantLabels: []string{"team", "namespace"}},
+		{name: "explicit flags override all env", args: []string{"--prometheus-guardrail-max-metric-cardinality=0", "--prometheus-guardrail-cardinality-cache-ttl=0", "--prometheus-guardrail-cardinality-scope-labels="}, env: map[string]string{"MAX_METRIC_CARDINALITY": "bad", "CARDINALITY_CACHE_TTL": "bad", "CARDINALITY_SCOPE_LABELS": "__name__"}},
+		{name: "positive flags", args: []string{"--prometheus-guardrail-max-metric-cardinality=123", "--prometheus-guardrail-cardinality-cache-ttl=15m", "--prometheus-guardrail-cardinality-scope-labels=tenant"}, wantMax: 123, wantTTL: 15 * time.Minute, wantLabels: []string{"tenant"}},
+		{name: "invalid count", env: map[string]string{"MAX_METRIC_CARDINALITY": "NaN"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "overflow count", env: map[string]string{"MAX_METRIC_CARDINALITY": "9223372036854775808"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "invalid TTL", env: map[string]string{"CARDINALITY_CACHE_TTL": "5d"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"},
+		{name: "negative count", args: []string{"--prometheus-guardrail-max-metric-cardinality=-1"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_MAX_METRIC_CARDINALITY"},
+		{name: "negative TTL", env: map[string]string{"CARDINALITY_CACHE_TTL": "-1m"}, wantErr: "GRAFANA_PROMETHEUS_GUARDRAIL_CARDINALITY_CACHE_TTL"},
+		{name: "metric name cannot provide scope", env: map[string]string{"CARDINALITY_SCOPE_LABELS": "job, __name__"}, wantErr: "__name__ is not a scope label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, suffix := range []string{"MODE", "MAX_RANGE", "MAX_POINTS", "REQUIRE_SELECTIVE_LABELS", "MAX_METRIC_CARDINALITY", "CARDINALITY_CACHE_TTL", "CARDINALITY_SCOPE_LABELS"} {
+				t.Setenv("GRAFANA_PROMETHEUS_GUARDRAIL_"+suffix, tc.env[suffix])
+			}
+			flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+			gc := grafanaConfig{}
+			gc.addFlags()
+			require.NoError(t, flag.CommandLine.Parse(tc.args))
+			setFlags := map[string]bool{}
+			flag.CommandLine.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+			err := gc.applyPrometheusGuardrailEnv(setFlags)
+			if err == nil {
+				err = gc.validatePrometheusGuardrail()
+			}
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMax, gc.prometheusGuardrailMaxMetricCardinality)
+			assert.Equal(t, tc.wantTTL, gc.prometheusGuardrailCardinalityCacheTTL)
+			assert.Equal(t, tc.wantLabels, gc.cardinalityScopeLabels())
+		})
+	}
 }

@@ -88,7 +88,7 @@ async def test_search_dashboards(mcp_client: ClientSession):
 
 async def test_alert_rules_list_and_filter(mcp_client: ClientSession):
     rules = await call_json(mcp_client, "alerting_rules_read", {"operation": "list"})
-    titles = {r["title"] for r in rules}
+    titles = {r["title"] for r in rules["rules"]}
     assert {"Test Alert Rule 1", "Test Alert Rule 2"} <= titles
 
     filtered = await call_json(
@@ -96,7 +96,7 @@ async def test_alert_rules_list_and_filter(mcp_client: ClientSession):
         "alerting_rules_read",
         {"operation": "list", "label_selectors": ['{rule="first"}']},
     )
-    assert {r["title"] for r in filtered} == {"Test Alert Rule 1"}
+    assert {r["title"] for r in filtered["rules"]} == {"Test Alert Rule 1"}
 
 
 async def test_get_alert_rule(mcp_client: ClientSession):

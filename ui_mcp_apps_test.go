@@ -6,7 +6,31 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/html"
 )
+
+// externalScripts gives the src of each script element. The tokenizer reads a script body as text, so a string in
+// the bundle that looks like a tag, for example in react-dom/server, is not an element.
+func externalScripts(page string) []string {
+	var srcs []string
+	z := html.NewTokenizer(strings.NewReader(page))
+	for tt := z.Next(); tt != html.ErrorToken; tt = z.Next() {
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			continue
+		}
+		if t := z.Token(); t.Data == "script" {
+			for _, a := range t.Attr {
+				if a.Key == "src" {
+					srcs = append(srcs, a.Val)
+				}
+			}
+		}
+	}
+	return srcs
+}
+
+// maxAppSize caps the inlined app, about 5 MB with the Renderer, so a growth in the bundle is a decision.
+const maxAppSize = 6 << 20
 
 func TestMCPAppResources(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
@@ -19,7 +43,7 @@ func TestMCPAppResources(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	resources, err := c.ListResources(ctx, nil)
 	require.NoError(t, err)
-	for _, uri := range []string{TraceViewerResourceURI, PanelViewerResourceURI} {
+	for _, uri := range []string{GrafanaAppResourceURI, PanelViewerResourceURI} {
 		t.Run(uri, func(t *testing.T) {
 			var found bool
 			for _, resource := range resources.Resources {
@@ -37,14 +61,15 @@ func TestMCPAppResources(t *testing.T) {
 			require.Equal(t, uri, content.URI)
 			require.Equal(t, appMIMEType, content.MIMEType)
 			require.Contains(t, strings.ToLower(content.Text), "<!doctype html>")
-			require.NotContains(t, content.Text, "<script src=")
+			require.Empty(t, externalScripts(content.Text), "the app loads no script file")
+			require.Less(t, len(content.Text), maxAppSize, "the app grew past %d bytes", maxAppSize)
 			ui, ok := content.Meta["ui"].(map[string]any)
 			require.True(t, ok)
 			csp, ok := ui["csp"].(map[string]any)
 			require.True(t, ok)
 			require.Empty(t, csp["connectDomains"])
 			require.Equal(t, []any{"data:"}, csp["resourceDomains"])
-			if uri == TraceViewerResourceURI {
+			if uri == GrafanaAppResourceURI {
 				require.Contains(t, ui, "permissions")
 			} else {
 				require.NotContains(t, ui, "permissions")

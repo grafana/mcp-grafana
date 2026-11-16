@@ -48,7 +48,7 @@ jobs:
       # So the bundle can be installed and tried on a real machine before a
       # release ships it. Snapshot builds are labelled -SNAPSHOT-<commit>.
       - name: Upload bundle
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: mcp-grafana-mcpb
           path: dist/*.mcpb

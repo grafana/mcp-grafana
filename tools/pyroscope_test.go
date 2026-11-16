@@ -140,6 +140,10 @@ func TestPyroscopeTools(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(result), &parsed))
 		assert.Equal(t, "metrics", parsed["query_type"])
 		assert.Nil(t, parsed["profile"], "profile should not be present for metrics-only")
-		assert.NotNil(t, parsed["metrics"])
+		metrics, ok := parsed["metrics"].(map[string]any)
+		require.True(t, ok, "metrics should be an object")
+		assert.NotEmpty(t, metrics["series"])
+		// CPU time is cumulative, so Grafana reports it as a rate in cores.
+		assert.Equal(t, "cores", metrics["unit"])
 	})
 }

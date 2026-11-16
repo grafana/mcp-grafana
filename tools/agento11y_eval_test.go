@@ -1154,7 +1154,7 @@ func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agen
 	t.Helper()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	AddAgento11yTools(srv, enableWriteTools)
+	Resolve(Policy{Categories: []string{"agento11y"}, ReadOnly: !enableWriteTools}).Register(srv)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	go func() { _ = srv.Run(context.Background(), serverTransport) }()

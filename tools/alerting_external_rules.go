@@ -29,7 +29,7 @@ func rulerPathSegment(value, kind string, query url.Values) string {
 	return url.PathEscape(value)
 }
 
-func createDatasourceAlertRule(ctx context.Context, args ManageRulesReadWriteParams) (*datasourceRuleCreated, error) {
+func createDatasourceAlertRule(ctx context.Context, args ManageRulesWriteParams) (*datasourceRuleCreated, error) {
 	client, err := newAlertingClientFromContext(ctx)
 	if err != nil {
 		return nil, err

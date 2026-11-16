@@ -24,6 +24,7 @@ import (
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -122,7 +123,7 @@ func TestLegacyGrafana8DatasourceFallback(t *testing.T) {
 	})
 
 	t.Run("get datasource by uid", func(t *testing.T) {
-		ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: "prometheus"})
+		ds, err := datasource.ByUID(ctx, "prometheus")
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), ds.ID)
 		assert.Equal(t, "prometheus", ds.Type)
@@ -141,7 +142,7 @@ func TestLegacyGrafana8DatasourceFallback(t *testing.T) {
 	})
 
 	t.Run("get datasource by lowercase name", func(t *testing.T) {
-		ds, err := getDatasourceByName(ctx, GetDatasourceByNameParams{Name: "prometheus"})
+		ds, err := datasource.ByName(ctx, "prometheus")
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), ds.ID)
 		assert.Equal(t, "Prometheus", ds.Name)
@@ -156,7 +157,7 @@ func TestLegacyGrafana8DatasourceFallback(t *testing.T) {
 	})
 
 	t.Run("unknown uid reports not found", func(t *testing.T) {
-		_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: "does-not-exist"})
+		_, err := datasource.ByUID(ctx, "does-not-exist")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 		assert.NotContains(t, err.Error(), "Permission denied")

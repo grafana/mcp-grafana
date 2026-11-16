@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -255,7 +253,8 @@ var CreateSnapshotTool = mcpgrafana.MustTool(
 	mcpgrafana.WithIdempotentHintAnnotation(false),
 	mcpgrafana.WithReadOnlyHintAnnotation(false),
 	mcpgrafana.WithDestructiveHintAnnotation(false),
-	mcpgrafana.WithOpenWorldHintAnnotation(false),
+	// external=true publishes the snapshot to an external snapshot server.
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 	mcpgrafana.RequiresPermissions("snapshots:create", "dashboards:read"),
 )
 
@@ -271,12 +270,3 @@ var DeleteSnapshotTool = mcpgrafana.MustTool(
 	// dashboards:write lets a non-creator delete a snapshot of an existing dashboard.
 	mcpgrafana.RequiresPermissions("snapshots:delete", "dashboards:write"),
 )
-
-func AddSnapshotTools(s *mcp.Server, enableWriteTools bool) {
-	ListSnapshotsTool.Register(s)
-	GetSnapshotTool.Register(s)
-	if enableWriteTools {
-		CreateSnapshotTool.Register(s)
-		DeleteSnapshotTool.Register(s)
-	}
-}

@@ -1126,7 +1126,7 @@ func TestCheckDatasourcesHealth_BackendPluginUnknownStatusCountsAsUnhealthy(t *t
 }
 
 func TestCheckDatasourcesHealth_FrontendSettingsUnavailableFallsBackToNormalCheck(t *testing.T) {
-	// No frontend/settings handler at all: fetchFrontendSettingsDatasources
+	// No frontend/settings handler at all: the frontend-settings lookup
 	// fails, and the bulk check must fall back to today's behavior (call the
 	// health endpoint for every datasource) rather than erroring out.
 	list := mockDatasourceList([]string{"ds-1"}, "prometheus")

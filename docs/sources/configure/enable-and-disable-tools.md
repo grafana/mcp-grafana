@@ -30,9 +30,10 @@ Some tool categories are disabled by default:
 
 - **runpanelquery** – Run dashboard panel queries.
 - **examples** – Query examples for datasource types.
-- **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
+- **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
 - **cloudwatch** – CloudWatch tools.
 - **cloudlogging** – Google Cloud Logging tools (requires the `googlecloud-logging-datasource` plugin, version 1.8.0 or later).
+- **azuremonitor** – Azure Monitor tools for Log Analytics and Resource Graph KQL queries.
 - **elasticsearch** – Elasticsearch query tool.
 - **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
@@ -62,7 +63,7 @@ Read-only mode also removes `query_sql` and `query_influxdb`: they pass the quer
 
 In read-only mode, `generate_deeplink` ignores `shorten=true` and returns the full URL, because Grafana creates short URLs through a `POST` request. Add `--enable-write-tools=generate_deeplink` to keep URL shortening without re-enabling any other write tool.
 
-The alerting write tools can be opted back in individually the same way. For example, `--enable-write-tools=alerting_rules_write` allows alert rule changes while silences, contact points, and every other write tool stay disabled.
+Every other write tool can be opted back in individually the same way. For example, `--enable-write-tools=alerting_rules_write` allows alert rule changes while silences, contact points, and every other write tool stay disabled, and `--enable-write-tools=update_dashboard` keeps dashboard edits in an otherwise read-only server.
 
 ## Run without query execution
 
