@@ -3,16 +3,9 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import { sharedModulesExternal, sharedModulesGuard } from './sharedModules.config';
+import { VIZ_RENDERER_FILE, VIZ_RENDERER_GLOBAL, VIZ_RENDERER_HASH_FILE } from './vizRenderer.config';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
-
-/** The global that the Renderer resource sets to the Renderer module when it runs as an inline script. */
-export const VIZ_RENDERER_GLOBAL = '__grafanaVizRenderer';
-
-const FILE_NAME = 'viz-renderer.js';
-
-/** Holds the first 16 hex digits of the sha256 of FILE_NAME, for its URI, so Go does not hash 3.7 MB at start. */
-const HASH_FILE_NAME = 'viz-renderer.hash';
 
 /** The id of the style element of the bundle CSS, so a second run of the script does not add it again. */
 const STYLE_ID = 'grafana-viz-renderer-css';
@@ -20,31 +13,31 @@ const STYLE_ID = 'grafana-viz-renderer-css';
 /**
  * Keeps the resource one file. Library mode writes the CSS of the bundle, for example the rc-slider styles that
  * @grafana/ui imports, to a file of its own, which Go does not embed. This moves it into a style element that the
- * script adds once, first in head, and fails the build on any other file. Then it writes HASH_FILE_NAME.
+ * script adds once, first in head, and fails the build on any other file. Then it writes VIZ_RENDERER_HASH_FILE.
  */
 function singleScript(): Plugin {
   return {
     name: 'grafana-viz-renderer-single-script',
     enforce: 'post',
     generateBundle(_options, bundle) {
-      const chunk = bundle[FILE_NAME];
-      if (chunk?.type !== 'chunk') return this.error(`no ${FILE_NAME} in the bundle`);
+      const chunk = bundle[VIZ_RENDERER_FILE];
+      if (chunk?.type !== 'chunk') return this.error(`no ${VIZ_RENDERER_FILE} in the bundle`);
       let css = '';
       for (const file of Object.values(bundle)) {
         if (file === chunk) continue;
         if (file.type !== 'asset' || !file.fileName.endsWith('.css')) {
-          return this.error(`${file.fileName} is not in ${FILE_NAME}; the resource must be one file`);
+          return this.error(`${file.fileName} is not in ${VIZ_RENDERER_FILE}; the resource must be one file`);
         }
         const source = typeof file.source === 'string' ? file.source : new TextDecoder().decode(file.source);
         css += source.replace(/\/\*\$vite\$:\d+\*\/\n?/g, '');
         delete bundle[file.fileName];
       }
       if (css) {
-        // First in head, as the inline path has it, so @grafana/ui Emotion rules win ties with the defaults.
+        // First in head, before the App's Emotion tags, so @grafana/ui rules win ties with the rc-slider defaults.
         chunk.code += `;(()=>{if(document.getElementById(${JSON.stringify(STYLE_ID)}))return;const s=document.createElement("style");s.id=${JSON.stringify(STYLE_ID)};s.textContent=${JSON.stringify(css)};document.head.prepend(s)})();\n`;
       }
       const hash = createHash('sha256').update(chunk.code).digest('hex').slice(0, 16);
-      this.emitFile({ type: 'asset', fileName: HASH_FILE_NAME, source: `${hash}\n` });
+      this.emitFile({ type: 'asset', fileName: VIZ_RENDERER_HASH_FILE, source: `${hash}\n` });
     },
   };
 }
@@ -61,7 +54,7 @@ export default defineConfig({
       entry: resolve(packageRoot, 'app', 'vizRenderer.entry.ts'),
       formats: ['iife'],
       name: VIZ_RENDERER_GLOBAL,
-      fileName: () => FILE_NAME,
+      fileName: () => VIZ_RENDERER_FILE,
     },
     rollupOptions: {
       external: sharedModulesExternal.external,

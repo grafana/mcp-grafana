@@ -51,8 +51,7 @@ func appText(toolName string, content any) string {
 	return strings.Join(append([]string{text}, notes...), "\n")
 }
 
-// AddAppTool registers one explicit viewer for the supplied enabled query tools,
-// and the viz Renderer resource when query_datasource is a source.
+// AddAppTool registers one explicit viewer for the supplied enabled query tools.
 // Sources retain ownership of their input contracts, execution and permissions.
 func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 	if len(sources) == 0 {
@@ -60,14 +59,6 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 	}
 	tool := newAppTool(sources...)
 	tool.Register(s)
-	if drawsViz(sources) {
-		mcpgrafana.RegisterVizRendererResource(s)
-	}
-}
-
-// drawsViz reports whether the App draws a result of the sources with the viz Renderer resource (#1589).
-func drawsViz(sources []mcpgrafana.Tool) bool {
-	return slices.ContainsFunc(sources, func(t mcpgrafana.Tool) bool { return t.Tool.Name == QueryDatasource.Tool.Name })
 }
 
 func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {

@@ -34,6 +34,8 @@ Tools use the configured Grafana connection and caller identity. Credentials
 stay on the server. Apps are self-contained HTML with no external connection or
 resource domains; trace sharing requests host-controlled clipboard permission.
 
+The `query_datasource` view draws with the viz Renderer, which is not in the App HTML. On its first chart the App reads the Renderer resource through the host (`resources/read`) and runs it as an inline script, so metrics and trace views never load it. This needs a host that passes resource reads to the server (the `serverResources` host capability). Claude Desktop, Cursor and VS Code do. In a host without it, the view shows an error and keeps the link to open the query in Grafana.
+
 ## Embed in another MCP server
 
 The Go module exports the same tools and UI used by the standalone server:
@@ -51,7 +53,7 @@ tools.Resolve(tools.Policy{Categories: []string{"prometheus", "tempo"}}).Registe
 tools.AddAppTool(s, tools.QueryPrometheus, tools.GetTempoTraceTool)
 ```
 
-`RegisterGrafanaAppResource` registers only the shared `GrafanaAppResourceURI`. When `query_datasource` is a source, `AddAppTool` and `Resolve(...).Register` also register the viz Renderer script that the App reads to draw its results. The script URI holds a hash of the script, so it changes with each build. The resource has the `user` audience, because it is for the App, not the model. Pass only enabled sources to `AddAppTool`; the standalone server applies its category, query and write gates before registration. The App tool is read-only only when every source is read-only, so a source such as `query_datasource` makes it destructive. The metrics view refreshes through `query_prometheus` in its existing App instance.
+`RegisterGrafanaAppResource` registers the shared `GrafanaAppResourceURI` and the viz Renderer script that the App reads to draw `query_datasource` results. The script URI holds a hash of the script, so it changes with each build. An App from one build cannot read the Renderer of another, and asks the user to try again. The resource has the `user` audience, because it is for the App, not the model. Pass only enabled sources to `AddAppTool`; the standalone server applies its category, query and write gates before registration. The App tool is read-only only when every source is read-only, so a source such as `query_datasource` makes it destructive. The metrics view refreshes through `query_prometheus` in its existing App instance.
 
 The module embeds the built HTML and the Renderer script. Go consumers serve the bundled App without a Node toolchain and receive UI updates through the module version.
 
