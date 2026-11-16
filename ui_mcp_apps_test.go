@@ -85,7 +85,7 @@ const maxVizRendererSize = 4 << 20
 
 func TestVizRendererResource(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
-	RegisterGrafanaAppResource(s)
+	RegisterVizRendererResource(s)
 	ctx := t.Context()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	go func() { _ = s.Run(ctx, serverTransport) }()
@@ -94,21 +94,23 @@ func TestVizRendererResource(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 
 	sum := sha256.Sum256([]byte(vizRendererJS))
-	require.Equal(t, "ui://grafana/viz-renderer-"+hex.EncodeToString(sum[:8])+".js", VizRendererResourceURI(),
+	require.Equal(t, "ui://grafana/viz-renderer-"+hex.EncodeToString(sum[:8])+".js", vizRendererURI,
 		"dist/viz-renderer.hash is the hash of dist/viz-renderer.js; run mise run build-ui")
 
 	resources, err := c.ListResources(ctx, nil)
 	require.NoError(t, err)
 	var listed *mcp.Resource
 	for _, resource := range resources.Resources {
-		if resource.URI == VizRendererResourceURI() {
+		if resource.URI == vizRendererURI {
 			listed = resource
 		}
 	}
-	require.NotNil(t, listed, "RegisterGrafanaAppResource registers the Renderer, so embedders get it too")
+	require.NotNil(t, listed)
 	require.Equal(t, vizRendererMIMEType, listed.MIMEType)
+	require.NotNil(t, listed.Annotations)
+	require.Equal(t, []mcp.Role{"user"}, listed.Annotations.Audience, "for the App, not the model")
 
-	result, err := c.ReadResource(ctx, &mcp.ReadResourceParams{URI: VizRendererResourceURI()})
+	result, err := c.ReadResource(ctx, &mcp.ReadResourceParams{URI: vizRendererURI})
 	require.NoError(t, err)
 	require.Len(t, result.Contents, 1)
 	require.Equal(t, vizRendererMIMEType, result.Contents[0].MIMEType)

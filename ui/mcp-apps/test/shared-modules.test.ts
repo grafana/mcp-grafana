@@ -32,13 +32,15 @@ describe('sharedModules', () => {
       sharedPackageCopies([
         '/x/node_modules/react-dom/cjs/react-dom-server.production.js',
         '/x/node_modules/@grafana/ui/node_modules/@emotion/css/dist/emotion-css.esm.js',
-        '/x/node_modules/@emotion/react/dist/emotion-react.esm.js',
+        '/x/node_modules/@emotion/cache/dist/emotion-cache.esm.js',
+        '/x/node_modules/@emotion/serialize/dist/emotion-serialize.esm.js',
         '/x/node_modules/lodash.debounce/index.js',
         '/x/app/vizRenderer.entry.ts',
       ])
     ).toEqual([
       '/x/node_modules/react-dom/cjs/react-dom-server.production.js',
       '/x/node_modules/@grafana/ui/node_modules/@emotion/css/dist/emotion-css.esm.js',
+      '/x/node_modules/@emotion/cache/dist/emotion-cache.esm.js',
     ]);
     expect(packageOf('/x/node_modules/lodash.debounce/index.js')).toBe('lodash.debounce');
   });

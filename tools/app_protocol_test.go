@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -275,4 +276,32 @@ func TestAppRejectsUnavailableSourcesAndInvalidArguments(t *testing.T) {
 			require.True(t, result.IsError)
 		})
 	}
+}
+
+// The App reads the viz Renderer resource only to draw query_datasource results (#1589), so a server without that
+// source does not list it.
+func TestVizRendererResourceOnlyWithQueryDatasource(t *testing.T) {
+	listsRenderer := func(t *testing.T, register func(*mcp.Server)) bool {
+		t.Helper()
+		s := mcp.NewServer(&mcp.Implementation{Name: "app-test", Version: "1"}, nil)
+		register(s)
+		serverTransport, clientTransport := mcp.NewInMemoryTransports()
+		go func() { _ = s.Run(t.Context(), serverTransport) }()
+		c, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(t.Context(), clientTransport, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = c.Close() })
+		resources, err := c.ListResources(t.Context(), nil)
+		require.NoError(t, err)
+		for _, resource := range resources.Resources {
+			if strings.HasPrefix(resource.URI, "ui://grafana/viz-renderer-") {
+				return true
+			}
+		}
+		return false
+	}
+
+	assert.False(t, listsRenderer(t, func(s *mcp.Server) { AddAppTool(s, QueryPrometheus, GetTempoTraceTool) }))
+	assert.True(t, listsRenderer(t, func(s *mcp.Server) { AddAppTool(s, QueryPrometheus, QueryDatasource) }))
+	assert.False(t, listsRenderer(t, Resolve(Policy{Categories: []string{"rendering", "prometheus", "tempo"}}).Register))
+	assert.True(t, listsRenderer(t, Resolve(Policy{Categories: []string{"rendering", "prometheus", "dsquery"}}).Register))
 }

@@ -23,11 +23,9 @@ var vizRendererJS string
 //go:embed ui/mcp-apps/dist/viz-renderer.hash
 var vizRendererHash string
 
+// vizRendererURI identifies the viz Renderer script that the Grafana App reads to draw query_datasource results
+// (#1589). It holds a hash of the script, so a new build gets a new URI and a host never runs a cached old one.
 var vizRendererURI = "ui://grafana/viz-renderer-" + strings.TrimSpace(vizRendererHash) + ".js"
-
-// VizRendererResourceURI identifies the viz Renderer script that the Grafana App reads to draw query_datasource
-// results (#1589). It holds a hash of the script, so a new build gets a new URI and a host never runs a cached old one.
-func VizRendererResourceURI() string { return vizRendererURI }
 
 const vizRendererMIMEType = "text/javascript"
 
@@ -35,7 +33,7 @@ const vizRendererMIMEType = "text/javascript"
 // can keep it that long.
 const vizRendererTTLMs = 7 * 24 * 60 * 60 * 1000
 
-// RegisterGrafanaAppResource makes the shared viewer and its viz Renderer available to MCP hosts.
+// RegisterGrafanaAppResource makes the shared viewer available to MCP hosts.
 func RegisterGrafanaAppResource(s *mcp.Server) {
 	s.AddResource(
 		&mcp.Resource{
@@ -55,8 +53,15 @@ func RegisterGrafanaAppResource(s *mcp.Server) {
 			}, nil
 		},
 	)
+}
+
+// RegisterVizRendererResource makes the viz Renderer script available to the Grafana App. The tools package calls it
+// when query_datasource is an App source, so a server that draws no viz does not list it.
+func RegisterVizRendererResource(s *mcp.Server) {
 	s.AddResource(
 		&mcp.Resource{
+			// For the App, not the model: a host that sends resources to the model can leave this 3.7 MB script out.
+			Annotations: &mcp.Annotations{Audience: []mcp.Role{"user"}},
 			URI:         vizRendererURI,
 			Name:        "Grafana App viz Renderer",
 			Title:       "Grafana App viz Renderer",

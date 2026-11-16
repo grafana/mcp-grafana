@@ -7,7 +7,14 @@ export const SHARED_MODULES_GLOBAL = '__grafanaMcpAppModules';
  * The one list of shared packages. The App puts each on the global (sharedModulesPlugin), and the Renderer resource
  * takes each from it instead of bundling a copy (sharedModulesExternal). Code on both sides imports them as usual.
  */
-export const SHARED_MODULE_IDS = ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', '@emotion/css'] as const;
+export const SHARED_MODULE_IDS = [
+  'react',
+  'react-dom',
+  'react-dom/client',
+  'react/jsx-runtime',
+  '@emotion/css',
+  '@emotion/react',
+] as const;
 
 const VIRTUAL_ID = 'virtual:shared-modules';
 const RESOLVED_ID = `\0${VIRTUAL_ID}`;
@@ -44,11 +51,12 @@ export function packageOf(moduleId: string): string | undefined {
   return parts[0].startsWith('@') ? `${parts[0]}/${parts[1]}` : parts[0];
 }
 
-const sharedPackages = new Set(SHARED_MODULE_IDS.map((id) => packageOf(`node_modules/${id}`)));
+// @emotion/cache is not shared, but a bundled copy is a second Emotion cache, so the guard fails on it too.
+const guardedPackages = new Set([...SHARED_MODULE_IDS.map((id) => packageOf(`node_modules/${id}`)), '@emotion/cache']);
 
-/** The bundled modules that come from a shared package, at any depth of the import graph. */
+/** The bundled modules that come from a shared package or @emotion/cache, at any depth of the import graph. */
 export const sharedPackageCopies = (moduleIds: Iterable<string>) =>
-  [...moduleIds].filter((id) => sharedPackages.has(packageOf(id)));
+  [...moduleIds].filter((id) => guardedPackages.has(packageOf(id)));
 
 /**
  * Fails the build if the bundle holds a copy of a shared package, for example from a subpath such as
