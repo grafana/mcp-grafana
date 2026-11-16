@@ -75,8 +75,12 @@ func AddAlertingTools(s *mcp.Server, writeEnabled func(name string) bool) {
 	if writeEnabled(AlertRoutingWrite.Tool.Name) {
 		AlertRoutingWrite.Register(s)
 	}
-	AlertSilencesRead.Register(s)
-	if writeEnabled(AlertSilencesWrite.Tool.Name) {
-		AlertSilencesWrite.Register(s)
+	// The read-only and write-capable variants share one tool name, so only
+	// register the write variant when writes are enabled; the read variant
+	// stays available otherwise.
+	if writeEnabled(ManageAlertmanagerReadWrite.Tool.Name) {
+		ManageAlertmanagerReadWrite.Register(s)
+	} else {
+		ManageAlertmanagerRead.Register(s)
 	}
 }

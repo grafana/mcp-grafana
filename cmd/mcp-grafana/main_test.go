@@ -1716,16 +1716,24 @@ func TestProcessTools_EnableWriteToolsRestoresWritableDeeplink(t *testing.T) {
 }
 
 func TestProcessTools_EnableWriteToolsRestoresSingleAlertingWriteTool(t *testing.T) {
-	writeTools := []string{"alerting_rules_write", "alerting_routing_write", "alerting_silences_write"}
+	writeTools := []string{"alerting_rules_write", "alerting_routing_write", "alerting_manage_alertmanager"}
 	for _, selected := range writeTools {
 		t.Run(selected, func(t *testing.T) {
 			listed := listAllCategoryTools(t, disabledTools{write: true, writeToolOverrides: selected})
 			require.Contains(t, listed, selected)
 			assert.False(t, listed[selected].Annotations.ReadOnlyHint)
 			for _, name := range writeTools {
-				if name != selected {
-					assert.NotContains(t, listed, name, "the override must not re-enable other alerting write tools")
+				if name == selected {
+					continue
 				}
+				if name == "alerting_manage_alertmanager" {
+					// The consolidated tool always has a read-only variant
+					// registered under the same name.
+					require.Contains(t, listed, name)
+					assert.True(t, listed[name].Annotations.ReadOnlyHint, "the consolidated tool should stay read-only unless selected")
+					continue
+				}
+				assert.NotContains(t, listed, name, "the override must not re-enable other alerting write tools")
 			}
 			assert.NotContains(t, listed, "update_dashboard", "the override must not re-enable other write tools")
 		})
