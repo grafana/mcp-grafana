@@ -6,17 +6,24 @@
 //   node scripts/renderer.mjs --bump <tag>   Pin a release: download and verify its files, then write RENDERER.
 //
 // The default mode needs no gh CLI and no token, and no network when the files on disk match the pin.
-// GITHUB_TOKEN, when set, is sent to the GitHub API (attestations, release assets) to avoid the anonymous rate limit.
+// GITHUB_TOKEN, when set, is sent to the GitHub API (attestations, releases) to avoid the anonymous rate limit.
+// RENDERER_LOCAL_DIR=<dir> copies an unreleased Renderer build (for example dataViz dist-renderer/) instead.
 import { createHash } from 'node:crypto';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { copyFile, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import http from 'node:http';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const rendererDir = fileURLToPath(new URL('../renderer/', import.meta.url));
 export const PIN_FILE = 'RENDERER';
+
+// The trust anchor. RENDERER repeats these two values so a reader sees them, but the script does not take them from
+// RENDERER: a pin that names another repository or signer fails. To trust another one, change them here, in a file
+// that CODEOWNERS gives to the viz Renderer owners.
 export const REPOSITORY = 'grafana/dataViz';
-export const ISSUER = 'https://token.actions.githubusercontent.com';
 export const SIGNER = `https://github.com/${REPOSITORY}/.github/workflows/release-please.yml@refs/heads/main`;
+
+export const ISSUER = 'https://token.actions.githubusercontent.com';
 export const PROVENANCE = 'https://slsa.dev/provenance/v1';
 // Files the App and its tests read. A release without one of them cannot be pinned.
 export const REQUIRED_FILES = ['renderer.js', 'renderer.manifest.json', 'renderer.d.ts', 'icons.json', 'package.json'];
@@ -25,6 +32,7 @@ const TAG = /^grafana-echarts-renderer\/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 // A file name from the pin or from a release: no directory part, so a write cannot leave renderer/.
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const HASH = /^[0-9a-f]{64}$/;
+const SOURCE = `git+https://github.com/${REPOSITORY}@`;
 
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
@@ -51,10 +59,18 @@ export function parsePin(text) {
       pin[key] = value;
     }
   }
-  for (const key of ['repository', 'tag', 'signer']) {
+  for (const key of ['repository', 'tag', 'signer', 'version', 'contractVersion']) {
     if (!pin[key]) throw new Error(`${PIN_FILE}: no ${key} line`);
   }
-  tagVersion(pin.tag);
+  if (pin.repository !== REPOSITORY || pin.signer !== SIGNER) {
+    throw new Error(
+      `${PIN_FILE}: repository ${pin.repository} and signer ${pin.signer} are not the trusted ${REPOSITORY} and ` +
+        `${SIGNER}. Only scripts/renderer.mjs sets what is trusted.`,
+    );
+  }
+  if (tagVersion(pin.tag) !== pin.version) {
+    throw new Error(`${PIN_FILE}: version ${pin.version} is not the version of tag ${pin.tag}`);
+  }
   for (const name of REQUIRED_FILES) {
     if (!pin.files[name]) throw new Error(`${PIN_FILE}: no sha256 line for ${name}`);
   }
@@ -62,7 +78,13 @@ export function parsePin(text) {
 }
 
 export function formatPin(pin) {
-  const lines = [`repository: ${pin.repository}`, `tag: ${pin.tag}`, `signer: ${pin.signer}`];
+  const lines = [
+    `repository: ${pin.repository}`,
+    `tag: ${pin.tag}`,
+    `signer: ${pin.signer}`,
+    `version: ${pin.version}`,
+    `contractVersion: ${pin.contractVersion}`,
+  ];
   for (const name of Object.keys(pin.files).sort()) lines.push(`sha256 ${name}: ${pin.files[name]}`);
   return `${lines.join('\n')}\n`;
 }
@@ -70,7 +92,19 @@ export function formatPin(pin) {
 export const downloadURL = (repository, tag, name) =>
   `https://github.com/${repository}/releases/download/${tag}/${name}`;
 
+// Node fetch ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY is set. Turn the proxy settings on, so the download works
+// on a network that allows traffic only through a proxy.
+let proxyFromEnv = false;
+function useEnvProxy() {
+  if (proxyFromEnv) return;
+  proxyFromEnv = true;
+  const env = process.env;
+  const proxy = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+  if (proxy && typeof http.setGlobalProxyFromEnv === 'function') http.setGlobalProxyFromEnv();
+}
+
 async function request(url, { fetchImpl, token, json }) {
+  if (fetchImpl === globalThis.fetch) useEnvProxy();
   const headers = {};
   if (url.startsWith('https://api.github.com/')) {
     headers.Accept = 'application/vnd.github+json';
@@ -81,7 +115,7 @@ async function request(url, { fetchImpl, token, json }) {
   try {
     response = await fetchImpl(url, { headers, redirect: 'follow' });
   } catch (error) {
-    throw new Error(`GET ${url}: ${error.message}`);
+    throw new Error(`GET ${url}: ${error.message}${error.cause ? ` (${error.cause.message ?? error.cause})` : ''}`);
   }
   if (!response.ok) throw new Error(`GET ${url}: HTTP ${response.status}`);
   return json ? response.json() : Buffer.from(await response.arrayBuffer());
@@ -107,10 +141,31 @@ async function writeAtomic(path, data) {
   }
 }
 
-/** Downloads each pinned file that is missing or differs from its pin. Returns the names it downloaded. */
-export async function fetchRenderer({ dir = rendererDir, fetchImpl = fetch, log = () => {} } = {}) {
+/** Copies a local Renderer build into renderer/. Nothing checks it: the pin tests fail until the next real fetch. */
+async function copyLocal(dir, source, log) {
+  const names = (await readdir(source)).filter((name) => FILE_NAME.test(name));
+  for (const name of REQUIRED_FILES) {
+    if (!names.includes(name)) throw new Error(`RENDERER_LOCAL_DIR ${source} has no ${name}`);
+  }
+  for (const name of names) await copyFile(join(source, name), join(dir, name));
+  log(`Using the local Renderer build in ${source}. Its hashes are not checked, so the renderer-pin tests fail.`);
+  return names;
+}
+
+/**
+ * Downloads each pinned file that is missing or differs from its pin. Returns the names it downloaded.
+ * With `localDir` (RENDERER_LOCAL_DIR), copies that build instead.
+ */
+export async function fetchRenderer({
+  dir = rendererDir,
+  fetchImpl = fetch,
+  log = () => {},
+  localDir = process.env.RENDERER_LOCAL_DIR || undefined,
+} = {}) {
   const pin = parsePin(await readFile(join(dir, PIN_FILE), 'utf8'));
+  if (localDir) return { pin, downloaded: [], local: await copyLocal(dir, resolve(localDir), log) };
   const downloaded = [];
+  const replaced = [];
   for (const [name, want] of Object.entries(pin.files)) {
     const path = join(dir, name);
     const current = await readIfExists(path);
@@ -120,93 +175,102 @@ export async function fetchRenderer({ dir = rendererDir, fetchImpl = fetch, log 
     const got = sha256(data);
     if (got !== want) throw new Error(`${name}: sha256 ${got} is not the pin ${want} (${url})`);
     await writeAtomic(path, data);
-    downloaded.push(name);
+    (current ? replaced : downloaded).push(name);
   }
   if (downloaded.length) log(`Downloaded ${downloaded.join(', ')} of ${pin.tag}.`);
-  return { pin, downloaded };
+  if (replaced.length) {
+    log(
+      `Replaced ${replaced.join(', ')} with the files of ${pin.tag}, because they did not match RENDERER. ` +
+        'To use a local Renderer build, set RENDERER_LOCAL_DIR (see renderer/README.md).',
+    );
+  }
+  return { pin, downloaded: [...downloaded, ...replaced] };
 }
 
-function provenanceSubjects(bundle) {
+function provenanceStatement(bundle) {
   const envelope = bundle?.dsseEnvelope;
   if (envelope?.payloadType !== 'application/vnd.in-toto+json') return undefined;
   const statement = JSON.parse(Buffer.from(envelope.payload, 'base64').toString('utf8'));
-  if (statement.predicateType !== PROVENANCE) return undefined;
-  return (statement.subject ?? []).map((subject) => subject?.digest?.sha256);
+  return statement.predicateType === PROVENANCE ? statement : undefined;
+}
+
+/** The commit of the trusted repository that a provenance statement says the file was built from. */
+export function sourceCommit(statement) {
+  const dependencies = statement?.predicate?.buildDefinition?.resolvedDependencies ?? [];
+  return dependencies.find((dependency) => dependency?.uri?.startsWith(SOURCE))?.digest?.gitCommit;
 }
 
 /**
- * Verifies that one file has a SLSA provenance attestation signed by `signer` through public Sigstore.
- * `verifier.verify` checks the signature, the certificate identity and the transparency log entry. It does not compare
- * a DSSE statement with the artifact, so the subject digest is compared here.
+ * Verifies that one file has a SLSA provenance attestation signed by the trusted SIGNER through public Sigstore, and
+ * returns its statement. `verifier.verify` checks the signature, the certificate identity and the transparency log
+ * entry. It does not compare a DSSE statement with the artifact, so the subject digest is compared here.
  */
-export async function verifyFile(name, data, { repository, signer, verifier, fetchImpl = fetch, token }) {
+export async function verifyFile(name, data, { verifier, fetchImpl = fetch, token }) {
   const digest = sha256(data);
-  const url = `https://api.github.com/repos/${repository}/attestations/sha256:${digest}`;
+  const url = `https://api.github.com/repos/${REPOSITORY}/attestations/sha256:${digest}`;
   const { attestations = [] } = await request(url, { fetchImpl, token, json: true });
   const failures = [];
   for (const { bundle } of attestations) {
-    const subjects = provenanceSubjects(bundle);
-    if (!subjects) continue;
-    if (!subjects.includes(digest)) {
+    const statement = provenanceStatement(bundle);
+    if (!statement) continue;
+    if (!(statement.subject ?? []).some((subject) => subject?.digest?.sha256 === digest)) {
       failures.push('subject digest is not the file hash');
       continue;
     }
     try {
       verifier.verify(bundle);
-      return;
+      return statement;
     } catch (error) {
       failures.push(error.message);
     }
   }
   const reason = failures.length ? failures.join('; ') : `no ${PROVENANCE} attestation`;
-  throw new Error(`${name}: no valid provenance attestation from ${signer}: ${reason}`);
+  throw new Error(`${name}: no valid provenance attestation from ${SIGNER}: ${reason}`);
 }
 
-async function createVerifier(signer) {
+async function createVerifier() {
   const sigstore = await import('sigstore');
-  return sigstore.createVerifier({ certificateIssuer: ISSUER, certificateIdentityURI: signer });
+  return sigstore.createVerifier({ certificateIssuer: ISSUER, certificateIdentityURI: SIGNER });
 }
 
 /** Fetches the pinned files, then verifies the attestation of each one. */
 export async function verifyRenderer({ dir = rendererDir, fetchImpl = fetch, token, verifier, log = () => {} } = {}) {
-  const { pin } = await fetchRenderer({ dir, fetchImpl, log });
-  verifier ??= await createVerifier(pin.signer);
+  const { pin } = await fetchRenderer({ dir, fetchImpl, log, localDir: undefined });
+  verifier ??= await createVerifier();
   for (const name of Object.keys(pin.files)) {
-    await verifyFile(name, await readFile(join(dir, name)), { ...pin, verifier, fetchImpl, token });
+    await verifyFile(name, await readFile(join(dir, name)), { verifier, fetchImpl, token });
   }
   log(`Verified the provenance of ${Object.keys(pin.files).length} files of ${pin.tag}.`);
   return pin;
 }
 
-function checkManifest(tag, files, data) {
-  const manifest = JSON.parse(data['renderer.manifest.json'].toString('utf8'));
-  if (manifest.version !== tagVersion(tag)) {
-    throw new Error(`renderer.manifest.json: version ${manifest.version} is not the tag version ${tagVersion(tag)}`);
-  }
-  if (manifest.sha256 !== files['renderer.js']) {
-    throw new Error('renderer.manifest.json: sha256 is not the hash of renderer.js');
-  }
-}
-
-/** Pins a release: downloads and verifies all its files, then writes them and RENDERER. */
-export async function bumpRenderer(tag, { dir = rendererDir, fetchImpl = fetch, token, verifier, log = () => {} } = {}) {
-  tagVersion(tag);
-  const previous = await readIfExists(join(dir, PIN_FILE));
-  // Keep the repository and signer of a valid pin. A missing or old-format pin starts from the defaults.
-  let old = {};
-  try {
-    if (previous) old = parsePin(previous.toString('utf8'));
-  } catch {
-    old = {};
-  }
-  const repository = old.repository ?? REPOSITORY;
-  const signer = old.signer ?? SIGNER;
-
-  const release = await request(`https://api.github.com/repos/${repository}/releases/tags/${tag}`, {
-    fetchImpl,
-    token,
+/** The commit that a tag names. An annotated tag points to a tag object, which points to the commit. */
+async function tagCommit(tag, options) {
+  let { object } = await request(`https://api.github.com/repos/${REPOSITORY}/git/ref/tags/${tag}`, {
+    ...options,
     json: true,
   });
+  if (object.type === 'tag') {
+    ({ object } = await request(object.url, { ...options, json: true }));
+  }
+  if (object.type !== 'commit') throw new Error(`tag ${tag} does not name a commit`);
+  return object.sha;
+}
+
+/**
+ * Pins a release. The release must be immutable, and each file must have a valid provenance attestation from the
+ * build of the tagged commit. Then it writes the files and RENDERER.
+ */
+export async function bumpRenderer(tag, { dir = rendererDir, fetchImpl = fetch, token, verifier, log = () => {} } = {}) {
+  const version = tagVersion(tag);
+  const options = { fetchImpl, token };
+  const release = await request(`https://api.github.com/repos/${REPOSITORY}/releases/tags/${tag}`, {
+    ...options,
+    json: true,
+  });
+  if (release.immutable !== true) {
+    throw new Error(`release ${tag} is not immutable, so its files can still change after the pin`);
+  }
   const names = release.assets.map((asset) => asset.name);
   for (const name of names) {
     if (!FILE_NAME.test(name)) throw new Error(`release ${tag}: bad asset name ${JSON.stringify(name)}`);
@@ -214,21 +278,32 @@ export async function bumpRenderer(tag, { dir = rendererDir, fetchImpl = fetch, 
   for (const name of REQUIRED_FILES) {
     if (!names.includes(name)) throw new Error(`release ${tag}: no ${name}`);
   }
+  const commit = await tagCommit(tag, options);
 
-  verifier ??= await createVerifier(signer);
+  verifier ??= await createVerifier();
   const files = {};
   const data = {};
   for (const name of names) {
-    data[name] = await request(downloadURL(repository, tag, name), { fetchImpl });
+    data[name] = await request(downloadURL(REPOSITORY, tag, name), { fetchImpl });
     files[name] = sha256(data[name]);
-    await verifyFile(name, data[name], { repository, signer, verifier, fetchImpl, token });
+    const statement = await verifyFile(name, data[name], { verifier, ...options });
+    const built = sourceCommit(statement);
+    if (built !== commit) throw new Error(`${name}: built from commit ${built}, but tag ${tag} is commit ${commit}`);
   }
-  checkManifest(tag, files, data);
+
+  const manifest = JSON.parse(data['renderer.manifest.json'].toString('utf8'));
+  if (manifest.version !== version) {
+    throw new Error(`renderer.manifest.json: version ${manifest.version} is not the tag version ${version}`);
+  }
+  if (manifest.sha256 !== files['renderer.js']) {
+    throw new Error('renderer.manifest.json: sha256 is not the hash of renderer.js');
+  }
+  if (!manifest.contractVersion) throw new Error('renderer.manifest.json: no contractVersion');
 
   for (const name of names) await writeAtomic(join(dir, name), data[name]);
-  const pin = { repository, tag, signer, files };
+  const pin = { repository: REPOSITORY, tag, signer: SIGNER, version, contractVersion: manifest.contractVersion, files };
   await writeFile(join(dir, PIN_FILE), formatPin(pin));
-  log(`Pinned ${tag} (${names.length} files, provenance verified).`);
+  log(`Pinned ${tag} (contract ${manifest.contractVersion}, ${names.length} files, built from ${commit}).`);
   return pin;
 }
 

@@ -24,6 +24,12 @@ describe('Renderer release', () => {
   it('has the manifest of its bundle (delivery.6)', () => {
     expect(manifest.sha256).toBe(pin.files['renderer.js']);
     expect(manifest.version).toBe(tagVersion(pin.tag));
+    expect(manifest.version).toBe(pin.version);
+  });
+
+  // RENDERER shows the contract version, so a bump that changes the contract shows it in its diff.
+  it('targets the contract version of the pin', () => {
+    expect(manifest.contractVersion).toBe(pin.contractVersion);
   });
 
   it('has the license file that the bundle banner names', () => {

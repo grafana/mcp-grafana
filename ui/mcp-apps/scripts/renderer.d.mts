@@ -3,6 +3,8 @@ export interface Pin {
   repository: string;
   tag: string;
   signer: string;
+  version: string;
+  contractVersion: string;
   files: Record<string, string>;
 }
 
@@ -26,8 +28,8 @@ interface NetworkOptions extends Options {
 export const rendererDir: string;
 export const PIN_FILE: string;
 export const REPOSITORY: string;
-export const ISSUER: string;
 export const SIGNER: string;
+export const ISSUER: string;
 export const PROVENANCE: string;
 export const REQUIRED_FILES: string[];
 
@@ -36,11 +38,14 @@ export function tagVersion(tag: string): string;
 export function parsePin(text: string): Pin;
 export function formatPin(pin: Pin): string;
 export function downloadURL(repository: string, tag: string, name: string): string;
-export function fetchRenderer(options?: Options): Promise<{ pin: Pin; downloaded: string[] }>;
+export function sourceCommit(statement: unknown): string | undefined;
+export function fetchRenderer(
+  options?: Options & { localDir?: string },
+): Promise<{ pin: Pin; downloaded: string[]; local?: string[] }>;
 export function verifyFile(
   name: string,
   data: Uint8Array,
-  options: { repository: string; signer: string; verifier: BundleVerifier; fetchImpl?: Fetch; token?: string },
-): Promise<void>;
+  options: { verifier: BundleVerifier; fetchImpl?: Fetch; token?: string },
+): Promise<unknown>;
 export function verifyRenderer(options?: NetworkOptions): Promise<Pin>;
 export function bumpRenderer(tag: string, options?: NetworkOptions): Promise<Pin>;

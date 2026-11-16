@@ -17,15 +17,27 @@ The release has these files:
 
 ## Pin
 
-`RENDERER` has the release tag, the signer workflow of the release, and the SHA-256 of each file.
+`RENDERER` has the release tag, its version and contract version, and the SHA-256 of each file. It also shows the
+trusted repository and signer workflow, but `scripts/renderer.mjs` does not take them from `RENDERER`. They are
+constants in the script, and a pin that names another repository or signer fails.
 
 `npm run build`, `npm run typecheck`, `npm run dev` and `npm test` download the files that are missing or that differ
-from the pin. They fail if a downloaded file is not its pin. They need no `gh` CLI and no token. If the files on disk
-match the pin, they need no network.
+from the pin. They fail if a downloaded file is not its pin. They need no `gh` CLI and no token. A fresh clone needs
+network for the first of these commands. After that, if the files on disk match the pin, they need no network.
 
-CI also runs `node scripts/renderer.mjs --verify`. For each file, it gets the SLSA provenance attestation from the
-GitHub attestations API and verifies it with Sigstore. The attestation must be signed by the `signer` workflow of
-`RENDERER`, and its subject must be the file. So a pin can only name a file that the dataViz release workflow built.
+## What is checked
+
+- Every build: each file is the SHA-256 of `RENDERER`. The pin tests also make sure that the manifest has the version
+  and contract version of `RENDERER`.
+- When `RENDERER`, the script or the lockfile changes: the `viz Renderer provenance` workflow runs
+  `node scripts/renderer.mjs --verify`. For each file, it gets the SLSA provenance attestation from the GitHub
+  attestations API and verifies it with Sigstore. The attestation must be signed by the
+  `grafana/dataViz/.github/workflows/release-please.yml` workflow on `main`, and its subject must be the file.
+- `--bump` checks the same attestations. It also makes sure that the release is immutable, that each file was built
+  from the commit of the tag, and that the manifest has the tag version and the hash of `renderer.js`.
+
+So a pin can name only files that the dataViz release workflow built. To trust another repository or workflow, change
+the constants in `scripts/renderer.mjs`.
 
 ## Change the Renderer version
 
@@ -36,9 +48,26 @@ node scripts/renderer.mjs --bump grafana-echarts-renderer/v<version>
 npm test
 ```
 
-`--bump` downloads all files of the release, verifies the attestation of each file, makes sure that the manifest
-version is the tag version, and writes `RENDERER`. Set `GITHUB_TOKEN` if the anonymous GitHub API rate limit
-(60 requests per hour) stops it.
+`--bump` writes `RENDERER`. Set `GITHUB_TOKEN` if the anonymous GitHub API rate limit (60 requests per hour) stops it.
+If the contract version changes, the `contractVersion:` line of `RENDERER` changes in the diff.
 
 Then run `mise run build-ui` in the repository root, and commit `RENDERER` and the rebuilt `dist/` files.
 Do not edit `RENDERER` by hand.
+
+## Try an unreleased Renderer build
+
+The scripts replace a file that does not match the pin. To use a local build instead, set `RENDERER_LOCAL_DIR` to
+the dataViz `dist-renderer/` directory:
+
+```sh
+RENDERER_LOCAL_DIR=../../../dataViz/plugins/packages/@plugins/grafana-echarts/dist-renderer npm run dev
+```
+
+The scripts then copy that build into this directory and check no hashes. The renderer-pin tests fail while a local
+build is in place. The next command without `RENDERER_LOCAL_DIR` replaces it with the pinned release. Do not commit
+`dist/` files built from a local Renderer.
+
+## Proxy
+
+The download reads `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`. If your network allows traffic only through a proxy,
+set them before the first `npm test` or `npm run build`. npm uses its own proxy configuration for `npm ci`.

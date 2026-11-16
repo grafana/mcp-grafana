@@ -1,6 +1,8 @@
 repository: grafana/dataViz
 tag: grafana-echarts-renderer/v0.1.0
 signer: https://github.com/grafana/dataViz/.github/workflows/release-please.yml@refs/heads/main
+version: 0.1.0
+contractVersion: 1.2.0
 sha256 LICENSE: 97eb6bc1a2a7b6ad6be6e76be8096ea32d83d0b25434170bea547bcfcb96e1ee
 sha256 icons.json: 6f6637a6f4c8415584bd25963133f0086e8ec1b8997acb8b36cd4ce2dcab193c
 sha256 package.json: 8cb115f598efc7832a91a53d0bde575c90773d994438909fa6bcaca4edf5fd3b

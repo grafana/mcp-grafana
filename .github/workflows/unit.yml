@@ -93,14 +93,6 @@ jobs:
       - name: Rebuild UI bundles
         run: mise run build-ui
 
-      # The build checks each Renderer file against its SHA-256 in RENDERER. This also checks that each file has a
-      # SLSA provenance attestation from the grafana/dataViz release workflow, so a pin can only name a real release.
-      - name: Verify the viz Renderer provenance
-        working-directory: ui/mcp-apps
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/renderer.mjs --verify
-
       - name: Check MCP App UI
         working-directory: ui/mcp-apps
         run: npm run typecheck && npm test
