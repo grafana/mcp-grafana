@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { RenderHandle } from '../renderer/renderer.js';
+import { openInGrafanaAction } from '../src/grafanaLink';
 import { McpAppShell } from '../src/McpAppShell';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
+import { exploreUrl } from './exploreUrl';
 import { loadRenderer } from './loadRenderer';
+import { QueryList, queryText } from './QueryList';
 import { buildVizSpec, type VizArgs, type VizSpec } from './vizSpec';
-
-// The query text of the common data sources: Prometheus and Loki, SQL, and others.
-const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText'];
 
 /**
  * The summary title: the text of the first query on one line, or the data source when the query has no text.
@@ -16,10 +16,7 @@ const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText'];
  */
 export function describeQueries(args: VizArgs): string {
   const [first, ...rest] = args.queries;
-  const text = QUERY_TEXT_FIELDS.map((name) => first?.[name])
-    .map((value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''))
-    .find(Boolean);
-  const title = text || `Data source ${args.datasourceUid}`;
+  const title = queryText(first)?.replace(/\s+/g, ' ').trim() || `Data source ${args.datasourceUid}`;
   return rest.length ? `${title} (+${rest.length} more)` : title;
 }
 
@@ -31,7 +28,11 @@ export function VizApplication({ host }: { host: AppHostState }) {
     () => (viz && vizArgs ? buildVizSpec(vizArgs, viz, { theme: colorMode, timeZone }) : undefined),
     [viz, vizArgs, colorMode, timeZone],
   );
-  const grafanaUrl = viz?.grafanaUrl;
+  // spec.7: the link opens the queries in Explore, in the Grafana of the result.
+  const grafanaUrl = useMemo(
+    () => viz?.grafanaUrl && (vizArgs ? exploreUrl(viz.grafanaUrl, vizArgs, viz.data.range) : viz.grafanaUrl),
+    [viz, vizArgs],
+  );
 
   return (
     <McpAppShell
@@ -49,20 +50,11 @@ export function VizApplication({ host }: { host: AppHostState }) {
             : state.status,
       }}
       feedback={state.isError ? { tone: 'error', message: state.status } : undefined}
-      openInGrafana={
-        grafanaUrl
-          ? {
-              href: grafanaUrl,
-              onClick: (event) => {
-                // The sandbox cannot navigate; the host opens the link (spec.7).
-                event.preventDefault();
-                host.openInGrafana({ url: grafanaUrl });
-              },
-            }
-          : undefined
-      }
+      // The sandbox cannot navigate; the host opens the link.
+      openInGrafana={openInGrafanaAction(grafanaUrl, host.openInGrafana)}
     >
       {spec ? <RendererView key={state.generation} spec={spec} /> : null}
+      {spec && vizArgs ? <QueryList queries={vizArgs.queries} /> : null}
     </McpAppShell>
   );
 }

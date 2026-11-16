@@ -1,5 +1,5 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GrafanaApplication } from '../app/GrafanaApplication';
@@ -26,7 +26,7 @@ afterEach(() => {
 
 type Handlers = { onhostcontextchanged?: (context: unknown) => void };
 
-function view() {
+function view(result: Record<string, unknown> = readVizFixture('prometheus-line', 'result.json')) {
   const app = {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
@@ -37,7 +37,7 @@ function view() {
     app.ontoolinput?.({
       arguments: { toolName: 'query_datasource', arguments: readVizFixture('prometheus-line', 'args.json') },
     } as never);
-    app.ontoolresult?.({ structuredContent: readVizFixture('prometheus-line', 'result.json'), content: [] } as never);
+    app.ontoolresult?.({ structuredContent: result, content: [] } as never);
   });
   return { app, ui: render(<GrafanaApplication host={host} />) };
 }
@@ -79,5 +79,23 @@ describe('RendererView', () => {
     await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(2));
     expect(screen.queryByText('This view failed to render')).toBeNull();
     log.mockRestore();
+  });
+});
+
+describe('VizApplication', () => {
+  it('shows the queries under the chart (#1585)', async () => {
+    view();
+    await waitFor(() => expect(renderer.render).toHaveBeenCalled());
+    const list = within(screen.getByText('Query').closest('details')!);
+    expect(list.getByText('A')).toBeTruthy();
+    expect(list.getByText('sum by (handler) (rate(grafana_http_request_duration_seconds_count[5m]))')).toBeTruthy();
+  });
+
+  it('opens the queries in Explore', async () => {
+    view({ ...readVizFixture('prometheus-line', 'result.json'), grafanaUrl: 'https://grafana.example' });
+    const link = (await screen.findByRole('link', { name: /Open in Grafana/ })) as HTMLAnchorElement;
+    const url = new URL(link.href);
+    expect(url.pathname).toBe('/explore');
+    expect(JSON.parse(url.searchParams.get('panes') ?? '{}').a.datasource).toBe('lgtm-prometheus');
   });
 });
