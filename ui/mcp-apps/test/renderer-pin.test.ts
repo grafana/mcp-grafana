@@ -1,38 +1,36 @@
 // @vitest-environment node
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { satisfies } from 'semver';
 import { describe, expect, it } from 'vitest';
+import { parsePin, sha256, tagVersion } from '../scripts/renderer.mjs';
 
-// The Renderer is a copy of a grafana/dataViz build. scripts/sync-viz-renderer.sh writes it and its pin RENDERER.
+// renderer/RENDERER pins a grafana/dataViz release. scripts/renderer.mjs downloads its files (test/renderer.global-setup.ts)
+// and fails on a file that is not its pin, so these tests read the pinned release.
 const dir = join(__dirname, '..', 'renderer');
 const read = (name: string) => readFileSync(join(dir, name), 'utf8');
 
-const pin = Object.fromEntries(
-  read('RENDERER')
-    .split('\n')
-    .filter((line) => line.includes(': '))
-    .map((line) => [line.slice(0, line.indexOf(': ')), line.slice(line.indexOf(': ') + 2)]),
-);
+const pin = parsePin(read('RENDERER'));
 const peers: Record<string, string> = JSON.parse(read('package.json')).peerDependencies;
 const manifest = JSON.parse(read('renderer.manifest.json'));
-const hash = (name: string) => createHash('sha256').update(readFileSync(join(dir, name))).digest('hex');
-const sha256 = hash('renderer.js');
 
-describe('Renderer copy', () => {
+describe('Renderer release', () => {
   it('is the bundle of the pin', () => {
-    expect(sha256).toBe(pin['sha256 renderer.js']);
-  });
-
-  it('has the icons of the pin (delivery.9)', () => {
-    expect(hash('icons.json')).toBe(pin['sha256 icons.json']);
+    for (const [name, want] of Object.entries(pin.files)) {
+      expect(sha256(readFileSync(join(dir, name))), name).toBe(want);
+    }
   });
 
   it('has the manifest of its bundle (delivery.6)', () => {
-    expect(manifest.sha256).toBe(sha256);
-    expect(manifest.version).toBe(pin.version);
-    expect(manifest.contractVersion).toBe(pin.contractVersion);
+    expect(manifest.sha256).toBe(pin.files['renderer.js']);
+    expect(manifest.version).toBe(tagVersion(pin.tag));
+  });
+
+  it('has the license file that the bundle banner names', () => {
+    expect(read('renderer.js').startsWith('/*! For license information please see renderer.js.LICENSE.txt */')).toBe(
+      true,
+    );
+    expect(pin.files['renderer.js.LICENSE.txt']).toBeDefined();
   });
 
   it('needs only the peers of renderer.9', () => {
