@@ -158,16 +158,31 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	var panelData *panelInfo
 	var err error
 	if params.IsV2 {
+		db = templatingV1FromV2(params.DB)
 		panel, findErr := findPanelByIDV2(params.DB, params.PanelID)
 		if findErr != nil {
-			return nil, fmt.Errorf("finding panel: %w", findErr)
+			// A LibraryPanel element has no inline queries; they live in its
+			// library element, whose model has the classic panel shape.
+			libPanel, ok := findLibraryPanelByIDV2(params.DB, params.PanelID)
+			if !ok {
+				return nil, fmt.Errorf("finding panel: %w", findErr)
+			}
+			resolved, resolveErr := resolveLibraryPanel(ctx, newLibraryPanelCache(), libPanel)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			panelData, err = extractPanelInfo(resolved, params.QueryIndex)
+		} else {
+			panelData, err = extractPanelInfoV2(panel, params.QueryIndex)
 		}
-		panelData, err = extractPanelInfoV2(panel, params.QueryIndex)
-		db = templatingV1FromV2(params.DB)
 	} else {
 		panel, findErr := findPanelByID(params.DB, params.PanelID)
 		if findErr != nil {
 			return nil, fmt.Errorf("finding panel: %w", findErr)
+		}
+		panel, resolveErr := resolveLibraryPanel(ctx, newLibraryPanelCache(), panel)
+		if resolveErr != nil {
+			return nil, resolveErr
 		}
 		panelData, err = extractPanelInfo(panel, params.QueryIndex)
 	}
@@ -1359,6 +1374,7 @@ var RunPanelQuery = mcpgrafana.MustTool(
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions(libraryPanelRead...),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
