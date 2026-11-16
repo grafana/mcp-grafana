@@ -154,7 +154,7 @@ async function copyLocal(dir, source, log) {
 
 /**
  * Downloads each pinned file that is missing or differs from its pin. Returns the names it downloaded.
- * With `localDir` (RENDERER_LOCAL_DIR), copies that build instead.
+ * With `localDir` (RENDERER_LOCAL_DIR by default), copies that build instead. `localDir: null` always uses the pin.
  */
 export async function fetchRenderer({
   dir = rendererDir,
@@ -235,7 +235,9 @@ async function createVerifier() {
 
 /** Fetches the pinned files, then verifies the attestation of each one. */
 export async function verifyRenderer({ dir = rendererDir, fetchImpl = fetch, token, verifier, log = () => {} } = {}) {
-  const { pin } = await fetchRenderer({ dir, fetchImpl, log, localDir: undefined });
+  // The attestations are of the released files, so a local build cannot be verified. Use the pin, and say so.
+  if (process.env.RENDERER_LOCAL_DIR) log('Ignoring RENDERER_LOCAL_DIR: --verify checks the pinned release.');
+  const { pin } = await fetchRenderer({ dir, fetchImpl, log, localDir: null });
   verifier ??= await createVerifier();
   for (const name of Object.keys(pin.files)) {
     await verifyFile(name, await readFile(join(dir, name)), { verifier, fetchImpl, token });

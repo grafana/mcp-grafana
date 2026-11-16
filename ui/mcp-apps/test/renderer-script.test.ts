@@ -123,7 +123,7 @@ describe('pin', () => {
 describe('fetchRenderer', () => {
   it('downloads the pinned files from the release', async () => {
     const fetchImpl = github();
-    const { downloaded } = await fetchRenderer({ dir, fetchImpl, localDir: undefined });
+    const { downloaded } = await fetchRenderer({ dir, fetchImpl, localDir: null });
     expect(downloaded.sort()).toEqual([...REQUIRED_FILES].sort());
     expect(fetchImpl).toHaveBeenCalledWith(
       `https://github.com/${REPOSITORY}/releases/download/${TAG}/renderer.js`,
@@ -135,21 +135,21 @@ describe('fetchRenderer', () => {
   it('makes no request when the files on disk match the pin', async () => {
     for (const name of REQUIRED_FILES) writeFileSync(join(dir, name), content[name]);
     const fetchImpl = github();
-    expect((await fetchRenderer({ dir, fetchImpl, localDir: undefined })).downloaded).toEqual([]);
+    expect((await fetchRenderer({ dir, fetchImpl, localDir: null })).downloaded).toEqual([]);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('replaces a file on disk that is not its pin, and says how to keep a local build', async () => {
     writeFileSync(join(dir, 'icons.json'), 'an old build');
     const log = vi.fn();
-    await fetchRenderer({ dir, fetchImpl: github(), log, localDir: undefined });
+    await fetchRenderer({ dir, fetchImpl: github(), log, localDir: null });
     expect(readFileSync(join(dir, 'icons.json'), 'utf8')).toBe(content['icons.json']);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/Replaced icons\.json .*RENDERER_LOCAL_DIR/));
   });
 
   it('fails on a download that is not its pin and leaves no file', async () => {
     const fetchImpl = github({ files: { ...content, 'renderer.js': 'tampered' } });
-    await expect(fetchRenderer({ dir, fetchImpl, localDir: undefined })).rejects.toThrow(
+    await expect(fetchRenderer({ dir, fetchImpl, localDir: null })).rejects.toThrow(
       /renderer\.js: sha256 .* is not the pin/,
     );
     expect(existsSync(join(dir, 'renderer.js'))).toBe(false);
@@ -158,7 +158,7 @@ describe('fetchRenderer', () => {
 
   it('fails on a missing release file', async () => {
     const { ['icons.json']: _, ...partial } = content;
-    await expect(fetchRenderer({ dir, fetchImpl: github({ files: partial }), localDir: undefined })).rejects.toThrow(
+    await expect(fetchRenderer({ dir, fetchImpl: github({ files: partial }), localDir: null })).rejects.toThrow(
       /HTTP 404/,
     );
   });
@@ -230,6 +230,34 @@ describe('verifyRenderer', () => {
     const verifier = { verify: vi.fn() };
     await verifyRenderer({ dir, fetchImpl: github(), verifier });
     expect(verifier.verify).toHaveBeenCalledTimes(REQUIRED_FILES.length);
+  });
+
+  it('verifies the pinned release, not a RENDERER_LOCAL_DIR build', async () => {
+    const local = join(dir, 'local-build');
+    mkdirSync(local);
+    for (const name of REQUIRED_FILES) writeFileSync(join(local, name), `local ${name}`);
+    vi.stubEnv('RENDERER_LOCAL_DIR', local);
+    try {
+      const log = vi.fn();
+      await verifyRenderer({ dir, fetchImpl: github(), verifier: { verify: vi.fn() }, log });
+      expect(readFileSync(join(dir, 'renderer.js'), 'utf8')).toBe(content['renderer.js']);
+      expect(log).toHaveBeenCalledWith(expect.stringMatching(/Ignoring RENDERER_LOCAL_DIR/));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('uses RENDERER_LOCAL_DIR by default for a fetch', async () => {
+    const local = join(dir, 'local-build');
+    mkdirSync(local);
+    for (const name of REQUIRED_FILES) writeFileSync(join(local, name), `local ${name}`);
+    vi.stubEnv('RENDERER_LOCAL_DIR', local);
+    try {
+      await fetchRenderer({ dir, fetchImpl: github() });
+      expect(readFileSync(join(dir, 'renderer.js'), 'utf8')).toBe('local renderer.js');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('fails when one file has no valid attestation', async () => {

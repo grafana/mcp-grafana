@@ -39,6 +39,10 @@ network for the first of these commands. After that, if the files on disk match 
 So a pin can name only files that the dataViz release workflow built. To trust another repository or workflow, change
 the constants in `scripts/renderer.mjs`.
 
+The `viz Renderer provenance` check is not a required check, and `main` does not require a code-owner review. So do
+not merge a pull request that changes `RENDERER` or `scripts/renderer.mjs` while this check is red or has not run.
+A change to the trusted repository or signer in `scripts/renderer.mjs` needs a review by `grafana/dataviz-squad`.
+
 ## Change the Renderer version
 
 Run these commands in `ui/mcp-apps`:

@@ -40,7 +40,7 @@ export function formatPin(pin: Pin): string;
 export function downloadURL(repository: string, tag: string, name: string): string;
 export function sourceCommit(statement: unknown): string | undefined;
 export function fetchRenderer(
-  options?: Options & { localDir?: string },
+  options?: Options & { localDir?: string | null },
 ): Promise<{ pin: Pin; downloaded: string[]; local?: string[] }>;
 export function verifyFile(
   name: string,
