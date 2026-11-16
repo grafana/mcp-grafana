@@ -287,7 +287,7 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*Search
 
 	searchResp, err := c.Search.Search(params, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("search dashboards for %+v: %w", c, err)
+		return nil, fmt.Errorf("search dashboards for query %q: %w", args.Query, err)
 	}
 
 	// Determine if there are more results
@@ -329,7 +329,7 @@ func searchFolders(ctx context.Context, args SearchFoldersParams) (*SearchDashbo
 	params.SetType(&folderTypeStr)
 	searchResp, err := c.Search.Search(params)
 	if err != nil {
-		return nil, fmt.Errorf("search folders for %+v: %w", c, err)
+		return nil, fmt.Errorf("search folders for query %q: %w", args.Query, err)
 	}
 	return &SearchDashboardsResult{
 		Dashboards: summarizeHitList(searchResp.Payload),
