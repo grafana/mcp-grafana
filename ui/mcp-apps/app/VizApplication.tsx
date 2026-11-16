@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import type { RenderHandle } from '../renderer/renderer.js';
+import type { RefreshRequest, RenderHandle } from '../renderer/renderer.js';
 import { McpAppShell } from '../src/McpAppShell';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
@@ -26,10 +26,11 @@ export function describeQueries(args: VizArgs): string {
 /** Draws the result of query_datasource with the viz contract Renderer. */
 export function VizApplication({ host }: { host: AppHostState }) {
   const state = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
-  const { viz, vizArgs, colorMode, timeZone } = state;
+  const { viz, vizArgs, vizNotices, colorMode, timeZone } = state;
   const spec = useMemo(
-    () => (viz && vizArgs ? buildVizSpec(vizArgs, viz, { theme: colorMode, timeZone }) : undefined),
-    [viz, vizArgs, colorMode, timeZone],
+    () =>
+      viz && vizArgs ? buildVizSpec(vizArgs, viz, { theme: colorMode, timeZone }, undefined, vizNotices) : undefined,
+    [viz, vizArgs, vizNotices, colorMode, timeZone],
   );
   const grafanaUrl = viz?.grafanaUrl;
   // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
@@ -74,7 +75,14 @@ export function VizApplication({ host }: { host: AppHostState }) {
       }
     >
       {spec && !loadFailure ? (
-        <RendererView spec={spec} load={host.loadRenderer} onLoadError={setLoadFailure} />
+        <RendererView
+          spec={spec}
+          load={host.loadRenderer}
+          onLoadError={setLoadFailure}
+          // Read when the Renderer draws: the load waits for the handshake, so serverTools is known by then. With no
+          // server tool calls a refresh cannot run, so the Renderer shows no Refresh or time picker (refresh.1).
+          refresh={() => (host.getSnapshot().serverTools ? host.refreshViz : undefined)}
+        />
       ) : null}
     </McpAppShell>
   );
@@ -83,16 +91,19 @@ export function VizApplication({ host }: { host: AppHostState }) {
 /**
  * Owns one Renderer handle: render once the module loads, update on a new spec, destroy on unmount (renderer.2 to
  * renderer.5). The module loads on first use (loadRenderer), so the other views do not load it. A failed load goes to
- * onLoadError. A failure of render is async, so it is thrown on the next render for AppErrorBoundary.
+ * onLoadError. A failure of render is async, so it is thrown on the next render for AppErrorBoundary. A refresh that
+ * gives a result ends with update, through a new spec; a failed one with setRefreshed (refresh.5).
  */
 function RendererView({
   spec,
   load,
   onLoadError,
+  refresh,
 }: {
   spec: VizSpec;
   load: () => Promise<Renderer>;
   onLoadError: (message: string) => void;
+  refresh: () => ((request: RefreshRequest) => Promise<{ error: string } | undefined>) | undefined;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const handle = useRef<RenderHandle | null>(null);
@@ -107,8 +118,19 @@ function RendererView({
       .then(
         ({ render }) => {
           if (destroyed || !el.current) return;
+          const onRefresh = refresh();
           try {
-            handle.current = render(el.current, latest.current);
+            handle.current = render(
+              el.current,
+              latest.current,
+              onRefresh && {
+                onRefresh: (request) => {
+                  void onRefresh(request).then((failed) => {
+                    if (failed) handle.current?.setRefreshed(request.id, false, failed.error || undefined);
+                  });
+                },
+              },
+            );
           } catch (cause) {
             setFailure(cause instanceof Error ? cause : new Error(String(cause)));
           }

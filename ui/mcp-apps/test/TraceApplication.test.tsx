@@ -28,6 +28,7 @@ function host() {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     getHostContext: () => ({ theme: 'dark' }),
+    getHostCapabilities: () => ({}),
     openLink: vi.fn(async () => ({})),
   } as unknown as App;
   return app;
