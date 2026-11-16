@@ -1093,7 +1093,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 	}
 
 	if res.IsV2 {
-		return getPanelQueriesV2(db, args)
+		return getPanelQueriesV2(ctx, db, args)
 	}
 
 	// Determine which panels to process
@@ -1109,9 +1109,17 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 	}
 
 	result := make([]panelQuery, 0)
+	cache := newLibraryPanelCache()
 	for _, panel := range panels {
-		queries := extractPanelQueries(panel)
-		result = append(result, queries...)
+		resolved, err := resolveLibraryPanel(ctx, cache, panel)
+		if err != nil {
+			if args.PanelID != nil {
+				return nil, err
+			}
+			result = append(result, libraryPanelFailure(panel, err))
+			continue
+		}
+		result = append(result, extractPanelQueries(resolved)...)
 	}
 
 	return preparePanelQueries(db, args, result, extractDashboardVariables(db))
@@ -1119,7 +1127,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to populate `processedQuery` and `requiredVariables`. Referenced All selections, and variables saved without a value, return `warnings` requesting explicit values. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.",
+	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.), row-nested panels and library panels (resolved from their library element). A library panel that cannot be resolved returns an entry with a warning naming its uid. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to populate `processedQuery` and `requiredVariables`. Referenced All selections, and variables saved without a value, return `warnings` requesting explicit values. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.",
 	GetDashboardPanelQueriesTool,
 	mcpgrafana.WithTitleAnnotation("Get dashboard panel queries"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),

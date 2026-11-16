@@ -113,7 +113,7 @@ func collectElementsV2(spec map[string]interface{}) []v2Element {
 }
 
 // collectAllPanelsV2 returns the inner spec of every Panel element (excluding
-// library panels, which carry no inline queries), for query extraction.
+// library panels, whose queries are resolved separately), for query extraction.
 func collectAllPanelsV2(spec map[string]interface{}) []map[string]interface{} {
 	var out []map[string]interface{}
 	for _, el := range collectElementsV2(spec) {
@@ -122,6 +122,17 @@ func collectAllPanelsV2(spec map[string]interface{}) []map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// findLibraryPanelByIDV2 returns the spec of the LibraryPanel element with the
+// given id.
+func findLibraryPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]interface{}, bool) {
+	for _, el := range collectElementsV2(spec) {
+		if el.Kind == "LibraryPanel" && safeInt(el.Spec, "id") == panelID {
+			return el.Spec, true
+		}
+	}
+	return nil, false
 }
 
 // findPanelByIDV2 returns the spec of the Panel element with the given id.
@@ -135,21 +146,35 @@ func findPanelByIDV2(spec map[string]interface{}, panelID int) (map[string]inter
 }
 
 // getPanelQueriesV2 implements get_dashboard_panel_queries for v2 dashboards.
-func getPanelQueriesV2(spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	var panels []map[string]interface{}
-	if args.PanelID != nil {
-		panel, err := findPanelByIDV2(spec, *args.PanelID)
-		if err != nil {
-			return nil, err
-		}
-		panels = []map[string]interface{}{panel}
-	} else {
-		panels = collectAllPanelsV2(spec)
-	}
-
+// A LibraryPanel element holds no queries; they are read from its library
+// element, whose model has the classic panel shape.
+func getPanelQueriesV2(ctx context.Context, spec map[string]interface{}, args DashboardPanelQueriesParams) ([]panelQuery, error) {
 	result := make([]panelQuery, 0)
-	for _, panel := range panels {
-		result = append(result, extractPanelQueriesV2(panel)...)
+	cache := newLibraryPanelCache()
+	found := false
+	for _, el := range collectElementsV2(spec) {
+		if args.PanelID != nil && safeInt(el.Spec, "id") != *args.PanelID {
+			continue
+		}
+		switch el.Kind {
+		case "Panel":
+			found = true
+			result = append(result, extractPanelQueriesV2(el.Spec)...)
+		case "LibraryPanel":
+			found = true
+			resolved, err := resolveLibraryPanel(ctx, cache, el.Spec)
+			if err != nil {
+				if args.PanelID != nil {
+					return nil, err
+				}
+				result = append(result, libraryPanelFailure(el.Spec, err))
+				continue
+			}
+			result = append(result, extractPanelQueries(resolved)...)
+		}
+	}
+	if args.PanelID != nil && !found {
+		return nil, fmt.Errorf("panel with ID %d not found", *args.PanelID)
 	}
 	return preparePanelQueries(templatingV1FromV2(spec), args, result, extractDashboardVariablesV2(spec))
 }
