@@ -1374,6 +1374,7 @@ var RunPanelQuery = mcpgrafana.MustTool(
 	mcpgrafana.WithDestructiveHintAnnotation(false),
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(dashboardRead...),
+	mcpgrafana.RequiresPermissions(libraryPanelRead...),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
 
