@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config';
+import { sharedModulesPlugin } from './sharedModules.config';
 
 export default defineConfig({
+  plugins: [sharedModulesPlugin()],
   test: {
     environment: 'jsdom',
     include: ['test/**/*.test.{ts,tsx}'],
