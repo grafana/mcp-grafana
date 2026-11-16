@@ -22,9 +22,11 @@ const (
 )
 
 // rateLimitRetryTransport retries requests that Grafana refused with 429 Too
-// Many Requests, or with 503 Service Unavailable and a Retry-After header,
-// waiting as long as Retry-After asks. Both mean the request wasn't
-// processed, so retrying is safe for any method. It gives up, returning the
+// Many Requests, waiting as long as Retry-After asks. A 429 means the request
+// wasn't processed, so retrying is safe for any method. A 503 Service
+// Unavailable with Retry-After is retried only for idempotent methods: a
+// proxy may return it after the upstream processed the request, and
+// replaying a POST could create a duplicate. It gives up, returning the
 // last response, when the wait would outlast the request's context deadline
 // or the body can't be replayed.
 type rateLimitRetryTransport struct {
@@ -37,7 +39,7 @@ func (t *rateLimitRetryTransport) RoundTrip(req *http.Request) (*http.Response, 
 		if err != nil || attempt == rateLimitMaxRetries {
 			return resp, err
 		}
-		wait, ok := rateLimitRetryDelay(resp, attempt, time.Now())
+		wait, ok := rateLimitRetryDelay(resp, req.Method, attempt, time.Now())
 		if !ok || !rateLimitCanReplay(req) {
 			return resp, nil
 		}
@@ -72,8 +74,14 @@ func rateLimitCanReplay(req *http.Request) bool {
 
 // rateLimitRetryDelay returns how long to wait before retrying resp, and
 // false if it shouldn't be retried.
-func rateLimitRetryDelay(resp *http.Response, attempt int, now time.Time) (time.Duration, bool) {
-	if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable {
+func rateLimitRetryDelay(resp *http.Response, method string, attempt int, now time.Time) (time.Duration, bool) {
+	switch resp.StatusCode {
+	case http.StatusTooManyRequests:
+	case http.StatusServiceUnavailable:
+		if !rateLimitIdempotent(method) {
+			return 0, false
+		}
+	default:
 		return 0, false
 	}
 	wait, ok := parseRetryAfter(resp.Header.Get("Retry-After"), now)
@@ -87,6 +95,14 @@ func rateLimitRetryDelay(resp *http.Response, attempt int, now time.Time) (time.
 	return wait, wait <= rateLimitMaxWait
 }
 
+func rateLimitIdempotent(method string) bool {
+	switch method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
 // parseRetryAfter parses a Retry-After value, which is either a number of
 // seconds or an HTTP date (RFC 9110 section 10.2.3).
 func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
@@ -94,7 +110,7 @@ func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
 	if v == "" {
 		return 0, false
 	}
-	if secs, err := strconv.Atoi(v); err == nil {
+	if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
 		if secs < 0 {
 			return 0, false
 		}
