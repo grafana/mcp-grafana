@@ -13,7 +13,7 @@
     "renderer": "node scripts/renderer.mjs",
     "build": "npm run renderer && npm run build:lib && npm run build:apps",
     "build:lib": "vite build && tsc -p tsconfig.build.json",
-    "build:apps": "npm run renderer && vite build --config grafana.vite.config.ts",
+    "build:apps": "npm run renderer && vite build --config grafana.vite.config.ts && vite build --config viz-renderer.vite.config.ts",
     "build:preview": "npm run renderer && vite build --config preview/vite.config.ts",
     "dev": "npm run renderer && vite --config preview/vite.config.ts",
     "typecheck": "npm run renderer && tsc --noEmit",
