@@ -66,7 +66,8 @@ export function VizApplication({ host }: { host: AppHostState }) {
           // Read when the Renderer draws: the load waits for the handshake, so serverTools is known by then. With no
           // server tool calls a refresh cannot run, so the Renderer shows no Refresh or time picker (refresh.1).
           refresh={() => (host.getSnapshot().serverTools ? host.refreshViz : undefined)}
-          onState={host.reportVizState}
+          // GrafanaApplication remounts this view for each call, so the generation is the one of this spec.
+          onState={(renderState) => host.reportVizState(renderState, state.generation)}
         />
       ) : null}
     </McpAppShell>

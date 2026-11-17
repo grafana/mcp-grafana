@@ -63,8 +63,11 @@ export type AppHostState = {
    * update. A failure gives the text for setRefreshed. An older request, or one after a new tool call, gives nothing.
    */
   refreshViz: (request: RefreshRequest) => Promise<{ error: string } | undefined>;
-  /** Takes a final state or new notices of the Renderer (onState), for the model context (state.14). */
-  reportVizState: (state: RenderState) => void;
+  /**
+   * Takes a final state or new notices of the Renderer (onState), for the model context (state.14). generation is the
+   * one the Renderer drew for; a state of an older call is dropped.
+   */
+  reportVizState: (state: RenderState, generation: number) => void;
   /** Hand a brushed window back to the agent as a question. */
   askAboutRange: (fromMs: number, toMs: number) => void;
   /** Ask the host to open a Grafana URL; the iframe cannot navigate itself. */
@@ -162,13 +165,21 @@ export function createAppHostState(app: App): AppHostState {
   const sendVizContext = () => {
     const { vizArgs, viz } = snapshot;
     if (!vizArgs || !viz || !vizState || !app.getHostCapabilities()?.updateModelContext) return;
+    let text: string;
+    try {
+      text = vizModelContext(vizArgs, viz, vizState);
+    } catch {
+      // A result with no valid data range; the context must not fail the draw or a refresh.
+      return;
+    }
     contextSent = true;
-    const text = vizModelContext(vizArgs, viz, vizState);
     // The context only helps a later turn; a host that refuses it leaves the view as it is.
     void app.updateModelContext({ content: [{ type: 'text', text }] }).catch(() => {});
   };
 
-  const reportVizState = (state: RenderState) => {
+  const reportVizState = (state: RenderState, generation: number) => {
+    // The old Renderer stays mounted until React commits the new call, so it can still report.
+    if (generation !== snapshot.generation) return;
     vizState = state;
     // A first draw that is ready with no notices is what the model asked for (state.16).
     if (state.state !== 'ready' || state.notices.length > 0 || contextSent) sendVizContext();
