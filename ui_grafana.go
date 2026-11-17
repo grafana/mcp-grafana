@@ -33,7 +33,8 @@ const vizRendererMIMEType = "text/javascript"
 // can keep it that long.
 const vizRendererTTLMs = 7 * 24 * 60 * 60 * 1000
 
-// RegisterGrafanaAppResource makes the shared viewer available to MCP hosts.
+// RegisterGrafanaAppResource makes the shared viewer available to MCP hosts, with the viz Renderer script it reads to
+// draw query_datasource results.
 func RegisterGrafanaAppResource(s *mcp.Server) {
 	s.AddResource(
 		&mcp.Resource{
@@ -53,11 +54,12 @@ func RegisterGrafanaAppResource(s *mcp.Server) {
 			}, nil
 		},
 	)
+	registerVizRendererResource(s)
 }
 
-// RegisterVizRendererResource makes the viz Renderer script available to the Grafana App. The tools package calls it
-// when query_datasource is an App source, so a server that draws no viz does not list it.
-func RegisterVizRendererResource(s *mcp.Server) {
+// registerVizRendererResource makes the viz Renderer script available to the Grafana App. It is registered with the App,
+// so an embedder that serves the App cannot leave it out (#1589).
+func registerVizRendererResource(s *mcp.Server) {
 	s.AddResource(
 		&mcp.Resource{
 			// For the App, not the model: a host that sends resources to the model can leave this 3.7 MB script out.

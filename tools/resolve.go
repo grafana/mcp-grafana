@@ -34,8 +34,6 @@ type ActiveCategory struct {
 type Selection struct {
 	Tools      []mcpgrafana.Tool
 	Categories []ActiveCategory
-	// vizRenderer is set when the App tool draws viz, so Register adds the Renderer resource.
-	vizRenderer bool
 }
 
 type resolvedCategory struct {
@@ -84,7 +82,6 @@ func Resolve(p Policy) Selection {
 	viewerBuilt := len(sources) > 0 && slices.ContainsFunc(resolved, func(r resolvedCategory) bool { return r.hostsViewer })
 	if viewerBuilt {
 		sel.Tools = append(sel.Tools, newAppTool(sources...))
-		sel.vizRenderer = drawsViz(sources)
 	}
 	for _, r := range resolved {
 		exposed := r.listed || viewerBuilt && (r.hostsViewer || r.appSourceOnly)
@@ -110,12 +107,9 @@ func (p Policy) allows(v variant) bool {
 	return slices.ContainsFunc(v.liftedBy, func(name string) bool { return slices.Contains(p.Allow, name) })
 }
 
-// Register adds the selected tools to srv, and the viz Renderer resource when the App tool draws viz.
+// Register adds the selected tools to srv.
 func (s Selection) Register(srv *mcp.Server) {
 	for _, t := range s.Tools {
 		t.Register(srv)
-	}
-	if s.vizRenderer {
-		mcpgrafana.RegisterVizRendererResource(srv)
 	}
 }

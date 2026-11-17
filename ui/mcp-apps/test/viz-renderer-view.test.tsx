@@ -10,18 +10,28 @@ const renderer = vi.hoisted(() => ({
   render: vi.fn(),
   update: vi.fn(),
   destroy: vi.fn(),
+  // The message of the next failed load, if set.
+  loadFailure: undefined as string | undefined,
 }));
 
-vi.mock('../renderer/renderer.js', () => ({
-  render: (...args: unknown[]) => {
-    renderer.render(...args);
-    return { update: renderer.update, destroy: renderer.destroy };
+vi.mock('../app/loadRenderer', () => ({
+  loadRenderer: async () => {
+    const failure = renderer.loadFailure;
+    renderer.loadFailure = undefined;
+    if (failure) throw new Error(failure);
+    return {
+      render: (...args: unknown[]) => {
+        renderer.render(...args);
+        return { update: renderer.update, destroy: renderer.destroy };
+      },
+    };
   },
 }));
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  renderer.loadFailure = undefined;
 });
 
 type Handlers = { onhostcontextchanged?: (context: unknown) => void };
@@ -79,5 +89,24 @@ describe('RendererView', () => {
     await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(2));
     expect(screen.queryByText('This view failed to render')).toBeNull();
     log.mockRestore();
+  });
+
+  it('shows a failed load in the banner, with Open in Grafana', async () => {
+    renderer.loadFailure = 'This host cannot load the chart.';
+    view();
+    expect(await screen.findByText(/This host cannot load the chart\. Open the query in Grafana to see it\./)).toBeTruthy();
+    expect(screen.queryByTestId('viz-renderer')).toBeNull();
+    expect(renderer.render).not.toHaveBeenCalled();
+  });
+
+  it('loads again for the next result after a failed load', async () => {
+    renderer.loadFailure = 'The chart script came back empty.';
+    const { app } = view();
+    await screen.findByText(/The chart script came back empty\./);
+    act(() => {
+      app.ontoolresult?.({ structuredContent: readVizFixture('prometheus-line', 'result.json'), content: [] } as never);
+    });
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/The chart script came back empty\./)).toBeNull();
   });
 });

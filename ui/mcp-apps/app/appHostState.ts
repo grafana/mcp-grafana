@@ -4,6 +4,7 @@ import type { McpAppColorMode, McpAppFeedback } from '../src/McpAppShell';
 import type { ParsedMetrics } from '../src/metrics/pickViz';
 import type { TraceViewResult } from '../src/trace/types';
 import { applyHostContext } from './hostContext';
+import { loadRenderer, type Renderer } from './loadRenderer';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
 import { parseVizArgs, parseVizResult, type VizArgs, type VizResult } from './vizSpec';
@@ -54,6 +55,8 @@ export type AppHostState = {
   askAboutRange: (fromMs: number, toMs: number) => void;
   /** Ask the host to open a Grafana URL; the iframe cannot navigate itself. */
   openInGrafana: (target: { url: string }) => void;
+  /** Load the viz Renderer from its resource on the server, once. */
+  loadRenderer: () => Promise<Renderer>;
   close: () => void;
 };
 
@@ -190,8 +193,9 @@ export function createAppHostState(app: App): AppHostState {
     return {};
   };
 
-  app
-    .connect()
+  // The host capabilities arrive in the handshake; the Renderer load reads them.
+  const connected = app.connect();
+  connected
     .then(() => {
       // The host context arrives during the handshake; replay it once connected.
       const context = app.getHostContext();
@@ -267,6 +271,8 @@ export function createAppHostState(app: App): AppHostState {
     refresh,
     askAboutRange,
     openInGrafana,
+    // A host may deliver the result before the handshake ends; a failed handshake already shows its own error.
+    loadRenderer: () => connected.then(() => loadRenderer(app)),
     close: () => void app.close(),
   };
 }
