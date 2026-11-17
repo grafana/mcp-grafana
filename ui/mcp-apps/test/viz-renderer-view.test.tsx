@@ -128,6 +128,19 @@ describe('RendererView', () => {
     log.mockRestore();
   });
 
+  it('shows and tells the model of an update that threw (state.14)', async () => {
+    renderer.update.mockImplementationOnce(() => {
+      throw new Error('bad spec');
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { app, context } = view();
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    act(() => app.onhostcontextchanged?.({ theme: 'dark' }));
+    await screen.findByText('This view failed to render');
+    expect(context()).toEqual([expect.stringContaining('Error: bad spec')]);
+    log.mockRestore();
+  });
+
   it('loads again for the next result after a failed load', async () => {
     renderer.loadFailure = 'The chart script came back empty.';
     const { app } = view();

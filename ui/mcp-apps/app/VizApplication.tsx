@@ -78,8 +78,8 @@ export function VizApplication({ host }: { host: AppHostState }) {
 /**
  * Owns one Renderer handle: render once the module loads, update on a new spec, destroy on unmount (renderer.2 to
  * renderer.5). The module loads on first use (loadRenderer), so the other views do not load it. A failed load goes to
- * onLoadError. A failure of render is async, so it is thrown on the next render for AppErrorBoundary. A refresh that
- * gives a result ends with update, through a new spec; a failed one with setRefreshed (refresh.5).
+ * onLoadError. A failure of render or update is async, so it is thrown on the next render for AppErrorBoundary. A
+ * refresh that gives a result ends with update, through a new spec; a failed one with setRefreshed (refresh.5).
  */
 function RendererView({
   spec,
@@ -94,7 +94,7 @@ function RendererView({
   onLoadError: (message: string) => void;
   refresh: () => ((request: RefreshRequest) => Promise<{ error: string } | undefined>) | undefined;
   onState: (state: RenderState) => void;
-  /** A failed load or render, for the model; the banner and AppErrorBoundary show it to the user. */
+  /** A failed load, render or update, for the model; the banner and AppErrorBoundary show it to the user. */
   onFailure: (message: string) => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
@@ -102,6 +102,11 @@ function RendererView({
   // The spec to draw when the module loads, if it changed while the module was loading.
   const latest = useRef(spec);
   const [failure, setFailure] = useState<Error>();
+  const fail = (cause: unknown) => {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    onFailure(error.message);
+    setFailure(error);
+  };
 
   // Runs once: GrafanaApplication remounts the view for each new result.
   useEffect(() => {
@@ -123,9 +128,7 @@ function RendererView({
               }),
             });
           } catch (cause) {
-            const error = cause instanceof Error ? cause : new Error(String(cause));
-            onFailure(error.message);
-            setFailure(error);
+            fail(cause);
           }
         },
         (cause: unknown) => {
@@ -144,7 +147,11 @@ function RendererView({
 
   useEffect(() => {
     latest.current = spec;
-    handle.current?.update(spec);
+    try {
+      handle.current?.update(spec);
+    } catch (cause) {
+      fail(cause);
+    }
   }, [spec]);
 
   if (failure) throw failure;
