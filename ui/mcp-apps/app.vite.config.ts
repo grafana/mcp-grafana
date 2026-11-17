@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
-import { sharedModulesPlugin } from './sharedModules.config';
+import { iconCacheGuard, sharedModulesPlugin } from './sharedModules.config';
 import { VIZ_RENDERER_HASH_FILE, vizRendererUri } from './vizRenderer.config';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
@@ -23,7 +23,7 @@ export function appBuildConfig(entry: string) {
   return defineConfig({
     base: './',
     define: { __VIZ_RENDERER_URI__: JSON.stringify(vizRendererUriFromBuild()) },
-    plugins: [sharedModulesPlugin(), viteSingleFile()],
+    plugins: [sharedModulesPlugin(), iconCacheGuard(), viteSingleFile()],
     root: resolve(packageRoot, 'app'),
     build: {
       // MCP hosts read this app as one text resource. Force every font, image,
