@@ -143,8 +143,9 @@ async function main() {
     null,
     { name: 'local-debug-host', version: '0.1.0' },
     // serverResources: the viz view reads the Renderer resource through the host (#1589). serverTools: it refreshes
-    // only through a host that passes tool calls to the server.
-    { serverResources: {}, serverTools: {} }
+    // only through a host that passes tool calls to the server. updateModelContext: it tells the model of a state or a
+    // new range.
+    { serverResources: {}, serverTools: {}, updateModelContext: { text: {} } }
   );
 
   bridge.onsizechange = (params) => record(`size-changed: ${JSON.stringify(params)}`);
@@ -177,6 +178,12 @@ async function main() {
     if (!/^ui:\/\/grafana\/viz-renderer-[0-9a-f]+\.js$/.test(uri)) throw new Error(`unknown resource ${uri}`);
     const text = await (await fetch('/viz-renderer.js')).text();
     return { contents: [{ uri, mimeType: 'text/javascript', text }] };
+  };
+
+  bridge.onupdatemodelcontext = async ({ content }) => {
+    const text = content?.map((block) => ('text' in block ? block.text : block.type)).join(' ') ?? '';
+    record(`app → updateModelContext: ${text.replace(/\n/g, ' | ')}`);
+    return {};
   };
 
   // "Ask about a window" sends a user message to the agent.

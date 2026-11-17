@@ -1,6 +1,6 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
 
-import type { RefreshRequest } from '../renderer/renderer.js';
+import type { RefreshRequest, RenderState } from '../renderer/renderer.js';
 import type { McpAppColorMode, McpAppFeedback } from '../src/McpAppShell';
 import type { ParsedMetrics } from '../src/metrics/pickViz';
 import type { TraceViewResult } from '../src/trace/types';
@@ -8,6 +8,7 @@ import { applyHostContext } from './hostContext';
 import { loadRenderer, type Renderer } from './loadRenderer';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
+import { vizModelContext } from './vizModelContext';
 import { runVizRefresh } from './vizRefresh';
 import { parseVizArgs, parseVizResult, type VizArgs, type VizNotice, type VizResult } from './vizSpec';
 
@@ -62,6 +63,11 @@ export type AppHostState = {
    * update. A failure gives the text for setRefreshed. An older request, or one after a new tool call, gives nothing.
    */
   refreshViz: (request: RefreshRequest) => Promise<{ error: string } | undefined>;
+  /**
+   * Takes a final state or new notices of the Renderer (onState), for the model context (state.14). generation is the
+   * one the Renderer drew for; a state of an older call is dropped.
+   */
+  reportVizState: (state: RenderState, generation: number) => void;
   /** Hand a brushed window back to the agent as a question. */
   askAboutRange: (fromMs: number, toMs: number) => void;
   /** Ask the host to open a Grafana URL; the iframe cannot navigate itself. */
@@ -151,12 +157,42 @@ export function createAppHostState(app: App): AppHostState {
     return true;
   };
 
-  /** A new tool call from the host supersedes any refresh still in flight. */
-  const nextCall = (): Partial<AppHostSnapshot> => ({
-    generation: snapshot.generation + 1,
-    notice: undefined,
-    refreshing: false,
-  });
+  // The model context of the viz view (state.14 to state.17): the last state of the Renderer, and whether a context
+  // went to the model. Once one did, each new state replaces it, so the model never keeps an old one.
+  let vizState: RenderState | undefined;
+  let contextSent = false;
+
+  const sendVizContext = () => {
+    const { vizArgs, viz } = snapshot;
+    if (!vizArgs || !viz || !vizState || !app.getHostCapabilities()?.updateModelContext) return;
+    let text: string;
+    try {
+      text = vizModelContext(vizArgs, viz, vizState);
+    } catch {
+      // A result with no valid data range; the context must not fail the draw or a refresh.
+      return;
+    }
+    contextSent = true;
+    // The context only helps a later turn; a host that refuses it leaves the view as it is.
+    void app.updateModelContext({ content: [{ type: 'text', text }] }).catch(() => {});
+  };
+
+  const reportVizState = (state: RenderState, generation: number) => {
+    // The old Renderer stays mounted until React commits the new call, so it can still report.
+    if (generation !== snapshot.generation) return;
+    vizState = state;
+    // A first draw that is ready with no notices is what the model asked for (state.16).
+    if (state.state !== 'ready' || state.notices.length > 0 || contextSent) sendVizContext();
+  };
+
+  /** A new tool call from the host supersedes any refresh still in flight, and starts a new model context. */
+  const nextCall = (): Partial<AppHostSnapshot> => {
+    // The host keeps the last context until the next one; the context of the last call describes a chart that is gone.
+    if (contextSent) void app.updateModelContext({ content: [] }).catch(() => {});
+    vizState = undefined;
+    contextSent = false;
+    return { generation: snapshot.generation + 1, notice: undefined, refreshing: false };
+  };
 
   app.ontoolinput = (params) => {
     const call = params.arguments;
@@ -265,6 +301,9 @@ export function createAppHostState(app: App): AppHostState {
       if (stale()) return undefined;
       if ('error' in outcome) return outcome;
       set({ vizArgs: outcome.args, viz: outcome.viz, vizNotices: outcome.notices });
+      // The model asked for another range, so it hears of the new one (state.14). The Renderer reports a state only
+      // when it changes, so this uses the last state; a change after the draw sends the context again.
+      if (request.cause === 'timeRange') sendVizContext();
       return undefined;
     } catch (cause) {
       // A host may decline the call, or require an approval the user dismissed.
@@ -309,6 +348,7 @@ export function createAppHostState(app: App): AppHostState {
     },
     refresh,
     refreshViz,
+    reportVizState,
     askAboutRange,
     openInGrafana,
     // A host may deliver the result before the handshake ends; a failed handshake already shows its own error.

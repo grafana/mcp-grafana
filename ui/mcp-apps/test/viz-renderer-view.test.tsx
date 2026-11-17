@@ -133,7 +133,7 @@ describe('RendererView refresh', () => {
   it('gives no onRefresh when the host does not pass tool calls to the server (refresh.1)', async () => {
     view(vi.fn(), false);
     await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
-    expect(renderer.render.mock.calls[0][2]).toBeUndefined();
+    expect(renderer.render.mock.calls[0][2]).toEqual({ onState: expect.any(Function) });
   });
 
   it('gives a failed refresh to setRefreshed (refresh.11)', async () => {

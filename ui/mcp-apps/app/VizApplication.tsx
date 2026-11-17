@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import type { RefreshRequest, RenderHandle } from '../renderer/renderer.js';
+import type { RefreshRequest, RenderHandle, RenderState } from '../renderer/renderer.js';
 import { McpAppShell } from '../src/McpAppShell';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
@@ -66,6 +66,8 @@ export function VizApplication({ host }: { host: AppHostState }) {
           // Read when the Renderer draws: the load waits for the handshake, so serverTools is known by then. With no
           // server tool calls a refresh cannot run, so the Renderer shows no Refresh or time picker (refresh.1).
           refresh={() => (host.getSnapshot().serverTools ? host.refreshViz : undefined)}
+          // GrafanaApplication remounts this view for each call, so the generation is the one of this spec.
+          onState={(renderState) => host.reportVizState(renderState, state.generation)}
         />
       ) : null}
     </McpAppShell>
@@ -83,11 +85,13 @@ function RendererView({
   load,
   onLoadError,
   refresh,
+  onState,
 }: {
   spec: VizSpec;
   load: () => Promise<Renderer>;
   onLoadError: (message: string) => void;
   refresh: () => ((request: RefreshRequest) => Promise<{ error: string } | undefined>) | undefined;
+  onState: (state: RenderState) => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const handle = useRef<RenderHandle | null>(null);
@@ -104,17 +108,16 @@ function RendererView({
           if (destroyed || !el.current) return;
           const onRefresh = refresh();
           try {
-            handle.current = render(
-              el.current,
-              latest.current,
-              onRefresh && {
-                onRefresh: (request) => {
+            handle.current = render(el.current, latest.current, {
+              onState,
+              ...(onRefresh && {
+                onRefresh: (request: RefreshRequest) => {
                   void onRefresh(request).then((failed) => {
                     if (failed) handle.current?.setRefreshed(request.id, false, failed.error || undefined);
                   });
                 },
-              },
-            );
+              }),
+            });
           } catch (cause) {
             setFailure(cause instanceof Error ? cause : new Error(String(cause)));
           }
