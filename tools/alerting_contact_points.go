@@ -48,7 +48,7 @@ func createContactPoint(ctx context.Context, args ManageRoutingWriteParams) (*co
 	}
 	response, err := c.Provisioning.PostContactpoints(params)
 	if err != nil {
-		return nil, fmt.Errorf("create contact point: %w", err)
+		return nil, fmt.Errorf("create contact point: %w", explainForbidden(err, contactPointsWritePermissions))
 	}
 	return &contactPointSummary{
 		UID:  response.Payload.UID,
@@ -75,7 +75,7 @@ func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]con
 
 	response, err := c.Provisioning.GetContactpoints(params)
 	if err != nil {
-		return nil, fmt.Errorf("list contact points: %w", err)
+		return nil, fmt.Errorf("list contact points: %w", explainForbidden(err, contactPointsReadPermissions))
 	}
 
 	filteredContactPoints, err := applyLimitToContactPoints(response.Payload, args.Limit)

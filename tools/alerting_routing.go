@@ -164,7 +164,7 @@ func getContactPointDetail(ctx context.Context, name string) ([]*models.Embedded
 	params.Name = &name
 	resp, err := c.Provisioning.GetContactpoints(params)
 	if err != nil {
-		return nil, fmt.Errorf("get contact point %q: %w", name, err)
+		return nil, fmt.Errorf("get contact point %q: %w", name, explainForbidden(err, contactPointsReadPermissions))
 	}
 	if len(resp.Payload) == 0 {
 		return nil, fmt.Errorf("contact point %q not found", name)
@@ -185,7 +185,7 @@ func getTimeIntervals(ctx context.Context) ([]muteTimingSummary, error) {
 		provisioning.NewGetMuteTimingsParamsWithContext(ctx),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("get time intervals: %w", err)
+		return nil, fmt.Errorf("get time intervals: %w", explainForbidden(err, timeIntervalsReadPermissions))
 	}
 	result := make([]muteTimingSummary, 0, len(resp.Payload))
 	for _, mt := range resp.Payload {
@@ -204,7 +204,7 @@ func getTimeInterval(ctx context.Context, name string) (*models.MuteTimeInterval
 		provisioning.NewGetMuteTimingParamsWithContext(ctx).WithName(name),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("get time interval %q: %w", name, err)
+		return nil, fmt.Errorf("get time interval %q: %w", name, explainForbidden(err, timeIntervalsReadPermissions))
 	}
 	return resp.Payload, nil
 }
