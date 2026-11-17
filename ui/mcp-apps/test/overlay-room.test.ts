@@ -59,6 +59,32 @@ describe('keepRoomForOverlays', () => {
     expect(document.body.style.minHeight).toBe('');
   });
 
+  it('grows the page for an overlay taller than the viewport, centered or shifted to the top', async () => {
+    const centered = overlay('-100 600');
+    container.append(centered);
+    await Promise.resolve();
+    nextFrame();
+    expect(document.body.style.minHeight).toBe('608px');
+
+    centered.remove();
+    container.append(overlay('0 650'));
+    await Promise.resolve();
+    nextFrame();
+    expect(document.body.style.minHeight).toBe('658px');
+  });
+
+  it('grows the page for the overlay next to a backdrop', async () => {
+    // The time picker below sm: a backdrop and a centered menu in one portal.
+    const open = overlay('0 500');
+    const menu = document.createElement('section');
+    menu.setAttribute('data-rect', '-50 550');
+    open.append(menu);
+    container.append(open);
+    await Promise.resolve();
+    nextFrame();
+    expect(document.body.style.minHeight).toBe('558px');
+  });
+
   it('measures again when the frame changes size', () => {
     container.append(overlay('100 300'));
     window.dispatchEvent(new Event('resize'));

@@ -4,8 +4,9 @@ const MARGIN = 8;
 /** The bottom of the boxes in el. A box of no height, like the wrapper of a portal, gives the bottom of its children. */
 function bottomOf(el: Element, viewportHeight: number): number {
   const rect = el.getBoundingClientRect();
-  // A backdrop covers the viewport: it needs no room of its own, and growing for it would never end.
-  if (rect.height > 0 && rect.top <= 0 && rect.bottom >= viewportHeight) return 0;
+  // A backdrop is flush with the viewport: it needs no room of its own, and growing for it would never end. An overlay
+  // taller than the viewport, centered or shifted to the top, ends below it and still needs room.
+  if (rect.height > 0 && rect.top <= 0 && Math.abs(rect.bottom - viewportHeight) < 1) return 0;
   if (rect.height > 0) return rect.bottom;
   return Math.max(0, ...Array.from(el.children, (child) => bottomOf(child, viewportHeight)));
 }
