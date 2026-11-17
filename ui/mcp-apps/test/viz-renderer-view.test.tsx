@@ -94,12 +94,14 @@ describe('RendererView', () => {
     log.mockRestore();
   });
 
-  it('shows a failed load in the banner, with Open in Grafana', async () => {
+  it('shows a failed load in the banner', async () => {
     renderer.loadFailure = 'This host cannot load the chart.';
     view();
-    expect(await screen.findByText(/This host cannot load the chart\. Open the query in Grafana to see it\./)).toBeTruthy();
+    expect(await screen.findByText('This host cannot load the chart.')).toBeTruthy();
     expect(screen.queryByTestId('viz-renderer')).toBeNull();
     expect(renderer.render).not.toHaveBeenCalled();
+    // Open in Grafana gives a blank page in Claude Desktop, so the viz view has none.
+    expect(screen.queryByText('Open in Grafana')).toBeNull();
   });
 
   it('loads again for the next result after a failed load', async () => {

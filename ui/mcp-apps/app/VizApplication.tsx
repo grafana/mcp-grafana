@@ -32,7 +32,6 @@ export function VizApplication({ host }: { host: AppHostState }) {
       viz && vizArgs ? buildVizSpec(vizArgs, viz, { theme: colorMode, timeZone }, undefined, vizNotices) : undefined,
     [viz, vizArgs, vizNotices, colorMode, timeZone],
   );
-  const grafanaUrl = viz?.grafanaUrl;
   // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
   const [loadFailure, setLoadFailure] = useState<string>();
 
@@ -55,23 +54,8 @@ export function VizApplication({ host }: { host: AppHostState }) {
         state.isError
           ? { tone: 'error', message: state.status }
           : loadFailure
-            ? {
-                tone: 'error',
-                message: `${loadFailure.replace(/\.$/, '')}.${grafanaUrl ? ' Open the query in Grafana to see it.' : ''}`,
-              }
+            ? { tone: 'error', message: loadFailure }
             : undefined
-      }
-      openInGrafana={
-        grafanaUrl
-          ? {
-              href: grafanaUrl,
-              onClick: (event) => {
-                // The sandbox cannot navigate; the host opens the link (spec.7).
-                event.preventDefault();
-                host.openInGrafana({ url: grafanaUrl });
-              },
-            }
-          : undefined
       }
     >
       {spec && !loadFailure ? (
