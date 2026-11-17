@@ -1,13 +1,13 @@
 repository: grafana/dataViz
-tag: grafana-echarts-renderer/v0.3.0
-commit: e6af098c39fc7835246ff514ad4676ce368f4997
+tag: grafana-echarts-renderer/v0.4.0
+commit: b9de770e4d32ffb8060002fb73c5e09a0c0c4fd1
 signer: https://github.com/grafana/dataViz/.github/workflows/release-please.yml@refs/heads/main
-version: 0.3.0
+version: 0.4.0
 contractVersion: 1.7.0
 sha256 LICENSE: 97eb6bc1a2a7b6ad6be6e76be8096ea32d83d0b25434170bea547bcfcb96e1ee
 sha256 icons.json: 6f6637a6f4c8415584bd25963133f0086e8ec1b8997acb8b36cd4ce2dcab193c
-sha256 package.json: 5b134505656b063da8413786738e9018f2e47a78704bc4de27967df4865c900e
+sha256 package.json: 3a97f2646048f778600e3a3d0044afe82693aad2c0c3fb4e6b6b52507e584c57
 sha256 renderer.d.ts: 7bb5e9068f4b159fed3e34bae3883b82bbfe105996303b5541dc2c4f136fbdad
-sha256 renderer.js: bad3b609ad3b36ea76b28aaad39dc6e517d4af65565b6f3f461f662d827777ef
+sha256 renderer.js: 16eb200dcb6a93742c474684f2e185d3f42f480089e58f89dbc133afbd7a9bbd
 sha256 renderer.js.LICENSE.txt: c219d1c21621f6e09a5e77f2c51919b397fbeb4e5974b0a45416274f580799fd
-sha256 renderer.manifest.json: 0b7bda6d8cc6c9e18ee7bf3d2b784ffebcfa3ac9eda2b6f23be8a0e3250f48a1
+sha256 renderer.manifest.json: 6da05e8a9a9754e2d5ebef15ee237aee4a2ea881e65305107cb7eb909ac70f92
