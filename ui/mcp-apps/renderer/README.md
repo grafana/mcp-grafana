@@ -2,8 +2,8 @@
 
 The App draws the `query_datasource` viz spec with the Renderer of
 [grafana/dataViz](https://github.com/grafana/dataViz) (`plugins/packages/@plugins/grafana-echarts`), which is under the
-Apache License 2.0. The Renderer files are not in Git. `RENDERER` pins a dataViz release (`grafana-echarts-renderer/v<version>`),
-and `scripts/renderer.mjs` downloads its files into this directory.
+Apache License 2.0. The Renderer files are not in Git. `RENDERER` pins a dataViz release
+(`grafana-echarts-renderer/v<version>`), and `scripts/renderer.mjs` downloads its files into this directory.
 
 The release has these files:
 
@@ -17,9 +17,10 @@ The release has these files:
 
 ## Pin
 
-`RENDERER` has the release tag, the commit of the tag, its version and contract version, and the SHA-256 of each file. It also shows the
-trusted repository and signer workflow, but `scripts/renderer.mjs` does not take them from `RENDERER`. They are
-constants in the script, and a pin that names another repository or signer fails.
+`RENDERER` has the release tag, the commit of the tag, its version and contract version, and the SHA-256 of each
+file. It also shows the trusted repository and signer workflow, but `scripts/renderer.mjs` does not take them from
+`RENDERER`. They are constants in the script, and a pin that names another repository or signer fails. A pin cannot
+name `RENDERER` or `README.md`, so a download cannot overwrite the files of this directory that are in Git.
 
 `npm run build`, `npm run typecheck`, `npm run dev` and `npm test` download the files that are missing or that differ
 from the pin. They fail if a downloaded file is not its pin. They need no `gh` CLI and no token. A fresh clone needs
@@ -30,11 +31,12 @@ network for the first of these commands. After that, if the files on disk match 
 - Every build: each file is the SHA-256 of `RENDERER`. The pin tests also make sure that the manifest has the version
   and contract version of `RENDERER`.
 - When `RENDERER`, the script or the lockfile changes: the `viz Renderer provenance` workflow runs
-  `node scripts/renderer.mjs --verify`. For each file, it gets the SLSA provenance attestation from the GitHub
-  attestations API and verifies it with Sigstore. The attestation must be signed by the
-  `grafana/dataViz/.github/workflows/release-please.yml` workflow on `main`, its subject must be the file, the build
-  must have run on a GitHub-hosted runner, and it must be the build of the `commit` of `RENDERER`. A file that is the
-  same in several releases (for example `icons.json`) has one attestation per build, so the commit selects the right one.
+  `node scripts/renderer.mjs --verify`. It makes sure that the `commit` of `RENDERER` is the commit of the tag. For
+  each file, it gets the SLSA provenance attestations from the GitHub attestations API (all pages) and verifies them
+  with Sigstore. An attestation must be signed by the `grafana/dataViz/.github/workflows/release-please.yml` workflow
+  on `main`, its subject must be the file, the build must have run on a GitHub-hosted runner, and it must be the build
+  of that commit. A file that is the same in several releases (for example `icons.json`) has one attestation per
+  build, so the commit selects the right one.
 - `--bump` checks the same attestations against the commit of the tag. It also makes sure that the release is
   immutable, that the manifest has the tag version and the hash of `renderer.js`, and that `package.json` has the tag
   version.

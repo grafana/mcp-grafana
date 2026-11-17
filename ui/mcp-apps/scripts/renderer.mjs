@@ -31,6 +31,9 @@ export const REQUIRED_FILES = ['renderer.js', 'renderer.manifest.json', 'rendere
 const TAG = /^grafana-echarts-renderer\/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 // A file name from the pin or from a release: no directory part, so a write cannot leave renderer/.
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// The files of renderer/ that are in Git. A pin line or a release asset with one of these names would overwrite it.
+const COMMITTED_FILES = new Set([PIN_FILE, 'README.md']);
+export const isFileName = (name) => FILE_NAME.test(name) && !COMMITTED_FILES.has(name);
 const HASH = /^[0-9a-f]{64}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 const SOURCE = `git+https://github.com/${REPOSITORY}@`;
@@ -53,7 +56,7 @@ export function parsePin(text) {
     const value = line.slice(at + 2).trim();
     if (key.startsWith('sha256 ')) {
       const name = key.slice('sha256 '.length);
-      if (!FILE_NAME.test(name)) throw new Error(`${PIN_FILE}: bad file name ${JSON.stringify(name)}`);
+      if (!isFileName(name)) throw new Error(`${PIN_FILE}: bad file name ${JSON.stringify(name)}`);
       if (!HASH.test(value)) throw new Error(`${PIN_FILE}: bad sha256 for ${name}`);
       pin.files[name] = value;
     } else {
@@ -106,7 +109,31 @@ function useEnvProxy() {
   if (proxy && typeof http.setGlobalProxyFromEnv === 'function') http.setGlobalProxyFromEnv();
 }
 
-async function request(url, { fetchImpl, token, json }) {
+async function request(url, options) {
+  const response = await get(url, options);
+  return options.json ? response.json() : Buffer.from(await response.arrayBuffer());
+}
+
+/** The `rel="next"` URL of a GitHub API `Link` header, if any. */
+export function nextPage(link) {
+  return /<([^>]+)>;\s*rel="next"/.exec(link ?? '')?.[1];
+}
+
+// A digest has one attestation per build that made the same bytes, so the list grows with every release.
+const MAX_PAGES = 50;
+
+/** Yields each page of a paginated GitHub API list. The token goes only to api.github.com. */
+async function* pages(url, options) {
+  for (let page = 0; url; page++) {
+    if (page === MAX_PAGES) throw new Error(`GET ${url}: more than ${MAX_PAGES} pages`);
+    if (!url.startsWith('https://api.github.com/')) throw new Error(`refusing the next page ${url}`);
+    const response = await get(url, options);
+    yield await response.json();
+    url = nextPage(response.headers.get('link'));
+  }
+}
+
+async function get(url, { fetchImpl, token }) {
   if (fetchImpl === globalThis.fetch) useEnvProxy();
   const headers = {};
   if (url.startsWith('https://api.github.com/')) {
@@ -121,7 +148,7 @@ async function request(url, { fetchImpl, token, json }) {
     throw new Error(`GET ${url}: ${error.message}${error.cause ? ` (${error.cause.message ?? error.cause})` : ''}`);
   }
   if (!response.ok) throw new Error(`GET ${url}: HTTP ${response.status}`);
-  return json ? response.json() : Buffer.from(await response.arrayBuffer());
+  return response;
 }
 
 async function readIfExists(path) {
@@ -146,7 +173,7 @@ async function writeAtomic(path, data) {
 
 /** Copies a local Renderer build into renderer/. Nothing checks it: the pin tests fail until the next real fetch. */
 async function copyLocal(dir, source, log) {
-  const names = (await readdir(source)).filter((name) => FILE_NAME.test(name));
+  const names = (await readdir(source)).filter(isFileName);
   for (const name of REQUIRED_FILES) {
     if (!names.includes(name)) throw new Error(`RENDERER_LOCAL_DIR ${source} has no ${name}`);
   }
@@ -220,30 +247,31 @@ export function runnerEnvironment(statement) {
  */
 export async function verifyFile(name, data, { verifier, fetchImpl = fetch, token, commit }) {
   const digest = sha256(data);
-  const url = `https://api.github.com/repos/${REPOSITORY}/attestations/sha256:${digest}`;
-  const { attestations = [] } = await request(url, { fetchImpl, token, json: true });
+  const url = `https://api.github.com/repos/${REPOSITORY}/attestations/sha256:${digest}?per_page=100`;
   const failures = [];
-  for (const { bundle } of attestations) {
-    const statement = provenanceStatement(bundle);
-    if (!statement) continue;
-    if (!(statement.subject ?? []).some((subject) => subject?.digest?.sha256 === digest)) {
-      failures.push('subject digest is not the file hash');
-      continue;
-    }
-    const runner = runnerEnvironment(statement);
-    if (runner !== 'github-hosted') {
-      failures.push(`built on runner environment ${runner ?? '(none)'}, not github-hosted`);
-      continue;
-    }
-    if (commit && sourceCommit(statement) !== commit) {
-      failures.push(`built from commit ${sourceCommit(statement)}, not ${commit}`);
-      continue;
-    }
-    try {
-      verifier.verify(bundle);
-      return statement;
-    } catch (error) {
-      failures.push(error.message);
+  for await (const { attestations = [] } of pages(url, { fetchImpl, token })) {
+    for (const { bundle } of attestations) {
+      const statement = provenanceStatement(bundle);
+      if (!statement) continue;
+      if (!(statement.subject ?? []).some((subject) => subject?.digest?.sha256 === digest)) {
+        failures.push('subject digest is not the file hash');
+        continue;
+      }
+      const runner = runnerEnvironment(statement);
+      if (runner !== 'github-hosted') {
+        failures.push(`built on runner environment ${runner ?? '(none)'}, not github-hosted`);
+        continue;
+      }
+      if (commit && sourceCommit(statement) !== commit) {
+        failures.push(`built from commit ${sourceCommit(statement)}, not ${commit}`);
+        continue;
+      }
+      try {
+        verifier.verify(bundle);
+        return statement;
+      } catch (error) {
+        failures.push(error.message);
+      }
     }
   }
   const reason = failures.length ? failures.join('; ') : `no ${PROVENANCE} attestation`;
@@ -260,6 +288,11 @@ export async function verifyRenderer({ dir = rendererDir, fetchImpl = fetch, tok
   // The attestations are of the released files, so a local build cannot be verified. Use the pin, and say so.
   if (process.env.RENDERER_LOCAL_DIR) log('Ignoring RENDERER_LOCAL_DIR: --verify checks the pinned release.');
   const { pin } = await fetchRenderer({ dir, fetchImpl, log, localDir: null });
+  // The commit line selects the attestations, so it must be the commit of the tag, not any trusted build.
+  const commit = await tagCommit(pin.tag, { fetchImpl, token });
+  if (commit !== pin.commit) {
+    throw new Error(`${PIN_FILE}: commit ${pin.commit} is not the commit ${commit} of tag ${pin.tag}`);
+  }
   verifier ??= await createVerifier();
   for (const name of Object.keys(pin.files)) {
     await verifyFile(name, await readFile(join(dir, name)), { verifier, fetchImpl, token, commit: pin.commit });
@@ -297,7 +330,7 @@ export async function bumpRenderer(tag, { dir = rendererDir, fetchImpl = fetch, 
   }
   const names = release.assets.map((asset) => asset.name);
   for (const name of names) {
-    if (!FILE_NAME.test(name)) throw new Error(`release ${tag}: bad asset name ${JSON.stringify(name)}`);
+    if (!isFileName(name)) throw new Error(`release ${tag}: bad asset name ${JSON.stringify(name)}`);
   }
   for (const name of REQUIRED_FILES) {
     if (!names.includes(name)) throw new Error(`release ${tag}: no ${name}`);

@@ -35,6 +35,8 @@ export const PROVENANCE: string;
 export const REQUIRED_FILES: string[];
 
 export function sha256(data: string | Uint8Array): string;
+export function isFileName(name: string): boolean;
+export function nextPage(link: string | null | undefined): string | undefined;
 export function tagVersion(tag: string): string;
 export function parsePin(text: string): Pin;
 export function formatPin(pin: Pin): string;

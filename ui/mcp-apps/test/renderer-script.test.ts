@@ -94,7 +94,7 @@ function github({
       return Response.json({ immutable, assets: Object.keys(files).map((name) => ({ name })) });
     }
     if (url === `${API}/git/ref/tags/${TAG}`) return Response.json({ object: { type: 'commit', sha: commit } });
-    const attestation = /\/attestations\/sha256:([0-9a-f]{64})$/.exec(url);
+    const attestation = /\/attestations\/sha256:([0-9a-f]{64})\?per_page=100$/.exec(url);
     if (attestation) {
       return Response.json({ attestations: [{ bundle: bundle(attestation[1], { commit: builtFrom, runner }) }] });
     }
@@ -116,6 +116,12 @@ describe('pin', () => {
 
   it('rejects a file name with a directory part', () => {
     const text = formatPin(pin).replace('sha256 icons.json', 'sha256 ../icons.json');
+    expect(() => parsePin(text)).toThrow(/bad file name/);
+  });
+
+  // renderer/RENDERER and renderer/README.md are in Git; a pin line with their name would overwrite them.
+  it.each([['RENDERER'], ['README.md']])('rejects the committed file name %s', (name) => {
+    const text = `${formatPin(pin)}sha256 ${name}: ${'0'.repeat(64)}\n`;
     expect(() => parsePin(text)).toThrow(/bad file name/);
   });
 
@@ -190,6 +196,15 @@ describe('fetchRenderer', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('does not copy a RENDERER or README.md of a local build', async () => {
+    const local = join(dir, 'local-build');
+    mkdirSync(local);
+    for (const name of [...REQUIRED_FILES, 'RENDERER', 'README.md']) writeFileSync(join(local, name), `local ${name}`);
+    await fetchRenderer({ dir, fetchImpl: github(), localDir: local });
+    expect(readFileSync(join(dir, 'RENDERER'), 'utf8')).toBe(formatPin(pin));
+    expect(existsSync(join(dir, 'README.md'))).toBe(false);
+  });
+
   it('fails on a local build without a required file', async () => {
     const local = join(dir, 'local-build');
     mkdirSync(local);
@@ -208,9 +223,53 @@ describe('verifyFile', () => {
     await verifyFile('renderer.js', data, { verifier, fetchImpl, token: 't0ken' });
     expect(verifier.verify).toHaveBeenCalledTimes(1);
     expect(fetchImpl).toHaveBeenCalledWith(
-      `${API}/attestations/sha256:${sha256(data)}`,
+      `${API}/attestations/sha256:${sha256(data)}?per_page=100`,
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer t0ken' }) }),
     );
+  });
+
+  // The API lists 30 attestations per page by default, and a file that is the same in many releases has more.
+  it('follows the next page to find the attestation of the expected commit', async () => {
+    const verifier = { verify: vi.fn() };
+    const second = `${API}/attestations/sha256:${sha256(data)}?per_page=100&after=abc`;
+    const fetchImpl = vi.fn(async (url: string, _init?: RequestInit) =>
+      url === second
+        ? Response.json({ attestations: [{ bundle: bundle(sha256(data)) }] })
+        : Response.json(
+            { attestations: [{ bundle: bundle(sha256(data), { commit: 'b'.repeat(40) }) }] },
+            { headers: { Link: `<${second}>; rel="next", <https://docs.github.com/rest>; rel="help"` } },
+          ),
+    );
+    await verifyFile('renderer.js', data, { verifier, fetchImpl, token: 't0ken', commit: COMMIT });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenLastCalledWith(
+      second,
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer t0ken' }) }),
+    );
+    expect(verifier.verify).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops at the first valid attestation and asks for no more pages', async () => {
+    const verifier = { verify: vi.fn() };
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) =>
+      Response.json(
+        { attestations: [{ bundle: bundle(sha256(data)) }] },
+        { headers: { Link: `<${API}/attestations/x?after=abc>; rel="next"` } },
+      ),
+    );
+    await verifyFile('renderer.js', data, { verifier, fetchImpl, commit: COMMIT });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send the token to a next page on another host', async () => {
+    const verifier = { verify: vi.fn() };
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) =>
+      Response.json({ attestations: [] }, { headers: { Link: '<https://example.com/steal?after=1>; rel="next"' } }),
+    );
+    await expect(verifyFile('renderer.js', data, { verifier, fetchImpl, token: 't0ken' })).rejects.toThrow(
+      /refusing the next page https:\/\/example\.com/,
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('fails when the statement subject is another file, even with a valid signature', async () => {
@@ -303,13 +362,22 @@ describe('verifyRenderer', () => {
     }
   });
 
+  it('fails when the commit of RENDERER is not the commit of the tag', async () => {
+    writeFileSync(join(dir, 'RENDERER'), formatPin({ ...pin, commit: 'c'.repeat(40) }));
+    const verifier = { verify: vi.fn() };
+    await expect(verifyRenderer({ dir, fetchImpl: github(), verifier })).rejects.toThrow(
+      /commit c+ is not the commit a+ of tag/,
+    );
+    expect(verifier.verify).not.toHaveBeenCalled();
+  });
+
   it('fails when one file has no valid attestation', async () => {
     const verifier = { verify: vi.fn() };
     const fetchImpl = github();
     // The attestations API has nothing for icons.json.
     const icons = `sha256:${sha256(content['icons.json'])}`;
     const failing = vi.fn(async (url: string, init?: RequestInit) =>
-      url.endsWith(icons) ? Response.json({ attestations: [] }) : fetchImpl(url, init),
+      url.includes(icons) ? Response.json({ attestations: [] }) : fetchImpl(url, init),
     );
     await expect(verifyRenderer({ dir, fetchImpl: failing, verifier })).rejects.toThrow(
       /icons\.json: no valid provenance attestation/,
@@ -342,6 +410,7 @@ describe('bumpRenderer', () => {
 
   it.each<[string, Release, RegExp]>([
     ['a release that is not immutable', { immutable: false }, /not immutable/],
+    ['a release with a README.md asset', { files: { ...content, 'README.md': 'replaced' } }, /bad asset name/],
     ['a release without a required file', { files: { ...content, 'icons.json': undefined! } }, /no icons\.json/],
     ['a file built from another commit', { builtFrom: 'b'.repeat(40) }, /built from commit b+, not a+/],
     ['a manifest of another version', { files: withManifest({ version: '9.9.9' }) }, /not the tag version/],
