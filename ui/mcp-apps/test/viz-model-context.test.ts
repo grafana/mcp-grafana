@@ -3,7 +3,7 @@ import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import { createAppHostState } from '../app/appHostState';
 import type { RenderState } from '../renderer/renderer.js';
-import { vizModelContext } from '../app/vizModelContext';
+import { vizFailureContext, vizModelContext } from '../app/vizModelContext';
 import { parseVizArgs, parseVizResult } from '../app/vizSpec';
 import { readVizFixture } from './vizFixtures';
 
@@ -33,6 +33,18 @@ describe('vizModelContext', () => {
         'State: error.',
         'Error: All queries failed.',
         'Notice: The chart is now a barchart.',
+      ].join('\n'),
+    );
+  });
+
+  it('says that no chart shows when the Renderer failed, with both ranges and the error', () => {
+    expect(vizFailureContext(args, viz, 'This host cannot load the chart.')).toBe(
+      [
+        'The Grafana App could not show the timeseries chart of data source lgtm-prometheus.',
+        'Time range of the arguments: now-15m to now.',
+        `Time range of the data: ${iso(viz.data.range.from)} to ${iso(viz.data.range.to)}.`,
+        'State: error.',
+        'Error: This host cannot load the chart.',
       ].join('\n'),
     );
   });
@@ -151,8 +163,23 @@ describe('model context of the viz view (state.14)', () => {
   });
 
   it('sends nothing to a host without updateModelContext', () => {
-    const { updateModelContext, report } = shown(undefined, {});
+    const { state, updateModelContext, report } = shown(undefined, {});
     report(noData);
+    state.reportVizFailure('This host cannot load the chart.', state.getSnapshot().generation);
+    expect(updateModelContext).not.toHaveBeenCalled();
+  });
+
+  it('sends a failed load or render, which no Renderer state follows', () => {
+    const { state, sent } = shown();
+    state.reportVizFailure('This host cannot load the chart.', state.getSnapshot().generation);
+    expect(sent()).toEqual([expect.stringContaining('Error: This host cannot load the chart.')]);
+  });
+
+  it('drops a failure of the Renderer of an older call', () => {
+    const { app, state, updateModelContext } = shown();
+    const old = state.getSnapshot().generation;
+    app.ontoolresult?.(ok());
+    state.reportVizFailure('This host cannot load the chart.', old);
     expect(updateModelContext).not.toHaveBeenCalled();
   });
 });
