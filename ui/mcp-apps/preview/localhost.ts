@@ -126,6 +126,7 @@ async function main() {
   const params = new URLSearchParams(location.search);
   const appFile = params.get('app') ?? 'app.html';
   const theme = params.get('mode') === 'dark' ? 'dark' : 'light';
+  const failRefresh = params.get('refresh') === 'fail';
 
   const iframe = document.getElementById('app') as HTMLIFrameElement;
   // dist/ is the dev server's publicDir, so bundles are same-origin here and
@@ -141,8 +142,10 @@ async function main() {
   const bridge = new AppBridge(
     null,
     { name: 'local-debug-host', version: '0.1.0' },
-    // serverResources: the viz view reads the Renderer resource through the host (#1589).
-    { serverResources: {} }
+    // serverResources: the viz view reads the Renderer resource through the host (#1589). serverTools: it refreshes
+    // only through a host that passes tool calls to the server. updateModelContext: it tells the model of a state or a
+    // new range.
+    { serverResources: {}, serverTools: {}, updateModelContext: { text: {} } }
   );
 
   bridge.onsizechange = (params) => record(`size-changed: ${JSON.stringify(params)}`);
@@ -151,6 +154,17 @@ async function main() {
   // the round trip is exercised, not stubbed out.
   bridge.oncalltool = async (params) => {
     record(`app → callServerTool: ${params.name} ${JSON.stringify(params.arguments)}`);
+    // A refresh of the viz view (refresh.9) gets the result of the fixture again, with a new capture time.
+    // `?refresh=fail` gives a tool error instead (refresh.11).
+    if (params.name === 'render_grafana_app' && params.arguments?.toolName === 'query_datasource') {
+      if (failRefresh) {
+        return { content: [{ type: 'text', text: 'query-failed: The data source did not answer.' }], isError: true };
+      }
+      return {
+        content: [{ type: 'text', text: 'Displayed query_datasource result in the Grafana App.' }],
+        structuredContent: { ...vizResult, data: { ...vizResult.data, capturedAt: Date.now() } },
+      };
+    }
     if (params.name !== 'query_prometheus') {
       return { content: [{ type: 'text', text: `unknown tool ${params.name}` }], isError: true };
     }
@@ -164,6 +178,12 @@ async function main() {
     if (!/^ui:\/\/grafana\/viz-renderer-[0-9a-f]+\.js$/.test(uri)) throw new Error(`unknown resource ${uri}`);
     const text = await (await fetch('/viz-renderer.js')).text();
     return { contents: [{ uri, mimeType: 'text/javascript', text }] };
+  };
+
+  bridge.onupdatemodelcontext = async ({ content }) => {
+    const text = content?.map((block) => ('text' in block ? block.text : block.type)).join(' ') ?? '';
+    record(`app → updateModelContext: ${text.replace(/\n/g, ' | ')}`);
+    return {};
   };
 
   // "Ask about a window" sends a user message to the agent.

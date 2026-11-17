@@ -10,6 +10,8 @@
 /ui/mcp-apps/test/renderer*            @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/VizApplication.tsx    @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/vizSpec.ts            @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/vizRefresh.ts         @grafana/grafana-assistant-loop @grafana/dataviz-squad
+/ui/mcp-apps/app/vizModelContext.ts    @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/loadRenderer.ts       @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/iconCache.ts          @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/app/sharedModules.ts      @grafana/grafana-assistant-loop @grafana/dataviz-squad

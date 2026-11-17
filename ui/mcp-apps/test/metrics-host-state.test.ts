@@ -15,6 +15,7 @@ function fakeHost() {
   const app = {
     connect: () => Promise.resolve(),
     getHostContext: () => undefined,
+    getHostCapabilities: () => ({}),
     callServerTool: vi.fn(() => new Promise((resolve) => (resolveCall = resolve))),
   } as unknown as App & Handlers;
   return { app, resolveCall: (response: unknown) => resolveCall(response) };
