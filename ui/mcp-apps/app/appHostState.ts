@@ -8,7 +8,7 @@ import { applyHostContext } from './hostContext';
 import { loadRenderer, type Renderer } from './loadRenderer';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
-import { vizModelContext } from './vizModelContext';
+import { vizFailureContext, vizModelContext } from './vizModelContext';
 import { runVizRefresh } from './vizRefresh';
 import { parseVizArgs, parseVizResult, type VizArgs, type VizNotice, type VizResult } from './vizSpec';
 
@@ -68,6 +68,8 @@ export type AppHostState = {
    * one the Renderer drew for; a state of an older call is dropped.
    */
   reportVizState: (state: RenderState, generation: number) => void;
+  /** Takes the message of a Renderer that did not load or whose render threw, for the model context (state.14). */
+  reportVizFailure: (message: string, generation: number) => void;
   /** Hand a brushed window back to the agent as a question. */
   askAboutRange: (fromMs: number, toMs: number) => void;
   /** Ask the host to open a Grafana URL; the iframe cannot navigate itself. */
@@ -162,12 +164,11 @@ export function createAppHostState(app: App): AppHostState {
   let vizState: RenderState | undefined;
   let contextSent = false;
 
-  const sendVizContext = () => {
-    const { vizArgs, viz } = snapshot;
-    if (!vizArgs || !viz || !vizState || !app.getHostCapabilities()?.updateModelContext) return;
+  const sendModelContext = (build: () => string) => {
+    if (!app.getHostCapabilities()?.updateModelContext) return;
     let text: string;
     try {
-      text = vizModelContext(vizArgs, viz, vizState);
+      text = build();
     } catch {
       // A result with no valid data range; the context must not fail the draw or a refresh.
       return;
@@ -177,9 +178,24 @@ export function createAppHostState(app: App): AppHostState {
     void app.updateModelContext({ content: [{ type: 'text', text }] }).catch(() => {});
   };
 
+  const sendVizContext = () => {
+    const { vizArgs, viz } = snapshot;
+    const state = vizState;
+    if (vizArgs && viz && state) sendModelContext(() => vizModelContext(vizArgs, viz, state));
+  };
+
+  // The old Renderer stays mounted until React commits the new call, so it can still report.
+  const isStale = (generation: number) => generation !== snapshot.generation;
+
+  const reportVizFailure = (message: string, generation: number) => {
+    if (isStale(generation)) return;
+    const { vizArgs, viz } = snapshot;
+    vizState = undefined;
+    if (vizArgs && viz) sendModelContext(() => vizFailureContext(vizArgs, viz, message));
+  };
+
   const reportVizState = (state: RenderState, generation: number) => {
-    // The old Renderer stays mounted until React commits the new call, so it can still report.
-    if (generation !== snapshot.generation) return;
+    if (isStale(generation)) return;
     vizState = state;
     // A first draw that is ready with no notices is what the model asked for (state.16).
     if (state.state !== 'ready' || state.notices.length > 0 || contextSent) sendVizContext();
@@ -349,6 +365,7 @@ export function createAppHostState(app: App): AppHostState {
     refresh,
     refreshViz,
     reportVizState,
+    reportVizFailure,
     askAboutRange,
     openInGrafana,
     // A host may deliver the result before the handshake ends; a failed handshake already shows its own error.

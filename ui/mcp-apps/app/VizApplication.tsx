@@ -68,6 +68,7 @@ export function VizApplication({ host }: { host: AppHostState }) {
           refresh={() => (host.getSnapshot().serverTools ? host.refreshViz : undefined)}
           // GrafanaApplication remounts this view for each call, so the generation is the one of this spec.
           onState={(renderState) => host.reportVizState(renderState, state.generation)}
+          onFailure={(message) => host.reportVizFailure(message, state.generation)}
         />
       ) : null}
     </McpAppShell>
@@ -86,12 +87,15 @@ function RendererView({
   onLoadError,
   refresh,
   onState,
+  onFailure,
 }: {
   spec: VizSpec;
   load: () => Promise<Renderer>;
   onLoadError: (message: string) => void;
   refresh: () => ((request: RefreshRequest) => Promise<{ error: string } | undefined>) | undefined;
   onState: (state: RenderState) => void;
+  /** A failed load or render, for the model; the banner and AppErrorBoundary show it to the user. */
+  onFailure: (message: string) => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const handle = useRef<RenderHandle | null>(null);
@@ -119,11 +123,16 @@ function RendererView({
               }),
             });
           } catch (cause) {
-            setFailure(cause instanceof Error ? cause : new Error(String(cause)));
+            const error = cause instanceof Error ? cause : new Error(String(cause));
+            onFailure(error.message);
+            setFailure(error);
           }
         },
         (cause: unknown) => {
-          if (!destroyed) onLoadError(cause instanceof Error ? cause.message : String(cause));
+          if (destroyed) return;
+          const message = cause instanceof Error ? cause.message : String(cause);
+          onFailure(message);
+          onLoadError(message);
         },
       );
     return () => {
