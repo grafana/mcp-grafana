@@ -158,7 +158,10 @@ func (r *policyRoute) toModel() (*models.Route, error) {
 
 // getContactPointDetail retrieves full details for a contact point by name,
 // including integration settings (unlike the list which returns summaries).
-func getContactPointDetail(ctx context.Context, name string) ([]*models.EmbeddedContactPoint, error) {
+// The provisioning API omits receivers without v1 integrations, so a name it
+// does not return is looked up through the receivers API before reporting it
+// missing.
+func getContactPointDetail(ctx context.Context, name string) (any, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	params := provisioning.NewGetContactpointsParams().WithContext(ctx)
 	params.Name = &name
@@ -166,10 +169,18 @@ func getContactPointDetail(ctx context.Context, name string) ([]*models.Embedded
 	if err != nil {
 		return nil, fmt.Errorf("get contact point %q: %w", name, explainForbidden(err, contactPointsReadPermissions))
 	}
-	if len(resp.Payload) == 0 {
+	if len(resp.Payload) > 0 {
+		// Keep the slice type callers and earlier releases returned.
+		return []*models.EmbeddedContactPoint(resp.Payload), nil
+	}
+	receiver, err := findReceiverByTitle(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("contact point %q not found by the provisioning API, and the receivers API lookup failed: %w", name, err)
+	}
+	if receiver == nil {
 		return nil, fmt.Errorf("contact point %q not found", name)
 	}
-	return resp.Payload, nil
+	return receiver, nil
 }
 
 // muteTimingSummary is a compact representation of a mute timing for list output.
