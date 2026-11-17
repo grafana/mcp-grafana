@@ -1,25 +1,24 @@
 # Agent guidance
 
-## Contribution workflow
+Go server and tools live at the root. `ui/mcp-apps` uses React, Vitest, and Testing Library.
+`ui/panel-viewer` has a separate build and no dedicated test script.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and applicable directory instructions before editing.
-Keep changes focused and follow surrounding conventions. Add comments for non-obvious reasons,
-not to narrate self-explanatory code. Read [contribute/testing.md](contribute/testing.md) before
-writing or running tests; it routes to the checked-in shared testing skills and local commands.
+## Read only when needed
 
-Use the contributor's configured signing identity for every commit. Never disable signing to get
-past an error or fabricate an identity. Preserve authorship; get explicit approval before rewriting
-published history. Follow the signing setup in CONTRIBUTING.md.
+- Server setup, build, or existing tests: "Prerequisites", "Building", "Testing", or "Linting" in DEVELOPING.md.
+- Existing frontend tests or UI source changes: "Frontend validation" in contribute/testing.md.
+  UI bundles are committed for Go embedding and must be rebuilt after UI source changes.
+- Writing or reviewing frontend tests: "Frontend test conventions" in contribute/testing.md.
+- Visualization tests: "Visualization adapter" in contribute/testing.md.
+- New tools or tool name/shape changes: "New tools need an issue first" and "The three tiers" in CONTRIBUTING.md.
+- Tool catalog or schema changes: "Conventions that CI enforces" in CONTRIBUTING.md for gates, RBAC, and schema rules.
+- Tool descriptions or schema growth: "Measuring the token cost" in CONTRIBUTING.md.
+- Signing error: [Signed commits](CONTRIBUTING.md#signed-commits). Never disable signing.
 
-Before `git push`, stop, summarize changes and validation, and obtain explicit human approval.
-A request to open a PR does not by itself authorize pushing. Report unavailable or skipped checks.
+## Git
 
-## Repository essentials
-
-- Go server and tools: use `mise` and [DEVELOPING.md](DEVELOPING.md).
-- Frontend: `ui/mcp-apps` uses React, Vitest, and Testing Library; `ui/panel-viewer` has a separate build.
-  Read [contribute/testing.md](contribute/testing.md) for commands and committed bundle requirements.
-- Preserve issue-first proposals for new tools and tool shape/name changes, token-budget constraints,
-  read/write/query gates, RBAC declarations, and generated permission documentation in CONTRIBUTING.md.
+- Sign every commit with the contributor's configured identity.
+- Get explicit approval before `git push` and before rewriting published history.
+  A request to open a PR does not authorize a push.
 - Ordinary contributions do not edit CHANGELOG.md. Release preparation is a separate workflow.
-- Do not claim cloud checks passed without credentials. Use local unit checks and report limitations.
+- Report skipped or unavailable checks. Cloud checks require credentials.

@@ -1,15 +1,6 @@
 # Testing contributions
 
-Read the checked-in [frontend testing strategy](../.claude/skills/frontend-testing-strategy/SKILL.md).
-For chart rendering and interactions, also read the
-[panel testing strategy](../.claude/skills/panel-testing-strategy/SKILL.md).
-These Markdown guides require no agent installation or private access. Local commands and fixtures
-below specialize those principles. Provenance and content hashes live in
-[shared-testing-source.json](../.claude/skills/shared-testing-source.json); publication of the shared
-source is pending. Update shared copies together through reviewed PRs, preserving the adjacent license.
-
-
-## MCP Apps frontend
+## Frontend validation
 
 From `ui/mcp-apps`:
 
@@ -19,17 +10,38 @@ npm run typecheck
 npm test
 ```
 
-`npm test` runs Vitest once; tests live in `test/**/*.test.{ts,tsx}` with jsdom and Testing Library.
-Use Vitest's `vi` APIs, not Jest globals. Type checking and test setup download the pinned Renderer;
-network access is required. Keep the existing provenance verification and renderer fixtures.
+The test command runs Vitest once. Type checking and test setup download the pinned Renderer.
+Network access is required. Keep the existing provenance verification and renderer fixtures.
 
 From the repository root, run `mise run build-ui` after UI source changes and commit the resulting
 `ui/*/dist` artifacts. CI rebuilds and checks for drift. This builds both `ui/mcp-apps` and
-`ui/panel-viewer`; panel-viewer currently has no dedicated test script. Do not report it as tested
-by the MCP Apps suite. Validate its changed behavior manually in the host and report results.
+`ui/panel-viewer`. Panel-viewer has no dedicated test script. Do not report it as tested by the
+MCP Apps suite. Validate its changed behavior manually in the host and report results.
+
+## Frontend test conventions
+
+When writing or reviewing frontend tests, read the
+[frontend testing strategy](../.claude/skills/frontend-testing-strategy/SKILL.md) if not already loaded.
+Tests live in `ui/mcp-apps/test/**/*.test.{ts,tsx}` with jsdom and Testing Library.
+Use Vitest's `vi` APIs, not Jest globals. No skill read is needed merely to run existing tests.
+
+## Visualization adapter
+
+For chart rendering and interactions, also read the
+[panel testing strategy](../.claude/skills/panel-testing-strategy/SKILL.md) if not already loaded.
+Use the Renderer fixtures and setup in `ui/mcp-apps/test/` and the existing Vitest configuration.
+Do not substitute Grafana core's panel-props helpers or automatic E2E server harness.
+Preserve the distinction between MCP Apps coverage and manual panel-viewer validation.
 
 ## Server and integration
 
-Use `mise run lint` and `mise run test-unit`. For integration checks, start services with
-`mise run run-test-services`, then run `mise run test-integration`. Cloud checks require credentials;
-see [DEVELOPING.md](../DEVELOPING.md). Shared frontend guidance does not replace Go test conventions.
+Read only "Testing" or "Linting" in [DEVELOPING.md](../DEVELOPING.md) for server validation commands.
+Cloud checks require credentials. The frontend skills do not replace Go test conventions.
+
+## Provenance
+
+[shared-testing-source.json](../.claude/skills/shared-testing-source.json) records the original source
+and hashes of these locally adapted copies. The hashes do not assert equality with upstream files.
+No automated drift check consumes them. Update them when changing the local skills.
+Publication of a canonical shared repository is a follow-up. Preserve the
+[skill license](../.claude/skills/SHARED-TESTING-LICENSE) when distributing them.
