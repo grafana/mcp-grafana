@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -378,9 +379,8 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			OrgID:        1,
 		}
 
-		// Our simple validation won't catch this, but it would fail at API call
 		err := params.validate()
-		require.NoError(t, err, "Simple validation doesn't check enum values")
+		require.EqualError(t, err, `no_data_state must be one of Alerting, NoData, OK, got "InvalidValue"`)
 	})
 
 	t.Run("invalid ExecErrState enum value", func(t *testing.T) {
@@ -396,9 +396,8 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			OrgID:        1,
 		}
 
-		// Our simple validation won't catch this
 		err := params.validate()
-		require.NoError(t, err, "Simple validation doesn't check enum values")
+		require.EqualError(t, err, `exec_err_state must be one of OK, Alerting, Error, got "BadValue"`)
 	})
 
 	t.Run("title too long", func(t *testing.T) {
@@ -1910,4 +1909,79 @@ func TestParseSelectorStrings_UnquotedValueShapes(t *testing.T) {
 			require.Contains(t, selectors[0].Filters, LabelMatcher{Name: "env", Type: "=", Value: "dev"})
 		})
 	}
+}
+
+func TestManageRulesWriteParams_RuleStates(t *testing.T) {
+	base := func(noData, execErr string) ManageRulesWriteParams {
+		return ManageRulesWriteParams{
+			Operation:    "create",
+			Title:        "Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "test-folder",
+			Condition:    "A",
+			Data:         []map[string]any{{"refId": "A", "datasourceUid": "prom", "model": map[string]any{"expr": "up"}}},
+			NoDataState:  noData,
+			ExecErrState: execErr,
+			For:          "5m",
+			OrgID:        1,
+		}
+	}
+
+	t.Run("accepts Error for exec_err_state", func(t *testing.T) {
+		cp, err := base("NoData", "Error").toCreateParams()
+		require.NoError(t, err)
+		require.Equal(t, "Error", cp.ExecErrState)
+		require.NoError(t, cp.validate())
+	})
+
+	t.Run("normalizes case", func(t *testing.T) {
+		cp, err := base("nodata", "ok").toCreateParams()
+		require.NoError(t, err)
+		require.Equal(t, "NoData", cp.NoDataState)
+		require.Equal(t, "OK", cp.ExecErrState)
+
+		up, err := ManageRulesWriteParams{Operation: "update", RuleUID: "r1", NoDataState: "ALERTING", ExecErrState: "error"}.toUpdateParams()
+		require.NoError(t, err)
+		require.Equal(t, "Alerting", up.NoDataState)
+		require.Equal(t, "Error", up.ExecErrState)
+	})
+
+	t.Run("rejects NoData for exec_err_state with the accepted values", func(t *testing.T) {
+		err := base("NoData", "NoData").validate()
+		require.EqualError(t, err, `exec_err_state must be one of OK, Alerting, Error, got "NoData"`)
+	})
+
+	t.Run("rejects Error for no_data_state with the accepted values", func(t *testing.T) {
+		_, err := base("Error", "OK").toCreateParams()
+		require.EqualError(t, err, `no_data_state must be one of Alerting, NoData, OK, got "Error"`)
+	})
+
+	t.Run("leaves empty states to the required checks", func(t *testing.T) {
+		err := base("", "OK").validate()
+		require.EqualError(t, err, "no_data_state is required")
+	})
+
+	t.Run("direct params reject values Grafana refuses", func(t *testing.T) {
+		params := CreateAlertRuleParams{
+			Title: "Test Rule", RuleGroup: "g", FolderUID: "f", Condition: "A",
+			Data: []*AlertQuery{{RefID: "A"}}, NoDataState: "OK", ExecErrState: "NoData", For: "5m", OrgID: 1,
+		}
+		require.EqualError(t, params.validate(), `exec_err_state must be one of OK, Alerting, Error, got "NoData"`)
+	})
+}
+
+func TestRuleStatesMatchClientValidation(t *testing.T) {
+	// The generated client validates states before sending, so every value
+	// the tool accepts must pass it, and NoData must fail for exec_err_state.
+	stateError := func(rule *models.ProvisionedAlertRule, field string) bool {
+		return strings.Contains(fmt.Sprint(rule.Validate(strfmt.Default)), field+" in body should be one of")
+	}
+	for _, state := range execErrStates {
+		require.False(t, stateError(&models.ProvisionedAlertRule{ExecErrState: &state}, "execErrState"), state)
+	}
+	for _, state := range noDataStates {
+		require.False(t, stateError(&models.ProvisionedAlertRule{NoDataState: &state}, "noDataState"), state)
+	}
+	noData := "NoData"
+	require.True(t, stateError(&models.ProvisionedAlertRule{ExecErrState: &noData}, "execErrState"))
 }
