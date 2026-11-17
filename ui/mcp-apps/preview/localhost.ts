@@ -148,7 +148,12 @@ async function main() {
     { serverResources: {}, serverTools: {}, updateModelContext: { text: {} } }
   );
 
-  bridge.onsizechange = (params) => record(`size-changed: ${JSON.stringify(params)}`);
+  // `?fit` sizes the frame to the page, as a chat host does, so an overlay that the frame cuts off shows here.
+  const fit = params.has('fit');
+  bridge.onsizechange = (params) => {
+    record(`size-changed: ${JSON.stringify(params)}`);
+    if (fit && params.height) iframe.style.height = `${params.height}px`;
+  };
 
   // The app calls back for Refresh; answer it the way the MCP server would so
   // the round trip is exercised, not stubbed out.
