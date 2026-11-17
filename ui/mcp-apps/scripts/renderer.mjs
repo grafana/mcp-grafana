@@ -32,6 +32,7 @@ const TAG = /^grafana-echarts-renderer\/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 // A file name from the pin or from a release: no directory part, so a write cannot leave renderer/.
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const HASH = /^[0-9a-f]{64}$/;
+const COMMIT = /^[0-9a-f]{40}$/;
 const SOURCE = `git+https://github.com/${REPOSITORY}@`;
 
 export const sha256 = (data) => createHash('sha256').update(data).digest('hex');
@@ -59,9 +60,10 @@ export function parsePin(text) {
       pin[key] = value;
     }
   }
-  for (const key of ['repository', 'tag', 'signer', 'version', 'contractVersion']) {
+  for (const key of ['repository', 'tag', 'commit', 'signer', 'version', 'contractVersion']) {
     if (!pin[key]) throw new Error(`${PIN_FILE}: no ${key} line`);
   }
+  if (!COMMIT.test(pin.commit)) throw new Error(`${PIN_FILE}: bad commit ${pin.commit}`);
   if (pin.repository !== REPOSITORY || pin.signer !== SIGNER) {
     throw new Error(
       `${PIN_FILE}: repository ${pin.repository} and signer ${pin.signer} are not the trusted ${REPOSITORY} and ` +
@@ -81,6 +83,7 @@ export function formatPin(pin) {
   const lines = [
     `repository: ${pin.repository}`,
     `tag: ${pin.tag}`,
+    `commit: ${pin.commit}`,
     `signer: ${pin.signer}`,
     `version: ${pin.version}`,
     `contractVersion: ${pin.contractVersion}`,
@@ -200,12 +203,22 @@ export function sourceCommit(statement) {
   return dependencies.find((dependency) => dependency?.uri?.startsWith(SOURCE))?.digest?.gitCommit;
 }
 
+/** The runner that a provenance statement says built the file: `github-hosted` or `self-hosted`. */
+export function runnerEnvironment(statement) {
+  return statement?.predicate?.buildDefinition?.internalParameters?.github?.runner_environment;
+}
+
 /**
  * Verifies that one file has a SLSA provenance attestation signed by the trusted SIGNER through public Sigstore, and
  * returns its statement. `verifier.verify` checks the signature, the certificate identity and the transparency log
- * entry. It does not compare a DSSE statement with the artifact, so the subject digest is compared here.
+ * entry. It does not compare a DSSE statement with the artifact, so the subject digest is compared here. The build
+ * must also have run on a GitHub-hosted runner (as `gh attestation verify --deny-self-hosted-runners`), because a
+ * self-hosted runner is outside what the signer identity proves.
+ *
+ * A file that is the same in several releases (icons.json, LICENSE) has one attestation per build. With `commit`, only
+ * an attestation of the build of that commit passes, whatever order the API lists them in.
  */
-export async function verifyFile(name, data, { verifier, fetchImpl = fetch, token }) {
+export async function verifyFile(name, data, { verifier, fetchImpl = fetch, token, commit }) {
   const digest = sha256(data);
   const url = `https://api.github.com/repos/${REPOSITORY}/attestations/sha256:${digest}`;
   const { attestations = [] } = await request(url, { fetchImpl, token, json: true });
@@ -215,6 +228,15 @@ export async function verifyFile(name, data, { verifier, fetchImpl = fetch, toke
     if (!statement) continue;
     if (!(statement.subject ?? []).some((subject) => subject?.digest?.sha256 === digest)) {
       failures.push('subject digest is not the file hash');
+      continue;
+    }
+    const runner = runnerEnvironment(statement);
+    if (runner !== 'github-hosted') {
+      failures.push(`built on runner environment ${runner ?? '(none)'}, not github-hosted`);
+      continue;
+    }
+    if (commit && sourceCommit(statement) !== commit) {
+      failures.push(`built from commit ${sourceCommit(statement)}, not ${commit}`);
       continue;
     }
     try {
@@ -240,7 +262,7 @@ export async function verifyRenderer({ dir = rendererDir, fetchImpl = fetch, tok
   const { pin } = await fetchRenderer({ dir, fetchImpl, log, localDir: null });
   verifier ??= await createVerifier();
   for (const name of Object.keys(pin.files)) {
-    await verifyFile(name, await readFile(join(dir, name)), { verifier, fetchImpl, token });
+    await verifyFile(name, await readFile(join(dir, name)), { verifier, fetchImpl, token, commit: pin.commit });
   }
   log(`Verified the provenance of ${Object.keys(pin.files).length} files of ${pin.tag}.`);
   return pin;
@@ -288,9 +310,7 @@ export async function bumpRenderer(tag, { dir = rendererDir, fetchImpl = fetch, 
   for (const name of names) {
     data[name] = await request(downloadURL(REPOSITORY, tag, name), { fetchImpl });
     files[name] = sha256(data[name]);
-    const statement = await verifyFile(name, data[name], { verifier, ...options });
-    const built = sourceCommit(statement);
-    if (built !== commit) throw new Error(`${name}: built from commit ${built}, but tag ${tag} is commit ${commit}`);
+    await verifyFile(name, data[name], { verifier, ...options, commit });
   }
 
   const manifest = JSON.parse(data['renderer.manifest.json'].toString('utf8'));
@@ -301,9 +321,22 @@ export async function bumpRenderer(tag, { dir = rendererDir, fetchImpl = fetch, 
     throw new Error('renderer.manifest.json: sha256 is not the hash of renderer.js');
   }
   if (!manifest.contractVersion) throw new Error('renderer.manifest.json: no contractVersion');
+  // The App reads the peers of the Renderer from package.json (renderer.9), so it must be of the same release.
+  const packageVersion = JSON.parse(data['package.json'].toString('utf8')).version;
+  if (packageVersion !== version) {
+    throw new Error(`package.json: version ${packageVersion} is not the tag version ${version}`);
+  }
 
   for (const name of names) await writeAtomic(join(dir, name), data[name]);
-  const pin = { repository: REPOSITORY, tag, signer: SIGNER, version, contractVersion: manifest.contractVersion, files };
+  const pin = {
+    repository: REPOSITORY,
+    tag,
+    commit,
+    signer: SIGNER,
+    version,
+    contractVersion: manifest.contractVersion,
+    files,
+  };
   await writeFile(join(dir, PIN_FILE), formatPin(pin));
   log(`Pinned ${tag} (contract ${manifest.contractVersion}, ${names.length} files, built from ${commit}).`);
   return pin;

@@ -17,7 +17,7 @@ The release has these files:
 
 ## Pin
 
-`RENDERER` has the release tag, its version and contract version, and the SHA-256 of each file. It also shows the
+`RENDERER` has the release tag, the commit of the tag, its version and contract version, and the SHA-256 of each file. It also shows the
 trusted repository and signer workflow, but `scripts/renderer.mjs` does not take them from `RENDERER`. They are
 constants in the script, and a pin that names another repository or signer fails.
 
@@ -32,9 +32,12 @@ network for the first of these commands. After that, if the files on disk match 
 - When `RENDERER`, the script or the lockfile changes: the `viz Renderer provenance` workflow runs
   `node scripts/renderer.mjs --verify`. For each file, it gets the SLSA provenance attestation from the GitHub
   attestations API and verifies it with Sigstore. The attestation must be signed by the
-  `grafana/dataViz/.github/workflows/release-please.yml` workflow on `main`, and its subject must be the file.
-- `--bump` checks the same attestations. It also makes sure that the release is immutable, that each file was built
-  from the commit of the tag, and that the manifest has the tag version and the hash of `renderer.js`.
+  `grafana/dataViz/.github/workflows/release-please.yml` workflow on `main`, its subject must be the file, the build
+  must have run on a GitHub-hosted runner, and it must be the build of the `commit` of `RENDERER`. A file that is the
+  same in several releases (for example `icons.json`) has one attestation per build, so the commit selects the right one.
+- `--bump` checks the same attestations against the commit of the tag. It also makes sure that the release is
+  immutable, that the manifest has the tag version and the hash of `renderer.js`, and that `package.json` has the tag
+  version.
 
 So a pin can name only files that the dataViz release workflow built. To trust another repository or workflow, change
 the constants in `scripts/renderer.mjs`.

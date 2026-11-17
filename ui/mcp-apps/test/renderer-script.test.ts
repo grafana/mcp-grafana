@@ -32,18 +32,23 @@ const content: Record<string, string> = {
     sha256: sha256(baseContent['renderer.js']),
     contractVersion: '1.2.0',
   }),
+  'package.json': JSON.stringify({ name: '@plugins/grafana-echarts-renderer', version: '1.2.3' }),
 };
 const pin: Pin = {
   repository: REPOSITORY,
   tag: TAG,
+  commit: COMMIT,
   signer: SIGNER,
   version: '1.2.3',
   contractVersion: '1.2.0',
   files: Object.fromEntries(REQUIRED_FILES.map((name) => [name, sha256(content[name])])),
 };
 
-/** A provenance bundle whose statement names `digest` and was built from `commit`. */
-const bundle = (digest: string, { predicateType = PROVENANCE, commit = COMMIT } = {}) => ({
+/** A provenance bundle whose statement names `digest` and was built from `commit` on a `runner` runner. */
+const bundle = (
+  digest: string,
+  { predicateType = PROVENANCE, commit = COMMIT, runner = 'github-hosted' as string | null } = {},
+) => ({
   dsseEnvelope: {
     payloadType: 'application/vnd.in-toto+json',
     payload: Buffer.from(
@@ -55,6 +60,8 @@ const bundle = (digest: string, { predicateType = PROVENANCE, commit = COMMIT } 
             resolvedDependencies: [
               { uri: `git+https://github.com/${REPOSITORY}@refs/heads/main`, digest: { gitCommit: commit } },
             ],
+            // null leaves the runner out of the statement.
+            internalParameters: { github: { event_name: 'push', runner_environment: runner ?? undefined } },
           },
         },
       }),
@@ -67,10 +74,17 @@ interface Release {
   immutable?: boolean;
   commit?: string;
   builtFrom?: string;
+  runner?: string;
 }
 
 /** A fake GitHub: release downloads, the releases and tag APIs, and the attestations API. */
-function github({ files = content, immutable = true, commit = COMMIT, builtFrom = COMMIT }: Release = {}) {
+function github({
+  files = content,
+  immutable = true,
+  commit = COMMIT,
+  builtFrom = COMMIT,
+  runner = 'github-hosted',
+}: Release = {}) {
   return vi.fn(async (url: string, _init?: RequestInit) => {
     if (url.startsWith(`https://github.com/${REPOSITORY}/releases/download/${TAG}/`)) {
       const name = url.slice(url.lastIndexOf('/') + 1);
@@ -81,7 +95,9 @@ function github({ files = content, immutable = true, commit = COMMIT, builtFrom 
     }
     if (url === `${API}/git/ref/tags/${TAG}`) return Response.json({ object: { type: 'commit', sha: commit } });
     const attestation = /\/attestations\/sha256:([0-9a-f]{64})$/.exec(url);
-    if (attestation) return Response.json({ attestations: [{ bundle: bundle(attestation[1], { commit: builtFrom }) }] });
+    if (attestation) {
+      return Response.json({ attestations: [{ bundle: bundle(attestation[1], { commit: builtFrom, runner }) }] });
+    }
     return new Response('not found', { status: 404 });
   });
 }
@@ -214,6 +230,33 @@ describe('verifyFile', () => {
     );
   });
 
+  it.each([['self-hosted'], [null]])('fails for a build on a %s runner, even with a valid signature', async (runner) => {
+    const verifier = { verify: vi.fn() };
+    const fetchImpl = api([{ bundle: bundle(sha256(data), { runner }) }]);
+    await expect(verifyFile('renderer.js', data, { verifier, fetchImpl })).rejects.toThrow(/not github-hosted/);
+    expect(verifier.verify).not.toHaveBeenCalled();
+  });
+
+  // A file that is the same in several releases has one attestation per build, in no set order.
+  it('passes the attestation of the expected commit among those of other builds', async () => {
+    const verifier = { verify: vi.fn() };
+    const fetchImpl = api([
+      { bundle: bundle(sha256(data), { commit: 'b'.repeat(40) }) },
+      { bundle: bundle(sha256(data), { commit: COMMIT }) },
+    ]);
+    await verifyFile('renderer.js', data, { verifier, fetchImpl, commit: COMMIT });
+    expect(verifier.verify).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails when no attestation is of the expected commit', async () => {
+    const verifier = { verify: vi.fn() };
+    const fetchImpl = api([{ bundle: bundle(sha256(data), { commit: 'b'.repeat(40) }) }]);
+    await expect(verifyFile('renderer.js', data, { verifier, fetchImpl, commit: COMMIT })).rejects.toThrow(
+      /built from commit b+, not a+/,
+    );
+    expect(verifier.verify).not.toHaveBeenCalled();
+  });
+
   it('fails when the verifier rejects the signer', async () => {
     const verifier = {
       verify: vi.fn(() => {
@@ -300,13 +343,19 @@ describe('bumpRenderer', () => {
   it.each<[string, Release, RegExp]>([
     ['a release that is not immutable', { immutable: false }, /not immutable/],
     ['a release without a required file', { files: { ...content, 'icons.json': undefined! } }, /no icons\.json/],
-    ['a file built from another commit', { builtFrom: 'b'.repeat(40) }, /built from commit b+, but tag/],
+    ['a file built from another commit', { builtFrom: 'b'.repeat(40) }, /built from commit b+, not a+/],
     ['a manifest of another version', { files: withManifest({ version: '9.9.9' }) }, /not the tag version/],
     [
       'a manifest whose sha256 is not renderer.js',
       { files: withManifest({ sha256: '0'.repeat(64) }) },
       /not the hash of renderer\.js/,
     ],
+    [
+      'a package.json of another version',
+      { files: { ...content, 'package.json': JSON.stringify({ version: '1.2.2' }) } },
+      /package\.json: version 1\.2\.2 is not the tag version 1\.2\.3/,
+    ],
+    ['a file built on a self-hosted runner', { runner: 'self-hosted' }, /self-hosted, not github-hosted/],
   ])('rejects %s and writes nothing', async (_, release, error) => {
     const files = Object.fromEntries(
       Object.entries(release.files ?? content).filter(([, value]) => value !== undefined),

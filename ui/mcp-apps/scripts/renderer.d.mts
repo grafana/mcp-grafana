@@ -2,6 +2,7 @@
 export interface Pin {
   repository: string;
   tag: string;
+  commit: string;
   signer: string;
   version: string;
   contractVersion: string;
@@ -39,13 +40,14 @@ export function parsePin(text: string): Pin;
 export function formatPin(pin: Pin): string;
 export function downloadURL(repository: string, tag: string, name: string): string;
 export function sourceCommit(statement: unknown): string | undefined;
+export function runnerEnvironment(statement: unknown): string | undefined;
 export function fetchRenderer(
   options?: Options & { localDir?: string | null },
 ): Promise<{ pin: Pin; downloaded: string[]; local?: string[] }>;
 export function verifyFile(
   name: string,
   data: Uint8Array,
-  options: { verifier: BundleVerifier; fetchImpl?: Fetch; token?: string },
+  options: { verifier: BundleVerifier; fetchImpl?: Fetch; token?: string; commit?: string },
 ): Promise<unknown>;
 export function verifyRenderer(options?: NetworkOptions): Promise<Pin>;
 export function bumpRenderer(tag: string, options?: NetworkOptions): Promise<Pin>;
