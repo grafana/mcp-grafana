@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
-import { sharedModulesExternal, sharedModulesGuard } from './sharedModules.config';
+import { iconCacheGuard, sharedModulesExternal, sharedModulesGuard } from './sharedModules.config';
 import { VIZ_RENDERER_FILE, VIZ_RENDERER_GLOBAL, VIZ_RENDERER_HASH_FILE } from './vizRenderer.config';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
@@ -45,7 +45,7 @@ function singleScript(): Plugin {
 // The Renderer resource, dist/viz-renderer.js: one classic script, so the App can run it as an inline script under
 // the default CSP of MCP Apps (#1589). The shared packages come from the App's global, not from this bundle.
 export default defineConfig({
-  plugins: [sharedModulesGuard(), singleScript()],
+  plugins: [sharedModulesGuard(), iconCacheGuard(), singleScript()],
   build: {
     emptyOutDir: false,
     minify: true,

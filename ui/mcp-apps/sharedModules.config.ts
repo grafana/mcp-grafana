@@ -75,3 +75,36 @@ export function sharedModulesGuard(): Plugin {
     },
   };
 }
+
+/**
+ * The copies of an npm package in a bundle: one per installed directory, and one more for each directory whose
+ * CommonJS build (a .cjs file, as react-inlinesvg ships) is bundled next to its ES module build, because each build
+ * has its own module state.
+ */
+export function packageCopies(moduleIds: Iterable<string>, pkg: string): string[] {
+  const copies = new Set<string>();
+  for (const raw of moduleIds) {
+    const id = raw.replace(/^\0/, '').replace(/\?.*$/, '');
+    if (packageOf(id) !== pkg) continue;
+    const dir = id.slice(0, id.lastIndexOf(`node_modules/${pkg}`) + `node_modules/${pkg}`.length);
+    copies.add(/\.c[jt]s$/.test(id) ? `${dir} (CommonJS)` : dir);
+  }
+  return [...copies].sort();
+}
+
+/**
+ * Fails the build if the bundle has more than one copy of react-inlinesvg (delivery.10). With two, the icon cache that
+ * the bundle fills (renderer.15) can be another one than the cache that Icon of @grafana/ui reads.
+ */
+export function iconCacheGuard(): Plugin {
+  return {
+    name: 'grafana-icon-cache-guard',
+    generateBundle(_options, bundle) {
+      const ids = Object.values(bundle).flatMap((chunk) => (chunk.type === 'chunk' ? chunk.moduleIds : []));
+      const copies = packageCopies(ids, 'react-inlinesvg');
+      if (copies.length > 1) {
+        this.error(`the bundle has ${copies.length} copies of react-inlinesvg: ${copies.join(', ')}`);
+      }
+    },
+  };
+}
