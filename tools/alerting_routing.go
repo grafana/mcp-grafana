@@ -2,12 +2,16 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/prometheus/alertmanager/matcher/compat"
+	amlabels "github.com/prometheus/alertmanager/pkg/labels"
+	"github.com/prometheus/common/promslog"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
@@ -90,14 +94,66 @@ func manageRouting(ctx context.Context, args ManageRoutingParams) (any, error) {
 
 // getNotificationPolicies retrieves the full notification policy tree.
 func getNotificationPolicies(ctx context.Context) (*models.Route, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Provisioning.GetPolicyTreeWithParams(
-		provisioning.NewGetPolicyTreeParamsWithContext(ctx),
-	)
+	client, err := newAlertingClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get notification policies: %w", err)
 	}
-	return resp.Payload, nil
+	resp, err := client.makeRequest(ctx, "/api/v1/provisioning/policies", nil)
+	if err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	var tree policyRoute
+	if err := json.Unmarshal(body, &tree); err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	route, err := tree.toModel()
+	if err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	return route, nil
+}
+
+var parsePolicyMatcher = compat.FallbackMatcherParser(promslog.NewNopLogger())
+
+// policyRoute decodes matchers as the Alertmanager strings Grafana sends, not the objects models.Route declares.
+type policyRoute struct {
+	models.Route
+	Matchers []string       `json:"matchers,omitempty"`
+	Routes   []*policyRoute `json:"routes,omitempty"`
+}
+
+func (r *policyRoute) toModel() (*models.Route, error) {
+	route := r.Route
+	route.Matchers = nil
+	for _, s := range r.Matchers {
+		m, err := parsePolicyMatcher(s, "grafana")
+		if err != nil {
+			return nil, fmt.Errorf("parse matcher %q: %w", s, err)
+		}
+		isRegex := m.Type == amlabels.MatchRegexp || m.Type == amlabels.MatchNotRegexp
+		route.Matchers = append(route.Matchers, &models.Matcher{
+			Name:    &m.Name,
+			Value:   &m.Value,
+			IsRegex: &isRegex,
+			IsEqual: m.Type == amlabels.MatchEqual || m.Type == amlabels.MatchRegexp,
+		})
+	}
+	route.Routes = nil
+	for _, child := range r.Routes {
+		c, err := child.toModel()
+		if err != nil {
+			return nil, err
+		}
+		route.Routes = append(route.Routes, c)
+	}
+	return &route, nil
 }
 
 // getContactPointDetail retrieves full details for a contact point by name,
