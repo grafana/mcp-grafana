@@ -1,9 +1,10 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GrafanaApplication } from '../app/GrafanaApplication';
 import { createAppHostState } from '../app/appHostState';
+import { chartLabel } from '../app/ChartPicker';
 import { readVizFixture } from './vizFixtures';
 
 const renderer = vi.hoisted(() => ({
@@ -180,5 +181,39 @@ describe('RendererView refresh', () => {
     act(() => onRefresh()({ id: 'r1', cause: 'refresh' }));
     await waitFor(() => expect(renderer.setRefreshed).toHaveBeenCalledWith('r1', false, 'boom'));
     expect(renderer.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('chart picker', () => {
+  const result = readVizFixture('prometheus-line', 'result.json');
+
+  it('draws the picked alternative with update, and names it in the header (spec.2)', async () => {
+    view();
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Time series · lgtm-prometheus')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chart: Time series' }));
+    const charts = [result.chart, ...result.alternatives.map((a: { chart: string }) => a.chart)];
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(charts.map(chartLabel));
+    expect(screen.getByRole('option', { name: 'Time series' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('option', { name: 'Bar chart' }));
+
+    const bar = result.alternatives.find((a: { chart: string }) => a.chart === 'barchart').panel;
+    await waitFor(() =>
+      expect(renderer.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({ panel: expect.objectContaining({ type: bar.type, options: bar.options }) }),
+      ),
+    );
+    expect(screen.getByText('Bar chart · lgtm-prometheus')).toBeTruthy();
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('shows no picker for a result with no alternatives', async () => {
+    const { app } = view();
+    act(() => {
+      app.ontoolresult?.({ structuredContent: { ...result, alternatives: [] }, content: [] } as never);
+    });
+    await waitFor(() => expect(renderer.render).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /^Chart:/ })).toBeNull();
   });
 });

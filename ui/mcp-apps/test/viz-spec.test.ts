@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { buildVizSpec, parseVizArgs, parseVizResult } from '../app/vizSpec';
+import { buildVizSpec, parseVizArgs, parseVizResult, shownChart } from '../app/vizSpec';
 import { readVizFixture as read, vizAppFixtureSets as sets } from './vizFixtures';
 
 // The App test of the viz contract (fixtures.9).
@@ -46,5 +46,25 @@ describe('viz spec', () => {
   it('reads no result from a payload of another tool', () => {
     expect(parseVizResult({ resultType: 'matrix', result: [] })).toBeUndefined();
     expect(parseVizArgs({ expr: 'up' })).toBeUndefined();
+  });
+});
+
+describe('shownChart', () => {
+  const result = parseVizResult(read('prometheus-line', 'result.json'))!;
+
+  it('gives the alternative that the user picked, or the chart of the result', () => {
+    expect(shownChart(result)).toBe('timeseries');
+    expect(shownChart(result, 'barchart')).toBe('barchart');
+    expect(shownChart(result, 'timeseries')).toBe('timeseries');
+  });
+
+  it('gives the chart of the result when the result no longer has the pick', () => {
+    expect(shownChart(result, 'nodeGraph')).toBe('timeseries');
+  });
+
+  it('draws the same chart as buildVizSpec (spec.2)', () => {
+    const args = parseVizArgs(read('prometheus-line', 'args.json'))!;
+    const bar = result.alternatives.find((a) => a.chart === 'barchart')!.panel;
+    expect(buildVizSpec(args, result, {}, 'barchart').panel.options).toEqual(bar.options);
   });
 });

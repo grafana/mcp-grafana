@@ -107,6 +107,15 @@ describe('model context of the viz view (state.14)', () => {
     expect(sent()).toEqual([expect.stringContaining('Time range of the arguments: now-6h to now.')]);
   });
 
+  it('sends the chart that the user picked, with the last state', () => {
+    const { state, sent, report } = shown();
+    report(ready);
+    state.pickVizChart('barchart');
+    expect(sent()).toEqual([expect.stringContaining('The Grafana App shows a barchart chart')]);
+    report(noData);
+    expect(sent().at(-1)).toContain('shows a barchart chart');
+  });
+
   it('sends nothing after a refresh with the cause refresh', async () => {
     const { state, updateModelContext, report } = shown();
     report(ready);

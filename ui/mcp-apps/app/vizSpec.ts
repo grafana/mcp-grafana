@@ -65,6 +65,14 @@ export function parseVizArgs(args: unknown): VizArgs | undefined {
 }
 
 /**
+ * The chart on screen: the alternative that the user picked, while the result still has it, or the chart of the result.
+ * buildVizSpec draws the same chart.
+ */
+export function shownChart(result: VizResult, picked?: string): string {
+  return picked && result.alternatives.some((a) => a.chart === picked) ? picked : result.chart;
+}
+
+/**
  * Makes the viz spec of a result. `chart` picks an alternative of the result; with no `chart`, or a chart that the
  * result does not have, the spec has the chart of the result.
  */

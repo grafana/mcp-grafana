@@ -138,3 +138,81 @@ describe('refreshViz', () => {
     expect(state.getSnapshot().viz).toBeUndefined();
   });
 });
+
+describe('pickVizChart', () => {
+  const mismatch = { isError: true, content: [{ type: 'text', text: 'type-mismatch: barchart needs categories.' }] };
+
+  function shown(callServerTool: Mock = vi.fn(async () => ok(fixture('result.json')))) {
+    const h = host(callServerTool);
+    h.app.ontoolinput?.(vizCall);
+    h.app.ontoolresult?.(ok(fixture('result.json')));
+    return h;
+  }
+
+  it('keeps an alternative of the result, and ignores a chart it does not have (spec.2)', () => {
+    const { state } = shown();
+    state.pickVizChart('nodeGraph');
+    expect(state.getSnapshot().vizChart).toBeUndefined();
+    state.pickVizChart('barchart');
+    expect(state.getSnapshot().vizChart).toBe('barchart');
+    expect(state.getSnapshot().vizArgs).toEqual(fixture('args.json'));
+  });
+
+  it('refreshes with the picked chart as type, apart from the last arguments (refresh.8, refresh.9)', async () => {
+    const { state, callServerTool } = shown(vi.fn(async () => ok({ ...fixture('result.json'), chart: 'barchart' })));
+    state.pickVizChart('barchart');
+    expect(await state.refreshViz({ id: 'r1', cause: 'refresh' })).toBeUndefined();
+    expect(callServerTool.mock.calls[0][0].arguments.arguments).toEqual({ ...fixture('args.json'), type: 'barchart' });
+    expect(state.getSnapshot().vizArgs).toEqual(fixture('args.json'));
+    expect(state.getSnapshot().vizChart).toBe('barchart');
+  });
+
+  it('keeps the type of the model in the last arguments', async () => {
+    const { app, state } = shown(vi.fn(async () => ok({ ...fixture('result.json'), chart: 'barchart' })));
+    const typed = { ...fixture('args.json'), type: 'timeseries' };
+    app.ontoolinput?.({ arguments: { toolName: 'query_datasource', arguments: typed } });
+    app.ontoolresult?.(ok(fixture('result.json')));
+    state.pickVizChart('barchart');
+    await state.refreshViz({ id: 'r1', cause: 'timeRange', from: 'now-6h', to: 'now' });
+    expect(state.getSnapshot().vizArgs).toEqual({ ...typed, from: 'now-6h', to: 'now' });
+  });
+
+  it('drops the pick when the Source picks the chart after type-mismatch (refresh.10)', async () => {
+    const callServerTool = vi.fn().mockResolvedValueOnce(mismatch).mockResolvedValueOnce(ok(fixture('result.json')));
+    const { state } = shown(callServerTool);
+    state.pickVizChart('barchart');
+    await state.refreshViz({ id: 'r1', cause: 'refresh' });
+    const snapshot = state.getSnapshot();
+    expect(callServerTool.mock.calls[1][0].arguments.arguments).toEqual(fixture('args.json'));
+    expect(snapshot.vizChart).toBeUndefined();
+    expect(snapshot.vizNotices).toEqual([expect.objectContaining({ code: 'chart-changed' })]);
+    expect(snapshot.vizNotices?.[0].message).toContain('barchart');
+  });
+
+  it('clears the notices of the last refresh (spec.8)', async () => {
+    const callServerTool = vi.fn().mockResolvedValueOnce(mismatch).mockResolvedValueOnce(ok(fixture('result.json')));
+    const { state } = shown(callServerTool);
+    state.pickVizChart('barchart');
+    await state.refreshViz({ id: 'r1', cause: 'refresh' });
+    state.pickVizChart('histogram');
+    expect(state.getSnapshot().vizNotices).toBeUndefined();
+  });
+
+  it('keeps a pick made while a refresh ran', async () => {
+    let finish: (value: unknown) => void = () => {};
+    const { state } = shown(vi.fn(() => new Promise((resolve) => (finish = resolve))));
+    const pending = state.refreshViz({ id: 'r1', cause: 'refresh' });
+    state.pickVizChart('histogram');
+    finish(ok(fixture('result.json')));
+    await pending;
+    expect(state.getSnapshot().vizChart).toBe('histogram');
+  });
+
+  it('starts with no pick for a new tool call', () => {
+    const { app, state } = shown();
+    state.pickVizChart('barchart');
+    app.ontoolinput?.(vizCall);
+    app.ontoolresult?.(ok(fixture('result.json')));
+    expect(state.getSnapshot().vizChart).toBeUndefined();
+  });
+});
