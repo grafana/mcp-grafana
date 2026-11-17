@@ -176,6 +176,8 @@ export function createAppHostState(app: App): AppHostState {
 
   /** A new tool call from the host supersedes any refresh still in flight, and starts a new model context. */
   const nextCall = (): Partial<AppHostSnapshot> => {
+    // The host keeps the last context until the next one; the context of the last call describes a chart that is gone.
+    if (contextSent) void app.updateModelContext({ content: [] }).catch(() => {});
     vizState = undefined;
     contextSent = false;
     return { generation: snapshot.generation + 1, notice: undefined, refreshing: false };

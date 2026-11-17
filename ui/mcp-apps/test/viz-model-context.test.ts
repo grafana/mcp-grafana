@@ -99,13 +99,29 @@ describe('model context of the viz view (state.14)', () => {
     expect(updateModelContext).not.toHaveBeenCalled();
   });
 
-  it('starts again for a new tool call', () => {
+  it('clears a sent context for a new tool call, then starts again', () => {
     const { app, state, updateModelContext } = shown();
     state.reportVizState(noData);
     app.ontoolinput?.({ arguments: { toolName: 'query_datasource', arguments: fixture('args.json') } });
     app.ontoolresult?.(ok());
     state.reportVizState(ready);
-    expect(updateModelContext).toHaveBeenCalledTimes(1);
+    expect(updateModelContext).toHaveBeenCalledTimes(2);
+    expect(updateModelContext).toHaveBeenLastCalledWith({ content: [] });
+  });
+
+  it('clears a sent context when the next call is not a viz call', () => {
+    const { app, state, updateModelContext } = shown();
+    state.reportVizState(noData);
+    app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: { expr: 'up' } } });
+    expect(updateModelContext).toHaveBeenLastCalledWith({ content: [] });
+  });
+
+  it('clears nothing for a new tool call when no context was sent', () => {
+    const { app, state, updateModelContext } = shown();
+    state.reportVizState(ready);
+    app.ontoolinput?.({ arguments: { toolName: 'query_datasource', arguments: fixture('args.json') } });
+    app.ontoolresult?.(ok());
+    expect(updateModelContext).not.toHaveBeenCalled();
   });
 
   it('sends nothing to a host without updateModelContext', () => {
