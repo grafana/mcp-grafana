@@ -18,6 +18,10 @@ From the repository root, run `mise run build-ui` after UI source changes and co
 `ui/panel-viewer`. Panel-viewer has no dedicated test script. Do not report it as tested by the
 MCP Apps suite. Validate its changed behavior manually in the host and report results.
 
+For owner-level coverage, run `npm run test:coverage` from `ui/mcp-apps`. See the
+[coverage reporting README](../ui/mcp-apps/scripts/codeowners-coverage/README.md)
+for report scope, planned shared-package extraction, and nightly Bench setup.
+
 ## Frontend test conventions
 
 When writing or reviewing frontend tests, read the

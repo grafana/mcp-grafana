@@ -1,0 +1,67 @@
+name: Report Frontend Coverage to Bench
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    # Publish only trusted main-branch measurements, including manual runs.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: node
+
+      - name: Install dependencies
+        working-directory: ui/mcp-apps
+        run: npm ci --ignore-scripts
+
+      - name: Run coverage and split by codeowner
+        working-directory: ui/mcp-apps
+        run: npm run test:coverage
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: frontend-coverage
+          path: ui/mcp-apps/coverage/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Setup Grafana Bench
+        uses: grafana/grafana-bench/.github/actions/setup-grafana-bench@c681398158d5ba840b7493cb6a087e69f44f67a7
+        with:
+          version: v1.0.6
+
+      - name: Get Vault secrets
+        id: get-secrets
+        uses: grafana/shared-workflows/actions/get-vault-secrets@2f1ddaf3ce1aa677356243d0dd584be33cfa35e3 # get-vault-secrets/v2.1
+        with:
+          repo_secrets: |
+            PROMETHEUS_URL=frontend_perf_tests:prometheus_push_url
+            PROMETHEUS_USER=frontend_perf_tests:prometheus_user
+            PROMETHEUS_TOKEN=frontend_perf_tests:prometheus_token
+
+      - name: Report coverage to Bench
+        working-directory: ui/mcp-apps
+        env:
+          PROMETHEUS_URL: ${{ fromJSON(steps.get-secrets.outputs.secrets).PROMETHEUS_URL }}
+          PROMETHEUS_USER: ${{ fromJSON(steps.get-secrets.outputs.secrets).PROMETHEUS_USER }}
+          PROMETHEUS_PASSWORD: ${{ fromJSON(steps.get-secrets.outputs.secrets).PROMETHEUS_TOKEN }}
+        run: npm run coverage:bench
