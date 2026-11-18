@@ -1,6 +1,6 @@
 import { Picker } from '../src/Picker';
 
-// The names of the charts of registry/chart-types.json, which has none for people.
+// Labels for the chart IDs of registry/chart-types.json, which has no display names.
 const LABELS: Record<string, string> = {
   timeseries: 'Time series',
   barchart: 'Bar chart',

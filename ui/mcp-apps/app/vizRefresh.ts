@@ -18,7 +18,7 @@ export type VizRefreshOutcome =
 /** The arguments with `type`, or with no `type` when it is undefined. */
 export function withType(args: VizArgs, type: string | undefined): VizArgs {
   const { type: _type, ...rest } = args;
-  return type === undefined ? (rest as VizArgs) : { ...rest, type };
+  return type === undefined ? rest : { ...rest, type };
 }
 
 /** The code and the message of a tool error (tool.25): `code: message`. A text with no code is all message. */

@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GrafanaApplication } from '../app/GrafanaApplication';
 import { createAppHostState } from '../app/appHostState';
-import { chartLabel } from '../app/ChartPicker';
 import { readVizFixture } from './vizFixtures';
 
 const renderer = vi.hoisted(() => ({
@@ -193,8 +192,18 @@ describe('chart picker', () => {
     expect(screen.getByText('Time series · lgtm-prometheus')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Chart: Time series' }));
-    const charts = [result.chart, ...result.alternatives.map((a: { chart: string }) => a.chart)];
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(charts.map(chartLabel));
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Time series',
+      'Bar chart',
+      'Histogram',
+      'Pie chart',
+      'Funnel',
+      'Heatmap',
+      'State timeline',
+      'Status history',
+      'Streamgraph',
+      'Bubble',
+    ]);
     expect(screen.getByRole('option', { name: 'Time series' }).getAttribute('aria-selected')).toBe('true');
     fireEvent.click(screen.getByRole('option', { name: 'Bar chart' }));
 

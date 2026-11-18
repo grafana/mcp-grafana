@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { buildVizSpec, parseVizArgs, parseVizResult, shownChart } from '../app/vizSpec';
+import chartTypes from '@grafana/viz-contract/registry/chart-types.json';
+
+import { chartLabel } from '../app/ChartPicker';
+import { buildVizSpec, parseVizArgs, parseVizResult, shownChart, vizCharts } from '../app/vizSpec';
 import { readVizFixture as read, vizAppFixtureSets as sets } from './vizFixtures';
 
 // The App test of the viz contract (fixtures.9).
@@ -52,6 +55,21 @@ describe('viz spec', () => {
 describe('shownChart', () => {
   const result = parseVizResult(read('prometheus-line', 'result.json'))!;
 
+  it('lists the chart of the result, then its alternatives', () => {
+    expect(vizCharts(result)).toEqual([
+      'timeseries',
+      'barchart',
+      'histogram',
+      'piechart',
+      'funnel',
+      'heatmap',
+      'state-timeline',
+      'status-history',
+      'streamgraph',
+      'bubble',
+    ]);
+  });
+
   it('gives the alternative that the user picked, or the chart of the result', () => {
     expect(shownChart(result)).toBe('timeseries');
     expect(shownChart(result, 'barchart')).toBe('barchart');
@@ -66,5 +84,17 @@ describe('shownChart', () => {
     const args = parseVizArgs(read('prometheus-line', 'args.json'))!;
     const bar = result.alternatives.find((a) => a.chart === 'barchart')!.panel;
     expect(buildVizSpec(args, result, {}, 'barchart').panel.options).toEqual(bar.options);
+  });
+});
+
+describe('chartLabel', () => {
+  it('has a label for each chart of the registry', () => {
+    // A chart with no label shows its registry ID; a new contract chart should get a label.
+    const unlabeled = chartTypes.charts.map((c) => c.name).filter((name) => chartLabel(name) === name);
+    expect(unlabeled).toEqual([]);
+  });
+
+  it('shows the registry ID of an unknown chart', () => {
+    expect(chartLabel('gauge')).toBe('gauge');
   });
 });

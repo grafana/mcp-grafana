@@ -64,12 +64,17 @@ export function parseVizArgs(args: unknown): VizArgs | undefined {
   return args as VizArgs;
 }
 
+/** The charts that a user can pick for a result: its own chart, then its alternatives (tool.23). */
+export function vizCharts(result: VizResult): string[] {
+  return [result.chart, ...result.alternatives.map((a) => a.chart)];
+}
+
 /**
- * The chart on screen: the alternative that the user picked, while the result still has it, or the chart of the result.
+ * The chart on screen: the chart that the user picked, while the result still has it, or the chart of the result.
  * buildVizSpec draws the same chart.
  */
 export function shownChart(result: VizResult, picked?: string): string {
-  return picked && result.alternatives.some((a) => a.chart === picked) ? picked : result.chart;
+  return picked && vizCharts(result).includes(picked) ? picked : result.chart;
 }
 
 /**

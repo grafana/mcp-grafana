@@ -6,7 +6,7 @@ import '../styles.css';
 import type { AppHostState } from './appHostState';
 import { ChartPicker, chartLabel } from './ChartPicker';
 import type { Renderer } from './loadRenderer';
-import { buildVizSpec, shownChart, type VizArgs, type VizSpec } from './vizSpec';
+import { buildVizSpec, shownChart, type VizArgs, type VizSpec, vizCharts } from './vizSpec';
 
 // The query text of the common data sources: Prometheus and Loki, SQL, and others.
 const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText'];
@@ -34,6 +34,7 @@ export function VizApplication({ host }: { host: AppHostState }) {
     [viz, vizArgs, vizNotices, vizChart, colorMode, timeZone],
   );
   const chart = viz ? shownChart(viz, vizChart) : undefined;
+  const charts = viz ? vizCharts(viz) : [];
   // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
   const [loadFailure, setLoadFailure] = useState<string>();
 
@@ -53,13 +54,9 @@ export function VizApplication({ host }: { host: AppHostState }) {
             : state.status,
       }}
       share={
-        // The charts that fit the data (tool.23); with none, there is nothing to pick.
-        viz && chart && viz.alternatives.length > 0 && !state.isError && !loadFailure ? (
-          <ChartPicker
-            options={[viz.chart, ...viz.alternatives.map((a) => a.chart)]}
-            value={chart}
-            onChange={host.pickVizChart}
-          />
+        // With no alternatives, there is nothing to pick.
+        chart && charts.length > 1 && !state.isError && !loadFailure ? (
+          <ChartPicker options={charts} value={chart} onChange={host.pickVizChart} />
         ) : undefined
       }
       feedback={

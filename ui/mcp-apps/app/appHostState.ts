@@ -10,7 +10,15 @@ import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResu
 import { parseTraceResult } from './parseTraceResult';
 import { vizFailureContext, vizModelContext } from './vizModelContext';
 import { runVizRefresh, withType } from './vizRefresh';
-import { parseVizArgs, parseVizResult, shownChart, type VizArgs, type VizNotice, type VizResult } from './vizSpec';
+import {
+  parseVizArgs,
+  parseVizResult,
+  shownChart,
+  vizCharts,
+  type VizArgs,
+  type VizNotice,
+  type VizResult,
+} from './vizSpec';
 
 // Attach handlers before connecting: hosts may deliver results before React's first commit.
 /** Source query inputs retained for refresh and range selection. */
@@ -206,8 +214,7 @@ export function createAppHostState(app: App): AppHostState {
 
   const pickVizChart = (chart: string) => {
     const { viz, vizChart } = snapshot;
-    const known = chart === viz?.chart || viz?.alternatives.some((a) => a.chart === chart);
-    if (!viz || !known || chart === shownChart(viz, vizChart)) return;
+    if (!viz || !vizCharts(viz).includes(chart) || chart === shownChart(viz, vizChart)) return;
     // The notices of the App belong to the spec of one refresh (spec.8).
     set({ vizChart: chart, vizNotices: undefined });
     // The user changed what the model asked for (state.14). The Renderer reports a state only when it changes, so this

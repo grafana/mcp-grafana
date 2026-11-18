@@ -73,7 +73,8 @@ export function Picker<T extends string>({ label, options, value, onChange, trig
       {open && (
         <ul className={cx(styles.menu, opensRight && styles.menuStart)} id={listId} role="listbox" aria-label={label}>
           {options.map((option) => (
-            <li key={option.value}>
+            // A listbox holds only options, so the list item has no role of its own.
+            <li key={option.value} role="none">
               <Button
                 variant="ghost"
                 size="xs"
