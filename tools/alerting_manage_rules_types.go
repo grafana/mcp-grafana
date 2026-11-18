@@ -668,7 +668,7 @@ type ManageRulesWriteParams struct {
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
 	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=Grafana-managed organization ID (required for 'create'\\, 'update')"`
-	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
+	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true. Set false to update a provisioned rule only after the user confirms they want to edit it."`
 }
 
 func (p ManageRulesWriteParams) validate() error {

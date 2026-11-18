@@ -558,10 +558,12 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 	response, err := c.Provisioning.PutAlertRule(params)
 	if err != nil {
 		// The client has no type for 409, so Grafana's message is lost. It is
-		// returned when the rule's stored provenance differs from the one sent.
+		// returned when the rule's stored provenance differs from the one sent,
+		// i.e. the rule is provisioned. Such rules are often managed by a tool
+		// like Terraform, so the user has to agree before the agent edits one.
 		var apiErr *runtime.APIError
 		if disableProvenance && errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict) {
-			return nil, fmt.Errorf("update alert rule %s: the rule's provenance does not match the one sent. disable_provenance defaults to true, which clears it, and Grafana rejects that for a rule provisioned through the API (provenance 'api'). Retry with disable_provenance=false: %w", args.UID, err)
+			return nil, fmt.Errorf("update alert rule %s: the rule is provisioned, so Grafana refused the update. It is likely managed by Terraform or another tool through the provisioning API, and editing it here can conflict with that tool. Do not retry on your own. Ask the user if they really want to edit a provisioned rule. Only if they confirm, retry with disable_provenance=false: %w", args.UID, err)
 		}
 		return nil, fmt.Errorf("update alert rule %s: %w", args.UID, err)
 	}
