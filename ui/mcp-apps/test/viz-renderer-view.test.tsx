@@ -37,7 +37,7 @@ afterEach(() => {
 
 type Handlers = { onhostcontextchanged?: (context: unknown) => void };
 
-function view(callServerTool = vi.fn(), serverTools = true) {
+function view(callServerTool = vi.fn(), serverTools = true, withResult = true) {
   const app = {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
@@ -51,7 +51,9 @@ function view(callServerTool = vi.fn(), serverTools = true) {
     app.ontoolinput?.({
       arguments: { toolName: 'query_datasource', arguments: readVizFixture('prometheus-line', 'args.json') },
     } as never);
-    app.ontoolresult?.({ structuredContent: readVizFixture('prometheus-line', 'result.json'), content: [] } as never);
+    if (withResult) {
+      app.ontoolresult?.({ structuredContent: readVizFixture('prometheus-line', 'result.json'), content: [] } as never);
+    }
   });
   const context = () =>
     (app.updateModelContext as unknown as ReturnType<typeof vi.fn>).mock.calls.map(
@@ -186,10 +188,9 @@ describe('RendererView refresh', () => {
 describe('chart picker', () => {
   const result = readVizFixture('prometheus-line', 'result.json');
 
-  it('draws the picked alternative with update, and names it in the header (spec.2)', async () => {
+  it('draws the picked alternative with update, and names it on the picker (spec.2)', async () => {
     view();
     await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
-    expect(screen.getByText('Time series · lgtm-prometheus')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Chart: Time series' }));
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
@@ -213,7 +214,7 @@ describe('chart picker', () => {
         expect.objectContaining({ panel: expect.objectContaining({ type: bar.type, options: bar.options }) }),
       ),
     );
-    expect(screen.getByText('Bar chart · lgtm-prometheus')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Chart: Bar chart' })).toBeTruthy();
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
@@ -224,5 +225,25 @@ describe('chart picker', () => {
     });
     await waitFor(() => expect(renderer.render).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /^Chart:/ })).toBeNull();
+  });
+});
+
+describe('query block', () => {
+  const expr = 'sum by (handler) (rate(grafana_http_request_duration_seconds_count[5m]))';
+
+  it('leads the view with the query of the arguments, and no summary card', async () => {
+    view();
+    await waitFor(() => expect(renderer.render).toHaveBeenCalled());
+    const block = screen.getByRole('region', { name: 'Query' });
+    expect(block.textContent).toBe(`lgtm-prometheus${expr}`);
+    expect(screen.getByRole('article', { name: 'Grafana' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Query result' })).toBeNull();
+  });
+
+  it('shows the query while the result is on its way', () => {
+    view(vi.fn(), true, false);
+    expect(screen.getByRole('region', { name: 'Query' }).textContent).toContain(expr);
+    expect(screen.getByText('Waiting for query results…')).toBeTruthy();
+    expect(renderer.render).not.toHaveBeenCalled();
   });
 });
