@@ -60,119 +60,65 @@ func resolveServerName(flagValue string, flagExplicitlySet bool, envValue, defau
 	return defaultValue
 }
 
-func maybeAddTools(s *mcp.Server, tf func(*mcp.Server), enabledTools []string, disable bool, category string) {
-	if !slices.Contains(enabledTools, category) {
-		slog.Debug("Not enabling tools", "category", category)
-		return
+func (dt *disabledTools) disabledByFlag() map[string]bool {
+	return map[string]bool{
+		"search":        dt.search,
+		"datasource":    dt.datasource,
+		"incident":      dt.incident,
+		"prometheus":    dt.prometheus,
+		"loki":          dt.loki,
+		"elasticsearch": dt.elasticsearch,
+		"quickwit":      dt.quickwit,
+		"influxdb":      dt.influxdb,
+		"alerting":      dt.alerting,
+		"dashboard":     dt.dashboard,
+		"folder":        dt.folder,
+		"oncall":        dt.oncall,
+		"asserts":       dt.asserts,
+		"admin":         dt.admin,
+		"pyroscope":     dt.pyroscope,
+		"navigation":    dt.navigation,
+		"tempo":         dt.tempo,
+		"annotations":   dt.annotations,
+		"rendering":     dt.rendering,
+		"snapshot":      dt.snapshot,
+		"cloudwatch":    dt.cloudwatch,
+		"cloudlogging":  dt.cloudlogging,
+		"azuremonitor":  dt.azuremonitor,
+		"examples":      dt.examples,
+		"sql":           dt.sql,
+		"runpanelquery": dt.runpanelquery,
+		"graphite":      dt.graphite,
+		"dsquery":       dt.dsquery,
+		"plugin":        dt.plugin,
+		"api":           dt.api,
+		"config":        dt.config,
+		"provisioning":  dt.provisioning,
+		"agento11y":     dt.agento11y,
+		"assistant":     dt.assistant,
+		"docs":          dt.docs,
+		"user":          dt.user,
 	}
-	if disable {
-		slog.Info("Disabling tools", "category", category)
-		return
-	}
-	slog.Debug("Enabling tools", "category", category)
-	tf(s)
 }
 
-func isCategoryEnabled(enabledTools []string, disabled bool, category string) bool {
-	return slices.Contains(enabledTools, category) && !disabled
-}
-
-var categoryDescription = map[string]string{
-	"search":        "Search: Find dashboards, folders, and other Grafana resources.",
-	"datasource":    "Datasources: List and fetch details for datasources.",
-	"incident":      "Incidents: Search, create, update, and resolve incidents in Grafana Incident.",
-	"prometheus":    "Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.",
-	"loki":          "Loki: Run LogQL queries, retrieve log metadata, and explore label names/values.",
-	"elasticsearch": "Elasticsearch and OpenSearch: Query Elasticsearch and OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.",
-	"quickwit":      "Quickwit: Query Quickwit datasources using Lucene syntax or Query DSL for logs and documents.",
-	"influxdb":      "InfluxDB: Query InfluxDB datasources.",
-	"alerting":      "Alerting: List and fetch alert rules and notification contact points.",
-	"dashboard":     "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.",
-	"folder":        "Folders: Manage dashboard folders.",
-	"oncall":        "OnCall: View and manage on-call schedules, shifts, teams, and users.",
-	"asserts":       "Asserts: Query and analyze assertion data.",
-	"admin":         "Admin: List teams and perform administrative tasks.",
-	"pyroscope":     "Pyroscope: Profile applications and fetch profiling data.",
-	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries, with optional built-in shortening.",
-	"tempo":         "Tempo: Search traces with TraceQL, compute trace-derived metrics, fetch and diff traces, and explore trace attributes.",
-	"annotations":   "Annotations: Create and manage dashboard annotations.",
-	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
-	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
-	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
-	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
-	"cloudlogging":  "Google Cloud Logging: Query logs with the Cloud Logging query language and list projects, log buckets, and views.",
-	"azuremonitor":  "Azure Monitor: Query Azure Log Analytics workspaces and Azure Resource Graph with KQL.",
-	"examples":      "Examples: Query example tools.",
-	"sql":           "SQL: Query supported SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery) via Grafana with macro substitution, schema discovery, and variable support.",
-	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
-	"graphite":      "Graphite: Query Graphite datasources for metrics.",
-	"dsquery":       "Data source queries: Chart the queries of any data source with render_grafana_app (query_datasource).",
-	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
-	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
-	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
-	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability. Read its agent catalog (system prompts, tools, version history, and per-version scores). Read or manage its eval configuration (evaluators, templates, eval rules, and guards), its curated saved conversations and collections, its offline experiments with their trials and scores, and the versioned test suites those experiments run against.",
-	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
-	"docs":          "Docs: Search and retrieve Grafana product documentation (powered by grafana.com/llms-full.txt).",
-	"user":          "User: Identify the current user/credential, its capabilities, and the organizations it can access.",
-}
-
-var categoryDescriptionNoQuery = map[string]string{
-	"prometheus":   "Prometheus: Retrieve metric metadata and explore metric names and label names/values. Query execution is disabled.",
-	"loki":         "Loki: Retrieve log metadata and index stats, explore label names/values, and audit label strategy. Log query execution is disabled.",
-	"pyroscope":    "Pyroscope: Explore profile types and label names/values. Query execution is disabled.",
-	"cloudwatch":   "CloudWatch: List AWS CloudWatch namespaces, metrics, dimensions, and log groups. Query execution is disabled.",
-	"cloudlogging": "Google Cloud Logging: List GCP projects, log buckets, and views. Query execution is disabled.",
-	"sql":          "SQL: List tables and describe table schemas in SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Query execution is disabled.",
-	"graphite":     "Graphite: List Graphite metrics and tags. Query execution is disabled.",
-}
-
-const navigationDescriptionNoShortening = "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries."
-
-var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor"}
-
-var mutatingQueryCategories = []string{"sql", "influxdb"}
-
-var enableQueryToolNames = []string{"query_sql", "query_influxdb"}
-
-func (dt *disabledTools) writeToolOverridden(names ...string) bool {
-	overrides := strings.Split(dt.writeToolOverrides, ",")
-	for i, o := range overrides {
-		overrides[i] = strings.TrimSpace(o)
-	}
-	if dt.enableQuery {
-		overrides = append(overrides, enableQueryToolNames...)
-	}
-	for _, name := range names {
-		if slices.Contains(overrides, name) {
-			return true
+func (dt *disabledTools) policy() tools.Policy {
+	dt.normalizeEnabledTools()
+	disabled := dt.disabledByFlag()
+	var p tools.Policy
+	for _, name := range strings.Split(dt.enabledTools, ",") {
+		if !disabled[name] {
+			p.Categories = append(p.Categories, name)
 		}
 	}
-	return false
-}
-
-func (dt *disabledTools) writeToolEnabled(names ...string) bool {
-	return !dt.write || dt.writeToolOverridden(names...)
-}
-
-func (dt *disabledTools) deeplinkShorteningEnabled() bool {
-	return dt.writeToolEnabled(tools.GenerateDeeplink.Tool.Name)
-}
-
-func (dt *disabledTools) queryToolsEnabled(category string) bool {
-	if dt.query {
-		return false
+	p.ReadOnly = dt.write
+	p.NoQuery = dt.query
+	for _, name := range strings.Split(dt.writeToolOverrides, ",") {
+		p.Allow = append(p.Allow, strings.TrimSpace(name))
 	}
-	if slices.Contains(mutatingQueryCategories, category) {
-		return dt.writeToolEnabled("query_" + category)
+	if dt.enableQuery {
+		p.Allow = append(p.Allow, tools.MutatingQueryToolNames()...)
 	}
-	return true
-}
-
-func (dt *disabledTools) mutatingQueryToolsEnabled() bool {
-	if dt.query {
-		return false
-	}
-	return dt.writeToolEnabled(enableQueryToolNames...)
+	return p
 }
 
 type disabledTools struct {
@@ -254,7 +200,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
 	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write, and keep query_datasource, a source of render_grafana_app, available. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. For the raw-SQL tools it is equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
-	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled.")
+	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently. For a tool with a read-only variant, it keeps the full one. Has no effect on a tool whose whole category is disabled, and --disable-query still removes query tools.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
@@ -509,93 +455,15 @@ func (gc *grafanaConfig) cardinalityScopeLabels() []string {
 	return labels
 }
 
-type toolEntry struct {
-	adder    func(*mcp.Server)
-	disabled bool
-	category string
-}
-
-func (dt *disabledTools) toolEntries() []toolEntry {
-	enableWriteTools := !dt.write
-	enableQueryTools := !dt.query
-	return []toolEntry{
-		{tools.AddSearchTools, dt.search, "search"},
-		{func(s *mcp.Server) { tools.AddDatasourceTools(s, enableWriteTools) }, dt.datasource, "datasource"},
-		{func(s *mcp.Server) { tools.AddIncidentTools(s, enableWriteTools) }, dt.incident, "incident"},
-		{func(s *mcp.Server) { tools.AddPrometheusTools(s, enableQueryTools) }, dt.prometheus, "prometheus"},
-		{func(s *mcp.Server) { tools.AddLokiTools(s, enableQueryTools) }, dt.loki, "loki"},
-		{func(s *mcp.Server) { tools.AddElasticsearchTools(s, enableQueryTools) }, dt.elasticsearch, "elasticsearch"},
-		{func(s *mcp.Server) { tools.AddQuickwitTools(s, enableQueryTools) }, dt.quickwit, "quickwit"},
-		{func(s *mcp.Server) { tools.AddInfluxDBTools(s, dt.queryToolsEnabled("influxdb")) }, dt.influxdb, "influxdb"},
-		{func(s *mcp.Server) {
-			tools.AddAlertingTools(s, func(name string) bool { return dt.writeToolEnabled(name) })
-		}, dt.alerting, "alerting"},
-		{func(s *mcp.Server) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard"},
-		{func(s *mcp.Server) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder"},
-		{func(s *mcp.Server) { tools.AddOnCallTools(s, enableWriteTools) }, dt.oncall, "oncall"},
-		{tools.AddAssertsTools, dt.asserts, "asserts"},
-		{tools.AddAdminTools, dt.admin, "admin"},
-		{func(s *mcp.Server) { tools.AddPyroscopeTools(s, enableQueryTools) }, dt.pyroscope, "pyroscope"},
-		{func(s *mcp.Server) { tools.AddNavigationTools(s, dt.deeplinkShorteningEnabled()) }, dt.navigation, "navigation"},
-		{func(s *mcp.Server) { tools.AddTempoTools(s, enableQueryTools) }, dt.tempo, "tempo"},
-		{func(s *mcp.Server) { tools.AddAnnotationTools(s, enableWriteTools) }, dt.annotations, "annotations"},
-		{func(s *mcp.Server) { tools.AddRenderingTools(s, dt.appSources()...) }, dt.rendering, "rendering"},
-		{func(s *mcp.Server) { tools.AddSnapshotTools(s, enableWriteTools) }, dt.snapshot, "snapshot"},
-		{func(s *mcp.Server) { tools.AddCloudWatchTools(s, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
-		{func(s *mcp.Server) { tools.AddCloudLoggingTools(s, enableQueryTools) }, dt.cloudlogging, "cloudlogging"},
-		{func(s *mcp.Server) { tools.AddAzureMonitorTools(s, enableQueryTools) }, dt.azuremonitor, "azuremonitor"},
-		{tools.AddExamplesTools, dt.examples, "examples"},
-		{func(s *mcp.Server) { tools.AddSQLTools(s, dt.queryToolsEnabled("sql")) }, dt.sql, "sql"},
-		{func(s *mcp.Server) { tools.AddRunPanelQueryTools(s, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
-		{func(s *mcp.Server) { tools.AddGraphiteTools(s, enableQueryTools) }, dt.graphite, "graphite"},
-		// query_datasource is a source of render_grafana_app and registers no tool of its own (appSources).
-		{func(*mcp.Server) {}, dt.dsquery, "dsquery"},
-		{func(s *mcp.Server) { tools.AddPluginTools(s, enableWriteTools) }, dt.plugin, "plugin"},
-		{func(s *mcp.Server) { tools.AddAPITools(s, enableWriteTools, dt.mutatingQueryToolsEnabled()) }, dt.api, "api"},
-		{tools.AddConfigTools, dt.config, "config"},
-		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
-		{func(s *mcp.Server) { tools.AddAgento11yTools(s, enableWriteTools) }, dt.agento11y, "agento11y"},
-		{func(s *mcp.Server) { tools.AddAssistantTools(s, enableWriteTools) }, dt.assistant, "assistant"},
-		{tools.AddDocsTools, dt.docs, "docs"},
-		{tools.AddUserTools, dt.user, "user"},
-	}
-}
-
-// dsquerySourceEnabled reports whether query_datasource can be a source. It passes the queries unfiltered, so
-// --disable-write hides it, unless --enable-query or --enable-write-tools=query_datasource says that the
-// credentials are read-only (viz-contract tool.2).
-func (dt *disabledTools) dsquerySourceEnabled() bool {
-	return !dt.query && (dt.writeToolEnabled(tools.QueryDatasource.Tool.Name) || dt.enableQuery)
-}
-
-func (dt *disabledTools) appSources() []mcpgrafana.Tool {
-	if dt.query {
-		return nil
-	}
-	enabled := strings.Split(dt.enabledTools, ",")
-	var sources []mcpgrafana.Tool
-	if isCategoryEnabled(enabled, dt.prometheus, "prometheus") {
-		sources = append(sources, tools.QueryPrometheus)
-	}
-	if isCategoryEnabled(enabled, dt.tempo, "tempo") {
-		sources = append(sources, tools.GetTempoTraceTool)
-	}
-	if isCategoryEnabled(enabled, dt.dsquery, "dsquery") && dt.dsquerySourceEnabled() {
-		sources = append(sources, tools.QueryDatasource)
-	}
-	return sources
-}
-
 // resourceKinds returns the MCP resource kinds to serve: each follows its
 // tool category.
 func (dt *disabledTools) resourceKinds() []resources.Kind {
-	dt.normalizeEnabledTools()
-	enabled := strings.Split(dt.enabledTools, ",")
+	categories := dt.policy().Categories
 	var kinds []resources.Kind
-	if isCategoryEnabled(enabled, dt.datasource, "datasource") {
+	if slices.Contains(categories, "datasource") {
 		kinds = append(kinds, resources.Datasources)
 	}
-	if isCategoryEnabled(enabled, dt.incident, "incident") {
+	if slices.Contains(categories, "incident") {
 		kinds = append(kinds, resources.ActiveIncidents)
 	}
 	return kinds
@@ -607,50 +475,29 @@ func (dt *disabledTools) resourceKinds() []resources.Kind {
 // knows about that is neither named in --enabled-tools nor explicitly disabled
 // appears in neither list.
 //
-// Both lists are bounded by toolEntries, so neither can carry an
+// Both lists are bounded by the tool catalog, so neither can carry an
 // operator-supplied string — a category named in --enabled-tools that this
 // build does not know about is reported by neither.
 func (dt *disabledTools) categoryReport() (enabled, disabled []string) {
-	enabledTools := strings.Split(dt.enabledTools, ",")
-	for _, e := range dt.toolEntries() {
+	active := dt.activeCategories()
+	flagged := dt.disabledByFlag()
+	for _, name := range tools.CategoryNames() {
 		switch {
-		case dt.categoryRegistersTools(e, enabledTools):
-			enabled = append(enabled, e.category)
-		case e.disabled:
-			disabled = append(disabled, e.category)
+		case active[name]:
+			enabled = append(enabled, name)
+		case flagged[name]:
+			disabled = append(disabled, name)
 		}
 	}
 	return enabled, disabled
 }
 
-// categoryRegistersTools reports whether a category that survived
-// --enabled-tools and --disable-<category> actually registers a tool once the
-// write and query gates are applied.
-//
-// It exists so buildInstructions and categoryReport cannot disagree. They ask
-// the same question for different audiences — one advertises the capability to
-// the agent, the other reports it as enabled — and a category that registers
-// nothing must do neither. They did disagree: --enabled-tools=assistant with
-// --disable-write reported assistant enabled while registering no tool, and
-// --disable-query did the same for every query-only category.
-func (dt *disabledTools) categoryRegistersTools(e toolEntry, enabledTools []string) bool {
-	if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
-		return false
+func (dt *disabledTools) activeCategories() map[string]bool {
+	active := map[string]bool{}
+	for _, c := range tools.Resolve(dt.policy()).Categories {
+		active[c.Name] = true
 	}
-	// AddAssistantTools registers nothing when write tools are disabled.
-	if e.category == "assistant" && dt.write {
-		return false
-	}
-	// query_datasource is a source of render_grafana_app, so it is as visible as that source and that tool.
-	if e.category == "dsquery" && (!dt.dsquerySourceEnabled() || !isCategoryEnabled(enabledTools, dt.rendering, "rendering")) {
-		return false
-	}
-	// A category whose every tool executes a query registers nothing once
-	// query tools are gated off.
-	if !dt.queryToolsEnabled(e.category) && slices.Contains(queryOnlyCategories, e.category) {
-		return false
-	}
-	return true
+	return active
 }
 
 // categoryAliases maps deprecated category names to their current replacements.
@@ -699,42 +546,23 @@ func (dt *disabledTools) normalizeEnabledTools() {
 }
 
 func (dt *disabledTools) processTools(s *mcp.Server) {
-	dt.normalizeEnabledTools()
 	if dt.query && dt.enableQuery {
 		slog.Warn("--enable-query has no effect because --disable-query is set; no query tools will be registered")
 	}
-	enabledTools := strings.Split(dt.enabledTools, ",")
-	for _, e := range dt.toolEntries() {
-		maybeAddTools(s, e.adder, enabledTools, e.disabled, e.category)
+	p := dt.policy()
+	disabled := dt.disabledByFlag()
+	for _, name := range strings.Split(dt.enabledTools, ",") {
+		if disabled[name] {
+			slog.Info("Disabling tools", "category", name)
+		}
 	}
+	tools.Resolve(p).Register(s)
 }
 
 func (dt *disabledTools) buildInstructions() string {
-	dt.normalizeEnabledTools()
-	enabledTools := strings.Split(dt.enabledTools, ",")
-
 	var capabilities []string
-	for _, e := range dt.toolEntries() {
-		// Don't advertise a capability the server won't actually expose; the
-		// same gate decides what categoryReport reports as enabled.
-		if !dt.categoryRegistersTools(e, enabledTools) {
-			continue
-		}
-		// Registered, but with its query tools gated off, so describe the
-		// reduced capability rather than the full one.
-		if !dt.queryToolsEnabled(e.category) {
-			if desc, ok := categoryDescriptionNoQuery[e.category]; ok {
-				capabilities = append(capabilities, desc)
-				continue
-			}
-		}
-		if e.category == "navigation" && !dt.deeplinkShorteningEnabled() {
-			capabilities = append(capabilities, navigationDescriptionNoShortening)
-			continue
-		}
-		if desc, ok := categoryDescription[e.category]; ok {
-			capabilities = append(capabilities, desc)
-		}
+	for _, c := range tools.Resolve(dt.policy()).Categories {
+		capabilities = append(capabilities, c.Description)
 	}
 
 	var b strings.Builder
@@ -925,34 +753,19 @@ func (hsc httpSecurityConfig) policy(addresses ...string) mcpgrafana.HostOriginP
 // which an LLM could reach Prometheus metric data WITHOUT going through the
 // enforced Prometheus backend — so --prometheus-enforced-matchers would not apply.
 func warnPrometheusEnforcementBypasses(dt disabledTools) {
-	enabledTools := strings.Split(dt.enabledTools, ",")
-	type bypass struct {
-		category string
-		disabled bool
-		flag     string
-		reason   string
-	}
-	for _, b := range []bypass{
-		{"api", dt.api, "--disable-api", "grafana_api_request can query the Prometheus datasource proxy directly, fully bypassing enforcement"},
-		{"rendering", dt.rendering, "--disable-rendering", "get_panel_image renders Prometheus panels server-side via the Grafana renderer, producing images that contain unrestricted metrics"},
+	active := dt.activeCategories()
+	for _, b := range []struct{ category, flag, reason string }{
+		{"api", "--disable-api", "grafana_api_request can query the Prometheus datasource proxy directly, fully bypassing enforcement"},
+		{"rendering", "--disable-rendering", "get_panel_image renders Prometheus panels server-side via the Grafana renderer, producing images that contain unrestricted metrics"},
+		{"dsquery", "--disable-dsquery", "render_grafana_app can use query_datasource to send unfiltered Prometheus queries"},
+		{"assistant", "--disable-assistant", "ask_assistant delegates to Grafana Assistant, which reads Prometheus server-side across all series; enforced matchers are not applied to what it reports back"},
 	} {
-		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
+		if active[b.category] {
 			slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
 				"disable_with", b.flag, "reason", b.reason)
 		}
 	}
-	if isCategoryEnabled(enabledTools, dt.rendering, "rendering") &&
-		isCategoryEnabled(enabledTools, dt.dsquery, "dsquery") && dt.dsquerySourceEnabled() {
-		slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
-			"disable_with", "--disable-dsquery",
-			"reason", "render_grafana_app can use query_datasource to send unfiltered Prometheus queries")
-	}
-	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
-		slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
-			"disable_with", "--disable-assistant",
-			"reason", "ask_assistant delegates to Grafana Assistant, which reads Prometheus server-side across all series; enforced matchers are not applied to what it reports back")
-	}
-	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
+	if active["snapshot"] {
 		slog.Info("Prometheus label-matcher enforcement: dashboard snapshots can return panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted metrics")
 	}
 }
@@ -962,28 +775,18 @@ func warnPrometheusEnforcementBypasses(dt disabledTools) {
 // backend — so --loki-enforced-matchers would not apply. Each line names the
 // mechanism and the flag that closes it.
 func warnLokiEnforcementBypasses(dt disabledTools) {
-	enabledTools := strings.Split(dt.enabledTools, ",")
-	type bypass struct {
-		category string
-		disabled bool
-		flag     string
-		reason   string
-	}
-	for _, b := range []bypass{
-		{"api", dt.api, "--disable-api", "grafana_api_request can query the Loki datasource proxy directly, fully bypassing enforcement"},
-		{"rendering", dt.rendering, "--disable-rendering", "get_panel_image renders Loki panels server-side via the Grafana renderer, producing images that contain unrestricted log lines"},
+	active := dt.activeCategories()
+	for _, b := range []struct{ category, flag, reason string }{
+		{"api", "--disable-api", "grafana_api_request can query the Loki datasource proxy directly, fully bypassing enforcement"},
+		{"rendering", "--disable-rendering", "get_panel_image renders Loki panels server-side via the Grafana renderer, producing images that contain unrestricted log lines"},
+		{"assistant", "--disable-assistant", "ask_assistant delegates to Grafana Assistant, which reads Loki server-side across all streams; enforced matchers are not applied to what it reports back"},
 	} {
-		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
+		if active[b.category] {
 			slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
 				"disable_with", b.flag, "reason", b.reason)
 		}
 	}
-	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
-		slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
-			"disable_with", "--disable-assistant",
-			"reason", "ask_assistant delegates to Grafana Assistant, which reads Loki server-side across all streams; enforced matchers are not applied to what it reports back")
-	}
-	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
+	if active["snapshot"] {
 		slog.Info("Loki label-matcher enforcement: dashboard snapshots can return log-panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted logs")
 	}
 }
@@ -1239,29 +1042,10 @@ func effectiveSSEKeepAlive(transport string, interval time.Duration) time.Durati
 // taken before any proxied tool is registered: those names come from a remote
 // MCP server and collapse to a single pseudo-name instead.
 func nativeToolNames(dt disabledTools) map[string]struct{} {
-	bare := mcp.NewServer(&mcp.Implementation{Name: "enumerator", Version: "0"}, nil)
-	dt.processTools(bare)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	go func() { _ = bare.Run(ctx, serverTransport) }()
-	client := mcp.NewClient(&mcp.Implementation{Name: "tool-enumerator", Version: "0"}, nil)
-	session, err := client.Connect(ctx, clientTransport, nil)
-	if err != nil {
-		slog.Warn("failed to enumerate native tools for usage stats", "error", err)
-		return nil
-	}
-	defer func() { _ = session.Close() }()
-	result, err := session.ListTools(ctx, nil)
-	if err != nil {
-		slog.Warn("failed to list native tools for usage stats", "error", err)
-		return nil
-	}
-	names := make(map[string]struct{}, len(result.Tools))
-	for _, t := range result.Tools {
-		names[t.Name] = struct{}{}
+	selected := tools.Resolve(dt.policy()).Tools
+	names := make(map[string]struct{}, len(selected))
+	for _, t := range selected {
+		names[t.Tool.Name] = struct{}{}
 	}
 	return names
 }

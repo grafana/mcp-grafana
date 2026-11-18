@@ -10,7 +10,6 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -225,15 +224,3 @@ Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) 
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddInfluxDBTools registers all InfluxDB tools with the MCP server.
-// query_influxdb passes the query through unfiltered, and InfluxQL has DELETE
-// and DROP, so it is a write tool as well as a query tool: the caller decides
-// via enableQueryTool, which is false under --disable-query, and under
-// --disable-write unless --enable-query overrides it. It is the only tool in
-// this category, so nothing is registered when it is gated off.
-func AddInfluxDBTools(s *mcp.Server, enableQueryTool bool) {
-	if enableQueryTool {
-		QueryInfluxDB.Register(s)
-	}
-}

@@ -13,6 +13,10 @@ var (
 	// it, and the legacy API otherwise.
 	dashboardRead = []string{"dashboards:read", "dashboard.grafana.app/dashboards:get"}
 
+	// libraryPanelRead covers resolving a library panel's model through
+	// /api/library-elements/{uid}.
+	libraryPanelRead = []string{"library.panels:read"}
+
 	resourcePermissionsRead = []string{
 		"dashboards.permissions:read",
 		"datasources.permissions:read",

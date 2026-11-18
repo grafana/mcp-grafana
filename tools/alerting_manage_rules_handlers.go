@@ -484,7 +484,7 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 	}
 	response, err := c.Provisioning.PostAlertRule(params)
 	if err != nil {
-		return nil, fmt.Errorf("create alert rule: %w", err)
+		return nil, fmt.Errorf("create alert rule: %w", explainForbidden(err, alertRuleCreatePermissions))
 	}
 
 	return response.Payload, nil

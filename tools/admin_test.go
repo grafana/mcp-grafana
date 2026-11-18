@@ -219,3 +219,8 @@ func TestListUsersByOrg_Pagination(t *testing.T) {
 		})
 	}
 }
+
+func TestListTeams_ErrorDoesNotDumpClient(t *testing.T) {
+	_, err := listTeams(mockCtxWithClient(forbiddenServer(t)), ListTeamsParams{Query: "cpu"})
+	assertNoClientDump(t, err, "search teams")
+}

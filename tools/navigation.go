@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -334,14 +332,6 @@ var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(), // short URLs need no RBAC action
 )
-
-func AddNavigationTools(s *mcp.Server, enableWriteTools bool) {
-	if enableWriteTools {
-		GenerateDeeplink.Register(s)
-		return
-	}
-	GenerateDeeplinkReadOnly.Register(s)
-}
 
 // buildDashboardTargetURL returns the dashboard or provisioning-preview URL
 // (without time range or extra query params) for the dashboard and panel

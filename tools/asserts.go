@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func newAssertsClient(ctx context.Context) (*Client, error) {
@@ -151,7 +150,3 @@ var GetAssertions = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("plugins.app:access"),
 )
-
-func AddAssertsTools(s *mcp.Server) {
-	GetAssertions.Register(s)
-}

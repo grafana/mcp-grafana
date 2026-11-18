@@ -2,11 +2,21 @@ import type { McpAppColorMode } from '../src/McpAppShell';
 
 // The viz spec that the App gives the Renderer (viz-contract 2-viz-spec.md, schemas/viz-spec.schema.json).
 
-/** The arguments of query_datasource that the viz spec reads. */
+/**
+ * The arguments of query_datasource. The viz spec reads the data source and the queries; a refresh sends them all
+ * again, with a new `from` and `to` or no `type` (refresh.9, refresh.10).
+ */
 export type VizArgs = {
   datasourceUid: string;
   queries: Array<Record<string, unknown> & { refId: string }>;
+  from?: string | number;
+  to?: string | number;
+  type?: string;
+  [name: string]: unknown;
 };
+
+/** A notice of the App (spec.8): a code and a message of registry/notices.json. */
+export type VizNotice = { code: string; message: string };
 
 export type VizPanel = {
   type: string;
@@ -31,6 +41,7 @@ export type VizSpec = {
   theme?: McpAppColorMode;
   timeZone?: string;
   grafanaUrl?: string;
+  notices?: VizNotice[];
 };
 
 /** The specVersion constant of the contract (spec.1). */
@@ -62,6 +73,7 @@ export function buildVizSpec(
   result: VizResult,
   host: { theme?: McpAppColorMode; timeZone?: string } = {},
   chart?: string,
+  notices: VizNotice[] = [],
 ): VizSpec {
   const { type, title, options, fieldConfig } =
     result.alternatives.find((a) => a.chart === chart)?.panel ?? result.panel;
@@ -85,5 +97,7 @@ export function buildVizSpec(
     ...(host.timeZone ? { timeZone: host.timeZone } : {}),
     // spec.7
     ...(result.grafanaUrl ? { grafanaUrl: result.grafanaUrl } : {}),
+    // spec.8
+    ...(notices.length ? { notices } : {}),
   };
 }

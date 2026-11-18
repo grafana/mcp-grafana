@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
@@ -400,8 +398,3 @@ var ValidateProvisioningFile = mcpgrafana.MustTool(
 		"folders:read", "folder.grafana.app/folders:get",
 	),
 )
-
-func AddProvisioningTools(s *mcp.Server) {
-	ListProvisioningRepositories.Register(s)
-	ValidateProvisioningFile.Register(s)
-}

@@ -1,9 +1,14 @@
 package tools
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/require"
+
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
 
 func TestManageRoutingParams_Validate(t *testing.T) {
@@ -209,6 +214,64 @@ func TestManageRoutingParams_ToListContactPointsParams(t *testing.T) {
 			require.Equal(t, tc.wantLimit, result.Limit)
 		})
 	}
+}
+
+func TestGetNotificationPolicies_StringMatchers(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"receiver": "default",
+			"group_by": ["alertname"],
+			"provenance": "api",
+			"object_matchers": [["a", "=", "b"]],
+			"routes": [{
+				"receiver": "critical",
+				"matchers": ["severity=\"critical\"", "env!=\"dev\"", "team!~\"ops|sre\""],
+				"routes": [{"receiver": "db", "matchers": ["service.name=~\"db.*\""]}]
+			}]
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	ctx := mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"})
+
+	result, err := manageRouting(ctx, ManageRoutingParams{Operation: "get_notification_policies"})
+	require.NoError(t, err)
+	require.Equal(t, "/api/v1/provisioning/policies", gotPath)
+	tree, ok := result.(*models.Route)
+	require.True(t, ok)
+	require.Equal(t, "default", tree.Receiver)
+	require.Equal(t, []string{"alertname"}, tree.GroupBy)
+	require.Equal(t, models.Provenance("api"), tree.Provenance)
+	require.Equal(t, models.ObjectMatchers{{"a", "=", "b"}}, tree.ObjectMatchers)
+	require.Empty(t, tree.Matchers)
+
+	require.Len(t, tree.Routes, 1)
+	critical := tree.Routes[0]
+	require.Equal(t, "critical", critical.Receiver)
+	require.Equal(t, models.Matchers{
+		{Name: strPtr("severity"), Value: strPtr("critical"), IsEqual: true, IsRegex: boolPtr(false)},
+		{Name: strPtr("env"), Value: strPtr("dev"), IsEqual: false, IsRegex: boolPtr(false)},
+		{Name: strPtr("team"), Value: strPtr("ops|sre"), IsEqual: false, IsRegex: boolPtr(true)},
+	}, critical.Matchers)
+
+	require.Len(t, critical.Routes, 1)
+	require.Equal(t, models.Matchers{
+		{Name: strPtr("service.name"), Value: strPtr("db.*"), IsEqual: true, IsRegex: boolPtr(true)},
+	}, critical.Routes[0].Matchers)
+}
+
+func TestGetNotificationPolicies_ErrorStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+	ctx := mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"})
+
+	_, err := manageRouting(ctx, ManageRoutingParams{Operation: "get_notification_policies"})
+	require.ErrorContains(t, err, "get notification policies")
+	require.ErrorContains(t, err, "403")
 }
 
 func strPtr(s string) *string {

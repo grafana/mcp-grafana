@@ -11,3 +11,6 @@ export const readVizFixture = (set: string, file: string) => JSON.parse(readFile
 export const vizAppFixtureSets = readdirSync(root).filter((set) =>
   ['args.json', 'result.json', 'spec.json'].every((file) => existsSync(join(root, set, file)))
 );
+
+// The sets with a viz spec that a Renderer draws.
+export const vizSpecFixtureSets = readdirSync(root).filter((set) => existsSync(join(root, set, 'spec.json')));

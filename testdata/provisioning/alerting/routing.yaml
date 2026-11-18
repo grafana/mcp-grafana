@@ -20,3 +20,6 @@ policies:
               - info
           mute_time_intervals:
             - weekends
+        - receiver: Email2
+          matchers:
+            - team = ops
