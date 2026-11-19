@@ -48,6 +48,24 @@ describe('QueryBlock', () => {
     expect(screen.queryByText('A')).toBeNull();
   });
 
+  it('shows each query when refIds are repeated or missing', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(
+      <QueryBlock
+        datasource="prometheus"
+        queries={[
+          { refId: 'A', text: 'up' },
+          { refId: 'A', text: 'down' },
+          { refId: '', text: 'sideways' },
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand query' }));
+    expect([...document.querySelectorAll('pre')].map((pre) => pre.textContent)).toEqual(['up', 'down', 'sideways']);
+    expect(screen.getAllByText('A')).toHaveLength(2);
+    expect(errors).not.toHaveBeenCalled();
+  });
+
   it('copies all queries, then shows Copy again', async () => {
     vi.useFakeTimers();
     const { writeText } = stubClipboard(() => Promise.resolve());

@@ -9,17 +9,22 @@ import { ChartPicker } from './ChartPicker';
 import type { Renderer } from './loadRenderer';
 import { buildVizSpec, shownChart, type VizArgs, type VizSpec, vizCharts } from './vizSpec';
 
-// The query text of the common data sources: Prometheus and Loki, SQL, and others.
-const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText'];
+// The query text of the common data sources: Prometheus and Loki, SQL, Graphite, and others.
+const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText', 'target'];
 
-/** The text of each query: its first query field with text, or the query as JSON when it has none. */
+/**
+ * The text of each query: its first query field with text, or the query as JSON when it has none. The arguments are
+ * the model's, unchecked until the server runs them, so an entry that is not an object is left out.
+ */
 export function queryTexts(args: VizArgs): QueryBlockQuery[] {
-  return args.queries.map(({ refId, ...query }) => {
-    const text = QUERY_TEXT_FIELDS.map((name) => query[name]).find(
-      (value): value is string => typeof value === 'string' && value.trim() !== '',
-    );
-    return { refId, text: text?.trim() ?? JSON.stringify(query) };
-  });
+  return args.queries
+    .filter((entry: unknown) => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+    .map(({ refId, ...query }) => {
+      const text = QUERY_TEXT_FIELDS.map((name) => query[name]).find(
+        (value): value is string => typeof value === 'string' && value.trim() !== '',
+      );
+      return { refId: typeof refId === 'string' ? refId : '', text: text?.trim() ?? JSON.stringify(query) };
+    });
 }
 
 /** Draws the result of query_datasource with the viz contract Renderer. */

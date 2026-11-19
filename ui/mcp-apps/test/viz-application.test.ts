@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { queryTexts } from '../app/VizApplication';
+import type { VizArgs } from '../app/vizSpec';
 
 const args = (...queries: Array<Record<string, unknown>>) => ({
   datasourceUid: 'ds',
@@ -19,6 +20,17 @@ describe('queryTexts', () => {
     expect(queryTexts(args({ rawSql: '\nSELECT time, value\n  FROM metrics\n' }))).toEqual([
       { refId: 'A', text: 'SELECT time, value\n  FROM metrics' },
     ]);
+  });
+
+  it('gives the target of a Graphite query', () => {
+    expect(queryTexts(args({ target: 'sumSeries(app.*.requests)' }))).toEqual([
+      { refId: 'A', text: 'sumSeries(app.*.requests)' },
+    ]);
+  });
+
+  it('leaves out an entry that is not an object, and keeps a query with no refId', () => {
+    const queries = [null, 'up', ['up'], { expr: 'up' }] as unknown as VizArgs['queries'];
+    expect(queryTexts({ datasourceUid: 'ds', queries })).toEqual([{ refId: '', text: 'up' }]);
   });
 
   it('gives a query with no text as JSON', () => {

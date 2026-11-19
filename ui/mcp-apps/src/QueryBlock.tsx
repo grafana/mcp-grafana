@@ -80,9 +80,10 @@ export function QueryBlock({ datasource, queries }: QueryBlockProps) {
 
       {expanded ? (
         <div id={bodyId} className={styles.queries}>
-          {queries.map(({ refId, text }) => (
-            <div key={refId}>
-              {queries.length > 1 && <div className={styles.refId}>{refId}</div>}
+          {/* By position: a refId can be missing or repeated until the server checks the queries. */}
+          {queries.map(({ refId, text }, i) => (
+            <div key={i}>
+              {queries.length > 1 && refId && <div className={styles.refId}>{refId}</div>}
               <pre className={styles.code}>{text}</pre>
             </div>
           ))}
