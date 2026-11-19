@@ -156,7 +156,8 @@ describe('RendererView', () => {
 });
 
 describe('RendererView refresh', () => {
-  type Options = { onRefresh: (request: { id: string; cause: 'refresh' }) => void };
+  type Request = { id: string; cause: 'refresh' | 'timeRange'; from?: string; to?: string };
+  type Options = { onRefresh: (request: Request) => void };
   const onRefresh = () => (renderer.render.mock.calls[0][2] as Options).onRefresh;
 
   it('draws the result of a refresh with update (refresh.12)', async () => {
@@ -167,6 +168,29 @@ describe('RendererView refresh', () => {
     act(() => onRefresh()({ id: 'r1', cause: 'refresh' }));
     await waitFor(() => expect(renderer.update).toHaveBeenCalledWith(expect.objectContaining({ data: result.data })));
     expect(renderer.setRefreshed).not.toHaveBeenCalled();
+  });
+
+  it('queries the range of a zoom and gives it as the timeRange of the new spec (refresh.9, spec.17)', async () => {
+    const result = readVizFixture('prometheus-line', 'result.json');
+    const call = vi.fn(async () => ({ structuredContent: result, content: [] }));
+    view(call);
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    expect(renderer.render.mock.calls[0][1].timeRange).toEqual({ from: 'now-15m', to: 'now' });
+
+    // A zoom gives epoch milliseconds as decimal strings (renderer.43).
+    act(() => onRefresh()({ id: 'z1', cause: 'timeRange', from: '1790352877294', to: '1790353177294' }));
+    await waitFor(() =>
+      expect(renderer.update).toHaveBeenCalledWith(
+        expect.objectContaining({ timeRange: { from: '1790352877294', to: '1790353177294' } }),
+      ),
+    );
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: expect.objectContaining({
+          arguments: expect.objectContaining({ from: '1790352877294', to: '1790353177294' }),
+        }),
+      }),
+    );
   });
 
   it('gives no onRefresh when the host does not pass tool calls to the server (refresh.1)', async () => {

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import chartTypes from '@grafana/viz-contract/registry/chart-types.json';
 
 import { chartLabel } from '../app/ChartPicker';
-import { buildVizSpec, parseVizArgs, parseVizResult, shownChart, vizCharts } from '../app/vizSpec';
+import { buildVizSpec, parseVizArgs, parseVizResult, shownChart, type VizArgs, vizCharts } from '../app/vizSpec';
 import { readVizFixture as read, vizAppFixtureSets as sets } from './vizFixtures';
 
 // The App test of the viz contract (fixtures.9).
@@ -44,6 +44,16 @@ describe('viz spec', () => {
     });
     expect(spec.theme).toBe('light');
     expect(spec.timeZone).toBe('Europe/Paris');
+  });
+
+  it('copies the range of the arguments, or gives the defaults of the Source with none (spec.17)', () => {
+    const result = parseVizResult(read(set, 'result.json'))!;
+    const { from: _from, to: _to, ...noRange } = parseVizArgs(read(set, 'args.json'))!;
+    expect(buildVizSpec(noRange as VizArgs, result).timeRange).toEqual({ from: 'now-1h', to: 'now' });
+    expect(buildVizSpec({ ...noRange, from: 1790352577294 } as VizArgs, result).timeRange).toEqual({
+      from: 1790352577294,
+      to: 'now',
+    });
   });
 
   it('reads no result from a payload of another tool', () => {
