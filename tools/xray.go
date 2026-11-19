@@ -109,10 +109,15 @@ type SearchXRayTracesResult struct {
 
 // parseXRayTraceSummaries reads the plugin's TraceSummaries frame, newest first.
 func parseXRayTraceSummaries(frames data.Frames, limit int) *SearchXRayTracesResult {
-	traces := []XRayTraceSummary{}
+	type summaryRow struct {
+		summary XRayTraceSummary
+		start   time.Time
+	}
+	rows := []summaryRow{}
 	for _, frame := range frames {
 		for row := 0; row < frame.Rows(); row++ {
-			s := XRayTraceSummary{}
+			r := summaryRow{}
+			s := &r.summary
 			for _, field := range frame.Fields {
 				v, ok := field.ConcreteAt(row)
 				if !ok {
@@ -123,6 +128,7 @@ func parseXRayTraceSummaries(frames data.Frames, limit int) *SearchXRayTracesRes
 					s.ID, _ = v.(string)
 				case "Start Time":
 					if t, ok := v.(time.Time); ok {
+						r.start = t
 						s.StartTime = t.UTC().Format(time.RFC3339Nano)
 					}
 				case "Method":
@@ -140,13 +146,16 @@ func parseXRayTraceSummaries(frames data.Frames, limit int) *SearchXRayTracesRes
 				}
 			}
 			if s.ID != "" {
-				traces = append(traces, s)
+				rows = append(rows, r)
 			}
 		}
 	}
 
-	// RFC3339 in UTC sorts lexically.
-	slices.SortStableFunc(traces, func(a, b XRayTraceSummary) int { return strings.Compare(b.StartTime, a.StartTime) })
+	slices.SortStableFunc(rows, func(a, b summaryRow) int { return b.start.Compare(a.start) })
+	traces := make([]XRayTraceSummary, len(rows))
+	for i, r := range rows {
+		traces[i] = r.summary
+	}
 
 	result := &SearchXRayTracesResult{Traces: traces}
 	if len(traces) > limit {

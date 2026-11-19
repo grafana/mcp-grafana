@@ -190,3 +190,24 @@ func TestXRayMs(t *testing.T) {
 	assert.Equal(t, 1.0, xrayMs(1770058800.001-1770058800), "float noise is rounded to the microsecond")
 	assert.Equal(t, 2517.993, xrayMs(2.5179934501))
 }
+
+func TestSearchXRayTraces_SubSecondOrder(t *testing.T) {
+	t0 := time.Date(2026, 2, 2, 19, 0, 0, 0, time.UTC)
+	frame := newXRayTraceSummariesFrame(
+		[]string{"1-000", "1-500", "1-150", "1-100"},
+		[]time.Time{t0, t0.Add(500 * time.Millisecond), t0.Add(150 * time.Millisecond), t0.Add(100 * time.Millisecond)},
+		[]float64{1, 1, 1, 1},
+	)
+	var gotBody map[string]interface{}
+	ctx := newAzureMonitorMockGrafana(t, XRayDatasourceType, newXRayQueryMock(t, frame, &gotBody))
+
+	result, err := searchXRayTraces(ctx, SearchXRayTracesParams{DatasourceUID: "xray-uid", Limit: 3})
+	require.NoError(t, err)
+
+	ids := make([]string, len(result.Traces))
+	for i, tr := range result.Traces {
+		ids[i] = tr.ID
+	}
+	assert.Equal(t, []string{"1-500", "1-150", "1-100"}, ids, "RFC3339Nano drops trailing zeros, so its strings don't sort by time")
+	assert.True(t, result.Truncated)
+}
