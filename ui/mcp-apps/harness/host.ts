@@ -24,8 +24,8 @@ const content = resource.contents[0];
 const csp = content._meta?.ui?.csp;
 const permissions = content._meta?.ui?.permissions;
 // Upstream basic-host owns origin isolation, the inner iframe, and HTTP CSP.
-frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
 const strict = params.get('sandbox') === 'strict';
+frame.setAttribute('sandbox', strict ? 'allow-scripts' : 'allow-scripts allow-same-origin allow-forms');
 const proxyReady = strict ? Promise.resolve() : new Promise<void>(resolve => {
   const listener = (event: MessageEvent) => {
     if (event.source === frame.contentWindow && event.data?.method === 'ui/notifications/sandbox-proxy-ready') {
@@ -74,10 +74,11 @@ bridge.oncalltool = async value => {
   return refreshResult(value.name);
 };
 const ready = new Promise<void>(resolve => { bridge.oninitialized = () => { record('initialized'); resolve(); }; });
+// contentWindow is a WindowProxy whose identity survives navigation. Listen before
+// loading the strict app so its initial handshake cannot arrive before the host is ready.
 await bridge.connect(new PostMessageTransport(frame.contentWindow!, frame.contentWindow!));
 if (strict) {
   // basic-host's relay requires its own origin; opaque-origin Apps connect directly.
-  frame.setAttribute('sandbox', 'allow-scripts');
   frame.src = '/mcp/strict-app';
 } else {
   await bridge.sendSandboxResourceReady({ html: content.text, csp, permissions });

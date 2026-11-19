@@ -8,6 +8,7 @@ export default defineConfig({
     reducedMotion: 'reduce', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   webServer: [
     { command: 'node harness/basic-host/start.mjs', url: 'http://localhost:5197/sandbox.html', reuseExistingServer: !process.env.CI },
-    { command: 'npx vite --config harness/vite.config.ts', port: 5194, timeout: 180_000, reuseExistingServer: !process.env.CI },
+    // Local startup may download modules and compile Go from a cold cache; CI supplies a binary.
+    { command: 'npx vite --config harness/vite.config.ts', port: 5194, timeout: process.env.MCP_GRAFANA_BINARY ? 180_000 : 600_000, reuseExistingServer: !process.env.CI },
   ],
 });

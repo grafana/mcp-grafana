@@ -15,7 +15,10 @@ AppBridge/PostMessageTransport. Most query results are deterministic fixtures; n
 Grafana, LLM, Docker, credentials, or external MCP host is required. The host builds a temporary Go binary on startup using the Go build cache.
 Rebuild UI bundles after UI source edits, then restart the host to embed them.
 For an explicitly prebuilt server, set `MCP_GRAFANA_BINARY` to its path (relative
-paths resolve from the working directory). This skips the automatic build.
+paths resolve from the working directory). This skips the automatic build. Playwright allows up to ten minutes for automatic
+local builds (including cold module downloads), or three minutes when a prebuilt
+binary is supplied. Go stderr is inherited so diagnostics stay visible and cannot
+fill an unread pipe.
 
 The `forward` profile forwards resource reads. The `tool-declared` profile
 advertises `serverResources` but rejects URIs absent from the server's actual
@@ -23,15 +26,15 @@ tool `_meta.ui.resourceUri` declarations. This models the Claude Desktop Code
 behavior reported in #1654, not a universal MCP requirement. It is not a test
 of the installed Claude client and cannot detect changes in that client.
 
-## Known compatibility regression
+## Resource-policy regression coverage
 
-On main at 70b0494, eight tests pass and `renders chart with tool-declared
-resource policy` fails: the renderer URI is rejected before forwarding, and
-no chart appears. The test runs with a conditional `test.fail` annotation for
-[#1654](https://github.com/grafana/mcp-grafana/issues/1654), allowing this coverage
-to merge while compatibility work continues. An unexpected pass fails CI: remove
-the annotation when the fix lands. The forward profile remains a normal test.
-Do not change the chart assertion to an error-banner assertion.
+Both resource policies must render a real chart. The `tool-declared` test covers
+[#1654](https://github.com/grafana/mcp-grafana/issues/1654), fixed by
+[#1659](https://github.com/grafana/mcp-grafana/pull/1659): the renderer resource is
+now declared by an app-only tool for clients advertising MCP Apps support.
+The harness advertises that capability and reads the actual Go tool catalog.
+This is a normal passing regression test; do not replace its chart assertion
+with an error-banner assertion.
 
 The permissive profile is the positive control: the same server, query result,
 and renderer draw successfully. Failure artifacts retain requested/rejected/
@@ -61,7 +64,7 @@ renderer. The only fixture option override disables animation. Each test waits
 for the renderer's `ready` state and loaded fonts, then compares the rendered
 chart container (including actual canvas pixels). It also attaches a real page
 screenshot and host/browser diagnostics. The restricted-resource #1654 test
-remains separate and is annotated as an expected failure.
+remains separate and must also pass.
 
 Use absolute fixture time ranges. The clock starts at a fixed date but advances:
 freezing Date.now() stalls Sankey rendering. Seeded Math.random stabilizes graph

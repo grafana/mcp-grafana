@@ -20,7 +20,6 @@ for (const policy of ['forward', 'tool-declared']) {
     await page.goto(`/?policy=${policy}`);
     await expect(page.locator('#log')).toContainText('initialized');
     await expect(page.locator('#log')).toContainText('result-delivered');
-    test.fail(policy === 'tool-declared', 'Known host compatibility failure: https://github.com/grafana/mcp-grafana/issues/1654. Remove when fixed.');
     const app = page.frameLocator('#app').frameLocator('iframe');
     await expect(app.locator('canvas').first()).toBeVisible();
     await expect.poll(() => app.locator('canvas').first().evaluate((canvas: HTMLCanvasElement) => {

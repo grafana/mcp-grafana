@@ -57,7 +57,8 @@ export default defineConfig({
         await client.connect(new StdioClientTransport({
           command,
           args: ['--enabled-tools', 'datasource,dsquery,prometheus,tempo,rendering'],
-          stderr: 'pipe',
+          // Drain server diagnostics through Vite; an unread pipe can block the Go process.
+          stderr: 'inherit',
           env: { GRAFANA_URL: `http://127.0.0.1:${address.port}`, GRAFANA_SERVICE_ACCOUNT_TOKEN: '', GRAFANA_API_KEY: '' },
         }));
       } catch (error) {

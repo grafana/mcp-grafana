@@ -51,7 +51,7 @@ Publication of a canonical shared repository is a follow-up. Preserve the
 Chromium Playwright tests now cover both built MCP Apps and panel-viewer using
 real AppBridge handshakes and resources served by the built Go binary. See the
 [browser test guide](../ui/mcp-apps/e2e/README.md) for local execution, fixture
-boundaries, diagnostics, and the expected-failure #1654 compatibility test.
+boundaries, diagnostics, and the resource-policy regression test for #1654.
 The secret-free Browser E2E Tests workflow runs on pull requests.
 
 For intentional visual changes, see [regenerating one chart or all screenshot baselines](../ui/mcp-apps/e2e/README.md#regenerate-one-chart-or-all-charts), including the Linux CI container command and verification steps.
