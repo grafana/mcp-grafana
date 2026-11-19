@@ -26,8 +26,9 @@ const STEP_UNITS: Array<[suffix: string, ms: number]> = [
  * An instant query shows `Instant query` in place of the range and the step.
  */
 export function queryMeta(args: VizArgs, viz: VizResult, timeZone?: string): string {
-  const instant = args.queries.every((query) => query.instant === true && query.range !== true);
-  const step = instant ? undefined : stepLabel(args);
+  const queries = objects(args.queries);
+  const instant = queries.length > 0 && queries.every((query) => query.instant === true && query.range !== true);
+  const step = instant ? undefined : stepLabel(queries);
   const series = seriesCount(viz);
   return [
     instant ? 'Instant query' : rangeLabel(args, viz, timeZone),
@@ -53,12 +54,21 @@ export function rangeLabel(args: VizArgs, viz: VizResult, timeZone?: string): st
 }
 
 /** The `intervalMs` that every query has, as `30s` or `5m`; none when the queries have none or differ. */
-function stepLabel(args: VizArgs): string | undefined {
-  const [first, ...rest] = args.queries.map((query) => query.intervalMs);
-  if (typeof first !== 'number' || first <= 0 || rest.some((ms) => ms !== first)) return undefined;
+function stepLabel(queries: Array<Record<string, unknown>>): string | undefined {
+  const [first, ...rest] = queries.map((query) => query.intervalMs);
+  // A fraction of a millisecond has no unit that divides it.
+  if (typeof first !== 'number' || !Number.isInteger(first) || first <= 0 || rest.some((ms) => ms !== first)) {
+    return undefined;
+  }
   const [suffix, ms] = STEP_UNITS.find(([, unit]) => first % unit === 0)!;
   return `${first / ms}${suffix}`;
 }
+
+/** The queries that are objects: the arguments are the model's, and the view does not check them (see queryTexts). */
+const objects = (queries: unknown[]): Array<Record<string, unknown>> =>
+  queries.filter(
+    (query): query is Record<string, unknown> => typeof query === 'object' && query !== null && !Array.isArray(query),
+  );
 
 /** The series of the result: the number fields of all frames, as the Renderer counts them (state.19). */
 export function seriesCount(viz: VizResult): number {

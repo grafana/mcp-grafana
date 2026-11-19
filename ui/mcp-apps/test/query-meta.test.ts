@@ -26,6 +26,18 @@ describe('queryMeta', () => {
     expect(queryMeta(differ, viz)).toBe('Last 15 minutes · 17 series');
   });
 
+  it('gives no step for an intervalMs that is not a whole number of milliseconds', () => {
+    expect(queryMeta(withQuery({ intervalMs: 1_500.5 }), viz)).toBe('Last 15 minutes · 17 series');
+  });
+
+  it('leaves out an entry that is not an object', () => {
+    const queries = [null, 'up', { refId: 'A', instant: true }] as unknown as VizArgs['queries'];
+    expect(queryMeta({ ...args, queries }, viz)).toBe('Instant query · 17 series');
+    expect(queryMeta({ ...args, queries: [null] as unknown as VizArgs['queries'] }, viz)).toBe(
+      'Last 15 minutes · 17 series',
+    );
+  });
+
   it('names an instant query in place of the range and the step', () => {
     expect(queryMeta(withQuery({ instant: true, intervalMs: 30_000 }), viz)).toBe('Instant query · 17 series');
     expect(queryMeta(withQuery({ instant: true, range: true }), viz)).toBe('Last 15 minutes · 17 series');
