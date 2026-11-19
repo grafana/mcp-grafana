@@ -70,8 +70,10 @@ freezing Date.now() stalls Sankey rendering. Seeded Math.random stabilizes graph
 layout. Screenshot comparison allows 0.2% differing pixels; do not increase this
 to hide a regression. Playwright waits for consecutive stable screenshots.
 
-Baselines are separate for macOS and Linux. CI runs the pinned Playwright 1.65.1
-Noble container on ARM64 Linux to match Linux baseline generation. Keep the
+Baselines are separate for macOS and Linux. CI builds the UI and a static Go server on the ARM64 Linux runner using the
+repository mise setup. Browser tests run in the pinned Playwright 1.65.1 Noble
+container with `MCP_GRAFANA_BINARY` pointing to that build; no Go build or Git
+metadata lookup runs inside the browser container. Keep the
 Playwright npm version, image, and baselines aligned when upgrading. Recheck
 fonts and review every changed image; do not automatically update in CI.
 

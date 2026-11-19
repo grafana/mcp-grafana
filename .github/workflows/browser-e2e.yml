@@ -8,19 +8,29 @@ permissions:
 jobs:
   browser:
     runs-on: ubuntu-24.04-arm
-    container: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-mise
-      - name: Build apps
+        with:
+          tools: go node
+      - name: Build apps and MCP server on the runner
+        env:
+          CGO_ENABLED: "0"
         run: |
           mise run build-ui
-      - name: Run browser contract tests
-        working-directory: ui/mcp-apps
-        run: npm run test:e2e
+          mise run build
+      - name: Run browser contract tests in the pinned browser image
+        run: |
+          docker run --rm --init --ipc=host \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e CI=true \
+            -e MCP_GRAFANA_BINARY=/work/dist/mcp-grafana \
+            -v "$GITHUB_WORKSPACE:/work" -w /work/ui/mcp-apps \
+            mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 \
+            npm run test:e2e
       - name: Retain browser diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
