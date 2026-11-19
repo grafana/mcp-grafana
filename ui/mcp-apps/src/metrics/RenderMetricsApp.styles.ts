@@ -30,32 +30,6 @@ export const getRenderMetricsAppStyles = () => {
       flexWrap: 'wrap',
     }),
 
-    picker: css({ position: 'relative' }),
-
-    pickerMenu: css({
-      position: 'absolute',
-      top: `calc(100% + ${spacing[1]})`,
-      right: 0,
-      zIndex: 2,
-      minWidth: 160,
-      // A chat panel can be very narrow; never overflow it.
-      maxWidth: `calc(100vw - ${spacing[3]})`,
-      margin: 0,
-      padding: spacing[1],
-      listStyle: 'none',
-      borderRadius: borderRadius.md,
-      border: `${borderWidth.thin} solid ${colors.line.border}`,
-      background: colors.surface.background,
-      boxShadow: '0 4px 16px rgb(0 0 0 / 12%)',
-    }),
-
-    /** A ghost Button, stretched to a full-width menu row. */
-    pickerOption: css({
-      width: '100%',
-      justifyContent: 'flex-start',
-      '&[aria-selected="true"]': { background: colors.interactive.accent },
-    }),
-
     /** Square, icon-only variant of the shell's xs Button (24px tall). */
     iconButton: css({ width: spacing[6], padding: 0 }),
 

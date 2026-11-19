@@ -107,6 +107,46 @@ describe('model context of the viz view (state.14)', () => {
     expect(sent()).toEqual([expect.stringContaining('Time range of the arguments: now-6h to now.')]);
   });
 
+  it('sends the chart that the user picked, with the last state', () => {
+    const { state, sent, report } = shown();
+    report(ready);
+    state.pickVizChart('barchart');
+    expect(sent()).toEqual([expect.stringContaining('The Grafana App shows a barchart chart')]);
+    report(noData);
+    expect(sent().at(-1)).toContain('shows a barchart chart');
+  });
+
+  it('sends a chart picked before the first state of the Renderer', () => {
+    const { state, sent, report } = shown();
+    state.pickVizChart('barchart');
+    expect(sent()).toEqual([]);
+    report(ready);
+    expect(sent()).toEqual([expect.stringContaining('shows a barchart chart')]);
+  });
+
+  it('sends nothing when a chart picked before the first state is the chart of the result again', () => {
+    const { state, updateModelContext, report } = shown();
+    state.pickVizChart('barchart');
+    state.pickVizChart('timeseries');
+    report(ready);
+    expect(updateModelContext).not.toHaveBeenCalled();
+  });
+
+  it('replaces the context of a pick when a refresh draws another chart', async () => {
+    const { app, state, sent, report } = shown();
+    report(ready);
+    let finish: (value: unknown) => void = () => {};
+    vi.mocked(app.callServerTool).mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)) as never);
+    const pending = state.refreshViz({ id: 'r1', cause: 'refresh' });
+    state.pickVizChart('histogram');
+    finish({ structuredContent: { ...fixture('result.json'), alternatives: [] }, content: [] });
+    await pending;
+    expect(sent()).toEqual([
+      expect.stringContaining('shows a histogram chart'),
+      expect.stringContaining('shows a timeseries chart'),
+    ]);
+  });
+
   it('sends nothing after a refresh with the cause refresh', async () => {
     const { state, updateModelContext, report } = shown();
     report(ready);
