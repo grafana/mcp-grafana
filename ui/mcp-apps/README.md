@@ -19,7 +19,8 @@ Run `npm run dev` for component and host previews. The preview fixtures are synt
 `PostMessageTransport`, with `dist/` served same-origin so the app's console and
 errors are reachable. Use it when an app misbehaves inside a real host, which
 sandboxes the iframe and may refuse to expose a debugger. `?app=app.html`
-selects the bundle and `?mode=dark` the colour mode.
+selects the bundle and `?mode=dark` the colour mode. `npm run dev:host` serves
+it with the bundles as built, so run `npm run build:apps` after a change.
 
 ## Use the shell
 
