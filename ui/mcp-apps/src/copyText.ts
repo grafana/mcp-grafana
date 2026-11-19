@@ -13,11 +13,14 @@ export async function copyText(text: string): Promise<boolean> {
   const area = document.createElement('textarea');
   area.value = text;
   area.readOnly = true;
+  // Pinned to the corner, so focusing it does not scroll the view, wherever the frame ends.
   area.style.position = 'fixed';
+  area.style.top = '0';
+  area.style.left = '0';
   area.style.opacity = '0';
   document.body.append(area);
   // execCommand copies the selection of the focused element; focus is given back after.
-  area.focus();
+  area.focus({ preventScroll: true });
   area.select();
   try {
     return document.execCommand('copy');

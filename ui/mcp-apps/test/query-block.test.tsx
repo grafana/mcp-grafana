@@ -82,12 +82,14 @@ describe('QueryBlock', () => {
 
   it('copies through a text area when the host blocks the Clipboard API', async () => {
     const { execCommand } = stubClipboard(() => Promise.reject(new Error('blocked')), vi.fn(() => true));
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, 'focus');
     render(<QueryBlock datasource="prometheus" queries={[{ refId: 'A', text: 'up' }]} />);
     const copy = screen.getByRole('button', { name: 'Copy query' });
     copy.focus();
     await act(async () => fireEvent.click(copy));
 
     expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(screen.getByRole('button', { name: 'Query copied' })).toBe(document.activeElement);
     expect(document.querySelector('textarea')).toBeNull();
   });
