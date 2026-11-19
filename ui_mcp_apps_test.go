@@ -144,7 +144,7 @@ func TestVizRendererTool(t *testing.T) {
 				return NewToolResultText(""), nil
 			},
 		)
-		RegisterGrafanaAppResource(s)
+		RegisterVizRendererTool(s)
 		ctx := t.Context()
 		serverTransport, clientTransport := mcp.NewInMemoryTransports()
 		go func() { _ = s.Run(ctx, serverTransport) }()

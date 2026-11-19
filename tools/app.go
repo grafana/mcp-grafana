@@ -59,6 +59,17 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 	}
 	tool := newAppTool(sources...)
 	tool.Register(s)
+	if readsVizRenderer(sources) {
+		mcpgrafana.RegisterVizRendererTool(s)
+	}
+}
+
+// readsVizRenderer reports whether the App draws one of the sources with the viz Renderer. Only query_datasource
+// does, so only then does the server need the tool that declares the Renderer (#1654).
+func readsVizRenderer(sources []mcpgrafana.Tool) bool {
+	return slices.ContainsFunc(sources, func(source mcpgrafana.Tool) bool {
+		return source.Tool.Name == QueryDatasource.Tool.Name
+	})
 }
 
 func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {

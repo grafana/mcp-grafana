@@ -35,7 +35,7 @@ const vizRendererMIMEType = "text/javascript"
 const vizRendererTTLMs = 7 * 24 * 60 * 60 * 1000
 
 // RegisterGrafanaAppResource makes the shared viewer available to MCP hosts, with the viz Renderer script it reads to
-// draw query_datasource results and the tool that declares that script.
+// draw query_datasource results.
 func RegisterGrafanaAppResource(s *mcp.Server) {
 	s.AddResource(
 		&mcp.Resource{
@@ -56,7 +56,6 @@ func RegisterGrafanaAppResource(s *mcp.Server) {
 		},
 	)
 	registerVizRendererResource(s)
-	registerVizRendererTool(s)
 }
 
 // registerVizRendererResource makes the viz Renderer script available to the Grafana App. It is registered with the App,
@@ -90,11 +89,14 @@ const AppsExtensionID = "io.modelcontextprotocol/ui"
 // vizRendererToolName names the tool that declares the viz Renderer as its UI resource.
 const vizRendererToolName = "grafana_app_viz_renderer"
 
-// registerVizRendererTool adds a tool whose only job is to declare the viz Renderer as its UI resource (#1654). A
+// RegisterVizRendererTool adds a tool whose only job is to declare the viz Renderer as its UI resource (#1654). A
 // host can pass a resources/read from the App to the server only for a URI that a tool declares in
 // _meta.ui.resourceUri, and the tool of the App declares app.html. The tool is for the App alone (visibility), so a
 // host of MCP Apps hides it from the model. tools/list leaves it out for a client that cannot show MCP Apps.
-func registerVizRendererTool(s *mcp.Server) {
+//
+// Only the query_datasource view reads the Renderer, so tools.AddAppTool and tools.Selection.Register call this
+// when query_datasource is a source of the App tool. A server without that source does not get the tool.
+func RegisterVizRendererTool(s *mcp.Server) {
 	no := false
 	s.AddTool(
 		&mcp.Tool{
