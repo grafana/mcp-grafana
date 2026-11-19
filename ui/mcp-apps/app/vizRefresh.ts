@@ -7,8 +7,19 @@ import { parseVizResult, type VizArgs, type VizNotice, type VizResult } from './
 
 type CallResult = Awaited<ReturnType<App['callServerTool']>>;
 
-/** What a refresh gives: the new last arguments, the result and the notices of its viz spec, or the error text. */
-export type VizRefreshOutcome = { args: VizArgs; viz: VizResult; notices: VizNotice[] } | { error: string };
+/**
+ * What a refresh gives: the new last arguments, the result and the notices of its viz spec, or the error text.
+ * `mismatch`: the Source chose the chart after type-mismatch (refresh.10).
+ */
+export type VizRefreshOutcome =
+  | { args: VizArgs; viz: VizResult; notices: VizNotice[]; mismatch: boolean }
+  | { error: string };
+
+/** `args` with `type` set, or removed when it is undefined. */
+export function withType(args: VizArgs, type: string | undefined): VizArgs {
+  const { type: _type, ...rest } = args;
+  return type === undefined ? rest : { ...rest, type };
+}
 
 /** The code and the message of a tool error (tool.25): `code: message`. A text with no code is all message. */
 export function toolError(result: CallResult): { code?: string; message: string } {
@@ -38,14 +49,14 @@ export async function runVizRefresh(
 ): Promise<VizRefreshOutcome> {
   let next: VizArgs = request.cause === 'timeRange' ? { ...args, from: request.from, to: request.to } : args;
   let response = await call(next);
-  const mismatch = response.isError && !!next.type && toolError(response).code === 'type-mismatch';
+  const mismatch = !!response.isError && !!next.type && toolError(response).code === 'type-mismatch';
   if (mismatch && !stale()) {
-    const { type: _type, ...picked } = next;
-    next = picked as VizArgs;
+    next = withType(next, undefined);
     response = await call(next);
   }
   if (response.isError) return { error: toolError(response).message };
   const viz = parseVizResult(extractToolPayload(response).payload);
   if (!viz) return { error: 'The App cannot read the new result.' };
-  return { args: next, viz, notices: mismatch && viz.chart !== chart ? [chartChanged(chart, viz.chart)] : [] };
+  const notices = mismatch && viz.chart !== chart ? [chartChanged(chart, viz.chart)] : [];
+  return { args: next, viz, notices, mismatch };
 }
