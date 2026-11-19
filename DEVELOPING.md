@@ -30,6 +30,27 @@ mise run run-sse             # SSE mode (with debug logging + metrics)
 mise run run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
 ```
 
+### When a port is in use
+
+The test services publish 20 ports on the host, for example 3000 for Grafana and 9090 for
+Prometheus. If another process holds one of them, the services do not start. Each published
+port has a variable in `docker-compose.yaml` with the name `<SERVICE>_HOST_PORT`. Set the
+variable in the shell, or in a `.env` file in the repository root, which Git ignores:
+
+```bash
+GRAFANA_HOST_PORT=3001 PROMETHEUS_HOST_PORT=9091 mise run run-test-services
+```
+
+Then give the server the new address of Grafana:
+
+```bash
+GRAFANA_URL=http://localhost:3001 mise run run-streamable-http
+```
+
+The services reach each other over the compose network, so a data source in Grafana works
+with any host port. The integration and E2E tests expect the default ports. Run them with
+no variable set.
+
 ## Testing
 
 ```bash

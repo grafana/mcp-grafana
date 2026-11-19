@@ -2,26 +2,29 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 
 import type { RefreshRequest, RenderHandle, RenderState } from '../renderer/renderer.js';
 import { McpAppShell } from '../src/McpAppShell';
+import { QueryBlock, type QueryBlockQuery } from '../src/QueryBlock';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
-import { ChartPicker, chartLabel } from './ChartPicker';
+import { ChartPicker } from './ChartPicker';
 import type { Renderer } from './loadRenderer';
 import { buildVizSpec, shownChart, type VizArgs, type VizSpec, vizCharts } from './vizSpec';
 
-// The query text of the common data sources: Prometheus and Loki, SQL, and others.
-const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText'];
+// The query text of the common data sources: Prometheus and Loki, SQL, Graphite, and others.
+const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText', 'target'];
 
 /**
- * The summary title: the text of the first query on one line, or the data source when the query has no text.
- * The count of the other queries follows.
+ * The text of each query: its first query field with text, or the query as JSON when it has none. The arguments are
+ * the model's, unchecked until the server runs them, so an entry that is not an object is left out.
  */
-export function describeQueries(args: VizArgs): string {
-  const [first, ...rest] = args.queries;
-  const text = QUERY_TEXT_FIELDS.map((name) => first?.[name])
-    .map((value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''))
-    .find(Boolean);
-  const title = text || `Data source ${args.datasourceUid}`;
-  return rest.length ? `${title} (+${rest.length} more)` : title;
+export function queryTexts(args: VizArgs): QueryBlockQuery[] {
+  return args.queries
+    .filter((entry: unknown) => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+    .map(({ refId, ...query }) => {
+      const text = QUERY_TEXT_FIELDS.map((name) => query[name]).find(
+        (value): value is string => typeof value === 'string' && value.trim() !== '',
+      );
+      return { refId: typeof refId === 'string' ? refId : '', text: text?.trim() ?? JSON.stringify(query) };
+    });
 }
 
 /** Draws the result of query_datasource with the viz contract Renderer. */
@@ -35,6 +38,7 @@ export function VizApplication({ host }: { host: AppHostState }) {
   );
   const chart = viz ? shownChart(viz, vizChart) : undefined;
   const charts = viz ? vizCharts(viz) : [];
+  const queries = useMemo(() => (vizArgs ? queryTexts(vizArgs) : []), [vizArgs]);
   // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
   const [loadFailure, setLoadFailure] = useState<string>();
 
@@ -43,16 +47,13 @@ export function VizApplication({ host }: { host: AppHostState }) {
       product="Grafana"
       layout="wide"
       colorMode={colorMode}
-      summary={{
-        label: 'Data source query',
-        title: vizArgs ? describeQueries(vizArgs) : 'Query result',
-        // Errors go to the feedback banner; repeating them here reads as a stutter.
-        description: state.isError
+      // Until the arguments arrive, the card shows the status; then the query block leads the view. Errors go to the
+      // feedback banner; repeating them here reads as a stutter.
+      summary={
+        vizArgs
           ? undefined
-          : chart && vizArgs
-            ? `${chartLabel(chart)} · ${vizArgs.datasourceUid}`
-            : state.status,
-      }}
+          : { label: 'Data source query', title: 'Query result', description: state.isError ? undefined : state.status }
+      }
       share={
         chart && charts.length > 1 && !state.isError && !loadFailure ? (
           <ChartPicker options={charts} value={chart} onChange={host.pickVizChart} />
@@ -63,9 +64,12 @@ export function VizApplication({ host }: { host: AppHostState }) {
           ? { tone: 'error', message: state.status }
           : loadFailure
             ? { tone: 'error', message: loadFailure }
-            : undefined
+            : vizArgs && !viz
+              ? { tone: 'info', message: state.status }
+              : undefined
       }
     >
+      {vizArgs && <QueryBlock datasource={vizArgs.datasourceUid} queries={queries} />}
       {spec && !loadFailure ? (
         <RendererView
           spec={spec}
