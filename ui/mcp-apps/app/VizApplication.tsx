@@ -54,7 +54,6 @@ export function VizApplication({ host }: { host: AppHostState }) {
             : state.status,
       }}
       share={
-        // With no alternatives, there is nothing to pick.
         chart && charts.length > 1 && !state.isError && !loadFailure ? (
           <ChartPicker options={charts} value={chart} onChange={host.pickVizChart} />
         ) : undefined

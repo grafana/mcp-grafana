@@ -9,13 +9,13 @@ type CallResult = Awaited<ReturnType<App['callServerTool']>>;
 
 /**
  * What a refresh gives: the new last arguments, the result and the notices of its viz spec, or the error text.
- * `mismatch`: the first call gave type-mismatch, so the Source picked the chart of the second (refresh.10).
+ * `mismatch`: the Source chose the chart after type-mismatch (refresh.10).
  */
 export type VizRefreshOutcome =
   | { args: VizArgs; viz: VizResult; notices: VizNotice[]; mismatch: boolean }
   | { error: string };
 
-/** The arguments with `type`, or with no `type` when it is undefined. */
+/** `args` with `type` set, or removed when it is undefined. */
 export function withType(args: VizArgs, type: string | undefined): VizArgs {
   const { type: _type, ...rest } = args;
   return type === undefined ? rest : { ...rest, type };

@@ -8,24 +8,20 @@ import { getPickerStyles } from './Picker.styles';
 export type PickerOption<T extends string> = { value: T; label: string; icon?: ReactNode };
 
 export type PickerProps<T extends string> = {
-  /** The name of the list, for assistive technology. */
+  /** The accessible name of the list. */
   label: string;
   options: Array<PickerOption<T>>;
   value: T;
   onChange: (value: T) => void;
-  /** The name of the trigger. With none, the trigger is named by the label of the value. */
+  /** The accessible name of the trigger; defaults to the label of the value. */
   triggerLabel?: string;
 };
 
-/**
- * A compact dropdown: one trigger that shows the value, and a listbox of the options. A dropdown keeps a control row
- * to one button in a narrow chat panel.
- */
+/** A dropdown of one trigger and a listbox, so a control row in a narrow chat panel stays one button. */
 export function Picker<T extends string>({ label, options, value, onChange, triggerLabel }: PickerProps<T>) {
   const styles = getPickerStyles();
   const [open, setOpen] = useState(false);
-  // The menu opens under the right edge of the trigger. A trigger near the left edge of the frame, like one in a
-  // header that wrapped, opens it under its left edge instead, so the menu stays in the frame.
+  // Opens to the right when the menu doesn't fit left of the trigger, as in a wrapped header.
   const [opensRight, setOpensRight] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
@@ -49,7 +45,7 @@ export function Picker<T extends string>({ label, options, value, onChange, trig
     };
   }, [open]);
 
-  // Measured on open, before paint: the width of the menu does not depend on the side it is pinned to.
+  // Measured before paint; the menu's width doesn't depend on its side.
   useLayoutEffect(() => {
     const menu = menuRef.current;
     const wrapper = wrapperRef.current;
@@ -81,7 +77,7 @@ export function Picker<T extends string>({ label, options, value, onChange, trig
           aria-label={label}
         >
           {options.map((option) => (
-            // A listbox holds only options, so the list item has no role of its own.
+            // A listbox holds only options.
             <li key={option.value} role="none">
               <Button
                 variant="ghost"

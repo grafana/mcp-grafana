@@ -43,7 +43,7 @@ export type AppHostSnapshot = {
   vizArgs?: VizArgs;
   /** The notices of the App for the viz spec of the last refresh only (spec.8, refresh.10). */
   vizNotices?: VizNotice[];
-  /** The alternative that the user picked (spec.2). None when the model or the Source chose the chart (refresh.8). */
+  /** The user's pick (spec.2); undefined when the model or the Source chose the chart (refresh.8). */
   vizChart?: string;
   colorMode: McpAppColorMode;
   /** The IANA time zone of the host context, if it gives one. */
@@ -80,7 +80,7 @@ export type AppHostState = {
   reportVizState: (state: RenderState, generation: number) => void;
   /** Takes the message of a Renderer that did not load or whose render threw, for the model context (state.14). */
   reportVizFailure: (message: string, generation: number) => void;
-  /** Draws another chart of the result, one of its alternatives or its own chart, and tells the model (state.14). */
+  /** Shows another chart of the result and tells the model (state.14). */
   pickVizChart: (chart: string) => void;
   /** Hand a brushed window back to the agent as a question. */
   askAboutRange: (fromMs: number, toMs: number) => void;
@@ -215,18 +215,16 @@ export function createAppHostState(app: App): AppHostState {
   const pickVizChart = (chart: string) => {
     const { viz, vizChart } = snapshot;
     if (!viz || !vizCharts(viz).includes(chart) || chart === shownChart(viz, vizChart)) return;
-    // The notices of the App belong to the spec of one refresh (spec.8).
+    // App notices belong to one refresh (spec.8).
     set({ vizChart: chart, vizNotices: undefined });
-    // The user changed what the model asked for (state.14). The Renderer reports a state only when it changes, so this
-    // uses the last state; a change after the draw sends the context again.
+    // Uses the last state; the Renderer reports again only on a change (state.12).
     sendVizContext();
   };
 
   const reportVizState = (state: RenderState, generation: number) => {
     if (isStale(generation)) return;
     vizState = state;
-    // A first draw that is ready with no notices is what the model asked for (state.16), unless the user picked
-    // another chart before it, while the Renderer loaded (state.14).
+    // Skip a first ready draw with no notices (state.16), unless the user picked another chart while it loaded.
     const { viz, vizChart } = snapshot;
     const picked = !!viz && shownChart(viz, vizChart) !== viz.chart;
     if (state.state !== 'ready' || state.notices.length > 0 || contextSent || picked) sendVizContext();
@@ -335,7 +333,7 @@ export function createAppHostState(app: App): AppHostState {
   const refreshViz = async (request: RefreshRequest) => {
     const { vizArgs, viz, vizChart, generation } = snapshot;
     if (!vizArgs || !viz) return { error: 'There is no query to refresh.' };
-    // A chart the user picked is the type of the refresh, so it does not change under the user (refresh.9).
+    // Ask for the picked chart, so it doesn't change under the user (refresh.9).
     const asked = vizChart ? withType(vizArgs, vizChart) : vizArgs;
     lastRefresh = request.id;
     const stale = () => lastRefresh !== request.id || snapshot.generation !== generation;
@@ -349,11 +347,9 @@ export function createAppHostState(app: App): AppHostState {
       const outcome = await runVizRefresh(call, asked, shownChart(viz, vizChart), request, stale);
       if (stale()) return undefined;
       if ('error' in outcome) return outcome;
-      // After type-mismatch the Source picked the chart, so the pick of the user is gone (refresh.10). Otherwise the
-      // last arguments keep the type of the model, and the pick stays apart from them (refresh.8).
+      // After type-mismatch the Source chose the chart (refresh.10); otherwise keep the model's type (refresh.8).
       const keptPick = vizChart !== undefined && !outcome.mismatch;
-      // A pick made while the refresh ran stays, if the new result has it. Otherwise the chart of the result shows,
-      // which is the pick of this refresh when the Source kept it.
+      // Keep a pick made during the refresh if the result has it, else this refresh's pick if the Source kept it.
       const later = snapshot.vizChart;
       const keptLater = later !== undefined && later !== vizChart && vizCharts(outcome.viz).includes(later);
       const before = shownChart(snapshot.viz ?? viz, later);
@@ -363,9 +359,7 @@ export function createAppHostState(app: App): AppHostState {
         vizNotices: outcome.notices,
         vizChart: keptLater ? later : keptPick ? vizChart : undefined,
       });
-      // The model asked for another range, so it hears of the new one (state.14). A context that went to the model
-      // names the chart, so a new chart replaces it. The Renderer reports a state only when it changes, so this uses
-      // the last state; a change after the draw sends the context again.
+      // Tell the model of a new range (state.14), or of a new chart once it has a context. Uses the last state.
       const changed = contextSent && shownChart(outcome.viz, snapshot.vizChart) !== before;
       if (request.cause === 'timeRange' || changed) sendVizContext();
       return undefined;

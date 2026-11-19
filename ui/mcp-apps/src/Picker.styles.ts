@@ -28,7 +28,7 @@ export const getPickerStyles = () => {
       boxShadow: '0 4px 16px rgb(0 0 0 / 12%)',
     }),
 
-    /** The menu under the left edge of the trigger, for a trigger near the left edge of the frame. */
+    /** Pins the menu to the left edge of the trigger. */
     menuStart: css({ left: 0, right: 'auto' }),
 
     /** A ghost Button, stretched to a full-width menu row. */

@@ -6,7 +6,7 @@ import { shownChart, type VizArgs, type VizResult } from './vizSpec';
 /**
  * The model context of the viz view (state.15): one text that names the chart, the time range of the tool arguments
  * and the absolute range of the data, the state, the error message and the message of each notice. Arguments with no
- * `from` or `to` use the defaults of the Source. `picked` is the alternative that the user picked (spec.2).
+ * `from` or `to` use the defaults of the Source. `picked` is the user's pick (spec.2).
  */
 export function vizModelContext(args: VizArgs, viz: VizResult, state: RenderState, picked?: string): string {
   const lines = [
