@@ -225,8 +225,11 @@ export function createAppHostState(app: App): AppHostState {
   const reportVizState = (state: RenderState, generation: number) => {
     if (isStale(generation)) return;
     vizState = state;
-    // A first draw that is ready with no notices is what the model asked for (state.16).
-    if (state.state !== 'ready' || state.notices.length > 0 || contextSent) sendVizContext();
+    // A first draw that is ready with no notices is what the model asked for (state.16), unless the user picked
+    // another chart before it, while the Renderer loaded (state.14).
+    const { viz, vizChart } = snapshot;
+    const picked = !!viz && shownChart(viz, vizChart) !== viz.chart;
+    if (state.state !== 'ready' || state.notices.length > 0 || contextSent || picked) sendVizContext();
   };
 
   /** A new tool call from the host supersedes any refresh still in flight, and starts a new model context. */
@@ -349,12 +352,13 @@ export function createAppHostState(app: App): AppHostState {
       // After type-mismatch the Source picked the chart, so the pick of the user is gone (refresh.10). Otherwise the
       // last arguments keep the type of the model, and the pick stays apart from them (refresh.8).
       const keptPick = vizChart !== undefined && !outcome.mismatch;
+      // A pick made while the refresh ran stays, if the new result has it.
+      const pick = outcome.mismatch && snapshot.vizChart === vizChart ? undefined : snapshot.vizChart;
       set({
         vizArgs: keptPick ? withType(outcome.args, vizArgs.type) : outcome.args,
         viz: outcome.viz,
         vizNotices: outcome.notices,
-        // A pick made while the refresh ran stays.
-        vizChart: outcome.mismatch && snapshot.vizChart === vizChart ? undefined : snapshot.vizChart,
+        vizChart: pick && vizCharts(outcome.viz).includes(pick) ? pick : undefined,
       });
       // The model asked for another range, so it hears of the new one (state.14). The Renderer reports a state only
       // when it changes, so this uses the last state; a change after the draw sends the context again.

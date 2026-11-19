@@ -208,6 +208,19 @@ describe('pickVizChart', () => {
     expect(state.getSnapshot().vizChart).toBe('histogram');
   });
 
+  it('drops a pick made while a refresh ran when the new result does not have it (refresh.9)', async () => {
+    let finish: (value: unknown) => void = () => {};
+    const { state, callServerTool } = shown(vi.fn(() => new Promise((resolve) => (finish = resolve))));
+    const pending = state.refreshViz({ id: 'r1', cause: 'refresh' });
+    state.pickVizChart('histogram');
+    finish(ok({ ...fixture('result.json'), alternatives: [] }));
+    await pending;
+    expect(state.getSnapshot().vizChart).toBeUndefined();
+    callServerTool.mockResolvedValueOnce(ok(fixture('result.json')));
+    await state.refreshViz({ id: 'r2', cause: 'refresh' });
+    expect(callServerTool.mock.calls[1][0].arguments.arguments).toEqual(fixture('args.json'));
+  });
+
   it('starts with no pick for a new tool call', () => {
     const { app, state } = shown();
     state.pickVizChart('barchart');

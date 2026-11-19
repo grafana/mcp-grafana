@@ -116,6 +116,22 @@ describe('model context of the viz view (state.14)', () => {
     expect(sent().at(-1)).toContain('shows a barchart chart');
   });
 
+  it('sends a chart picked before the first state of the Renderer', () => {
+    const { state, sent, report } = shown();
+    state.pickVizChart('barchart');
+    expect(sent()).toEqual([]);
+    report(ready);
+    expect(sent()).toEqual([expect.stringContaining('shows a barchart chart')]);
+  });
+
+  it('sends nothing when a chart picked before the first state is the chart of the result again', () => {
+    const { state, updateModelContext, report } = shown();
+    state.pickVizChart('barchart');
+    state.pickVizChart('timeseries');
+    report(ready);
+    expect(updateModelContext).not.toHaveBeenCalled();
+  });
+
   it('sends nothing after a refresh with the cause refresh', async () => {
     const { state, updateModelContext, report } = shown();
     report(ready);
