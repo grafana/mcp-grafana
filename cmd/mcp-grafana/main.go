@@ -83,6 +83,7 @@ func (dt *disabledTools) disabledByFlag() map[string]bool {
 		"rendering":     dt.rendering,
 		"snapshot":      dt.snapshot,
 		"cloudwatch":    dt.cloudwatch,
+		"xray":          dt.xray,
 		"cloudlogging":  dt.cloudlogging,
 		"azuremonitor":  dt.azuremonitor,
 		"examples":      dt.examples,
@@ -129,7 +130,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, admin,
-	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, cloudlogging, azuremonitor, write, query, enableQuery,
+	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, xray, cloudlogging, azuremonitor, write, query, enableQuery,
 	snapshot, examples, sql, graphite, dsquery,
 	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
@@ -205,6 +206,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
+	flag.BoolVar(&dt.xray, "disable-xray", false, "Disable AWS X-Ray tools")
 	flag.BoolVar(&dt.cloudlogging, "disable-cloudlogging", false, "Disable Google Cloud Logging tools")
 	flag.BoolVar(&dt.azuremonitor, "disable-azuremonitor", false, "Disable Azure Monitor tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")

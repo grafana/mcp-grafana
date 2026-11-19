@@ -173,6 +173,9 @@ var catalog = []category{
 			query(QueryCloudWatch), query(QueryCloudWatchLogs),
 		},
 	},
+	{name: "xray", description: "X-Ray: Search AWS X-Ray traces with filter expressions and fetch a trace as a tree of segments.", tools: []toolSpec{
+		query(SearchXRayTraces), query(GetXRayTrace),
+	}},
 	{
 		name:               "cloudlogging",
 		description:        "Google Cloud Logging: Query logs with the Cloud Logging query language and list projects, log buckets, and views.",

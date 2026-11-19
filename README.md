@@ -121,6 +121,13 @@ BigQuery queries require qualified table references such as `` `my-project.my_da
 - **List CloudWatch log group fields:** Discover the fields available in a log group.
 - **Query CloudWatch Logs:** Run CloudWatch Logs Insights queries across one or more log groups.
 
+### X-Ray Querying
+
+> **Note:** X-Ray tools are **disabled by default**. To enable them, add `xray` to your `--enabled-tools` flag. Requires the [AWS X-Ray datasource plugin](https://grafana.com/grafana/plugins/grafana-x-ray-datasource/) (`grafana-x-ray-datasource`); AWS authentication is handled by the datasource configuration.
+
+- **Search X-Ray traces:** Find traces with an X-Ray filter expression (e.g. `service("checkout") AND fault = true`) and a time range; returns the newest matches with duration and HTTP method, URL and status.
+- **Get X-Ray trace:** Fetch one trace by X-Ray or W3C ID as a tree of segments and subsegments, with timings, HTTP status, error/fault/throttle flags and exception messages.
+
 ### Google Cloud Logging Querying
 
 > **Note:** Google Cloud Logging tools are **disabled by default**. To enable them, add `cloudlogging` to your `--enabled-tools` flag. Requires the [Google Cloud Logging datasource plugin](https://grafana.com/grafana/plugins/googlecloud-logging-datasource/) (`googlecloud-logging-datasource`) version 1.8.0 or later, which needs Grafana 11.2+. Older plugin versions return a different response layout and `query_cloud_logging` reports an error asking for an upgrade.
@@ -377,6 +384,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_cloudwatch_log_groups`        | CloudWatch*               | List CloudWatch log groups                                                                                                                                    | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloudwatch_log_group_fields`  | CloudWatch*               | List fields discovered in a log group                                                                                                                         | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `query_cloudwatch_logs`             | CloudWatch*               | Execute CloudWatch Logs Insights queries                                                                                                                      | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
+| `search_xray_traces`                | X-Ray*                    | Search X-Ray traces with a filter expression                                                                                                                  | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
+| `get_xray_trace`                    | X-Ray*                    | Get an X-Ray trace as a tree of segments                                                                                                                      | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloud_logging_projects`       | Cloud Logging*            | List GCP projects readable by a Google Cloud Logging datasource                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloud_logging_buckets`        | Cloud Logging*            | List log buckets in a GCP project                                                                                                                             | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloud_logging_views`          | Cloud Logging*            | List log views in a log bucket                                                                                                                                | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
@@ -527,7 +536,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, `snowflake`, and `xray`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
@@ -572,6 +581,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 - `--disable-snapshot`: Disable snapshot tools
 - `--disable-cloudwatch`: Disable CloudWatch tools
+- `--disable-xray`: Disable AWS X-Ray tools
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools
 - `--disable-azuremonitor`: Disable Azure Monitor tools
 - `--disable-examples`: Disable query examples tools
@@ -693,6 +703,10 @@ When `--disable-query` is enabled, the following tools are not registered:
 - `query_cloudwatch`
 - `query_cloudwatch_logs`
 
+**X-Ray Tools:**
+- `search_xray_traces`
+- `get_xray_trace`
+
 **Google Cloud Logging Tools:**
 - `query_cloud_logging`
 
@@ -706,7 +720,7 @@ When `--disable-query` is enabled, the following tools are not registered:
 **Run Panel Query Tools:**
 - `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, and `azuremonitor` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, `azuremonitor`, and `xray` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
 
 Note that `--disable-query` gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but does not police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
