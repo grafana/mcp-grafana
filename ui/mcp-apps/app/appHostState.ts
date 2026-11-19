@@ -356,15 +356,18 @@ export function createAppHostState(app: App): AppHostState {
       // which is the pick of this refresh when the Source kept it.
       const later = snapshot.vizChart;
       const keptLater = later !== undefined && later !== vizChart && vizCharts(outcome.viz).includes(later);
+      const before = shownChart(snapshot.viz ?? viz, later);
       set({
         vizArgs: keptPick ? withType(outcome.args, vizArgs.type) : outcome.args,
         viz: outcome.viz,
         vizNotices: outcome.notices,
         vizChart: keptLater ? later : keptPick ? vizChart : undefined,
       });
-      // The model asked for another range, so it hears of the new one (state.14). The Renderer reports a state only
-      // when it changes, so this uses the last state; a change after the draw sends the context again.
-      if (request.cause === 'timeRange') sendVizContext();
+      // The model asked for another range, so it hears of the new one (state.14). A context that went to the model
+      // names the chart, so a new chart replaces it. The Renderer reports a state only when it changes, so this uses
+      // the last state; a change after the draw sends the context again.
+      const changed = contextSent && shownChart(outcome.viz, snapshot.vizChart) !== before;
+      if (request.cause === 'timeRange' || changed) sendVizContext();
       return undefined;
     } catch (cause) {
       // A host may decline the call, or require an approval the user dismissed.

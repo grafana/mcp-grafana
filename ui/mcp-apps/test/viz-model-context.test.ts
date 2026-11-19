@@ -132,6 +132,21 @@ describe('model context of the viz view (state.14)', () => {
     expect(updateModelContext).not.toHaveBeenCalled();
   });
 
+  it('replaces the context of a pick when a refresh draws another chart', async () => {
+    const { app, state, sent, report } = shown();
+    report(ready);
+    let finish: (value: unknown) => void = () => {};
+    vi.mocked(app.callServerTool).mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)) as never);
+    const pending = state.refreshViz({ id: 'r1', cause: 'refresh' });
+    state.pickVizChart('histogram');
+    finish({ structuredContent: { ...fixture('result.json'), alternatives: [] }, content: [] });
+    await pending;
+    expect(sent()).toEqual([
+      expect.stringContaining('shows a histogram chart'),
+      expect.stringContaining('shows a timeseries chart'),
+    ]);
+  });
+
   it('sends nothing after a refresh with the cause refresh', async () => {
     const { state, updateModelContext, report } = shown();
     report(ready);
