@@ -242,3 +242,22 @@ npm run test:e2e -- viz-integration.spec.ts --repeat-each=10 --workers=2 --retri
 Use `CI=true` with unused harness ports when checking fresh server startup rather
 than reusing a running development host. Schema/pick matrices, argument transforms,
 timeout permutations and callback races remain in Go/Vitest.
+
+### When a harness port is in use
+
+Like the Docker test stack described in DEVELOPING.md, the browser harness
+supports service-specific host port overrides. These are independent of the
+Docker stack's variables: browser tests use fixtures, not that stack.
+
+| Variable | Default |
+| --- | --- |
+| `MCP_APPS_HOST_PORT` | 5194 |
+| `MCP_BASIC_HOST_PORT` | 5196 |
+| `MCP_SANDBOX_HOST_PORT` | 5197 |
+
+For example, run `MCP_APPS_HOST_PORT=5294 MCP_BASIC_HOST_PORT=5296 MCP_SANDBOX_HOST_PORT=5297 npm run test:e2e`.
+The same variables work with `npm run dev`; open `http://127.0.0.1:5294`
+for that example. Legacy preview bookmarks still redirect to the default port;
+open the configured host directly when overriding it. Ports must be distinct
+integers from 1 to 65535. Sandbox URLs and Playwright readiness checks follow
+the overrides automatically. The mock Grafana server always uses an ephemeral port.

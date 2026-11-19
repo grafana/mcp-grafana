@@ -1,3 +1,4 @@
+import { basicHostPort, sandboxPort } from '../ports.mjs';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +26,7 @@ for (const [source, hash] of Object.entries(manifest.files)) {
 await build({ configFile: false, root, plugins: [viteSingleFile()],
   build: { outDir: 'dist', rollupOptions: { input: `${root}/sandbox.html` } } });
 const child = spawn(process.execPath, [`${root}/serve.ts`], {
-  stdio: 'inherit', env: { ...process.env, HOST_PORT: '5196', SANDBOX_PORT: '5197' },
+  stdio: 'inherit', env: { ...process.env, HOST_PORT: String(basicHostPort), SANDBOX_PORT: String(sandboxPort) },
 });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
 child.on('exit', code => process.exit(code ?? 1));

@@ -1,3 +1,4 @@
+declare const __MCP_SANDBOX_URL__: string;
 import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { deliverScenario, refreshResult, chartNames } from './scenarios';
 
@@ -34,7 +35,7 @@ const proxyReady = strict ? Promise.resolve() : new Promise<void>(resolve => {
   };
   window.addEventListener('message', listener);
 });
-const sandboxUrl = new URL('http://localhost:5197/sandbox.html');
+const sandboxUrl = new URL(__MCP_SANDBOX_URL__);
 if (csp) sandboxUrl.searchParams.set('csp', JSON.stringify(csp));
 if (!strict) {
   frame.src = sandboxUrl.href;

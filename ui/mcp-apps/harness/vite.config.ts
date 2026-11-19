@@ -1,3 +1,4 @@
+import { appPort, sandboxUrl } from './ports.mjs';
 import { defineConfig } from 'vite';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
@@ -11,8 +12,9 @@ import { createServer } from 'node:http';
 import responseFixture from '@grafana/viz-contract/fixtures/prometheus-line/response.json' with { type: 'json' };
 
 export default defineConfig({
+  define: { __MCP_SANDBOX_URL__: JSON.stringify(sandboxUrl) },
   root: fileURLToPath(new URL('.', import.meta.url)),
-  server: { host: '127.0.0.1', port: 5194, strictPort: true },
+  server: { host: '127.0.0.1', port: appPort, strictPort: true },
   plugins: [{
     name: 'mcp-resource-proxy',
     async configureServer(server) {
@@ -73,7 +75,7 @@ export default defineConfig({
           if (url.pathname === '/mcp/strict-app') {
             const resource = await client.readResource({ uri: 'ui://grafana/app.html' });
             const content = resource.contents[0];
-            const sandbox = new URL('http://localhost:5197/sandbox.html');
+            const sandbox = new URL(sandboxUrl);
             const ui = content._meta?.ui as { csp?: unknown } | undefined;
             if (ui?.csp) sandbox.searchParams.set('csp', JSON.stringify(ui.csp));
             const upstream = await fetch(sandbox);
