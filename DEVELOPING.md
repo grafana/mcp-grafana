@@ -28,6 +28,7 @@ Then run the server in your preferred transport mode:
 mise run run                 # stdio mode
 mise run run-sse             # SSE mode (with debug logging + metrics)
 mise run run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
+mise run run-app [port]      # Streamable HTTP mode with every MCP App source on, for a review of an App change
 ```
 
 ## Testing

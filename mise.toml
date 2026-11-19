@@ -163,6 +163,20 @@ description = "Run the MCP server in StreamableHTTP mode"
 env = { GRAFANA_USERNAME = "admin", GRAFANA_PASSWORD = "admin", OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4317", OTEL_EXPORTER_OTLP_INSECURE = "true" }
 run = "go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug --metrics --enabled-tools {{vars.enabled_tools}}"
 
+[tasks.run-app]
+description = "Run the MCP server in StreamableHTTP mode with every source of render_grafana_app on, for a review of an MCP App change. Takes an optional port (default 8000)"
+usage = 'arg "[port]" help="Port to listen on" default="8000"'
+# The defaults are set in the script, not in `env`, so GRAFANA_URL and a token
+# from the shell select a live instance instead of the test stack.
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -z "${GRAFANA_SERVICE_ACCOUNT_TOKEN:-}${GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE:-}${GRAFANA_API_KEY:-}" ]; then
+  export GRAFANA_USERNAME="${GRAFANA_USERNAME:-admin}" GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-admin}"
+fi
+exec go run ./cmd/mcp-grafana --transport streamable-http --address "localhost:${usage_port}" --log-level debug --debug --enabled-tools {{vars.enabled_tools}},dsquery
+"""
+
 # =============================================================================
 # TOKEN ANALYSIS
 # =============================================================================

@@ -89,4 +89,5 @@ One constraint is easy to miss when adding an app:
 `preview/localhost.html` runs an app against a real `AppBridge` host with the
 iframe same-origin, so its console and errors are reachable. Hosts sandbox apps
 and may refuse to expose a debugger, which makes an in-host failure otherwise
-invisible; `npm run dev` serves this page.
+invisible. `npx vite --config localhost.vite.config.ts` serves this page with the
+built app; `npm run dev` serves the page without it.

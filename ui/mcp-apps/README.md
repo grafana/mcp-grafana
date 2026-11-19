@@ -19,7 +19,8 @@ Run `npm run dev` for component and host previews. The preview fixtures are synt
 `PostMessageTransport`, with `dist/` served same-origin so the app's console and
 errors are reachable. Use it when an app misbehaves inside a real host, which
 sandboxes the iframe and may refuse to expose a debugger. `?app=app.html`
-selects the bundle and `?mode=dark` the colour mode.
+selects the bundle and `?mode=dark` the colour mode. Serve it with
+`npx vite --config localhost.vite.config.ts`; `npm run dev` does not serve `dist/`.
 
 ## Use the shell
 
