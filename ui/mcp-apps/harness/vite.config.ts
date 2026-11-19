@@ -9,7 +9,11 @@ export default defineConfig({
   plugins: [{
     name: 'mcp-resource-proxy',
     async configureServer(server) {
-      const client = new Client({ name: 'browser-e2e', version: '1.0.0' });
+      const client = new Client({ name: 'browser-e2e', version: '1.0.0' }, {
+        capabilities: {
+          extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } },
+        },
+      });
       await client.connect(new StdioClientTransport({
         command: fileURLToPath(new URL('../../../dist/mcp-grafana', import.meta.url)),
         args: ['--enabled-tools', 'datasource,prometheus,tempo,rendering'],

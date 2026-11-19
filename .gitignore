@@ -13,6 +13,7 @@ wheels/
 
 # UI app build artifacts
 ui/*/node_modules/
+ui/**/coverage/
 
 # Virtual environments
 .venv
