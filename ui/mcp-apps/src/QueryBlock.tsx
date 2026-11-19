@@ -12,6 +12,8 @@ export type QueryBlockProps = {
   /** The data source of the queries, shown in a chip. */
   datasource: string;
   queries: QueryBlockQuery[];
+  /** A line under the expanded queries, for example the time range and the count of series. */
+  meta?: string;
 };
 
 /** How long Copy shows its result. */
@@ -25,9 +27,9 @@ const COPY = {
 
 /**
  * The queries behind a chart. Collapsed, it shows them on one line; expanded, each query as written, with its refId
- * when there are several. Copy puts the text of all queries on the clipboard.
+ * when there are several, then the meta line. Copy puts the text of all queries on the clipboard.
  */
-export function QueryBlock({ datasource, queries }: QueryBlockProps) {
+export function QueryBlock({ datasource, queries, meta }: QueryBlockProps) {
   const styles = getQueryBlockStyles();
   const [expanded, setExpanded] = useState(false);
   const [copy, setCopy] = useState<keyof typeof COPY>('idle');
@@ -87,6 +89,7 @@ export function QueryBlock({ datasource, queries }: QueryBlockProps) {
               <pre className={styles.code}>{text}</pre>
             </div>
           ))}
+          {meta && <div className={styles.meta}>{meta}</div>}
         </div>
       ) : (
         <div id={bodyId} className={styles.preview}>

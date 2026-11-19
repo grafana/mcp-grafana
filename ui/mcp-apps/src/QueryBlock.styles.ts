@@ -86,6 +86,8 @@ export const getQueryBlockStyles = () => {
       wordBreak: 'break-all',
     }),
 
+    meta: css({ color: colors.interactive.mutedForeground, fontSize: typography.fontSize.ui.sm }),
+
     /** Read by assistive technology only. */
     srOnly: css({
       position: 'absolute',

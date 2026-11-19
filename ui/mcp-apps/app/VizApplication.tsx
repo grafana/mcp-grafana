@@ -6,6 +6,7 @@ import { QueryBlock, type QueryBlockQuery } from '../src/QueryBlock';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
 import { ChartPicker } from './ChartPicker';
+import { queryMeta } from './queryMeta';
 import type { Renderer } from './loadRenderer';
 import { buildVizSpec, shownChart, type VizArgs, type VizSpec, vizCharts } from './vizSpec';
 
@@ -39,6 +40,10 @@ export function VizApplication({ host }: { host: AppHostState }) {
   const chart = viz ? shownChart(viz, vizChart) : undefined;
   const charts = viz ? vizCharts(viz) : [];
   const queries = useMemo(() => (vizArgs ? queryTexts(vizArgs) : []), [vizArgs]);
+  const meta = useMemo(
+    () => (vizArgs && viz ? queryMeta(vizArgs, viz, timeZone) : undefined),
+    [vizArgs, viz, timeZone],
+  );
   // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
   const [loadFailure, setLoadFailure] = useState<string>();
 
@@ -69,7 +74,7 @@ export function VizApplication({ host }: { host: AppHostState }) {
               : undefined
       }
     >
-      {vizArgs && <QueryBlock datasource={vizArgs.datasourceUid} queries={queries} />}
+      {vizArgs && <QueryBlock datasource={vizArgs.datasourceUid} queries={queries} meta={meta} />}
       {spec && !loadFailure ? (
         <RendererView
           spec={spec}

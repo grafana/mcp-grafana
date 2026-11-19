@@ -240,6 +240,13 @@ describe('query block', () => {
     expect(screen.queryByRole('heading', { name: 'Query result' })).toBeNull();
   });
 
+  it('gives the range and the series of the result under the expanded query', async () => {
+    view();
+    await waitFor(() => expect(renderer.render).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Expand query' }));
+    expect(screen.getByText('Last 15 minutes · 17 series')).toBeTruthy();
+  });
+
   it('shows the query while the result is on its way', () => {
     view(vi.fn(), true, false);
     expect(screen.getByRole('region', { name: 'Query' }).textContent).toContain(expr);
