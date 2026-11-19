@@ -1058,7 +1058,10 @@ func newBaseTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTri
 // BuildTransport constructs an http.RoundTripper with the standard middleware
 // chain derived from cfg. The default chain (innermost to outermost) is:
 //
-//	base → TLS → redirectGuard → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//	base → TLS → redirectGuard → debugLogging → rateLimitRetry → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//
+// rateLimitRetry retries 429s (and 503s with Retry-After) below the header
+// layers, so every attempt carries the same headers and is debug-logged.
 //
 // Auth is innermost among the header-setting layers so that credentials take
 // precedence over any forwarded/extra headers with the same keys.
@@ -1095,6 +1098,8 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 			logger:     cfg.LoggerOrDefault(),
 		}
 	}
+
+	transport = &rateLimitRetryTransport{next: transport}
 
 	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
 	if !options.withoutAuth {

@@ -14,7 +14,6 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -596,21 +595,3 @@ var ListCloudWatchDimensionValues = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddCloudWatchTools registers all CloudWatch tools with the MCP server.
-// query_cloudwatch and query_cloudwatch_logs are registered only when
-// enableQueryTools is true; the listing tools stay available either way.
-func AddCloudWatchTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		QueryCloudWatch.Register(s)
-	}
-	ListCloudWatchNamespaces.Register(s)
-	ListCloudWatchMetrics.Register(s)
-	ListCloudWatchDimensions.Register(s)
-	ListCloudWatchDimensionValues.Register(s)
-	if enableQueryTools {
-		QueryCloudWatchLogs.Register(s)
-	}
-	ListCloudWatchLogGroups.Register(s)
-	ListCloudWatchLogGroupFields.Register(s)
-}

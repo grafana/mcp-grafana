@@ -23,7 +23,7 @@ func TestTempoGetTraceStatelessStreamableHTTP(t *testing.T) {
 	defer cleanup()
 	base := traceTestContext(t, mcpgrafana.GrafanaConfig{URL: grafana.URL})
 	s := mcp.NewServer(&mcp.Implementation{Name: "trace-transport-test", Version: "1"}, nil)
-	AddTempoTools(s, true)
+	Resolve(Policy{Categories: []string{"tempo"}}).Register(s)
 	s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			ctx = mcpgrafana.WithGrafanaClient(mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfigFromContext(base)), mcpgrafana.GrafanaClientFromContext(base))

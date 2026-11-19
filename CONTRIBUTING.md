@@ -100,8 +100,8 @@ Run `mise run lint` and `mise run test-unit` before pushing. The specifics:
 - **Commas inside `jsonschema` struct tags must be escaped.** There's a dedicated linter because it's easy to get wrong: `mise run lint-jsonschema-fix` will fix it for you.
 - **No bare boolean sub-schemas.** An `any` or `interface{}` field makes the schema reflector emit `true`, which breaks some MCP clients outright. Tool creation panics if this happens; add the type to the reflector's `Mapper` in `tools.go`.
 - **Pass `context.Context` through Grafana API client calls** — enforced by `mise run lint-openapi`.
-- **Write tools must respect `--disable-write`.** Any tool that creates, updates or deletes anything must be registered so that it disappears when the server runs read-only. Take the `enableWriteTools` parameter in your category's `Add*Tools` function.
-- **Query tools must respect `--disable-query`.** Any tool that executes a query against a datasource must disappear when query execution is disabled. Take the `enableQueryTools` parameter in your category's `Add*Tools` function, and leave metadata and discovery tools registered unconditionally. If the tool passes the query through unfiltered — raw SQL, InfluxQL — it can write, so it counts as a write tool too: add its category to `mutatingQueryCategories` in `cmd/mcp-grafana/main.go` so `--disable-write` removes it.
+- **Write tools must respect `--disable-write`.** Every tool is listed once in its category in `tools/catalog.go`, and its constructor says which gates apply. A tool that creates, updates or deletes anything is `write(...)`, so it disappears when the server runs read-only.
+- **Query tools must respect `--disable-query`.** A tool that executes a query against a datasource is `query(...)`, so it disappears when query execution is disabled; metadata and discovery tools are `read(...)`. If the tool passes the query through unfiltered — raw SQL, InfluxQL — it can write, so it is `writeQuery(...)` and `--disable-write` removes it too.
 - **New tools declare their RBAC permissions** with `mcpgrafana.RequiresPermissions(...)` on the `MustTool` call (see `tools/rbac.go` for shared groups such as `datasourceQuery`), and **need a row in the README's tool table** with the category and required scopes. The permissions column is generated: run `go test ./cmd/mcp-grafana -run TestReadmeToolPermissions -update-readme`.
 
 The checks that must pass to merge are `license/cla`, `Test Unit`, `Test Integration`, `Lint Go`, `Lint JSON Schemas`, `docker` and `docker-alpine`. `Test Cloud` and the Python E2E suites are informational — `Test Cloud` cannot pass from a fork at all, because it needs credentials, so please don't worry about it being red.
@@ -113,3 +113,46 @@ The checks that must pass to merge are `license/cla`, `Test Unit`, `Test Integra
 - **If we're going to say no, we'll try to say it on the issue, not on your PR.** That's the whole point of proposing first.
 
 Thanks — the constraint this document describes exists because people rely on this server being fast and cheap to load, and that's worth protecting.
+
+## Preparing a contribution
+
+Keep each PR focused on one change. Describe the problem, resulting behavior, and validation performed.
+Include regression tests with bug fixes and meaningful coverage with new functionality.
+For visible UI changes, include before/after screenshots and check keyboard access, semantic HTML,
+accessible names, and theme behavior. Follow the [frontend testing guide](contribute/testing.md)
+when writing or reviewing UI tests. Report checks that could not run rather than claiming they passed.
+
+Report vulnerabilities through
+[Grafana's security reporting page](https://grafana.com/legal/report-a-security-issue/), not public issues.
+
+## Signed commits
+
+Every contributed commit must have a signature that GitHub verifies, including commits authored
+with an agent. A `Signed-off-by` trailer (`git commit -s`) is not a cryptographic signature.
+
+Set up [SSH or GPG commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+with your own identity and register the public signing key with GitHub. Once configured:
+
+```bash
+git config --local commit.gpgsign true
+git commit -m "docs: clarify contribution guidance"
+```
+
+[Check GitHub's verification status](https://docs.github.com/en/authentication/troubleshooting-commit-signature-verification/checking-your-commit-and-tag-signature-verification-status)
+on every commit in the PR. Local signing alone does not guarantee GitHub verification.
+If signing fails, fix the key or signing-agent setup rather than disabling signing. Preserve original
+authorship when repairing signatures. Coordinate before rewriting published history. Agents must
+obtain explicit approval before doing so. Do not re-sign another contributor's commits as your own.
+
+For local SSH signature verification with `git log --show-signature`, first configure
+`gpg.ssh.allowedSignersFile` with the trusted signing identity and public key. An error about a
+missing allowed-signers file means local verification is not configured. It does not mean signing failed.
+
+## Testing skill licenses
+
+The two Markdown skills under `.claude/skills/frontend-testing-strategy/` and
+`.claude/skills/panel-testing-strategy/` adapt guidance from grafana/grafana. They retain
+AGPL-3.0-only, with the text in [SHARED-TESTING-LICENSE](.claude/skills/SHARED-TESTING-LICENSE).
+They are development guidance, not server or UI implementation files. This exception does not replace
+this repository's Apache-2.0 license. Moving these skills to a
+shared repository does not itself change their license. Any relicensing requires authorization.

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // GetQueryExamplesParams defines the parameters for the get_query_examples tool.
@@ -300,8 +299,3 @@ var GetQueryExamples = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(),
 ).NotOrgScoped()
-
-// AddExamplesTools registers all example-related tools to the MCP server.
-func AddExamplesTools(s *mcp.Server) {
-	GetQueryExamples.Register(s)
-}

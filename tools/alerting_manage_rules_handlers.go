@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -610,7 +613,7 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 	}
 	response, err := c.Provisioning.PostAlertRule(params)
 	if err != nil {
-		return nil, fmt.Errorf("create alert rule: %w", err)
+		return nil, fmt.Errorf("create alert rule: %w", explainForbidden(err, alertRuleCreatePermissions))
 	}
 
 	return response.Payload, nil
@@ -658,6 +661,14 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 
 	response, err := c.Provisioning.PutAlertRule(params)
 	if err != nil {
+		// The client has no type for 409, so Grafana's message is lost. It is
+		// returned when the rule's stored provenance differs from the one sent,
+		// i.e. the rule is provisioned. Such rules are often managed by a tool
+		// like Terraform, so the user has to agree before the agent edits one.
+		var apiErr *runtime.APIError
+		if disableProvenance && errors.As(err, &apiErr) && apiErr.IsCode(http.StatusConflict) {
+			return nil, fmt.Errorf("update alert rule %s: the rule is provisioned, so Grafana refused the update. It is likely managed by Terraform or another tool through the provisioning API, and editing it here can conflict with that tool. Do not retry on your own. Ask the user if they really want to edit a provisioned rule. Only if they confirm, retry with disable_provenance=false: %w", args.UID, err)
+		}
 		return nil, fmt.Errorf("update alert rule %s: %w", args.UID, err)
 	}
 

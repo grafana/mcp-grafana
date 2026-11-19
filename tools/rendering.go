@@ -522,8 +522,3 @@ var GetPanelImage = mcpgrafana.MustTool(
 	// explore renders /explore; provisioningPreview renders a repository preview.
 	mcpgrafana.RequiresPermissions("datasources:explore", "provisioning.repositories:read"),
 )
-
-func AddRenderingTools(s *mcp.Server, appTools ...mcpgrafana.Tool) {
-	GetPanelImage.Register(s)
-	AddAppTool(s, appTools...)
-}

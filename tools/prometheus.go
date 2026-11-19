@@ -777,17 +777,3 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddPrometheusTools registers the Prometheus tools on the MCP server. The
-// tools that execute PromQL are registered only when enableQueryTools is true;
-// the metadata tools stay available either way.
-func AddPrometheusTools(s *mcp.Server, enableQueryTools bool) {
-	ListPrometheusMetricMetadata.Register(s)
-	if enableQueryTools {
-		QueryPrometheus.Register(s)
-		QueryPrometheusHistogram.Register(s)
-	}
-	ListPrometheusMetricNames.Register(s)
-	ListPrometheusLabelNames.Register(s)
-	ListPrometheusLabelValues.Register(s)
-}

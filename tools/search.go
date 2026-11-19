@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/search"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -287,7 +286,7 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*Search
 
 	searchResp, err := c.Search.Search(params, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("search dashboards for %+v: %w", c, err)
+		return nil, fmt.Errorf("search dashboards for query %q: %w", args.Query, err)
 	}
 
 	// Determine if there are more results
@@ -329,7 +328,7 @@ func searchFolders(ctx context.Context, args SearchFoldersParams) (*SearchDashbo
 	params.SetType(&folderTypeStr)
 	searchResp, err := c.Search.Search(params)
 	if err != nil {
-		return nil, fmt.Errorf("search folders for %+v: %w", c, err)
+		return nil, fmt.Errorf("search folders for query %q: %w", args.Query, err)
 	}
 	return &SearchDashboardsResult{
 		Dashboards: summarizeHitList(searchResp.Payload),
@@ -348,8 +347,3 @@ var SearchFolders = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("folders:read"),
 )
-
-func AddSearchTools(s *mcp.Server) {
-	SearchDashboards.Register(s)
-	SearchFolders.Register(s)
-}

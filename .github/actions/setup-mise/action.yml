@@ -19,7 +19,7 @@ runs:
     # adds it whenever a lockfile exists; passing it here makes a missing
     # lockfile fail the job instead.
     - name: Set up mise
-      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
       with:
         version: 2026.9.5
         install: true

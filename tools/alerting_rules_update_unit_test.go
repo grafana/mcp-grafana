@@ -459,7 +459,7 @@ func TestManageRulesWrite_UpdateErrors(t *testing.T) {
 		rec, ctx := newAlertRuleUpdateRecorder(t, storedAlertRuleJSON)
 
 		_, err := manageRulesWrite(ctx, ManageRulesWriteParams{Operation: "update", RuleUID: "rule-1", NoDataState: "Sometimes"})
-		require.ErrorContains(t, err, "invalid rule configuration")
+		require.ErrorContains(t, err, "no_data_state must be one of Alerting, NoData, OK")
 		require.Empty(t, rec.putBodies)
 	})
 
