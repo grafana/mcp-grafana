@@ -36,14 +36,16 @@ does not respond, or a host that refuses a call. A review of a PR that changes s
 2. Open the App in a host:
    - **Preview host.** From `ui/mcp-apps`, run `npm ci --ignore-scripts`, then
      `npx vite --config localhost.vite.config.ts`.
-     Open `/localhost.html` for the metrics view, or `/localhost.html?fixture=viz` for the viz view.
+     At the URL that Vite prints, open `/localhost.html` for the metrics view, or
+     `/localhost.html?fixture=viz` for the viz view.
      `npm run dev` serves the same page, but not the built App.
    - **Real host.** From the repository root, run `mise run run-app [port]`. The default port is 8000.
      Connect the host to `http://localhost:<port>/mcp`. The task enables each source of
      `render_grafana_app`, `query_datasource` included. It uses the test stack of
-     `mise run run-test-services`. For a live instance, set `GRAFANA_URL` and
-     `GRAFANA_SERVICE_ACCOUNT_TOKEN` in the shell.
-3. Use the changed behavior. For example, expand the query block, click Copy, pick a chart, or zoom.
+     `mise run run-test-services`. For another local Grafana, set `GRAFANA_URL` in the shell.
+     For a live instance, set `GRAFANA_URL` and `GRAFANA_SERVICE_ACCOUNT_TOKEN`.
+3. Use the changed behavior. For example, pick another chart, zoom out, change the time range,
+   or click Refresh.
 
 The preview host is enough for most changes. Use a real host when the PR changes the trace view,
 which has no fixture in the preview host, or a file that talks to the host:
