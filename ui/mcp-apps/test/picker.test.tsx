@@ -13,9 +13,10 @@ const options = [
   { value: 'b', label: 'Beta' },
 ];
 
-/** The side that the open menu is pinned to, for a trigger whose right edge is at `right`. */
-function menuSide(right: number) {
+/** The side that the open menu is pinned to, for a trigger whose right edge is at `right` and a menu `width` wide. */
+function menuSide(right: number, width: number) {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ right } as DOMRect);
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(width);
   render(<Picker label="Letters" options={options} value="a" onChange={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
   const style = getComputedStyle(screen.getByRole('listbox', { name: 'Letters' }));
@@ -46,8 +47,10 @@ describe('Picker', () => {
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
-  it('opens the menu to the right of a trigger with no room on its left', () => {
-    expect(menuSide(600)).toEqual({ left: 'auto', right: '0px' });
-    expect(menuSide(100)).toEqual({ left: '0px', right: 'auto' });
+  it('opens the menu to the right of a trigger with no room for it on its left', () => {
+    expect(menuSide(600, 160)).toEqual({ left: 'auto', right: '0px' });
+    expect(menuSide(100, 160)).toEqual({ left: '0px', right: 'auto' });
+    // A menu wider than its least width, with long labels.
+    expect(menuSide(200, 240)).toEqual({ left: '0px', right: 'auto' });
   });
 });

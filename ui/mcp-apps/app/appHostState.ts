@@ -352,13 +352,15 @@ export function createAppHostState(app: App): AppHostState {
       // After type-mismatch the Source picked the chart, so the pick of the user is gone (refresh.10). Otherwise the
       // last arguments keep the type of the model, and the pick stays apart from them (refresh.8).
       const keptPick = vizChart !== undefined && !outcome.mismatch;
-      // A pick made while the refresh ran stays, if the new result has it.
-      const pick = outcome.mismatch && snapshot.vizChart === vizChart ? undefined : snapshot.vizChart;
+      // A pick made while the refresh ran stays, if the new result has it. Otherwise the chart of the result shows,
+      // which is the pick of this refresh when the Source kept it.
+      const later = snapshot.vizChart;
+      const keptLater = later !== undefined && later !== vizChart && vizCharts(outcome.viz).includes(later);
       set({
         vizArgs: keptPick ? withType(outcome.args, vizArgs.type) : outcome.args,
         viz: outcome.viz,
         vizNotices: outcome.notices,
-        vizChart: pick && vizCharts(outcome.viz).includes(pick) ? pick : undefined,
+        vizChart: keptLater ? later : keptPick ? vizChart : undefined,
       });
       // The model asked for another range, so it hears of the new one (state.14). The Renderer reports a state only
       // when it changes, so this uses the last state; a change after the draw sends the context again.

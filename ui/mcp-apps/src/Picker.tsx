@@ -1,9 +1,9 @@
 import { cx } from '@emotion/css';
 import { ChevronDown } from 'lucide-react';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from './design';
-import { getPickerStyles, PICKER_MENU_MIN_WIDTH } from './Picker.styles';
+import { getPickerStyles } from './Picker.styles';
 
 export type PickerOption<T extends string> = { value: T; label: string; icon?: ReactNode };
 
@@ -28,6 +28,7 @@ export function Picker<T extends string>({ label, options, value, onChange, trig
   // header that wrapped, opens it under its left edge instead, so the menu stays in the frame.
   const [opensRight, setOpensRight] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
   const listId = useId();
   const current = options.find((option) => option.value === value);
 
@@ -48,11 +49,12 @@ export function Picker<T extends string>({ label, options, value, onChange, trig
     };
   }, [open]);
 
-  const toggle = () => {
-    // Measured on open only: one layout read per click, none per render.
-    if (!open) setOpensRight((wrapperRef.current?.getBoundingClientRect().right ?? 0) < PICKER_MENU_MIN_WIDTH);
-    setOpen(!open);
-  };
+  // Measured on open, before paint: the width of the menu does not depend on the side it is pinned to.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const wrapper = wrapperRef.current;
+    if (open && menu && wrapper) setOpensRight(menu.offsetWidth > wrapper.getBoundingClientRect().right);
+  }, [open]);
 
   return (
     <div className={styles.picker} ref={wrapperRef}>
@@ -63,7 +65,7 @@ export function Picker<T extends string>({ label, options, value, onChange, trig
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        onClick={toggle}
+        onClick={() => setOpen(!open)}
       >
         {current?.icon}
         {current?.label ?? value}
@@ -71,7 +73,13 @@ export function Picker<T extends string>({ label, options, value, onChange, trig
       </Button>
 
       {open && (
-        <ul className={cx(styles.menu, opensRight && styles.menuStart)} id={listId} role="listbox" aria-label={label}>
+        <ul
+          ref={menuRef}
+          className={cx(styles.menu, opensRight && styles.menuStart)}
+          id={listId}
+          role="listbox"
+          aria-label={label}
+        >
           {options.map((option) => (
             // A listbox holds only options, so the list item has no role of its own.
             <li key={option.value} role="none">

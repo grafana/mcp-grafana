@@ -1,9 +1,6 @@
 import { css } from '@emotion/css';
 import { getDesignTokens } from './design';
 
-/** The least width of the menu. Picker opens the menu to the right when it does not fit left of the trigger. */
-export const PICKER_MENU_MIN_WIDTH = 160;
-
 /** Styles for `Picker`, per the package's styles-factory convention. */
 export const getPickerStyles = () => {
   const {
@@ -19,7 +16,7 @@ export const getPickerStyles = () => {
       top: `calc(100% + ${spacing[1]})`,
       right: 0,
       zIndex: 2,
-      minWidth: PICKER_MENU_MIN_WIDTH,
+      minWidth: 160,
       // A chat panel can be very narrow; never overflow it.
       maxWidth: `calc(100vw - ${spacing[3]})`,
       margin: 0,
