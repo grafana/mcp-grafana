@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -80,6 +81,72 @@ func registerVizRendererResource(s *mcp.Server) {
 			}, nil
 		},
 	)
+}
+
+// AppsExtensionID is the client capability of MCP Apps (EXTENSION_ID of ext-apps).
+const AppsExtensionID = "io.modelcontextprotocol/ui"
+
+// vizRendererToolName names the tool that declares the viz Renderer as its UI resource.
+const vizRendererToolName = "grafana_app_viz_renderer"
+
+// RegisterVizRendererTool adds a tool whose only job is to declare the viz Renderer as its UI resource (#1654). A
+// host can pass a resources/read from the App to the server only for a URI that a tool declares in
+// _meta.ui.resourceUri, and the tool of the App declares app.html. The tool is for the App alone (visibility), so a
+// host of MCP Apps hides it from the model. tools/list leaves it out for a client that cannot show MCP Apps.
+//
+// Only the query_datasource view reads the Renderer, so tools.AddAppTool and tools.Selection.Register call this
+// when query_datasource is a source of the App tool. A server without that source does not get the tool.
+func RegisterVizRendererTool(s *mcp.Server) {
+	no := false
+	s.AddTool(
+		&mcp.Tool{
+			Name:        vizRendererToolName,
+			Title:       "Grafana App viz Renderer",
+			Description: "Declares the chart script of the Grafana App as a UI resource, so that a host lets the App read it. It is for the App, not for the chat, and it returns no data.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+			Annotations: &mcp.ToolAnnotations{
+				ReadOnlyHint: true, IdempotentHint: true, DestructiveHint: &no, OpenWorldHint: &no,
+			},
+			Meta: mcp.Meta{"ui": map[string]any{"resourceUri": vizRendererURI, "visibility": []string{"app"}}},
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return NewToolResultText("The Grafana App reads its chart script from the UI resource of this tool. The tool returns no data."), nil
+		},
+	)
+	s.AddReceivingMiddleware(hideVizRendererTool)
+}
+
+// hideVizRendererTool takes the Renderer tool out of tools/list for a client that does not list the MCP Apps
+// extension: that client has no App to read the script, and would show the tool to the model. Unknown capabilities,
+// as in a stateless request of an older protocol, keep the tool.
+func hideVizRendererTool(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		list, ok := result.(*mcp.ListToolsResult)
+		if err != nil || !ok {
+			return result, err
+		}
+		listReq, ok := req.(*mcp.ListToolsRequest)
+		if !ok {
+			return result, nil
+		}
+		caps := listReq.ClientCapabilities()
+		if caps == nil {
+			return result, nil
+		}
+		if _, apps := caps.Extensions[AppsExtensionID]; apps {
+			return result, nil
+		}
+		// A copy: the result of the next handler is not ours to change in place.
+		filtered := *list
+		filtered.Tools = make([]*mcp.Tool, 0, len(list.Tools))
+		for _, tool := range list.Tools {
+			if tool.Name != vizRendererToolName {
+				filtered.Tools = append(filtered.Tools, tool)
+			}
+		}
+		return &filtered, nil
+	}
 }
 
 func grafanaAppMetadata() mcp.Meta {
