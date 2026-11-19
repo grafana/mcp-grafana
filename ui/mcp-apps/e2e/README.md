@@ -52,8 +52,6 @@ panel-viewer's decoded image and host-mediated link flow.
 
 ```sh
 npm run test:e2e:visual
-# Deliberate baseline update, followed by visual review:
-npm run test:e2e:visual -- --update-snapshots
 ```
 
 `specs/viz-screenshots.spec.ts` iterates every chart in the pinned contract registry
@@ -77,10 +75,96 @@ metadata lookup runs inside the browser container. Keep the
 Playwright npm version, image, and baselines aligned when upgrading. Recheck
 fonts and review every changed image; do not automatically update in CI.
 
-To regenerate Linux baselines, run the same commands inside the pinned CI
-container on ARM64 Linux, with both the test host and upstream sandbox servers
-inside the container. Do not point a container browser at a macOS host: upstream
-basic-host deliberately validates localhost referrers and sandbox origins.
+### Regenerate one chart or all charts
+
+Run regeneration commands sequentially: concurrent Playwright processes in the same
+checkout share output/report directories and can delete each other's artifacts.
+
+Update baselines only after confirming an intentional visual change. For example,
+renderer v0.5.0 added a Reset control to the toolbar. CI tests the PR merged with
+current main, so merge current main before updating for renderer changes there.
+Do not loosen the comparison threshold to hide a difference.
+
+First, from the repository root, build the UI that the Go binary will embed:
+
+```sh
+mise run build-ui
+cd ui/mcp-apps
+```
+
+Stop any running `npm run dev` or Playwright UI session using ports 5194/5196/5197.
+Unset `MCP_GRAFANA_BINARY` unless it points to a binary rebuilt from this checkout.
+The commands below use `CI=true` to require fresh servers instead of silently
+reusing an older harness/binary. They update only the current platform's baselines
+(`*-darwin.png` on macOS, `*-linux.png` on Linux).
+
+```sh
+# One chart. The trailing $ prevents matching a longer chart name.
+CI=true npm run test:e2e -- viz-screenshots.spec.ts --grep 'visual smoke: timeseries$' --update-snapshots
+
+# Selected charts.
+CI=true npm run test:e2e -- viz-screenshots.spec.ts --grep 'visual smoke: (timeseries|barchart)$' --update-snapshots
+
+# Every visualization in the pinned registry.
+CI=true npm run test:e2e -- viz-screenshots.spec.ts --update-snapshots
+```
+
+Use the direct `test:e2e` commands when supplying `--grep`: `test:e2e:visual`
+already supplies its own grep filter. `--list` can replace `--update-snapshots`
+to check which tests a filter selects before updating.
+
+### Regenerate the Linux CI baselines from macOS or Linux
+
+Use Docker with the exact CI image and ARM64 platform. Both harness servers and
+Chromium run inside the container; do not connect to a macOS-hosted harness.
+The following commands run from the **repository root**, after `mise run build-ui`.
+They cross-compile the Go binary and install Linux dependencies in a temporary
+mounted directory, preserving the host's `node_modules`. Baselines and diagnostics
+are written directly into the checkout, owned by the current user.
+
+```sh
+snapshot_tmp="$(mktemp -d)"
+mkdir "$snapshot_tmp/node_modules"
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "$snapshot_tmp/mcp-grafana" ./cmd/mcp-grafana
+
+docker run --rm --init --ipc=host --platform linux/arm64 \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp -e CI=true -e MCP_GRAFANA_BINARY=/tmp/mcp-grafana \
+  -v "$PWD:/work" \
+  -v "$snapshot_tmp/node_modules:/work/ui/mcp-apps/node_modules" \
+  -v "$snapshot_tmp/mcp-grafana:/tmp/mcp-grafana:ro" \
+  -w /work/ui/mcp-apps \
+  mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 \
+  sh -c 'npm ci --ignore-scripts && npm run test:e2e -- viz-screenshots.spec.ts --update-snapshots "$@"' \
+  sh --grep 'visual smoke:'
+
+rm -r "$snapshot_tmp"
+```
+
+The final `--grep 'visual smoke:'` updates every chart. Replace it with
+`--grep 'visual smoke: timeseries$'` for one chart, or
+`--grep 'visual smoke: (timeseries|barchart)$'` for a subset.
+Network access is needed for the image, npm packages and pinned upstream sandbox.
+Update the image reference here when changing it in `.github/workflows/browser-e2e.yml`.
+
+### Review and verify
+
+Review each changed PNG under `e2e/specs/viz-screenshots.spec.ts-snapshots/` against
+its previous version. Check chart data and labels as well as toolbar/layout changes.
+Regenerate both macOS and Linux baselines for shared UI changes; one platform's
+update does not update the other. Commit only intentional baseline changes.
+
+Then rerun the same selection **without** `--update-snapshots`. For a broader
+stability check on the current platform:
+
+```sh
+# From ui/mcp-apps, with no old harness running:
+CI=true npm run test:e2e -- viz-screenshots.spec.ts --repeat-each=10 --workers=2 --retries=0
+```
+
+For Linux, remove `--update-snapshots` from the Docker command and add the repeat
+flags after its final `--grep` argument. A passing update run only writes new
+expectations; the subsequent comparison run validates them.
 
 ## Upstream sandbox ownership
 
