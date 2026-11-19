@@ -4,7 +4,6 @@ Run from the repository root:
 
 ```sh
 mise run build-ui
-mise run build
 cd ui/mcp-apps
 npx playwright install chromium
 npm run test:e2e
@@ -13,8 +12,10 @@ npm run test:e2e
 The Vite test host starts the built Go server over stdio, reads its real tool
 catalog and embedded resources, then connects the built app iframe through
 AppBridge/PostMessageTransport. Query results are deterministic fixtures; no
-Grafana, LLM, Docker, credentials, or external MCP host is required. Rebuild the
-Go binary after changing UI bundles or resource/tool registration.
+Grafana, LLM, Docker, credentials, or external MCP host is required. The host builds a temporary Go binary on startup using the Go build cache.
+Rebuild UI bundles after UI source edits, then restart the host to embed them.
+For an explicitly prebuilt server, set `MCP_GRAFANA_BINARY` to its path (relative
+paths resolve from the working directory). This skips the automatic build.
 
 The `forward` profile forwards resource reads. The `tool-declared` profile
 advertises `serverResources` but rejects URIs absent from the server's actual

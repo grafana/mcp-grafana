@@ -14,8 +14,8 @@ npm run build
 `npm run build` creates the reusable library (`dist/index.js` and declarations) and the two resources embedded by Go: the shared `dist/app.html` and the viz Renderer script `dist/viz-renderer.js`, with `dist/viz-renderer.hash` for its URI. The App build reads the hash, so `build:apps` builds the Renderer first. Regenerate and commit all three after app source changes. `npm run build:apps` builds only the resources; `mise run build-ui` builds all UI packages.
 
 Run `npm run dev` for the shared sandboxed host at http://127.0.0.1:5194.
-Build the Go server first (`mise run build` from the repository root) so it embeds
-the current UI bundles. The host offers chart, trace, panel, and error scenarios,
+The host builds the Go server automatically, embedding the current UI bundles.
+After UI source edits, run `npm run build:apps` and restart the host. The host offers chart, trace, panel, and error scenarios,
 plus every visualization smoke fixture. Its fixtures do not query Grafana.
 
 Preview and Playwright use the same `harness/` entry, bridge handlers, fixtures,

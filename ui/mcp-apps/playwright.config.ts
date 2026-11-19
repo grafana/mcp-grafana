@@ -8,6 +8,6 @@ export default defineConfig({
     reducedMotion: 'reduce', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   webServer: [
     { command: 'node harness/basic-host/start.mjs', url: 'http://localhost:5197/sandbox.html', reuseExistingServer: !process.env.CI },
-    { command: 'npx vite --config harness/vite.config.ts', port: 5194, reuseExistingServer: !process.env.CI },
+    { command: 'npx vite --config harness/vite.config.ts', port: 5194, timeout: 180_000, reuseExistingServer: !process.env.CI },
   ],
 });

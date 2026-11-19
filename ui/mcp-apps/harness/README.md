@@ -1,6 +1,7 @@
 # Shared browser host
 
-Run `npm run dev` after building `dist/mcp-grafana` at the repository root.
+Run `npm run dev`. Startup builds a temporary Go server using Go’s build cache;
+the process and binary are cleaned up when the host stops. Go must be on PATH.
 Open http://127.0.0.1:5194 and select a scenario or visualization. Playwright uses
 this same entry point and host implementation.
 

@@ -15,10 +15,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-mise
-      - name: Build apps and embedding server
+      - name: Build apps
         run: |
           mise run build-ui
-          mise run build
       - name: Run browser contract tests
         working-directory: ui/mcp-apps
         run: npm run test:e2e
