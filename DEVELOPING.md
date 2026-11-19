@@ -91,7 +91,7 @@ Releases follow a branch-based workflow with automated tagging and publishing.
 
    ```bash
    # Determine the new version from the latest tag
-   git tag --sort=-version:refname | head -1   # e.g. v0.10.0 → next minor is v0.11.0
+   git tag --list 'v*' --sort=-version:refname | head -1   # e.g. v0.10.0 → next minor is v0.11.0
 
    git checkout main && git pull
    git checkout -b release/v0.11.0
@@ -121,6 +121,10 @@ Releases follow a branch-based workflow with automated tagging and publishing.
    - **goreleaser** — builds binaries for Linux/macOS/Windows and creates a GitHub Release with notes extracted from CHANGELOG.md
    - **Docker** — builds and pushes `grafana/mcp-grafana:0.11.0` (+ `:latest` for stable releases) and Alpine variants
    - **MCP Registry** — publishes the updated server metadata
+
+### The `@grafana/mcp-shell` npm package
+
+The React shell in `ui/mcp-apps` has its own version and its own tags (`mcp-shell/v<version>`). A server release does not publish it. See "Publish the npm package" in [ui/mcp-apps/README.md](ui/mcp-apps/README.md).
 
 ### CHANGELOG format
 

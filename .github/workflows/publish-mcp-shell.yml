@@ -1,0 +1,106 @@
+name: Publish MCP shell
+
+# Publishes ui/mcp-apps to npm as @grafana/mcp-shell (#1649). A maintainer pushes the tag mcp-shell/v<version> on a
+# commit of main, and the version is the one in ui/mcp-apps/package.json. The tag prefix keeps this release apart
+# from the server release: release.yml and docker.yml run only for tags that start with v.
+# npm trusted publishing names this file and the npm-publish environment. Do not rename them.
+on:
+  push:
+    tags:
+      - "mcp-shell/v*"
+
+permissions: {}
+
+concurrency:
+  group: publish-mcp-shell
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: npm-publish
+      url: https://www.npmjs.com/package/@grafana/mcp-shell
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing; it also adds provenance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0 # the tag check reads origin/main
+          persist-credentials: false
+
+      - name: Check the tag
+        id: tag
+        # The tag must be on main, so a tag on an unreviewed branch publishes nothing. The version of the tag must be
+        # the version of package.json, so the published package says the same version as its source.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#mcp-shell/v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::$TAG is not mcp-shell/v<major>.<minor>.<patch>"
+            exit 1
+          fi
+          package_version="$(jq -r .version ui/mcp-apps/package.json)"
+          if [ "$version" != "$package_version" ]; then
+            echo "::error::$TAG does not match version $package_version of ui/mcp-apps/package.json"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not a commit of main"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A version with a pre-release part does not become the latest version on npm.
+          if [[ "$version" == *-* ]]; then
+            echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Node and npm as pinned in mise.toml and mise.lock. npm trusted publishing needs npm 11.5.1 or later.
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
+        with:
+          # Do not use any caches when creating a release.
+          cache: false
+          tools: node
+
+      - name: Install dependencies
+        working-directory: ui/mcp-apps
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Check and build
+        working-directory: ui/mcp-apps
+        run: npm run typecheck && npm test && npm run build
+
+      - name: Fail if the embedded bundles differ from the build
+        run: |
+          if ! git diff --exit-code -- ui; then
+            echo "::error::ui/*/dist is out of sync with sources. Run 'mise run build-ui' locally and commit."
+            exit 1
+          fi
+
+      - name: Publish
+        working-directory: ui/mcp-apps
+        # A re-run after npm accepted the upload goes green instead of failing.
+        # npm view exits 1 with E404 for a version that is not published. Any other error stops the run.
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
+        run: |
+          err="$RUNNER_TEMP/npm-view-error.txt"
+          if npm view "@grafana/mcp-shell@$VERSION" version >/dev/null 2>"$err"; then
+            echo "$VERSION is already published"
+            exit 0
+          elif ! grep -q E404 "$err"; then
+            cat "$err"
+            exit 1
+          fi
+          # npm adds a LICENSE file of the package directory to the tarball. The license is at the repository root.
+          cp ../../LICENSE LICENSE
+          npm publish --ignore-scripts --tag "$DIST_TAG"
