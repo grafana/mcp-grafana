@@ -27,7 +27,7 @@ const STEP_UNITS: Array<[suffix: string, ms: number]> = [
  */
 export function queryMeta(args: VizArgs, viz: VizResult, timeZone?: string): string {
   const queries = objects(args.queries);
-  const instant = queries.length > 0 && queries.every((query) => query.instant === true && query.range !== true);
+  const instant = queries.length > 0 && queries.every(isInstant);
   const step = instant ? undefined : stepLabel(queries);
   const series = seriesCount(viz);
   return [
@@ -63,6 +63,10 @@ function stepLabel(queries: Array<Record<string, unknown>>): string | undefined 
   const [suffix, ms] = STEP_UNITS.find(([, unit]) => first % unit === 0)!;
   return `${first / ms}${suffix}`;
 }
+
+/** An instant query: Prometheus sets `instant` with no `range`, Loki sets `queryType`. */
+const isInstant = (query: Record<string, unknown>) =>
+  (query.instant === true && query.range !== true) || query.queryType === 'instant';
 
 /** The queries that are objects: the arguments are the model's, and the view does not check them (see queryTexts). */
 const objects = (queries: unknown[]): Array<Record<string, unknown>> =>

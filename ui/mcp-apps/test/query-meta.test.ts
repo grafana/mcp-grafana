@@ -41,6 +41,10 @@ describe('queryMeta', () => {
   it('names an instant query in place of the range and the step', () => {
     expect(queryMeta(withQuery({ instant: true, intervalMs: 30_000 }), viz)).toBe('Instant query · 17 series');
     expect(queryMeta(withQuery({ instant: true, range: true }), viz)).toBe('Last 15 minutes · 17 series');
+    expect(queryMeta(withQuery({ expr: 'count_over_time({job="app"}[5m])', queryType: 'instant' }), viz)).toBe(
+      'Instant query · 17 series',
+    );
+    expect(queryMeta(withQuery({ queryType: 'range' }), viz)).toBe('Last 15 minutes · 17 series');
   });
 });
 
