@@ -51,7 +51,8 @@ export interface McpAppShellProps {
    */
   colorMode: McpAppColorMode;
   children?: ReactNode;
-  summary: McpAppSummary;
+  /** The summary card. With none, the shell is named by `product`, and the content comes first. */
+  summary?: McpAppSummary;
   primaryAction?: McpAppAction;
   secondaryAction?: McpAppAction;
   openInGrafana?: McpAppOpenInGrafana;
@@ -122,7 +123,8 @@ export function McpAppShell({
         <article
           className={cx(styles.shell, layout === 'wide' && styles.wide, density === 'compact' && styles.compact)}
           data-color-mode={colorMode}
-          aria-labelledby={titleId}
+          aria-labelledby={summary ? titleId : undefined}
+          aria-label={summary ? undefined : product}
         >
           <header className={styles.header}>
             <div className={styles.identity}>
@@ -159,18 +161,20 @@ export function McpAppShell({
             )}
           </header>
 
-          <div className={cx(styles.summary, density === 'compact' && styles.compactSummary)}>
-            <div className={styles.summaryHeader}>
-              <span className={styles.summaryLabel}>{summary.label}</span>
-              {summary.status}
+          {summary && (
+            <div className={cx(styles.summary, density === 'compact' && styles.compactSummary)}>
+              <div className={styles.summaryHeader}>
+                <span className={styles.summaryLabel}>{summary.label}</span>
+                {summary.status}
+              </div>
+              <h1 id={titleId} className={styles.summaryTitle}>
+                {summary.title}
+              </h1>
+              {summary.description !== undefined && summary.description !== null && (
+                <div className={styles.summaryDescription}>{summary.description}</div>
+              )}
             </div>
-            <h1 id={titleId} className={styles.summaryTitle}>
-              {summary.title}
-            </h1>
-            {summary.description !== undefined && summary.description !== null && (
-              <div className={styles.summaryDescription}>{summary.description}</div>
-            )}
-          </div>
+          )}
 
           {children !== undefined && children !== null && <div className={styles.content}>{children}</div>}
 
