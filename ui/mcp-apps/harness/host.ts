@@ -25,7 +25,8 @@ const csp = content._meta?.ui?.csp;
 const permissions = content._meta?.ui?.permissions;
 // Upstream basic-host owns origin isolation, the inner iframe, and HTTP CSP.
 frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
-const proxyReady = new Promise<void>(resolve => {
+const strict = params.get('sandbox') === 'strict';
+const proxyReady = strict ? Promise.resolve() : new Promise<void>(resolve => {
   const listener = (event: MessageEvent) => {
     if (event.source === frame.contentWindow && event.data?.method === 'ui/notifications/sandbox-proxy-ready') {
       window.removeEventListener('message', listener); resolve();
@@ -35,8 +36,10 @@ const proxyReady = new Promise<void>(resolve => {
 });
 const sandboxUrl = new URL('http://localhost:5197/sandbox.html');
 if (csp) sandboxUrl.searchParams.set('csp', JSON.stringify(csp));
-frame.src = sandboxUrl.href;
-await proxyReady;
+if (!strict) {
+  frame.src = sandboxUrl.href;
+  await proxyReady;
+}
 const bridge = new AppBridge(null, { name: 'browser-contract-host', version: '1.0.0' },
   { serverResources: {}, serverTools: {}, openLinks: {}, updateModelContext: { text: {} } },
   { hostContext: { theme: params.get('mode') === 'dark' ? 'dark' : 'light', locale: 'en-US', platform: 'web' } });
@@ -54,19 +57,36 @@ bridge.onupdatemodelcontext = async value => { record('model-context', value); r
 bridge.onopenlink = async value => { record('open-link', value); return {}; };
 bridge.onmessage = async value => { record('message', value); return {}; };
 bridge.onsizechange = value => record('size-change', value);
-bridge.oncalltool = async value => {
+const callGo = async (value: { name: string; arguments?: Record<string, unknown> }) => {
   record('tool-call', value);
-  if (params.get('refresh') === 'fail') return { content: [{ type: 'text', text: 'The data source did not answer.' }], isError: true };
+  const response = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+  if (!response.ok) throw new Error(await response.text());
+  const { result, requests } = await response.json();
+  record('grafana-requests', requests);
+  record('go-result', result);
+  return result;
+};
+let refreshAttempts = 0;
+bridge.oncalltool = async value => {
+  if (scenario === 'go') return callGo(value);
+  record('tool-call', value);
+  if (params.get('refresh') === 'fail' || (params.get('refresh') === 'fail-once' && refreshAttempts++ === 0)) return { content: [{ type: 'text', text: 'The data source did not answer.' }], isError: true };
   return refreshResult(value.name);
 };
 const ready = new Promise<void>(resolve => { bridge.oninitialized = () => { record('initialized'); resolve(); }; });
 await bridge.connect(new PostMessageTransport(frame.contentWindow!, frame.contentWindow!));
-await bridge.sendSandboxResourceReady({ html: content.text, csp, permissions });
+if (strict) {
+  // basic-host's relay requires its own origin; opaque-origin Apps connect directly.
+  frame.setAttribute('sandbox', 'allow-scripts');
+  frame.src = '/mcp/strict-app';
+} else {
+  await bridge.sendSandboxResourceReady({ html: content.text, csp, permissions });
+}
 await ready;
 let dark = params.get('mode') === 'dark';
 document.querySelector('#theme')!.addEventListener('click', () => {
   dark = !dark; bridge.setHostContext({ theme: dark ? 'dark' : 'light' });
 });
 document.querySelector('#resize')!.addEventListener('click', () => { frame.style.width = '520px'; });
-await deliverScenario(bridge, params);
+await deliverScenario(bridge, params, callGo);
 record('result-delivered', scenario);

@@ -17,9 +17,16 @@ export function refreshResult(name: string) {
   return { content: [], structuredContent: { ...result, panel: { ...result.panel, title: 'Refreshed request rate' } } };
 }
 
-export async function deliverScenario(bridge: AppBridge, params: URLSearchParams) {
+export async function deliverScenario(bridge: AppBridge, params: URLSearchParams, callGo: (call: { name: string; arguments: Record<string, unknown> }) => Promise<Parameters<AppBridge['sendToolResult']>[0]>) {
   const scenario = params.get('scenario') ?? 'viz';
-if (scenario === 'metrics') {
+if (scenario === 'go') {
+  const arguments_ = { toolName: 'query_datasource', arguments: {
+    ...args, datasourceUid: params.get('datasource')!, title: 'Go integration chart',
+    from: String(result.data.range.from), to: String(result.data.range.to),
+  } };
+  await bridge.sendToolInput({ arguments: arguments_ });
+  await bridge.sendToolResult(await callGo({ name: 'render_grafana_app', arguments: arguments_ }));
+} else if (scenario === 'metrics') {
   const fixture = params.get('fixture');
   const expressions: Record<string, string> = {
     bounded1: 'node_memory_utilisation_ratio', boundedN: 'node_filesystem_used_ratio',

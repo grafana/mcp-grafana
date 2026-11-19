@@ -11,7 +11,7 @@ npm run test:e2e
 
 The Vite test host starts the built Go server over stdio, reads its real tool
 catalog and embedded resources, then connects the built app iframe through
-AppBridge/PostMessageTransport. Query results are deterministic fixtures; no
+AppBridge/PostMessageTransport. Most query results are deterministic fixtures; no
 Grafana, LLM, Docker, credentials, or external MCP host is required. The host builds a temporary Go binary on startup using the Go build cache.
 Rebuild UI bundles after UI source edits, then restart the host to embed them.
 For an explicitly prebuilt server, set `MCP_GRAFANA_BINARY` to its path (relative
@@ -103,7 +103,8 @@ assert that no CSP violations occurred.
 `specs/sandbox.spec.ts` verifies that parent DOM/storage access raises SecurityError
 and an undeclared connection triggers a real connect-src CSP violation. This
 isolation does not prohibit app-origin localStorage: upstream allows same-origin
-within its separate sandbox origin. We do not claim stricter storage denial.
+within its separate sandbox origin. The separate strict-profile test below covers
+storage denial.
 
 To upgrade, review upstream changes, update the revision and hashes together,
 and rerun the suite. Do not edit downloaded sandbox code or loosen its policy
@@ -120,3 +121,37 @@ E2E only owns specs and baselines.
 Upstream's host-side helpers currently hardcode sandbox port 8081 and couple to
 its theme/UI modules. We retain a small local bootstrap for fixture delivery;
 security policy and sandbox proxy remain unchanged upstream code.
+
+## Focused visualization integration tests
+
+`specs/viz-integration.spec.ts` adds five representative browser journeys:
+
+- Strict `sandbox="allow-scripts"` rendering and refresh with localStorage denied.
+  The pinned upstream relay rejects opaque-origin messages, so this profile connects
+  AppBridge directly to the app iframe. `/mcp/strict-app` serves the real embedded
+  HTML with the CSP header obtained from upstream basic-host, unchanged. This is
+  renderer conformance coverage, not a claim that basic-host supports that profile.
+- Time-picker selection sends exact range arguments and model context over the bridge.
+- A failed refresh preserves the chart; a successful retry clears the error.
+- Narrow toolbar, time picker, hover/pinned tooltip and legend color menu render
+  their icons without app-frame network requests. This samples browser-only states;
+  the comprehensive renderer interaction matrix remains upstream.
+- A real Go `render_grafana_app` call and refresh reach a fixture-backed Grafana
+  HTTP server. Only `/api/ds/query` is stubbed, using the pinned contract response.
+  Assertions cover the HTTP request, actual tool result and rendered canvas.
+
+The harness enables `dsquery` and points its Go child at a loopback fixture server
+on an ephemeral port, with no Grafana credentials. Parallel Go-journey tests use
+unique datasource UIDs so their request assertions cannot see another test's calls.
+The fixture host exposes only `render_grafana_app` with `query_datasource` through
+`/mcp/call`; manual previews remain deterministic.
+
+To repeat this spec without retries:
+
+```sh
+npm run test:e2e -- viz-integration.spec.ts --repeat-each=10 --workers=2 --retries=0
+```
+
+Use `CI=true` with unused harness ports when checking fresh server startup rather
+than reusing a running development host. Schema/pick matrices, argument transforms,
+timeout permutations and callback races remain in Go/Vitest.
