@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { chartChanged, runVizRefresh, toolError } from '../app/vizRefresh';
+import { chartChanged, runVizRefresh, toolError, withType } from '../app/vizRefresh';
 import type { VizArgs } from '../app/vizSpec';
 import { readVizFixture } from './vizFixtures';
 
@@ -44,7 +44,7 @@ describe('runVizRefresh', () => {
 
     const { type: _type, ...untyped } = args;
     expect(call).toHaveBeenLastCalledWith(untyped);
-    expect(outcome).toMatchObject({ args: untyped, notices: [chartChanged('timeseries', 'barchart')] });
+    expect(outcome).toMatchObject({ args: untyped, notices: [chartChanged('timeseries', 'barchart')], mismatch: true });
   });
 
   it('adds no notice when the picked chart is the old one', async () => {
@@ -76,6 +76,14 @@ describe('runVizRefresh', () => {
     expect(await runVizRefresh(call, args, 'timeseries', refresh, never)).toEqual({
       error: 'The App cannot read the new result.',
     });
+  });
+});
+
+describe('withType', () => {
+  it('sets or removes the type, and keeps the other arguments', () => {
+    expect(withType(args, 'barchart')).toEqual({ ...args, type: 'barchart' });
+    expect('type' in withType(args, undefined)).toBe(false);
+    expect(withType(args, undefined).queries).toBe(args.queries);
   });
 });
 

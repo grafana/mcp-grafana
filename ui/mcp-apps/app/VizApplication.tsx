@@ -4,8 +4,9 @@ import type { RefreshRequest, RenderHandle, RenderState } from '../renderer/rend
 import { McpAppShell } from '../src/McpAppShell';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
+import { ChartPicker, chartLabel } from './ChartPicker';
 import type { Renderer } from './loadRenderer';
-import { buildVizSpec, type VizArgs, type VizSpec } from './vizSpec';
+import { buildVizSpec, shownChart, type VizArgs, type VizSpec, vizCharts } from './vizSpec';
 
 // The query text of the common data sources: Prometheus and Loki, SQL, and others.
 const QUERY_TEXT_FIELDS = ['expr', 'rawSql', 'query', 'queryText'];
@@ -26,12 +27,14 @@ export function describeQueries(args: VizArgs): string {
 /** Draws the result of query_datasource with the viz contract Renderer. */
 export function VizApplication({ host }: { host: AppHostState }) {
   const state = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
-  const { viz, vizArgs, vizNotices, colorMode, timeZone } = state;
+  const { viz, vizArgs, vizNotices, vizChart, colorMode, timeZone } = state;
   const spec = useMemo(
     () =>
-      viz && vizArgs ? buildVizSpec(vizArgs, viz, { theme: colorMode, timeZone }, undefined, vizNotices) : undefined,
-    [viz, vizArgs, vizNotices, colorMode, timeZone],
+      viz && vizArgs ? buildVizSpec(vizArgs, viz, { theme: colorMode, timeZone }, vizChart, vizNotices) : undefined,
+    [viz, vizArgs, vizNotices, vizChart, colorMode, timeZone],
   );
+  const chart = viz ? shownChart(viz, vizChart) : undefined;
+  const charts = viz ? vizCharts(viz) : [];
   // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
   const [loadFailure, setLoadFailure] = useState<string>();
 
@@ -46,10 +49,15 @@ export function VizApplication({ host }: { host: AppHostState }) {
         // Errors go to the feedback banner; repeating them here reads as a stutter.
         description: state.isError
           ? undefined
-          : viz && vizArgs
-            ? `${viz.chart} · ${vizArgs.datasourceUid}`
+          : chart && vizArgs
+            ? `${chartLabel(chart)} · ${vizArgs.datasourceUid}`
             : state.status,
       }}
+      share={
+        chart && charts.length > 1 && !state.isError && !loadFailure ? (
+          <ChartPicker options={charts} value={chart} onChange={host.pickVizChart} />
+        ) : undefined
+      }
       feedback={
         state.isError
           ? { tone: 'error', message: state.status }
