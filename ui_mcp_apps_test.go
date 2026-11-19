@@ -1,8 +1,10 @@
 package mcpgrafana
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -129,4 +131,54 @@ func TestVizRendererResource(t *testing.T) {
 	require.Equal(t, vizRendererTTLMs, result.TTLMs)
 	require.True(t, strings.HasPrefix(vizRendererJS, "var __grafanaVizRenderer="), "a classic script that sets the Renderer global")
 	require.Less(t, len(vizRendererJS), maxVizRendererSize, "the Renderer grew past %d bytes", maxVizRendererSize)
+}
+
+// A host can pass a read from the App only for a URI that a tool declares, so a tool declares the Renderer (#1654).
+func TestVizRendererTool(t *testing.T) {
+	listTools := func(t *testing.T, caps *mcp.ClientCapabilities) map[string]*mcp.Tool {
+		t.Helper()
+		s := mcp.NewServer(&mcp.Implementation{Name: "apps-test", Version: "1"}, nil)
+		s.AddTool(
+			&mcp.Tool{Name: "other", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return NewToolResultText(""), nil
+			},
+		)
+		RegisterVizRendererTool(s)
+		ctx := t.Context()
+		serverTransport, clientTransport := mcp.NewInMemoryTransports()
+		go func() { _ = s.Run(ctx, serverTransport) }()
+		client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, &mcp.ClientOptions{Capabilities: caps})
+		c, err := client.Connect(ctx, clientTransport, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = c.Close() })
+		listed, err := c.ListTools(ctx, nil)
+		require.NoError(t, err)
+		byName := make(map[string]*mcp.Tool, len(listed.Tools))
+		for _, tool := range listed.Tools {
+			byName[tool.Name] = tool
+		}
+		return byName
+	}
+
+	t.Run("a client of MCP Apps gets the tool", func(t *testing.T) {
+		tools := listTools(t, &mcp.ClientCapabilities{Extensions: map[string]any{AppsExtensionID: map[string]any{}}})
+		require.Contains(t, tools, "other")
+		tool := tools[vizRendererToolName]
+		require.NotNil(t, tool)
+		ui, ok := tool.Meta["ui"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, vizRendererURI, ui["resourceUri"], "the URI that the App reads")
+		require.Equal(t, []any{"app"}, ui["visibility"], "hidden from the model")
+		require.NotNil(t, tool.Annotations)
+		require.True(t, tool.Annotations.ReadOnlyHint)
+		require.Equal(t, false, *tool.Annotations.DestructiveHint)
+		require.Equal(t, false, *tool.Annotations.OpenWorldHint)
+	})
+
+	t.Run("a client without MCP Apps does not", func(t *testing.T) {
+		tools := listTools(t, &mcp.ClientCapabilities{})
+		require.Contains(t, tools, "other")
+		require.NotContains(t, tools, vizRendererToolName)
+	})
 }
