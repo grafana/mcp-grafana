@@ -145,7 +145,7 @@ func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {
 }
 
 // appsExtensionID is the client capability of MCP Apps (EXTENSION_ID of ext-apps).
-const appsExtensionID = "io.modelcontextprotocol/ui"
+const appsExtensionID = mcpgrafana.AppsExtensionID
 
 // requireAppHost refuses a call from a client that cannot show the App, before the query runs, so the view data
 // does not reach the model as the tool result. Unknown capabilities, as in a stateless request of an older
