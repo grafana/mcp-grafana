@@ -34,7 +34,8 @@ does not respond, or a host that refuses a call. A review of a PR that changes s
 1. Check out the PR head. Both hosts below show the committed bundles in `ui/mcp-apps/dist`.
    Run `mise run build-ui` first if the bundle drift check of the PR has not passed.
 2. Open the App in a host:
-   - **Preview host.** From `ui/mcp-apps`, run `npx vite --config localhost.vite.config.ts`.
+   - **Preview host.** From `ui/mcp-apps`, run `npm ci --ignore-scripts`, then
+     `npx vite --config localhost.vite.config.ts`.
      Open `/localhost.html` for the metrics view, or `/localhost.html?fixture=viz` for the viz view.
      `npm run dev` serves the same page, but not the built App.
    - **Real host.** From the repository root, run `mise run run-app [port]`. The default port is 8000.
