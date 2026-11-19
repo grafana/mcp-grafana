@@ -26,3 +26,10 @@
 /ui/mcp-apps/test/icon-cache.test.tsx  @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/shared-modules.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
 /ui/mcp-apps/test/load-renderer.test.ts @grafana/grafana-assistant-loop @grafana/dataviz-squad
+
+# Browser E2E tests, visualization screenshots, and their CI workflow
+/ui/mcp-apps/e2e/                     @grafana/dataviz-squad
+/ui/mcp-apps/playwright.config.ts     @grafana/dataviz-squad
+/.github/workflows/browser-e2e.yml    @grafana/dataviz-squad
+
+/ui/mcp-apps/harness/                 @grafana/dataviz-squad
