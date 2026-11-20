@@ -73,8 +73,25 @@ func TestQueryDatasourceResult(t *testing.T) {
 	assert.Equal(t, map[string]any{"uid": "prom"}, first["datasource"])
 	assert.Equal(t, float64(defaultDSMaxDataPoints), first["maxDataPoints"])
 	assert.Equal(t, "{{job}}", first["legendFormat"])
-	rangeMs := content.Data.Range.To - content.Data.Range.From
-	assert.Equal(t, float64(rangeMs/defaultDSMaxDataPoints), first["intervalMs"])
+	// 6h over 1000 points is 21.6s, which Grafana rounds to 20s.
+	assert.Equal(t, float64(20000), first["intervalMs"])
+}
+
+func TestDSIntervalMsRoundsAsGrafana(t *testing.T) {
+	// The range over 1000 points, rounded as rangeutil.roundInterval of Grafana. An unrounded 7d interval (604.8s) makes
+	// the Prometheus data source expand $__rate_interval to 10m19.8s, which PromQL rejects.
+	for _, tc := range []struct {
+		span time.Duration
+		want int64
+	}{
+		{15 * time.Minute, 1000},
+		{time.Hour, 5000},
+		{6 * time.Hour, 20000},
+		{24 * time.Hour, 60000},
+		{7 * 24 * time.Hour, 600000},
+	} {
+		assert.Equal(t, tc.want, dsIntervalMs(tc.span.Milliseconds(), defaultDSMaxDataPoints), tc.span.String())
+	}
 }
 
 func TestQueryDatasourceGrafanaURL(t *testing.T) {
