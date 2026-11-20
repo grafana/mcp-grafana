@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -1066,6 +1067,40 @@ func TestSubstituteGrafanaMacrosIntervalOptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := substituteGrafanaMacros("$__interval ${__interval_ms}", start, start.Add(tt.span), tt.options)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// On the Prometheus path, $__interval is the step the query executes at, not
+// Grafana's calculateInterval value: that value is the range divided by the
+// max data points (floored at the datasource min interval), which is smaller
+// than the executor's step on short ranges, and a rate() window that small
+// holds too few samples and silently returns no data. Grafana's own backend
+// substitutes the step it actually runs. $__rate_interval is not the step and
+// stays as it was, as the 30d case shows.
+func TestSubstituteGrafanaMacrosPrometheusExecutionStep(t *testing.T) {
+	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		span time.Duration
+		want string
+	}{
+		{"5m range", 5 * time.Minute, "sum(rate(http_requests_total[1m])) 60000 1m"},
+		{"10m range", 10 * time.Minute, "sum(rate(http_requests_total[1m])) 60000 1m"},
+		{"30m range", 30 * time.Minute, "sum(rate(http_requests_total[1m])) 60000 1m"},
+		{"1h range", time.Hour, "sum(rate(http_requests_total[1m])) 60000 1m"},
+		{"30d range", 30 * 24 * time.Hour, "sum(rate(http_requests_total[3m56s])) 236000 1m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Options as runPanelQuery builds them for a Prometheus panel:
+			// the datasource lower limit, then the executor's step.
+			options := intervalOptions{}.
+				withLowerLimit(newVariableInterpolator(nil, nil), "prometheus", nil).
+				withExecutionStep(ctx, start, start.Add(tt.span))
+			got := substituteGrafanaMacros("sum(rate(http_requests_total[$__interval])) ${__interval_ms} $__rate_interval", start, start.Add(tt.span), options)
 			assert.Equal(t, tt.want, got)
 		})
 	}
