@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import type { RefreshRequest, RenderHandle, RenderState } from '../renderer/renderer.js';
-import { McpAppShell } from '../src/McpAppShell';
+import type { MessageRequest, RefreshRequest, RenderHandle, RenderState } from '../renderer/renderer.js';
+import { type McpAppFeedback, McpAppShell } from '../src/McpAppShell';
 import { QueryBlock, type QueryBlockQuery } from '../src/QueryBlock';
 import '../styles.css';
 import type { AppHostState } from './appHostState';
 import { ChartPicker } from './ChartPicker';
+import { VizMessageError } from './VizMessageError';
 import { queryMeta } from './queryMeta';
 import type { Renderer } from './loadRenderer';
 import { buildVizSpec, shownChart, type VizArgs, type VizSpec, vizCharts } from './vizSpec';
@@ -31,7 +32,7 @@ export function queryTexts(args: VizArgs): QueryBlockQuery[] {
 /** Draws the result of query_datasource with the viz contract Renderer. */
 export function VizApplication({ host }: { host: AppHostState }) {
   const state = useSyncExternalStore(host.subscribe, host.getSnapshot, host.getSnapshot);
-  const { viz, vizArgs, vizNotices, vizChart, colorMode, timeZone } = state;
+  const { viz, vizArgs, vizNotices, vizChart, vizMessage, colorMode, timeZone } = state;
   const spec = useMemo(
     () =>
       viz && vizArgs ? buildVizSpec(vizArgs, viz, { theme: colorMode, timeZone }, vizChart, vizNotices) : undefined,
@@ -44,6 +45,15 @@ export function VizApplication({ host }: { host: AppHostState }) {
     () => (vizArgs && viz ? queryMeta(vizArgs, viz, timeZone) : undefined),
     [vizArgs, viz, timeZone],
   );
+  const messageFeedback: McpAppFeedback | undefined = !vizMessage
+    ? undefined
+    : 'sending' in vizMessage
+      ? { tone: 'info', message: 'Sending to the chat…' }
+      : {
+          tone: 'error',
+          message: <VizMessageError {...vizMessage} />,
+          action: { label: 'Close', onClick: host.closeVizMessage },
+        };
   // A failed load of the Renderer. GrafanaApplication remounts this view for each new result, which clears it.
   const [loadFailure, setLoadFailure] = useState<string>();
 
@@ -71,7 +81,7 @@ export function VizApplication({ host }: { host: AppHostState }) {
             ? { tone: 'error', message: loadFailure }
             : vizArgs && !viz
               ? { tone: 'info', message: state.status }
-              : undefined
+              : messageFeedback
       }
     >
       {vizArgs && <QueryBlock datasource={vizArgs.datasourceUid} queries={queries} meta={meta} />}
@@ -83,6 +93,7 @@ export function VizApplication({ host }: { host: AppHostState }) {
           // Read when the Renderer draws: the load waits for the handshake, so serverTools is known by then. With no
           // server tool calls a refresh cannot run, so the Renderer shows no Refresh or time picker (refresh.1).
           refresh={() => (host.getSnapshot().serverTools ? host.refreshViz : undefined)}
+          message={() => (host.getSnapshot().messages ? host.askVizPoint : undefined)}
           // GrafanaApplication remounts this view for each call, so the generation is the one of this spec.
           onState={(renderState) => host.reportVizState(renderState, state.generation)}
           onFailure={(message) => host.reportVizFailure(message, state.generation)}
@@ -103,6 +114,7 @@ function RendererView({
   load,
   onLoadError,
   refresh,
+  message,
   onState,
   onFailure,
 }: {
@@ -110,6 +122,8 @@ function RendererView({
   load: () => Promise<Renderer>;
   onLoadError: (message: string) => void;
   refresh: () => ((request: RefreshRequest) => Promise<{ error: string } | undefined>) | undefined;
+  /** Read when the Renderer draws, as refresh. With none, the Renderer shows no Ask in chat (state.20). */
+  message: () => ((spec: VizSpec, request: MessageRequest) => void) | undefined;
   onState: (state: RenderState) => void;
   /** A failed load, render or update, for the model; the banner and AppErrorBoundary show it to the user. */
   onFailure: (message: string) => void;
@@ -133,6 +147,7 @@ function RendererView({
         ({ render }) => {
           if (destroyed || !el.current) return;
           const onRefresh = refresh();
+          const onMessage = message();
           try {
             handle.current = render(el.current, latest.current, {
               onState,
@@ -143,6 +158,8 @@ function RendererView({
                   });
                 },
               }),
+              // The text names the chart on screen, so it reads the last spec.
+              ...(onMessage && { onMessage: (request: MessageRequest) => onMessage(latest.current, request) }),
             });
           } catch (cause) {
             fail(cause);
