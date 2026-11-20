@@ -31,6 +31,12 @@ type vizPickRule struct {
 	Chart string         `json:"chart"`
 }
 
+// vizHeldCharts are charts of the registry that the pinned Renderer does not draw yet. The Source leaves them out of
+// the type argument, the pick and the alternatives. Remove an entry when a Renderer release draws the chart.
+var vizHeldCharts = map[string]bool{
+	"stat": true, // grafana/dataviz#257
+}
+
 var vizCharts, vizPickRules = mustLoadVizRegistry()
 
 func mustLoadVizRegistry() ([]vizChart, []vizPickRule) {
@@ -42,6 +48,8 @@ func mustLoadVizRegistry() ([]vizChart, []vizPickRule) {
 	}
 	mustReadVizRegistry("chart-types.json", &charts)
 	mustReadVizRegistry("pick.json", &pick)
+	charts.Charts = slices.DeleteFunc(charts.Charts, func(c vizChart) bool { return vizHeldCharts[c.Name] })
+	pick.Rules = slices.DeleteFunc(pick.Rules, func(r vizPickRule) bool { return vizHeldCharts[r.Chart] })
 	for _, rule := range pick.Rules {
 		if vizChartByName(charts.Charts, rule.Chart) == nil {
 			panic(fmt.Sprintf("pick.json: rule %s has the unknown chart %s", rule.ID, rule.Chart))

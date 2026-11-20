@@ -105,6 +105,6 @@ describe('chartLabel', () => {
   });
 
   it('shows the registry ID of an unknown chart', () => {
-    expect(chartLabel('gauge')).toBe('gauge');
+    expect(chartLabel('pie')).toBe('pie');
   });
 });
