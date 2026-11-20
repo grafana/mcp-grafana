@@ -86,7 +86,7 @@ One constraint is easy to miss when adding an app:
   `app/appHostState.ts`, created alongside the `App` and consumed with
   `useSyncExternalStore`.
 
-`preview/localhost.html` runs an app against a real `AppBridge` host with the
-iframe same-origin, so its console and errors are reachable. Hosts sandbox apps
-and may refuse to expose a debugger, which makes an in-host failure otherwise
-invisible; `npm run dev` serves this page.
+`npm run dev` starts the shared sandboxed development/test host. It serves the
+built app through the Go server and uses the same upstream basic-host sandbox
+and fixture scenarios as Playwright. See the [UI guide](../ui/mcp-apps/README.md)
+and [browser test guide](../ui/mcp-apps/e2e/README.md).
