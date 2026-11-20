@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -387,6 +389,209 @@ func TestLokiFramesToResult_Metrics(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "matrix", empty.ResultType)
 	assert.Empty(t, empty.Entries)
+}
+
+// lokiToolResult runs the query_loki_logs tool against a Grafana stub
+// that answers /api/ds/query with frames.
+func lokiToolResult(t *testing.T, args string, frames ...*data.Frame) *mcp.CallToolResult {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/datasources/uid/loki":
+			_, _ = io.WriteString(w, `{"uid":"loki","type":"loki"}`)
+		case "/api/ds/query":
+			_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{
+				"A": backend.DataResponse{Frames: frames},
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := QueryLokiLogs.Handler(enforceTestCtx(server, false), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: "query_loki_logs", Arguments: json.RawMessage(args)},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+	return result
+}
+
+// callQueryLokiLogs returns the text of a successful query_loki_logs call.
+func callQueryLokiLogs(t *testing.T, args string, frames ...*data.Frame) string {
+	t.Helper()
+	result := lokiToolResult(t, args, frames...)
+	text := result.Content[0].(*mcp.TextContent).Text
+	require.False(t, result.IsError, text)
+	assert.Nil(t, result.StructuredContent)
+	return text
+}
+
+// testLokiLogFrame has two lines of stream app=a and one of app=b, newest first.
+func testLokiLogFrame() *data.Frame {
+	return data.NewFrame("",
+		data.NewField("labels", nil, []json.RawMessage{
+			json.RawMessage(`{"app":"a","trace_id":"t1","level":"error"}`),
+			json.RawMessage(`{"app":"b"}`),
+			json.RawMessage(`{"app":"a","trace_id":"t1","level":"error"}`),
+		}),
+		data.NewField("Time", nil, []time.Time{time.Unix(0, 0), time.Unix(0, 0), time.Unix(0, 0)}),
+		data.NewField("Line", nil, []string{"boom", "ok", "bang"}),
+		data.NewField("tsNs", nil, []string{"3000000000", "2000000000", "1000000000"}),
+		data.NewField("labelTypes", nil, []json.RawMessage{
+			json.RawMessage(`{"app":"I","trace_id":"S","level":"P"}`),
+			json.RawMessage(`{"app":"I"}`),
+			json.RawMessage(`{"app":"I","trace_id":"S","level":"P"}`),
+		}),
+	)
+}
+
+func testLokiMetricFrame() *data.Frame {
+	return data.NewFrame("",
+		data.NewField("Time", nil, []time.Time{time.UnixMilli(1000), time.UnixMilli(2500)}),
+		data.NewField("Value", data.Labels{"app": "a"}, []float64{3, 4.5}),
+	)
+}
+
+const (
+	testLokiTimeArgs = `"startRfc3339":"1970-01-01T00:00:00Z","endRfc3339":"1970-01-01T00:00:05Z"`
+	testLokiLogArgs  = `{"datasourceUid":"loki","logql":"{app=~\".+\"}",` + testLokiTimeArgs
+	testLokiRateArgs = `{"datasourceUid":"loki","logql":"sum by (app) (count_over_time({app=\"a\"}[1m]))",` + testLokiTimeArgs
+)
+
+// TestQueryLokiLogsDefaultFormatUnchanged pins the exact text of the default output.
+func TestQueryLokiLogsDefaultFormatUnchanged(t *testing.T) {
+	for _, tc := range []struct {
+		name, args, text string
+		frame            *data.Frame
+	}{
+		{
+			name:  "log",
+			args:  testLokiLogArgs + `}`,
+			frame: testLokiLogFrame(),
+			text: `{"data":[` +
+				`{"timestamp":"3000000000","line":"boom","labels":{"app":"a"},"structuredMetadata":{"trace_id":"t1"},"parsed":{"level":"error"}},` +
+				`{"timestamp":"2000000000","line":"ok","labels":{"app":"b"}},` +
+				`{"timestamp":"1000000000","line":"bang","labels":{"app":"a"},"structuredMetadata":{"trace_id":"t1"},"parsed":{"level":"error"}}],` +
+				`"metadata":{"linesReturned":3,"maxLinesAllowed":10,"resultsTruncated":false,"totalLinesScanned":null,` +
+				`"startTime":"1970-01-01T00:00:00Z","endTime":"1970-01-01T00:00:05Z"}}`,
+		},
+		{
+			name:  "metric",
+			args:  testLokiRateArgs + `}`,
+			frame: testLokiMetricFrame(),
+			text: `{"data":[{"values":[{"timestamp":"1.000","value":3},{"timestamp":"2.500","value":4.5}],"labels":{"app":"a"}}],` +
+				`"metadata":{"linesReturned":1,"maxLinesAllowed":10,"resultsTruncated":false,"totalLinesScanned":null,` +
+				`"startTime":"1970-01-01T00:00:00Z","endTime":"1970-01-01T00:00:05Z"}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.text, callQueryLokiLogs(t, tc.args, tc.frame))
+		})
+	}
+}
+
+func TestQueryLokiLogsFormatLokiStreams(t *testing.T) {
+	text := callQueryLokiLogs(t, testLokiLogArgs+`,"format":"loki"}`, testLokiLogFrame())
+	assert.JSONEq(t, `{"status":"success","data":{"resultType":"streams","result":[
+		{"stream":{"app":"a","trace_id":"t1","level":"error"},"values":[["3000000000","boom"],["1000000000","bang"]]},
+		{"stream":{"app":"b"},"values":[["2000000000","ok"]]}
+	]},"metadata":{"linesReturned":3,"maxLinesAllowed":10,"resultsTruncated":false,"totalLinesScanned":null,
+		"startTime":"1970-01-01T00:00:00Z","endTime":"1970-01-01T00:00:05Z"}}`, text)
+}
+
+func TestQueryLokiLogsFormatLokiTruncated(t *testing.T) {
+	text := callQueryLokiLogs(t, testLokiLogArgs+`,"format":"loki","limit":1}`, testLokiLogFrame())
+	assert.JSONEq(t, `{"status":"success","data":{"resultType":"streams","result":[
+		{"stream":{"app":"a","trace_id":"t1","level":"error"},"values":[["3000000000","boom"]]}
+	]},"metadata":{"linesReturned":1,"maxLinesAllowed":1,"resultsTruncated":true,"totalLinesScanned":null,
+		"startTime":"1970-01-01T00:00:00Z","endTime":"1970-01-01T00:00:05Z"}}`, text)
+}
+
+func TestQueryLokiLogsFormatLokiMetrics(t *testing.T) {
+	metadata := `"metadata":{"linesReturned":1,"maxLinesAllowed":10,"resultsTruncated":false,"totalLinesScanned":null,
+		"startTime":"1970-01-01T00:00:00Z","endTime":"1970-01-01T00:00:05Z"}`
+	for _, tc := range []struct {
+		queryType, data string
+	}{
+		{
+			queryType: "range",
+			data:      `{"resultType":"matrix","result":[{"metric":{"app":"a"},"values":[[1,"3"],[2.5,"4.5"]]}]}`,
+		},
+		{
+			queryType: "instant",
+			data:      `{"resultType":"vector","result":[{"metric":{"app":"a"},"value":[2.5,"4.5"]}]}`,
+		},
+	} {
+		t.Run(tc.queryType, func(t *testing.T) {
+			args := testLokiRateArgs + `,"format":"loki","queryType":"` + tc.queryType + `"}`
+			text := callQueryLokiLogs(t, args, testLokiMetricFrame())
+			assert.JSONEq(t, `{"status":"success","data":`+tc.data+`,`+metadata+`}`, text)
+		})
+	}
+}
+
+func TestQueryLokiLogsFormatLokiUnlabeledSeries(t *testing.T) {
+	frame := data.NewFrame("",
+		data.NewField("Time", nil, []time.Time{time.UnixMilli(1000)}),
+		data.NewField("Value", nil, []float64{0}),
+	)
+	args := `{"datasourceUid":"loki","logql":"vector(0)","format":"loki","queryType":"instant",` + testLokiTimeArgs + `}`
+	var got struct {
+		Data json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(callQueryLokiLogs(t, args, frame)), &got))
+	assert.JSONEq(t, `{"resultType":"vector","result":[{"metric":{},"value":[1,"0"]}]}`, string(got.Data))
+}
+
+func TestQueryLokiLogsFormatLokiEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		name, logql, queryType, resultType string
+	}{
+		{name: "log range", logql: `{app="a"} |= "x"`, queryType: "range", resultType: "streams"},
+		{name: "log instant", logql: `{app="a"}`, queryType: "instant", resultType: "streams"},
+		{name: "metric range", logql: `count_over_time({app="a"}[1m])`, queryType: "range", resultType: "matrix"},
+		{name: "metric instant", logql: `count_over_time({app="a"}[1m])`, queryType: "instant", resultType: "vector"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := fmt.Sprintf(`{"datasourceUid":"loki","logql":%q,"queryType":%q,"format":"loki",%s}`,
+				tc.logql, tc.queryType, testLokiTimeArgs)
+			var got struct {
+				Status string            `json:"status"`
+				Data   json.RawMessage   `json:"data"`
+				Hints  *EmptyResultHints `json:"hints"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(callQueryLokiLogs(t, args)), &got))
+			assert.Equal(t, "success", got.Status)
+			assert.JSONEq(t, `{"resultType":"`+tc.resultType+`","result":[]}`, string(got.Data))
+			assert.NotNil(t, got.Hints)
+		})
+	}
+}
+
+func TestQueryLokiLogsInvalidFormat(t *testing.T) {
+	result := lokiToolResult(t, testLokiLogArgs+`,"format":"json"}`)
+	assert.True(t, result.IsError)
+	assert.Equal(t, `invalid format "json": must be 'full', 'compact' or 'loki'`,
+		result.Content[0].(*mcp.TextContent).Text)
+}
+
+func TestIsLogQLLogQuery(t *testing.T) {
+	for logql, want := range map[string]bool{
+		`{app="a"}`:                              true,
+		` ({app="a"} |= "x")`:                    true,
+		"# note\n{app=\"a\"}":                    true,
+		`/* note */ {app="a"}`:                   true,
+		`count_over_time({app="a"}[1m])`:         false,
+		`(sum(rate({app="a"}[1m])))`:             false,
+		`sum by (app) (rate({app="a"}[1m])) > 1`: false,
+		`vector(0)`:                              false,
+		"# {app=\"a\"}\nvector(0)":               false,
+		`/* {app="a"}`:                           false,
+	} {
+		assert.Equal(t, want, isLogQLLogQuery(logql), logql)
+	}
 }
 
 func TestLokiClient_MakeRequest_SetsQueryTags(t *testing.T) {

@@ -54,6 +54,7 @@ const (
 	skipNoCloudWatch   = "mcptests has no CloudWatch datasource"
 	skipNoCloudLogging = "mcptests has no Google Cloud Logging datasource"
 	skipNoAzureMonitor = "mcptests has no Azure Monitor datasource"
+	skipNoXRay         = "mcptests has no X-Ray datasource"
 	skipIncident       = "needs a live incident; list_incidents covers the same declared permissions"
 )
 
@@ -364,6 +365,9 @@ var rbacFixtures = map[string]rbacFixture{
 	"query_cloudwatch_logs":            {skip: skipNoCloudWatch},
 	"list_cloudwatch_log_groups":       {skip: skipNoCloudWatch},
 	"list_cloudwatch_log_group_fields": {skip: skipNoCloudWatch},
+
+	"search_xray_traces": {skip: skipNoXRay},
+	"get_xray_trace":     {skip: skipNoXRay},
 
 	"query_cloud_logging":         {skip: skipNoCloudLogging},
 	"list_cloud_logging_projects": {skip: skipNoCloudLogging},

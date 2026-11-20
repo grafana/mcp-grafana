@@ -165,3 +165,39 @@ func TestParseEndTime(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveTimeRange(t *testing.T) {
+	t.Run("defaults to the last hour", func(t *testing.T) {
+		from, to, err := resolveTimeRange("", "")
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now(), to, 5*time.Second)
+		assert.Equal(t, time.Hour, to.Sub(from))
+	})
+
+	t.Run("end-only range starts an hour before the end", func(t *testing.T) {
+		from, to, err := resolveTimeRange("", "2024-01-01T12:00:00Z")
+		require.NoError(t, err)
+		assert.Equal(t, time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC), to.UTC())
+		assert.Equal(t, time.Date(2024, 1, 1, 11, 0, 0, 0, time.UTC), from.UTC())
+	})
+
+	t.Run("start-only range ends now", func(t *testing.T) {
+		from, to, err := resolveTimeRange("now-2h", "")
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now(), to, 5*time.Second)
+		assert.WithinDuration(t, time.Now().Add(-2*time.Hour), from, 5*time.Second)
+	})
+
+	t.Run("invalid bounds are reported", func(t *testing.T) {
+		_, _, err := resolveTimeRange("garbage", "")
+		require.ErrorContains(t, err, "parsing start time")
+		_, _, err = resolveTimeRange("", "garbage")
+		require.ErrorContains(t, err, "parsing end time")
+	})
+}
+
+func TestParseAzureLogAnalyticsTimeRange_EndOnly(t *testing.T) {
+	from, to, err := parseAzureLogAnalyticsTimeRange("", "2024-01-01T12:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, time.Hour, to.Sub(from))
+}

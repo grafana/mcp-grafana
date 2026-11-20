@@ -240,6 +240,27 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 			},
 		},
 		{
+			name:         "write categories describe only reads when write disabled",
+			enabledTools: "incident,dashboard,oncall,annotations,snapshot,agento11y",
+			disableFlags: map[string]bool{"write": true},
+			wantContains: []string{
+				"Incidents: Search incidents",
+				"Dashboards: Retrieve dashboards",
+				"OnCall: View on-call schedules",
+				"Annotations: List dashboard annotations",
+				"Snapshots: List and get dashboard snapshots.",
+				"Read its eval configuration",
+			},
+			wantNotContains: []string{
+				"create, update, and resolve incidents",
+				"update, and create dashboards",
+				"View and manage",
+				"Create and manage dashboard annotations",
+				"create, and delete dashboard snapshots",
+				"Read or manage",
+			},
+		},
+		{
 			name:         "raw-SQL categories restored by enable-query",
 			enabledTools: "sql,influxdb",
 			disableFlags: map[string]bool{"write": true, "enableQuery": true},
@@ -1528,6 +1549,8 @@ var safeQueryToolNames = []string{
 	"query_graphite_density",
 	"query_cloudwatch",
 	"query_cloudwatch_logs",
+	"search_xray_traces",
+	"get_xray_trace",
 	"query_cloud_logging",
 	"query_azure_log_analytics",
 	"query_azure_resource_graph",
@@ -1952,7 +1975,7 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 	})
 
 	t.Run("query-only categories are empty without query tools", func(t *testing.T) {
-		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor"}
+		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor", "xray"}
 		dt := disabledTools{enabledTools: strings.Join(queryOnlyCategories, ",") + ",search", query: true}
 		enabled, _ := dt.categoryReport()
 
