@@ -96,7 +96,7 @@ test('real Go tool result renders and refreshes through MCP', async ({ page }) =
   await expect(app.getByText('Go integration chart')).toBeVisible();
   const expectedRequest = {
     from: String(result.data.range.from), to: String(result.data.range.to),
-    queries: args.queries.map(query => ({ ...query, datasource: { uid: datasourceUid }, maxDataPoints: 1000, intervalMs: 900 })),
+    queries: args.queries.map(query => ({ ...query, datasource: { uid: datasourceUid }, maxDataPoints: 1000, intervalMs: 1000 })),
   };
   await expect.poll(() => events(page, 'grafana-requests')).toEqual([[expectedRequest]]);
   const [initial] = await events(page, 'go-result');

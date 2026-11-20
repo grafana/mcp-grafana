@@ -53,6 +53,27 @@ func readFixtureJSON(t *testing.T, dir, name string, into any) bool {
 	return true
 }
 
+// roundExpectedIntervals rounds the expected intervalMs of each query whose arguments have none, as the Source does
+// (dsIntervalMs). The fixtures follow tool.12, which asks for the unrounded range divided by maxDataPoints
+// (grafana/viz-contract#104).
+func roundExpectedIntervals(t *testing.T, args json.RawMessage, want map[string]any) {
+	t.Helper()
+	var a struct {
+		Queries []map[string]any `json:"queries"`
+	}
+	require.NoError(t, json.Unmarshal(args, &a))
+	queries, _ := want["queries"].([]any)
+	for i, q := range queries {
+		q := q.(map[string]any)
+		if i < len(a.Queries) && a.Queries[i]["intervalMs"] != nil {
+			continue
+		}
+		if ms, ok := q["intervalMs"].(float64); ok {
+			q["intervalMs"] = grafanaRoundInterval(ms)
+		}
+	}
+}
+
 // adjustExpectedAlternatives changes the expected alternatives of a set:
 //   - It removes the charts of vizHeldCharts, which the Source leaves out.
 //   - With a unit in the arguments, it adds the unit to an alternative that has no fieldConfig. tool.23 makes each
@@ -129,6 +150,7 @@ func TestQueryDatasourceConformance(t *testing.T) {
 			// a status other than 200 must match its result.
 			require.NoError(t, err)
 			if hasRequest {
+				roundExpectedIntervals(t, args, wantRequest)
 				assert.Equal(t, wantRequest, posted, "the request body")
 			}
 			if want.IsError {
