@@ -15,7 +15,6 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -541,15 +540,3 @@ var QueryGraphiteDensity = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddGraphiteTools registers all Graphite tools with the MCP server.
-// The query tools are registered only when enableQueryTools is true; the
-// metric and tag listing tools stay available either way.
-func AddGraphiteTools(s *mcp.Server, enableQueryTools bool) {
-	ListGraphiteMetrics.Register(s)
-	ListGraphiteTags.Register(s)
-	if enableQueryTools {
-		QueryGraphite.Register(s)
-		QueryGraphiteDensity.Register(s)
-	}
-}

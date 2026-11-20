@@ -1,12 +1,24 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
 
+import type { RefreshRequest, RenderState } from '../renderer/renderer.js';
 import type { McpAppColorMode, McpAppFeedback } from '../src/McpAppShell';
 import type { ParsedMetrics } from '../src/metrics/pickViz';
 import type { TraceViewResult } from '../src/trace/types';
 import { applyHostContext } from './hostContext';
+import { loadRenderer, type Renderer } from './loadRenderer';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
-import { parseVizArgs, parseVizResult, type VizArgs, type VizResult } from './vizSpec';
+import { vizFailureContext, vizModelContext } from './vizModelContext';
+import { runVizRefresh, withType } from './vizRefresh';
+import {
+  parseVizArgs,
+  parseVizResult,
+  shownChart,
+  vizCharts,
+  type VizArgs,
+  type VizNotice,
+  type VizResult,
+} from './vizSpec';
 
 // Attach handlers before connecting: hosts may deliver results before React's first commit.
 /** Source query inputs retained for refresh and range selection. */
@@ -27,8 +39,12 @@ export type AppHostSnapshot = {
   viz?: VizResult;
   toolName?: string;
   args?: QueryArgs;
-  /** The arguments of query_datasource, for the viz spec. */
+  /** The last arguments of query_datasource, for the viz spec and a refresh (refresh.8). */
   vizArgs?: VizArgs;
+  /** The notices of the App for the viz spec of the last refresh only (spec.8, refresh.10). */
+  vizNotices?: VizNotice[];
+  /** The user's pick (spec.2); undefined when the model or the Source chose the chart (refresh.8). */
+  vizChart?: string;
   colorMode: McpAppColorMode;
   /** The IANA time zone of the host context, if it gives one. */
   timeZone?: string;
@@ -37,6 +53,8 @@ export type AppHostSnapshot = {
   /** Transient message about the last user-initiated action. */
   notice?: McpAppFeedback;
   refreshing: boolean;
+  /** The host passes tool calls to the server (serverTools), so the viz view can refresh. */
+  serverTools: boolean;
   /**
    * Bumped on each tool input, result and cancellation from the host, never on
    * refresh. Keys the view, so state the user set up for one response does not
@@ -50,10 +68,26 @@ export type AppHostState = {
   subscribe: (listener: () => void) => () => void;
   /** Re-run the same query under the host's authenticated MCP session. */
   refresh: () => Promise<void>;
+  /**
+   * Answers a RefreshRequest of the Renderer (5-refresh.md). A new result goes to the snapshot, and the view calls
+   * update. A failure gives the text for setRefreshed. An older request, or one after a new tool call, gives nothing.
+   */
+  refreshViz: (request: RefreshRequest) => Promise<{ error: string } | undefined>;
+  /**
+   * Takes a final state or new notices of the Renderer (onState), for the model context (state.14). generation is the
+   * one the Renderer drew for; a state of an older call is dropped.
+   */
+  reportVizState: (state: RenderState, generation: number) => void;
+  /** Takes the message of a Renderer that did not load or whose render threw, for the model context (state.14). */
+  reportVizFailure: (message: string, generation: number) => void;
+  /** Shows another chart of the result and tells the model (state.14). */
+  pickVizChart: (chart: string) => void;
   /** Hand a brushed window back to the agent as a question. */
   askAboutRange: (fromMs: number, toMs: number) => void;
   /** Ask the host to open a Grafana URL; the iframe cannot navigate itself. */
   openInGrafana: (target: { url: string }) => void;
+  /** Load the viz Renderer from its resource on the server, once. */
+  loadRenderer: () => Promise<Renderer>;
   close: () => void;
 };
 
@@ -61,7 +95,13 @@ const WAITING = 'Waiting for query results…';
 const UNAVAILABLE = 'Interactive view unavailable; data remains available in the tool output.';
 
 /** The fields that hold a view. A new call or a failure clears all of them, so no old view stays under the new one. */
-const NO_VIEW = { result: undefined, trace: undefined, viz: undefined } as const;
+const NO_VIEW = {
+  result: undefined,
+  trace: undefined,
+  viz: undefined,
+  vizNotices: undefined,
+  vizChart: undefined,
+} as const;
 
 const error = (message: string): McpAppFeedback => ({ tone: 'error', message });
 
@@ -71,6 +111,7 @@ export function createAppHostState(app: App): AppHostState {
     status: WAITING,
     isError: false,
     refreshing: false,
+    serverTools: false,
     generation: 0,
   };
   const listeners = new Set<() => void>();
@@ -136,12 +177,67 @@ export function createAppHostState(app: App): AppHostState {
     return true;
   };
 
-  /** A new tool call from the host supersedes any refresh still in flight. */
-  const nextCall = (): Partial<AppHostSnapshot> => ({
-    generation: snapshot.generation + 1,
-    notice: undefined,
-    refreshing: false,
-  });
+  // The model context of the viz view (state.14 to state.17): the last state of the Renderer, and whether a context
+  // went to the model. Once one did, each new state replaces it, so the model never keeps an old one.
+  let vizState: RenderState | undefined;
+  let contextSent = false;
+
+  const sendModelContext = (build: () => string) => {
+    if (!app.getHostCapabilities()?.updateModelContext) return;
+    let text: string;
+    try {
+      text = build();
+    } catch {
+      // A result with no valid data range; the context must not fail the draw or a refresh.
+      return;
+    }
+    contextSent = true;
+    // The context only helps a later turn; a host that refuses it leaves the view as it is.
+    void app.updateModelContext({ content: [{ type: 'text', text }] }).catch(() => {});
+  };
+
+  const sendVizContext = () => {
+    const { vizArgs, viz, vizChart } = snapshot;
+    const state = vizState;
+    if (vizArgs && viz && state) sendModelContext(() => vizModelContext(vizArgs, viz, state, vizChart));
+  };
+
+  // The old Renderer stays mounted until React commits the new call, so it can still report.
+  const isStale = (generation: number) => generation !== snapshot.generation;
+
+  const reportVizFailure = (message: string, generation: number) => {
+    if (isStale(generation)) return;
+    const { vizArgs, viz, vizChart } = snapshot;
+    vizState = undefined;
+    if (vizArgs && viz) sendModelContext(() => vizFailureContext(vizArgs, viz, message, vizChart));
+  };
+
+  const pickVizChart = (chart: string) => {
+    const { viz, vizChart } = snapshot;
+    if (!viz || !vizCharts(viz).includes(chart) || chart === shownChart(viz, vizChart)) return;
+    // App notices belong to one refresh (spec.8).
+    set({ vizChart: chart, vizNotices: undefined });
+    // Uses the last state; the Renderer reports again only on a change (state.12).
+    sendVizContext();
+  };
+
+  const reportVizState = (state: RenderState, generation: number) => {
+    if (isStale(generation)) return;
+    vizState = state;
+    // Skip a first ready draw with no notices (state.16), unless the user picked another chart while it loaded.
+    const { viz, vizChart } = snapshot;
+    const picked = !!viz && shownChart(viz, vizChart) !== viz.chart;
+    if (state.state !== 'ready' || state.notices.length > 0 || contextSent || picked) sendVizContext();
+  };
+
+  /** A new tool call from the host supersedes any refresh still in flight, and starts a new model context. */
+  const nextCall = (): Partial<AppHostSnapshot> => {
+    // The host keeps the last context until the next one; the context of the last call describes a chart that is gone.
+    if (contextSent) void app.updateModelContext({ content: [] }).catch(() => {});
+    vizState = undefined;
+    contextSent = false;
+    return { generation: snapshot.generation + 1, notice: undefined, refreshing: false };
+  };
 
   app.ontoolinput = (params) => {
     const call = params.arguments;
@@ -190,9 +286,11 @@ export function createAppHostState(app: App): AppHostState {
     return {};
   };
 
-  app
-    .connect()
+  // The host capabilities arrive in the handshake; the Renderer load reads them.
+  const connected = app.connect();
+  connected
     .then(() => {
+      if (app.getHostCapabilities()?.serverTools) set({ serverTools: true });
       // The host context arrives during the handshake; replay it once connected.
       const context = app.getHostContext();
       if (context) app.onhostcontextchanged?.(context);
@@ -226,6 +324,48 @@ export function createAppHostState(app: App): AppHostState {
       set({ notice: error(`Could not refresh: ${cause instanceof Error ? cause.message : String(cause)}`) });
     } finally {
       if (!superseded()) set({ refreshing: false });
+    }
+  };
+
+  // The id of the last RefreshRequest. Only its result is drawn (refresh.14).
+  let lastRefresh: string | undefined;
+
+  const refreshViz = async (request: RefreshRequest) => {
+    const { vizArgs, viz, vizChart, generation } = snapshot;
+    if (!vizArgs || !viz) return { error: 'There is no query to refresh.' };
+    // Ask for the picked chart, so it doesn't change under the user (refresh.9).
+    const asked = vizChart ? withType(vizArgs, vizChart) : vizArgs;
+    lastRefresh = request.id;
+    const stale = () => lastRefresh !== request.id || snapshot.generation !== generation;
+    const orgId = snapshot.args?.orgId;
+    const call = (args: VizArgs) =>
+      app.callServerTool({
+        name: 'render_grafana_app',
+        arguments: { toolName: 'query_datasource', arguments: args, ...(orgId === undefined ? {} : { orgId }) },
+      });
+    try {
+      const outcome = await runVizRefresh(call, asked, shownChart(viz, vizChart), request, stale);
+      if (stale()) return undefined;
+      if ('error' in outcome) return outcome;
+      // After type-mismatch the Source chose the chart (refresh.10); otherwise keep the model's type (refresh.8).
+      const keptPick = vizChart !== undefined && !outcome.mismatch;
+      // Keep a pick made during the refresh if the result has it, else this refresh's pick if the Source kept it.
+      const later = snapshot.vizChart;
+      const keptLater = later !== undefined && later !== vizChart && vizCharts(outcome.viz).includes(later);
+      const before = shownChart(snapshot.viz ?? viz, later);
+      set({
+        vizArgs: keptPick ? withType(outcome.args, vizArgs.type) : outcome.args,
+        viz: outcome.viz,
+        vizNotices: outcome.notices,
+        vizChart: keptLater ? later : keptPick ? vizChart : undefined,
+      });
+      // Tell the model of a new range (state.14), or of a new chart once it has a context. Uses the last state.
+      const changed = contextSent && shownChart(outcome.viz, snapshot.vizChart) !== before;
+      if (request.cause === 'timeRange' || changed) sendVizContext();
+      return undefined;
+    } catch (cause) {
+      // A host may decline the call, or require an approval the user dismissed.
+      return stale() ? undefined : { error: cause instanceof Error ? cause.message : String(cause) };
     }
   };
 
@@ -265,8 +405,14 @@ export function createAppHostState(app: App): AppHostState {
       return () => listeners.delete(listener);
     },
     refresh,
+    refreshViz,
+    reportVizState,
+    reportVizFailure,
+    pickVizChart,
     askAboutRange,
     openInGrafana,
+    // A host may deliver the result before the handshake ends; a failed handshake already shows its own error.
+    loadRenderer: () => connected.then(() => loadRenderer(app)),
     close: () => void app.close(),
   };
 }

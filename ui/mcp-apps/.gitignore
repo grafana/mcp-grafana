@@ -1,5 +1,11 @@
 /node_modules/
 /dist/*
 !/dist/app.html
+!/dist/viz-renderer.js
+!/dist/viz-renderer.hash
 !/dist/service-health.html
 /dist-preview/
+# scripts/renderer.mjs downloads the viz Renderer release that renderer/RENDERER pins.
+/renderer/*
+!/renderer/RENDERER
+!/renderer/README.md

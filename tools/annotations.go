@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 
 	"github.com/grafana/grafana-openapi-client-go/client/annotations"
@@ -277,13 +275,3 @@ var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions("annotations:read"),
 )
-
-func AddAnnotationTools(s *mcp.Server, enableWriteTools bool) {
-	GetAnnotationsTool.Register(s)
-	if enableWriteTools {
-		CreateAnnotationTool.Register(s)
-		UpdateAnnotationTool.Register(s)
-		DeleteAnnotationTool.Register(s)
-	}
-	GetAnnotationTagsTool.Register(s)
-}

@@ -121,6 +121,13 @@ BigQuery queries require qualified table references such as `` `my-project.my_da
 - **List CloudWatch log group fields:** Discover the fields available in a log group.
 - **Query CloudWatch Logs:** Run CloudWatch Logs Insights queries across one or more log groups.
 
+### X-Ray Querying
+
+> **Note:** X-Ray tools are **disabled by default**. To enable them, add `xray` to your `--enabled-tools` flag. Requires the [AWS X-Ray datasource plugin](https://grafana.com/grafana/plugins/grafana-x-ray-datasource/) (`grafana-x-ray-datasource`); AWS authentication is handled by the datasource configuration.
+
+- **Search X-Ray traces:** Find traces with an X-Ray filter expression (e.g. `service("checkout") AND fault = true`) and a time range; returns the newest matches with duration and HTTP method, URL and status.
+- **Get X-Ray trace:** Fetch one trace by X-Ray or W3C ID as a tree of segments and subsegments, with timings, HTTP status, error/fault/throttle flags and exception messages.
+
 ### Google Cloud Logging Querying
 
 > **Note:** Google Cloud Logging tools are **disabled by default**. To enable them, add `cloudlogging` to your `--enabled-tools` flag. Requires the [Google Cloud Logging datasource plugin](https://grafana.com/grafana/plugins/googlecloud-logging-datasource/) (`googlecloud-logging-datasource`) version 1.8.0 or later, which needs Grafana 11.2+. Older plugin versions return a different response layout and `query_cloud_logging` reports an error asking for an upgrade.
@@ -333,8 +340,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_by_uid`              | Dashboard                 | Get a dashboard by uid, optionally a saved version                                                                                                            | `dashboard.grafana.app/dashboards:get`, `dashboards:read`, `dashboards:write`                                                                                                                                                                                                       | `dashboards:uid:abc123`                                       |
 | `list_dashboard_versions`           | Dashboard                 | List saved versions of a dashboard (version, author, time, message)                                                                                           | `dashboards:read`, `dashboards:write`                                                                                                                                                                                                                                               | `dashboards:uid:abc123`                                       |
 | `update_dashboard`                  | Dashboard                 | Update or create a new dashboard                                                                                                                              | `dashboard.grafana.app/dashboards:create`, `dashboard.grafana.app/dashboards:get`, `dashboard.grafana.app/dashboards:update`, `dashboards:create`, `dashboards:read`, `dashboards:write`, `folders:read`                                                                            | `dashboards:*`, `folders:*` or `folders:uid:xyz789`           |
-| `get_dashboard_panel_queries`       | Dashboard                 | Get panel title, queries, datasource UID and type from a dashboard                                                                                            | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
-| `run_panel_query`                   | RunPanelQuery*            | Execute one or more dashboard panel queries                                                                                                                   | `dashboard.grafana.app/dashboards:get`, `dashboards:read`, `datasources:query`, `datasources:read`                                                                                                                                                                                  | `dashboards:uid:*`, `datasources:uid:*`                       |
+| `get_dashboard_panel_queries`       | Dashboard                 | Get panel title, queries, datasource UID and type from a dashboard                                                                                            | `dashboard.grafana.app/dashboards:get`, `dashboards:read`, `library.panels:read`                                                                                                                                                                                                    | `dashboards:uid:abc123`                                       |
+| `run_panel_query`                   | RunPanelQuery*            | Execute one or more dashboard panel queries                                                                                                                   | `dashboard.grafana.app/dashboards:get`, `dashboards:read`, `datasources:query`, `datasources:read`, `library.panels:read`                                                                                                                                                           | `dashboards:uid:*`, `datasources:uid:*`                       |
 | `get_dashboard_property`            | Dashboard                 | Extract specific parts of a dashboard using JSONPath expressions                                                                                              | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
 | `get_dashboard_summary`             | Dashboard                 | Get a compact summary of a dashboard without full JSON                                                                                                        | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
 | `create_folder`                     | Dashboard                 | Create a folder                                                                                                                                               | `folders:create`, `folders:read`, `folders:write`                                                                                                                                                                                                                                   | `folders:*`                                                   |
@@ -377,6 +384,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_cloudwatch_log_groups`        | CloudWatch*               | List CloudWatch log groups                                                                                                                                    | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloudwatch_log_group_fields`  | CloudWatch*               | List fields discovered in a log group                                                                                                                         | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `query_cloudwatch_logs`             | CloudWatch*               | Execute CloudWatch Logs Insights queries                                                                                                                      | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
+| `search_xray_traces`                | X-Ray*                    | Search X-Ray traces with a filter expression                                                                                                                  | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
+| `get_xray_trace`                    | X-Ray*                    | Get an X-Ray trace as a tree of segments                                                                                                                      | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloud_logging_projects`       | Cloud Logging*            | List GCP projects readable by a Google Cloud Logging datasource                                                                                               | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloud_logging_buckets`        | Cloud Logging*            | List log buckets in a GCP project                                                                                                                             | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
 | `list_cloud_logging_views`          | Cloud Logging*            | List log views in a log bucket                                                                                                                                | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
@@ -527,10 +536,11 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, `snowflake`, and `xray`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-on-estimate-failure`: What the Loki guardrail does when it cannot assess a query (no stream selector it understands, or the index/stats estimate failed) - default: `allow`. `allow` runs the query; `block` rejects it in `enforce` mode. `block` has no effect on VictoriaLogs, where such queries always run. Only applies when the guardrail is not `off`. Env fallback: `GRAFANA_LOKI_GUARDRAIL_ON_ESTIMATE_FAILURE`.
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations - default: `24h`. Accepts Go duration strings. `0` disables the range check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 - `--prometheus-guardrail-mode`: Prometheus query guardrail for `query_prometheus`, `query_prometheus_histogram`, and the Prometheus queries of `run_panel_query` - default: `off`. The guardrail caps the effective time range of a query and the number of points per series it requests, before the query reaches the datasource. An independent opt-in selector policy can require a non-empty positive label constraint beyond the metric name in every vector selector; see [selector policy](docs/sources/configure/command-line-flags.md#prometheus-selector-policy) for examples and limits. `shadow` logs queries that would be blocked but lets them run; `enforce` rejects them with rewrite guidance the LLM can act on (`run_panel_query` reports it in the result's `errors` entry for that panel). Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_MODE`.
 - `--prometheus-guardrail-require-selective-labels`: Require each vector selector to include a non-empty positive label constraint beyond the metric name. Default: `false`; independent of the range and points budgets, including when both are `0`. Only applies when the guardrail mode is not `off`. Env fallback: `GRAFANA_PROMETHEUS_GUARDRAIL_REQUIRE_SELECTIVE_LABELS`. Explicit CLI values, including `false`, override the environment.
@@ -545,6 +555,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
 - `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
 - `--dashboard-schema`: Set to `v2` to make `update_dashboard` reject a classic v1 (`panels[]`) body that would create a new dashboard when Grafana serves dashboard schema v2; the error carries a minimal v2 body to retry with. Existing v1 dashboards stay editable, and a Grafana without v2 is unaffected. Default: empty (no change). Env fallback: `GRAFANA_DASHBOARD_SCHEMA`.
+- `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Dynamic (per-call) organization selection](#dynamic-per-call-organization-selection).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -552,21 +563,25 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`, and keep `query_datasource`, a source of `render_grafana_app`, available. For the raw-SQL tools it is equivalent to `--enable-write-tools=query_sql,query_influxdb`; kept as a shorthand for that common case.
-- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. Has no effect on a tool whose whole category is disabled. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
+- `--enable-write-tools`: Comma separated list of individual tool names to keep registered even under `--disable-write`, for tools whose write behavior is scoped enough to opt back in independently. It works for every tool `--disable-write` removes, and for a tool with a read-only variant it keeps the full one. Has no effect on a tool whose whole category is disabled, and `--disable-query` still removes query tools. For example, `--enable-write-tools=generate_deeplink` keeps URL shortening (`shorten=true`) working under `--disable-write`, and `--enable-write-tools=alerting_rules_write` allows alert rule changes without enabling other write tools.
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
 - `--disable-influxdb`: Disable InfluxDB tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
+- `--disable-folder`: Disable folder tools
 - `--disable-oncall`: Disable oncall tools
 - `--disable-asserts`: Disable asserts tools
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
+- `--disable-tempo`: Disable Tempo tracing tools. The deprecated alias `--disable-proxied` also works.
+- `--disable-annotations`: Disable annotation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 - `--disable-snapshot`: Disable snapshot tools
 - `--disable-cloudwatch`: Disable CloudWatch tools
+- `--disable-xray`: Disable AWS X-Ray tools
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools
 - `--disable-azuremonitor`: Disable Azure Monitor tools
 - `--disable-examples`: Disable query examples tools
@@ -574,10 +589,14 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
 - `--disable-dsquery`: Disable the `query_datasource` source of `render_grafana_app`
+- `--disable-plugin`: Disable plugin tools
+- `--disable-api`: Disable API tools
+- `--disable-config`: Disable config-generation tools
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
 - `--disable-docs`: Disable documentation tools
+- `--disable-user`: Disable user info tools
 
 ### Read-Only Mode
 
@@ -588,7 +607,7 @@ The `--disable-write` flag provides a way to run the MCP server in read-only mod
 - Running in production environments where write access should be restricted
 - Testing and development scenarios where you want to prevent accidental modifications
 
-When `--disable-write` is enabled, the following write operations are disabled:
+When `--disable-write` is enabled, the following write operations are disabled. Each one can be kept individually with `--enable-write-tools=<name>`:
 
 **Dashboard Tools:**
 - `update_dashboard`
@@ -605,8 +624,6 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `alerting_rules_write` (create, update, delete operations)
 - `alerting_silences_write` (create, update, delete operations)
 - `alerting_routing_write` (create_contact_point operation)
-
-Each alerting write tool can be kept individually with `--enable-write-tools=<name>`.
 
 **OnCall Tools:**
 - `update_alert_group`
@@ -686,6 +703,10 @@ When `--disable-query` is enabled, the following tools are not registered:
 - `query_cloudwatch`
 - `query_cloudwatch_logs`
 
+**X-Ray Tools:**
+- `search_xray_traces`
+- `get_xray_trace`
+
 **Google Cloud Logging Tools:**
 - `query_cloud_logging`
 
@@ -699,7 +720,7 @@ When `--disable-query` is enabled, the following tools are not registered:
 **Run Panel Query Tools:**
 - `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, and `azuremonitor` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, `azuremonitor`, and `xray` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
 
 Note that `--disable-query` gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but does not police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
@@ -712,6 +733,9 @@ Note that `--disable-query` gates the query tools and the `grafana_api_request` 
 **Server TLS Configuration (streamable-http transport only):**
 - `--server.tls-cert-file`: Path to TLS certificate file for server HTTPS
 - `--server.tls-key-file`: Path to TLS private key file for server HTTPS
+
+**Version Information:**
+- `--version`: Print the version and exit
 
 ## Usage
 
@@ -1495,7 +1519,8 @@ How it works:
 > [!IMPORTANT]
 > Other enabled tools can bypass these matchers. Disable `grafana_api_request`
 > with `--disable-api`, rendering tools with `--disable-rendering`, and Grafana
-> Assistant with `--disable-assistant` (or `--disable-write`). In particular,
+> Assistant with `--disable-assistant` (or `--disable-write`, unless
+> `--enable-write-tools` names `ask_assistant`). In particular,
 > `render_grafana_app` can send unfiltered Prometheus queries through its
 > `query_datasource` source. `--disable-dsquery` closes that source, but does not
 > disable server-side panel rendering. Existing dashboard snapshots can also
@@ -1545,7 +1570,7 @@ How it works:
 >
 > - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 > - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
-> - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too.
+> - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too, unless `--enable-write-tools=ask_assistant` keeps it.
 >
 > The server logs a warning at startup naming each of these that is still enabled.
 > `run_panel_query` is safe (it reuses the enforced query path). Tempo tools

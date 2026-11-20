@@ -952,7 +952,7 @@ func TestTempoToolResult_HasMeta(t *testing.T) {
 func listTempoTools(t *testing.T, enableQuery bool) map[string]bool {
 	t.Helper()
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1.0"}, nil)
-	AddTempoTools(s, enableQuery)
+	Resolve(Policy{Categories: []string{"tempo"}, NoQuery: !enableQuery}).Register(s)
 
 	ctx := t.Context()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -1009,7 +1009,7 @@ func TestTempoGetAttributeValues_AllowsORInsideQuotes(t *testing.T) {
 	assert.False(t, result.IsError, "|| inside quotes should not be rejected")
 }
 
-func TestAddTempoTools_RegistersAllTools(t *testing.T) {
+func TestTempoTools_RegistersAllTools(t *testing.T) {
 	expectedTools := []string{
 		"search_tempo_traces",
 		"query_tempo_metrics",
@@ -1027,7 +1027,7 @@ func TestAddTempoTools_RegistersAllTools(t *testing.T) {
 	assert.Len(t, tools, len(expectedTools))
 }
 
-func TestAddTempoTools_DisableQueryRegistersNothing(t *testing.T) {
+func TestTempoTools_DisableQueryRegistersNothing(t *testing.T) {
 	tools := listTempoTools(t, false)
 	for name := range tools {
 		assert.False(t, strings.HasPrefix(name, "search_tempo") || strings.HasPrefix(name, "query_tempo") ||

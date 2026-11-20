@@ -8,6 +8,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+
+	"github.com/grafana/mcp-grafana/v2/tools"
 )
 
 // listAllTools registers every tool category on a fresh server (with write
@@ -16,12 +18,7 @@ import (
 func listAllTools(t *testing.T, disableWrite bool) []*mcp.Tool {
 	t.Helper()
 
-	dt := disabledTools{write: disableWrite}
-	var categories []string
-	for _, e := range dt.toolEntries() {
-		categories = append(categories, e.category)
-	}
-	dt.enabledTools = strings.Join(categories, ",")
+	dt := disabledTools{write: disableWrite, enabledTools: strings.Join(tools.CategoryNames(), ",")}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	dt.processTools(srv)

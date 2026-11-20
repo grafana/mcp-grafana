@@ -276,3 +276,19 @@ func TestAppRejectsUnavailableSourcesAndInvalidArguments(t *testing.T) {
 		})
 	}
 }
+
+// AddAppTool adds the tool that declares the viz Renderer only with the source that the Renderer draws (#1654).
+func TestAddAppToolDeclaresVizRenderer(t *testing.T) {
+	listed := func(sources ...mcpgrafana.Tool) bool {
+		result, err := appSession(t, t.Context(), sources...).ListTools(t.Context(), nil)
+		require.NoError(t, err)
+		for _, tool := range result.Tools {
+			if tool.Name == "grafana_app_viz_renderer" {
+				return true
+			}
+		}
+		return false
+	}
+	require.True(t, listed(QueryPrometheus, QueryDatasource), "query_datasource is a source")
+	require.False(t, listed(QueryPrometheus, GetTempoTraceTool), "no source draws with the Renderer")
+}

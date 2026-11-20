@@ -118,6 +118,19 @@ func TestManageRouting(t *testing.T) {
 				require.True(t, ok)
 				require.NotNil(t, route)
 				require.NotEmpty(t, route.Routes, "expected at least one child route")
+
+				var teamOps *models.Matcher
+				for _, child := range route.Routes {
+					for _, m := range child.Matchers {
+						if m.Name != nil && *m.Name == "team" {
+							teamOps = m
+						}
+					}
+				}
+				require.NotNil(t, teamOps, "expected the provisioned team=ops matcher")
+				require.Equal(t, "ops", *teamOps.Value)
+				require.True(t, teamOps.IsEqual)
+				require.False(t, *teamOps.IsRegex)
 			},
 		},
 

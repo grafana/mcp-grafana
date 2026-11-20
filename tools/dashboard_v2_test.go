@@ -54,9 +54,14 @@ func TestFindPanelByIDV2(t *testing.T) {
 func TestGetPanelQueriesV2(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 
-	queries, err := getPanelQueriesV2(spec, DashboardPanelQueriesParams{UID: "v2-test-uid"})
+	queries, err := getPanelQueriesV2(context.Background(), spec, DashboardPanelQueriesParams{UID: "v2-test-uid"})
 	require.NoError(t, err)
-	require.Len(t, queries, 2)
+	// The library panel cannot be resolved without a Grafana client, so it is
+	// reported with a warning instead of being dropped.
+	require.Len(t, queries, 3)
+	assert.Equal(t, "Shared graph", queries[2].Title)
+	require.Len(t, queries[2].Warnings, 1)
+	assert.Contains(t, queries[2].Warnings[0], `library panel "lib-uid"`)
 
 	assert.Equal(t, "CPU usage", queries[0].Title)
 	assert.Equal(t, `rate(cpu_seconds_total{job="$job"}[5m])`, queries[0].Query)
@@ -72,7 +77,7 @@ func TestGetPanelQueriesV2(t *testing.T) {
 func TestGetPanelQueriesV2_WithVariableSubstitution(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 
-	queries, err := getPanelQueriesV2(spec, DashboardPanelQueriesParams{
+	queries, err := getPanelQueriesV2(context.Background(), spec, DashboardPanelQueriesParams{
 		UID:       "v2-test-uid",
 		PanelID:   intPtrV2(1),
 		Variables: map[string]string{"job": "web"},

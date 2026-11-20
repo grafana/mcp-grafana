@@ -442,3 +442,40 @@ func TestSearchDashboards_FolderPath(t *testing.T) {
 		assert.Len(t, tree, folderListPageSize+1)
 	})
 }
+
+func forbiddenServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "access denied"})
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// assertNoClientDump checks that err names the query and not the client.
+func assertNoClientDump(t *testing.T, err error, prefix string) {
+	t.Helper()
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, prefix+` for query "cpu"`)
+	assert.NotContains(t, msg, "GrafanaHTTPAPI")
+	assert.NotContains(t, msg, "Transport:")
+	assert.NotContains(t, msg, "PublicURL:")
+	assert.NotContains(t, msg, "0x")
+}
+
+func TestSearchErrors_DoNotDumpClient(t *testing.T) {
+	ctx := mockSearchCtx(forbiddenServer(t))
+
+	t.Run("search dashboards", func(t *testing.T) {
+		_, err := searchDashboards(ctx, SearchDashboardsParams{Query: "cpu"})
+		assertNoClientDump(t, err, "search dashboards")
+	})
+
+	t.Run("search folders", func(t *testing.T) {
+		_, err := searchFolders(ctx, SearchFoldersParams{Query: "cpu"})
+		assertNoClientDump(t, err, "search folders")
+	})
+}

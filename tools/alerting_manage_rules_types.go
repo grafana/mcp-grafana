@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -17,6 +18,52 @@ var promqlParser = parser.NewParser(parser.Options{})
 var validAlertStates = map[string]bool{
 	"firing": true, "pending": true, "normal": true,
 	"recovering": true, "nodata": true, "error": true,
+}
+
+// Grafana's provisioning API accepts only these rule states. The two lists
+// differ: execution errors can map to Error, while missing data maps to NoData.
+var (
+	noDataStates  = []string{"Alerting", "NoData", "OK"}
+	execErrStates = []string{"OK", "Alerting", "Error"}
+)
+
+// canonicalRuleState returns the accepted spelling of value, matched without
+// regard to case, or an error naming the accepted values. An empty value is
+// returned unchanged so the required-field checks can report it.
+func canonicalRuleState(field, value string, allowed []string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	for _, state := range allowed {
+		if strings.EqualFold(value, state) {
+			return state, nil
+		}
+	}
+	return "", fmt.Errorf("%s must be one of %s, got %q", field, strings.Join(allowed, ", "), value)
+}
+
+// canonicalRuleStates applies canonicalRuleState to both rule states.
+func canonicalRuleStates(noData, execErr string) (string, string, error) {
+	noData, err := canonicalRuleState("no_data_state", noData, noDataStates)
+	if err != nil {
+		return "", "", err
+	}
+	execErr, err = canonicalRuleState("exec_err_state", execErr, execErrStates)
+	if err != nil {
+		return "", "", err
+	}
+	return noData, execErr, nil
+}
+
+// validateRuleStates rejects states the provisioning API would refuse.
+func validateRuleStates(noData, execErr string) error {
+	if !slices.Contains(noDataStates, noData) {
+		return fmt.Errorf("no_data_state must be one of %s, got %q", strings.Join(noDataStates, ", "), noData)
+	}
+	if !slices.Contains(execErrStates, execErr) {
+		return fmt.Errorf("exec_err_state must be one of %s, got %q", strings.Join(execErrStates, ", "), execErr)
+	}
+	return nil
 }
 
 // unquotedLabelValueRe matches either a quoted string, which is left untouched so
@@ -371,8 +418,8 @@ type CreateAlertRuleParams struct {
 	FolderUID                   string                `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
 	Condition                   string                `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
 	Data                        []*AlertQuery         `json:"data" jsonschema:"required,description=Array of alert query objects. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'vector(1)'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [1]}}]}}]. RefID and relativeTimeRange are auto-assigned if omitted."`
-	NoDataState                 string                `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
-	ExecErrState                string                `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
+	NoDataState                 string                `json:"noDataState" jsonschema:"required,enum=Alerting,enum=NoData,enum=OK,description=State when no data (Alerting\\, NoData\\, OK)"`
+	ExecErrState                string                `json:"execErrState" jsonschema:"required,enum=OK,enum=Alerting,enum=Error,description=State on execution error (OK\\, Alerting\\, Error)"`
 	For                         string                `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
 	KeepFiringFor               string                `json:"keepFiringFor,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    bool                  `json:"isPaused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
@@ -408,6 +455,9 @@ func (p CreateAlertRuleParams) validate() error {
 	if p.ExecErrState == "" {
 		return fmt.Errorf("exec_err_state is required")
 	}
+	if err := validateRuleStates(p.NoDataState, p.ExecErrState); err != nil {
+		return err
+	}
 
 	if p.Record != nil {
 		if err := p.Record.validate(); err != nil {
@@ -431,8 +481,8 @@ type UpdateAlertRuleParams struct {
 	FolderUID                   string                `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
 	Condition                   string                `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
 	Data                        []*AlertQuery         `json:"data" jsonschema:"required,description=Array of alert query objects. RefID and relativeTimeRange are auto-assigned if omitted."`
-	NoDataState                 string                `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
-	ExecErrState                string                `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
+	NoDataState                 string                `json:"noDataState" jsonschema:"required,enum=Alerting,enum=NoData,enum=OK,description=State when no data (Alerting\\, NoData\\, OK)"`
+	ExecErrState                string                `json:"execErrState" jsonschema:"required,enum=OK,enum=Alerting,enum=Error,description=State on execution error (OK\\, Alerting\\, Error)"`
 	For                         string                `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
 	KeepFiringFor               string                `json:"keepFiringFor,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    bool                  `json:"isPaused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive"`
@@ -469,6 +519,9 @@ func (p UpdateAlertRuleParams) validate() error {
 	}
 	if p.ExecErrState == "" {
 		return fmt.Errorf("exec_err_state is required")
+	}
+	if err := validateRuleStates(p.NoDataState, p.ExecErrState); err != nil {
+		return err
 	}
 
 	if p.Record != nil {
@@ -657,8 +710,8 @@ type ManageRulesWriteParams struct {
 	FolderUID                   string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. Required destination folder for Grafana-managed 'create'/'update'."`
 	Condition                   string            `json:"condition,omitempty" jsonschema:"description=Grafana-managed only. The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
 	Data                        []map[string]any  `json:"data,omitempty" jsonschema:"description=Grafana-managed only. Array of alert query objects (required for 'create'/'update'). Each object has: datasourceUid (string\\, required)\\, model (object with expr for data queries or type/expression/conditions for expressions)\\, refId (string\\, auto-assigned if omitted)\\, relativeTimeRange ({from\\, to} in seconds\\, defaults to {from:600\\,to:0}). For server-side expressions use datasourceUid '__expr__'. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'up == 0'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [0]}}]}}]"`
-	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"description=Grafana-managed only. State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"description=Grafana-managed only. State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	NoDataState                 string            `json:"no_data_state,omitempty" jsonschema:"enum=Alerting,enum=NoData,enum=OK,description=Grafana-managed only. State when no data: Alerting\\, NoData or OK (required for 'create'\\, 'update')"`
+	ExecErrState                string            `json:"exec_err_state,omitempty" jsonschema:"enum=OK,enum=Alerting,enum=Error,description=Grafana-managed only. State on execution error: OK\\, Alerting or Error. NoData is not accepted here (required for 'create'\\, 'update')"`
 	For                         string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m'. Required for Grafana-managed create/update. Optional for datasource-managed rules (default 0s)."`
 	KeepFiringFor               string            `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    bool              `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
@@ -668,7 +721,7 @@ type ManageRulesWriteParams struct {
 	Annotations                 map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
 	OrgID                       int64             `json:"org_id,omitempty" jsonschema:"description=Grafana-managed organization ID (required for 'create'\\, 'update')"`
-	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
+	DisableProvenance           *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true. Set false to update a provisioned rule only after the user confirms they want to edit it."`
 }
 
 func (p ManageRulesWriteParams) validate() error {
@@ -810,14 +863,18 @@ func (p ManageRulesWriteParams) toCreateParams() (CreateAlertRuleParams, error) 
 	if err != nil {
 		return CreateAlertRuleParams{}, fmt.Errorf("invalid record: %w", err)
 	}
+	noDataState, execErrState, err := canonicalRuleStates(p.NoDataState, p.ExecErrState)
+	if err != nil {
+		return CreateAlertRuleParams{}, err
+	}
 	params := CreateAlertRuleParams{
 		Title:                       p.Title,
 		RuleGroup:                   p.RuleGroup,
 		FolderUID:                   p.FolderUID,
 		Condition:                   p.Condition,
 		Data:                        data,
-		NoDataState:                 p.NoDataState,
-		ExecErrState:                p.ExecErrState,
+		NoDataState:                 noDataState,
+		ExecErrState:                execErrState,
 		For:                         p.For,
 		Annotations:                 p.Annotations,
 		Labels:                      p.Labels,
@@ -848,6 +905,10 @@ func (p ManageRulesWriteParams) toUpdateParams() (UpdateAlertRuleParams, error) 
 	if err != nil {
 		return UpdateAlertRuleParams{}, fmt.Errorf("invalid record: %w", err)
 	}
+	noDataState, execErrState, err := canonicalRuleStates(p.NoDataState, p.ExecErrState)
+	if err != nil {
+		return UpdateAlertRuleParams{}, err
+	}
 	return UpdateAlertRuleParams{
 		UID:                         p.RuleUID,
 		Title:                       p.Title,
@@ -855,8 +916,8 @@ func (p ManageRulesWriteParams) toUpdateParams() (UpdateAlertRuleParams, error) 
 		FolderUID:                   p.FolderUID,
 		Condition:                   p.Condition,
 		Data:                        data,
-		NoDataState:                 p.NoDataState,
-		ExecErrState:                p.ExecErrState,
+		NoDataState:                 noDataState,
+		ExecErrState:                execErrState,
 		For:                         p.For,
 		Annotations:                 p.Annotations,
 		Labels:                      p.Labels,

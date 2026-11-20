@@ -2,12 +2,16 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/prometheus/alertmanager/matcher/compat"
+	amlabels "github.com/prometheus/alertmanager/pkg/labels"
+	"github.com/prometheus/common/promslog"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 )
@@ -90,30 +94,93 @@ func manageRouting(ctx context.Context, args ManageRoutingParams) (any, error) {
 
 // getNotificationPolicies retrieves the full notification policy tree.
 func getNotificationPolicies(ctx context.Context) (*models.Route, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Provisioning.GetPolicyTreeWithParams(
-		provisioning.NewGetPolicyTreeParamsWithContext(ctx),
-	)
+	client, err := newAlertingClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get notification policies: %w", err)
 	}
-	return resp.Payload, nil
+	resp, err := client.makeRequest(ctx, "/api/v1/provisioning/policies", nil)
+	if err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	var tree policyRoute
+	if err := json.Unmarshal(body, &tree); err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	route, err := tree.toModel()
+	if err != nil {
+		return nil, fmt.Errorf("get notification policies: %w", err)
+	}
+	return route, nil
+}
+
+var parsePolicyMatcher = compat.FallbackMatcherParser(promslog.NewNopLogger())
+
+// policyRoute decodes matchers as the Alertmanager strings Grafana sends, not the objects models.Route declares.
+type policyRoute struct {
+	models.Route
+	Matchers []string       `json:"matchers,omitempty"`
+	Routes   []*policyRoute `json:"routes,omitempty"`
+}
+
+func (r *policyRoute) toModel() (*models.Route, error) {
+	route := r.Route
+	route.Matchers = nil
+	for _, s := range r.Matchers {
+		m, err := parsePolicyMatcher(s, "grafana")
+		if err != nil {
+			return nil, fmt.Errorf("parse matcher %q: %w", s, err)
+		}
+		isRegex := m.Type == amlabels.MatchRegexp || m.Type == amlabels.MatchNotRegexp
+		route.Matchers = append(route.Matchers, &models.Matcher{
+			Name:    &m.Name,
+			Value:   &m.Value,
+			IsRegex: &isRegex,
+			IsEqual: m.Type == amlabels.MatchEqual || m.Type == amlabels.MatchRegexp,
+		})
+	}
+	route.Routes = nil
+	for _, child := range r.Routes {
+		c, err := child.toModel()
+		if err != nil {
+			return nil, err
+		}
+		route.Routes = append(route.Routes, c)
+	}
+	return &route, nil
 }
 
 // getContactPointDetail retrieves full details for a contact point by name,
 // including integration settings (unlike the list which returns summaries).
-func getContactPointDetail(ctx context.Context, name string) ([]*models.EmbeddedContactPoint, error) {
+// The provisioning API omits receivers without v1 integrations, so a name it
+// does not return is looked up through the receivers API before reporting it
+// missing.
+func getContactPointDetail(ctx context.Context, name string) (any, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	params := provisioning.NewGetContactpointsParams().WithContext(ctx)
 	params.Name = &name
 	resp, err := c.Provisioning.GetContactpoints(params)
 	if err != nil {
-		return nil, fmt.Errorf("get contact point %q: %w", name, err)
+		return nil, fmt.Errorf("get contact point %q: %w", name, explainForbidden(err, contactPointsReadPermissions))
 	}
-	if len(resp.Payload) == 0 {
+	if len(resp.Payload) > 0 {
+		// Keep the slice type callers and earlier releases returned.
+		return []*models.EmbeddedContactPoint(resp.Payload), nil
+	}
+	receiver, err := findReceiverByTitle(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("contact point %q not found by the provisioning API, and the receivers API lookup failed: %w", name, err)
+	}
+	if receiver == nil {
 		return nil, fmt.Errorf("contact point %q not found", name)
 	}
-	return resp.Payload, nil
+	return receiver, nil
 }
 
 // muteTimingSummary is a compact representation of a mute timing for list output.
@@ -129,7 +196,7 @@ func getTimeIntervals(ctx context.Context) ([]muteTimingSummary, error) {
 		provisioning.NewGetMuteTimingsParamsWithContext(ctx),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("get time intervals: %w", err)
+		return nil, fmt.Errorf("get time intervals: %w", explainForbidden(err, timeIntervalsReadPermissions))
 	}
 	result := make([]muteTimingSummary, 0, len(resp.Payload))
 	for _, mt := range resp.Payload {
@@ -148,7 +215,7 @@ func getTimeInterval(ctx context.Context, name string) (*models.MuteTimeInterval
 		provisioning.NewGetMuteTimingParamsWithContext(ctx).WithName(name),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("get time interval %q: %w", name, err)
+		return nil, fmt.Errorf("get time interval %q: %w", name, explainForbidden(err, timeIntervalsReadPermissions))
 	}
 	return resp.Payload, nil
 }

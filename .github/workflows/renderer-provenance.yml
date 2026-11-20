@@ -1,0 +1,50 @@
+name: viz Renderer provenance
+
+# Checks that each file of the viz Renderer release that ui/mcp-apps/renderer/RENDERER pins has a SLSA provenance
+# attestation from the grafana/dataViz release workflow. It runs only when the pin, the script that checks it, or its
+# dependencies change: when the pin does not change, the hashes in Git already cover the files, and every other build
+# checks them. So an outage of the GitHub attestations API or Sigstore cannot fail unrelated pull requests.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ui/mcp-apps/renderer/RENDERER'
+      - 'ui/mcp-apps/scripts/renderer.mjs'
+      - 'ui/mcp-apps/package-lock.json'
+      - '.github/workflows/renderer-provenance.yml'
+  pull_request:
+    paths:
+      - 'ui/mcp-apps/renderer/RENDERER'
+      - 'ui/mcp-apps/scripts/renderer.mjs'
+      - 'ui/mcp-apps/package-lock.json'
+      - '.github/workflows/renderer-provenance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify the viz Renderer provenance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: node
+
+      - name: Install dependencies
+        working-directory: ui/mcp-apps
+        run: npm ci --ignore-scripts
+
+      # The trusted repository and signer are constants in scripts/renderer.mjs, not values from RENDERER, so a pin
+      # that names another repository or workflow fails here.
+      - name: Verify the provenance of each pinned file
+        working-directory: ui/mcp-apps
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/renderer.mjs --verify

@@ -2,3 +2,6 @@
 # the Alpine-based test containers even when checked out on Windows.
 *.sh text eol=lf
 testdata/*-entrypoint.sh text eol=lf
+
+# The UI bundles are embedded as built, and the Renderer URI holds a hash of its bytes.
+ui/mcp-apps/dist/** -text

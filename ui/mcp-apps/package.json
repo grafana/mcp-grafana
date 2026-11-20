@@ -10,12 +10,13 @@
     "./styles.css": "./styles.css"
   },
   "scripts": {
-    "build": "npm run build:lib && npm run build:apps",
+    "renderer": "node scripts/renderer.mjs",
+    "build": "npm run renderer && npm run build:lib && npm run build:apps",
     "build:lib": "vite build && tsc -p tsconfig.build.json",
-    "build:apps": "vite build --config grafana.vite.config.ts",
-    "build:preview": "vite build --config preview/vite.config.ts",
-    "dev": "vite --config preview/vite.config.ts",
-    "typecheck": "tsc --noEmit",
+    "build:apps": "npm run renderer && vite build --config viz-renderer.vite.config.ts && vite build --config grafana.vite.config.ts",
+    "build:preview": "npm run renderer && vite build --config preview/vite.config.ts",
+    "dev": "npm run renderer && vite --config preview/vite.config.ts",
+    "typecheck": "npm run renderer && tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
@@ -33,12 +34,12 @@
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
-    "@grafana/data": "13.3.0",
-    "@grafana/ui": "13.3.0",
-    "@grafana/viz-contract": "1.6.0",
+    "@grafana/data": "13.3.1",
+    "@grafana/ui": "13.3.1",
+    "@grafana/viz-contract": "1.7.0",
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/semver": "7.8.0",
@@ -47,6 +48,7 @@
     "react-dom": "19.3.1",
     "react-inlinesvg": "4.6.0",
     "semver": "7.8.6",
+    "sigstore": "5.0.1",
     "typescript": "~7.0.0",
     "vite": "^8.3.4",
     "vite-plugin-singlefile": "^2.3.0",

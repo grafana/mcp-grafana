@@ -15,7 +15,6 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -489,13 +488,3 @@ var ListCloudLoggingViews = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddCloudLoggingTools registers the Google Cloud Logging tools with the MCP server.
-func AddCloudLoggingTools(s *mcp.Server, enableQueryTools bool) {
-	if enableQueryTools {
-		QueryCloudLogging.Register(s)
-	}
-	ListCloudLoggingProjects.Register(s)
-	ListCloudLoggingBuckets.Register(s)
-	ListCloudLoggingViews.Register(s)
-}

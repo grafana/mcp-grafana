@@ -17,7 +17,6 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/grafana/mcp-grafana/v2/internal/datasource"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -383,7 +382,7 @@ type QueryLokiLogsParams struct {
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now')"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (default max: 100\\, configurable by MCP server)."`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
-	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value. On VictoriaLogs\\, 'instant' returns the newest log lines from the hour before endRfc3339 (default now)."`
+	QueryType     string `json:"queryType,omitempty" jsonschema:"enum=range,enum=instant,description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value. On VictoriaLogs\\, 'instant' returns the newest log lines from the hour before endRfc3339 (default now)."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,enum=loki,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once\\, substantially reducing response size for broad queries. Structured metadata keys that are constant within a stream appear once on the stream header; keys that vary across lines appear per-line. Ignored for metric queries. 'loki' returns Loki's query_range JSON\\, also for metric queries."`
 
@@ -710,6 +709,12 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	case "", "full", "compact", "loki":
 	default:
 		return nil, fmt.Errorf("invalid format %q: must be 'full', 'compact' or 'loki'", args.Format)
+	}
+
+	switch args.QueryType {
+	case "", "range", "instant":
+	default:
+		return nil, fmt.Errorf("invalid queryType %q: must be 'range' or 'instant'", args.QueryType)
 	}
 
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
@@ -1039,22 +1044,3 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcpgrafana.WithOpenWorldHintAnnotation(false),
 	mcpgrafana.RequiresPermissions(datasourceQuery...),
 )
-
-// AddLokiTools registers all Loki tools with the MCP server.
-// Config-generation tools (e.g. suggest_loki_alloy_label_config) live in
-// the separate "config" category — see tools.AddConfigTools.
-// The tools that return log content are registered only when enableQueryTools
-// is true. The metadata tools stay available either way, including
-// query_loki_stats and the label analyzer: both send a selector to the
-// datasource, but they read the index and return stream/chunk/byte counts, never
-// log lines.
-func AddLokiTools(s *mcp.Server, enableQueryTools bool) {
-	ListLokiLabelNames.Register(s)
-	ListLokiLabelValues.Register(s)
-	QueryLokiStats.Register(s)
-	if enableQueryTools {
-		QueryLokiLogs.Register(s)
-		QueryLokiPatterns.Register(s)
-	}
-	AddLokiLabelAnalyzerTools(s)
-}
