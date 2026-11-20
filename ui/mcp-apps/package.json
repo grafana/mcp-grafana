@@ -17,7 +17,11 @@
     "build:preview": "npm run renderer && vite build --config preview/vite.config.ts",
     "dev": "npm run renderer && vite --config preview/vite.config.ts",
     "typecheck": "npm run renderer && tsc --noEmit",
-    "test": "vitest run"
+    "test": "npm run test:coverage-tools && vitest run",
+    "test:coverage-tools": "node --test scripts/codeowners-coverage/*.test.mjs",
+    "test:coverage": "npm run test:coverage-tools && vitest run --coverage && node scripts/codeowners-coverage/index.mjs",
+    "coverage:bench": "node scripts/codeowners-coverage/report.mjs",
+    "test:coverage:by-codeowner": "node scripts/codeowners-coverage/index.mjs --run"
   },
   "dependencies": {
     "@emotion/css": "11.13.5",
@@ -43,6 +47,9 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/semver": "7.8.0",
+    "@vitest/coverage-v8": "5.0.5",
+    "enquirer": "2.4.1",
+    "github-codeowners": "0.2.1",
     "jsdom": "^31.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -52,7 +59,7 @@
     "typescript": "~7.0.0",
     "vite": "^8.3.4",
     "vite-plugin-singlefile": "^2.3.0",
-    "vitest": "^5.0.0"
+    "vitest": "5.0.5"
   },
   "files": [
     "dist",

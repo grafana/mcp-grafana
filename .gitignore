@@ -23,3 +23,6 @@ ui/*/node_modules/
 
 # Superpowers agent artifacts (implementation plans, etc.)
 docs/superpowers/
+
+# Frontend coverage reports and ownership manifests
+ui/*/coverage/
