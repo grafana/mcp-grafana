@@ -32,6 +32,7 @@ Some tool categories are disabled by default:
 - **examples** – Query examples for datasource types.
 - **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
 - **cloudwatch** – CloudWatch tools.
+- **xray** – AWS X-Ray trace search and trace tools (requires the `grafana-x-ray-datasource` plugin).
 - **cloudlogging** – Google Cloud Logging tools (requires the `googlecloud-logging-datasource` plugin, version 1.8.0 or later).
 - **azuremonitor** – Azure Monitor tools for Log Analytics and Resource Graph KQL queries.
 - **elasticsearch** – Elasticsearch query tool.

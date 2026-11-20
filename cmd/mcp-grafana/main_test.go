@@ -1528,6 +1528,8 @@ var safeQueryToolNames = []string{
 	"query_graphite_density",
 	"query_cloudwatch",
 	"query_cloudwatch_logs",
+	"search_xray_traces",
+	"get_xray_trace",
 	"query_cloud_logging",
 	"query_azure_log_analytics",
 	"query_azure_resource_graph",
@@ -1952,7 +1954,7 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 	})
 
 	t.Run("query-only categories are empty without query tools", func(t *testing.T) {
-		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor"}
+		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor", "xray"}
 		dt := disabledTools{enabledTools: strings.Join(queryOnlyCategories, ",") + ",search", query: true}
 		enabled, _ := dt.categoryReport()
 
