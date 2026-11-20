@@ -42,6 +42,13 @@ describe('QueryBlock', () => {
     expect(screen.getByText('B')).toBeTruthy();
   });
 
+  it('shows the meta line under the expanded queries only', () => {
+    render(<QueryBlock datasource="prometheus" queries={queries} meta="Last 1 hour · 2 series" />);
+    expect(screen.queryByText('Last 1 hour · 2 series')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand query' }));
+    expect(screen.getByText('Last 1 hour · 2 series')).toBeTruthy();
+  });
+
   it('shows no refId for a single query', () => {
     render(<QueryBlock datasource="prometheus" queries={[{ refId: 'A', text: 'up' }]} />);
     fireEvent.click(screen.getByRole('button', { name: 'Expand query' }));
