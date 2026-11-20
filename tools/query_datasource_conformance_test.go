@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"slices"
 	"testing"
 	"time"
 
@@ -73,6 +74,31 @@ func roundExpectedIntervals(t *testing.T, args json.RawMessage, want map[string]
 	}
 }
 
+// adjustExpectedAlternatives changes the expected alternatives of a set:
+//   - It removes the charts of vizHeldCharts, which the Source leaves out.
+//   - With a unit in the arguments, it adds the unit to an alternative that has no fieldConfig. tool.23 makes each
+//     alternative as in tool.22, but the fixtures of the gauge and stat alternatives leave the unit out
+//     (grafana/viz-contract#103).
+func adjustExpectedAlternatives(t *testing.T, args json.RawMessage, want map[string]any) {
+	t.Helper()
+	alternatives, ok := want["alternatives"].([]any)
+	if !ok {
+		return
+	}
+	alternatives = slices.DeleteFunc(alternatives, func(alt any) bool {
+		return vizHeldCharts[alt.(map[string]any)["chart"].(string)]
+	})
+	var a struct{ Unit string }
+	require.NoError(t, json.Unmarshal(args, &a))
+	for _, alt := range alternatives {
+		panel := alt.(map[string]any)["panel"].(map[string]any)
+		if a.Unit != "" && panel["fieldConfig"] == nil {
+			panel["fieldConfig"] = map[string]any{"defaults": map[string]any{"unit": a.Unit}}
+		}
+	}
+	want["alternatives"] = alternatives
+}
+
 func TestQueryDatasourceConformance(t *testing.T) {
 	for _, dir := range vizSourceFixtures(t) {
 		t.Run(dir, func(t *testing.T) {
@@ -92,6 +118,9 @@ func TestQueryDatasourceConformance(t *testing.T) {
 			require.True(t, readFixtureJSON(t, dir, "response.json", &response))
 			require.True(t, readFixtureJSON(t, dir, "result.json", &wantResult))
 			require.True(t, readFixtureJSON(t, dir, "result.json", &want))
+			if chart, _ := wantResult["chart"].(string); vizHeldCharts[chart] {
+				t.Skipf("the pinned Renderer does not draw %s", chart)
+			}
 			var wantRequest map[string]any
 			hasRequest := readFixtureJSON(t, dir, "request.json", &wantRequest)
 
@@ -138,6 +167,7 @@ func TestQueryDatasourceConformance(t *testing.T) {
 			// fixtures.8: grafanaUrl is not compared.
 			delete(wantResult, "grafanaUrl")
 			delete(gotResult, "grafanaUrl")
+			adjustExpectedAlternatives(t, args, wantResult)
 			assert.Equal(t, wantResult, gotResult)
 		})
 	}

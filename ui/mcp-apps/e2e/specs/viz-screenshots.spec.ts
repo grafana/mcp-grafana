@@ -2,8 +2,11 @@ import { test, expect } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import charts from '@grafana/viz-contract/registry/chart-types.json' with { type: 'json' };
 
+// Charts of the registry that the pinned Renderer does not draw yet; the Source holds them too (vizHeldCharts).
+const HELD_CHARTS = ['stat']; // grafana/dataviz#257
+
 // Iterate the pinned registry, so newly supported chart types cannot silently miss coverage.
-for (const { name } of charts.charts) {
+for (const { name } of charts.charts.filter((chart) => !HELD_CHARTS.includes(chart.name))) {
   test(`visual smoke: ${name}`, async ({ page }, info) => {
     expect(existsSync(new URL(`../../node_modules/@grafana/viz-contract/fixtures/smoke-${name}/spec.json`, import.meta.url)),
       `Contract needs a smoke fixture for ${name}`).toBe(true);

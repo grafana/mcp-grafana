@@ -22,6 +22,8 @@ const LABELS: Record<string, string> = {
   parallel: 'Parallel coordinates',
   streamgraph: 'Streamgraph',
   bubble: 'Bubble',
+  gauge: 'Gauge',
+  stat: 'Stat',
 };
 
 /** The display name of a chart; a chart this list lacks shows its ID. */

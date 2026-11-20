@@ -47,6 +47,9 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	if limit == 0 {
 		limit = 10
 	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must not be negative, got %d", limit)
+	}
 
 	metadata, err := backend.MetricMetadata(ctx, args.Metric, limit)
 	if err != nil {

@@ -307,7 +307,7 @@ func TestQueryDatasourceNoRowsDoesNotCheckType(t *testing.T) {
 
 func TestQueryDatasourceRejectsUnknownType(t *testing.T) {
 	result, posted, err := runQueryDatasource(t,
-		`{"datasourceUid":"prom","type":"gauge","queries":[{"refId":"A"}]}`, dsQueryResponse)
+		`{"datasourceUid":"prom","type":"pie","queries":[{"refId":"A"}]}`, dsQueryResponse)
 	if err == nil {
 		require.True(t, result.IsError)
 	}
@@ -380,4 +380,29 @@ func TestQueryDatasourceStatusWithoutResults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueryDatasourceHoldsChartsTheRendererDoesNotDraw(t *testing.T) {
+	// One row matches the single-value rule of pick.json, which picks stat. The pinned Renderer does not draw stat, so
+	// the pick goes on to the next rule, as before the rule, and stat is no alternative and no type.
+	response := `{"results":{"A":{"status":200,"frames":[{"schema":{"refId":"A","fields":[{"name":"time","type":"time"},{"name":"value","type":"number"}]},"data":{"values":[[1700000000000],[1.5]]}}]}}}`
+	result, _, err := runQueryDatasource(t, `{"datasourceUid":"prom","queries":[{"refId":"A"}]}`, response)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	got := result.StructuredContent.(*QueryDatasourceResult)
+	assert.Equal(t, "barchart", got.Chart)
+	var alternatives []string
+	for _, alt := range got.Alternatives {
+		alternatives = append(alternatives, alt.Chart)
+	}
+	assert.Contains(t, alternatives, "gauge")
+	assert.NotContains(t, alternatives, "stat")
+
+	result, posted, err := runQueryDatasource(t, `{"datasourceUid":"prom","type":"stat","queries":[{"refId":"A"}]}`, response)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Nil(t, posted, "tool.4: no query")
+	body, err := json.Marshal(QueryDatasource.Tool.InputSchema)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), `"stat"`)
 }

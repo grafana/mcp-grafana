@@ -12,8 +12,9 @@ type Renderer = typeof import('../renderer/renderer.js');
 // uPlot, which @grafana/ui loads, reads matchMedia at import; jsdom has none.
 window.matchMedia ??= (() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) as never;
 
-// Icons of icons.json that only a state with layout or a canvas shows: the close button of a pinned tooltip.
-const NOT_IN_JSDOM = ['unicons/times'];
+// Icons of icons.json that only a state with layout or a canvas shows: the close button and the Ask in chat link of a
+// pinned tooltip.
+const NOT_IN_JSDOM = ['unicons/times', 'unicons/link'];
 
 // Icons that the Renderer shows but its icons.json lacks, so Icon requests them. The open time picker with no recent
 // ranges has an external "Read the documentation" link (grafana/dataViz#234). Remove an entry when a Renderer release
