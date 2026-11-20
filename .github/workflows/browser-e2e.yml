@@ -6,7 +6,40 @@ on:
 permissions:
   contents: read
 jobs:
+  changes:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      browser: ${{ steps.filter.outputs.browser }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
+        id: filter
+        with:
+          # Shared server concerns have Go coverage. Focus browser tests on
+          # MCP App resources and the Go-to-client visualization integration.
+          filters: |
+            browser:
+              - 'ui/**'
+              - 'ui_*.go'
+              - 'tools/app.go'
+              - 'tools/query_datasource.go'
+              - 'tools/viz_contract.go'
+              - 'tools/ds_query.go'
+              - 'tools/catalog.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'mise.toml'
+              - 'mise.lock'
+              - '.github/actions/setup-mise/**'
+              - '.github/workflows/browser-e2e.yml'
   browser:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
