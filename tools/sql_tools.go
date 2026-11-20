@@ -168,28 +168,9 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 	fillDatasourceDefaults(ds, &args.Catalog, &args.Database, &args.Region)
 	fillBigQueryDefaults(ds, nil, &args.Location)
 
-	now := time.Now()
-	fromTime := now.Add(-1 * time.Hour)
-	toTime := now
-
-	if args.Start != "" {
-		parsed, err := parseStartTime(args.Start)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		if !parsed.IsZero() {
-			fromTime = parsed
-		}
-	}
-
-	if args.End != "" {
-		parsed, err := parseEndTime(args.End)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		if !parsed.IsZero() {
-			toTime = parsed
-		}
+	fromTime, toTime, err := resolveTimeRange(args.Start, args.End)
+	if err != nil {
+		return nil, err
 	}
 
 	processedQuery := args.Query

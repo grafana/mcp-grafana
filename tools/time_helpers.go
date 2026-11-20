@@ -60,3 +60,30 @@ func parseEndTime(timeStr string) (time.Time, error) {
 	}
 	return t, nil
 }
+
+// resolveTimeRange resolves optional start and end strings for datasource
+// queries. A missing end defaults to now and a missing start to one hour
+// before the end, so an end-only range never starts after it.
+func resolveTimeRange(start, end string) (time.Time, time.Time, error) {
+	to := time.Now()
+	if end != "" {
+		parsed, err := parseEndTime(end)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("parsing end time: %w", err)
+		}
+		if !parsed.IsZero() {
+			to = parsed
+		}
+	}
+	from := to.Add(-time.Hour)
+	if start != "" {
+		parsed, err := parseStartTime(start)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("parsing start time: %w", err)
+		}
+		if !parsed.IsZero() {
+			from = parsed
+		}
+	}
+	return from, to, nil
+}

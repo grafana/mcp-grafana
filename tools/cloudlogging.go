@@ -306,27 +306,9 @@ func queryCloudLogging(ctx context.Context, args CloudLoggingQueryParams) (*Clou
 		return nil, fmt.Errorf("creating Cloud Logging client: %w", err)
 	}
 
-	now := time.Now()
-	fromTime := now.Add(-1 * time.Hour)
-	toTime := now
-
-	if args.Start != "" {
-		parsed, err := parseStartTime(args.Start)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		if !parsed.IsZero() {
-			fromTime = parsed
-		}
-	}
-	if args.End != "" {
-		parsed, err := parseEndTime(args.End)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		if !parsed.IsZero() {
-			toTime = parsed
-		}
+	fromTime, toTime, err := resolveTimeRange(args.Start, args.End)
+	if err != nil {
+		return nil, err
 	}
 	if !toTime.After(fromTime) {
 		return nil, fmt.Errorf("end time must be after start time")
