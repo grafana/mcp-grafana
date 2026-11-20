@@ -56,7 +56,7 @@ func readFixtureJSON(t *testing.T, dir, name string, into any) bool {
 // adjustExpectedAlternatives changes the expected alternatives of a set:
 //   - It removes the charts of vizHeldCharts, which the Source leaves out.
 //   - With a unit in the arguments, it adds the unit to an alternative that has no fieldConfig. tool.23 makes each
-//     alternative as in tool.22, but the fixtures of the gauge and stat alternatives leave the unit out.
+//     alternative as in tool.22, but the fixtures of the gauge and stat alternatives leave the unit out (grafana/viz-contract#103).
 func adjustExpectedAlternatives(t *testing.T, args json.RawMessage, want map[string]any) {
 	t.Helper()
 	alternatives, ok := want["alternatives"].([]any)
