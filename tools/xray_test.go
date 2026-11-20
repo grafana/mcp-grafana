@@ -211,3 +211,13 @@ func TestSearchXRayTraces_SubSecondOrder(t *testing.T) {
 	assert.Equal(t, []string{"1-500", "1-150", "1-100"}, ids, "RFC3339Nano drops trailing zeros, so its strings don't sort by time")
 	assert.True(t, result.Truncated)
 }
+
+func TestSearchXRayTraces_EndOnlyStartsAnHourBeforeEnd(t *testing.T) {
+	var gotBody map[string]interface{}
+	ctx := newAzureMonitorMockGrafana(t, XRayDatasourceType, newXRayQueryMock(t, newXRayTraceSummariesFrame(nil, nil, nil), &gotBody))
+
+	_, err := searchXRayTraces(ctx, SearchXRayTracesParams{DatasourceUID: "xray-uid", End: "2026-02-02T20:00:00Z"})
+	require.NoError(t, err)
+	assert.Equal(t, "1770058800000", gotBody["from"])
+	assert.Equal(t, "1770062400000", gotBody["to"])
+}
