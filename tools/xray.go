@@ -166,25 +166,9 @@ func parseXRayTraceSummaries(frames data.Frames, limit int) *SearchXRayTracesRes
 }
 
 func searchXRayTraces(ctx context.Context, args SearchXRayTracesParams) (*SearchXRayTracesResult, error) {
-	now := time.Now()
-	from, to := now.Add(-time.Hour), now
-	if args.Start != "" {
-		parsed, err := parseStartTime(args.Start)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		if !parsed.IsZero() {
-			from = parsed
-		}
-	}
-	if args.End != "" {
-		parsed, err := parseEndTime(args.End)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		if !parsed.IsZero() {
-			to = parsed
-		}
+	from, to, err := resolveTimeRange(args.Start, args.End)
+	if err != nil {
+		return nil, err
 	}
 	if !to.After(from) {
 		return nil, fmt.Errorf("end time must be after start time")
