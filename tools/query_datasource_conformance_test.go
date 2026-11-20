@@ -53,7 +53,8 @@ func readFixtureJSON(t *testing.T, dir, name string, into any) bool {
 }
 
 // roundExpectedIntervals rounds the expected intervalMs of each query whose arguments have none, as the Source does
-// (dsIntervalMs). The fixtures follow tool.12, which asks for the unrounded range divided by maxDataPoints.
+// (dsIntervalMs). The fixtures follow tool.12, which asks for the unrounded range divided by maxDataPoints
+// (grafana/viz-contract#104).
 func roundExpectedIntervals(t *testing.T, args json.RawMessage, want map[string]any) {
 	t.Helper()
 	var a struct {
