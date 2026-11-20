@@ -34,20 +34,7 @@ func useDSQuery(ctx context.Context, since [2]int) bool {
 // tempoTimeRange resolves optional start and end times, defaulting to the
 // past hour.
 func tempoTimeRange(start, end string) (time.Time, time.Time, error) {
-	to := time.Now()
-	from := to.Add(-time.Hour)
-	var err error
-	if start != "" {
-		if from, err = parseStartTime(start); err != nil {
-			return from, to, fmt.Errorf("invalid start time: %v", err)
-		}
-	}
-	if end != "" {
-		if to, err = parseEndTime(end); err != nil {
-			return from, to, fmt.Errorf("invalid end time: %v", err)
-		}
-	}
-	return from, to, nil
+	return resolveTimeRange(start, end)
 }
 
 // dsQuery runs one Tempo query through /api/ds/query and returns its frames.
