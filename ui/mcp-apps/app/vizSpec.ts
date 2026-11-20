@@ -1,3 +1,5 @@
+import constants from '@grafana/viz-contract/registry/constants.json';
+
 import type { McpAppColorMode } from '../src/McpAppShell';
 
 // The viz spec that the App gives the Renderer (viz-contract 2-viz-spec.md, schemas/viz-spec.schema.json).
@@ -38,6 +40,7 @@ export type VizSpec = {
   specVersion: number;
   panel: VizPanel & { datasource: { uid: string }; targets: VizArgs['queries'] };
   data: VizResult['data'];
+  timeRange: { from: string | number; to: string | number };
   theme?: McpAppColorMode;
   timeZone?: string;
   grafanaUrl?: string;
@@ -102,6 +105,8 @@ export function buildVizSpec(
     },
     // spec.4: the data of the result, with no change.
     data: result.data,
+    // spec.17: the range of the arguments, relative or not, for Reset. With none, the defaults of the Source.
+    timeRange: { from: args.from ?? constants.defaultFrom.value, to: args.to ?? constants.defaultTo.value },
     // spec.5, spec.6: the theme and the time zone of the host context. With none, the Renderer uses its default.
     ...(host.theme ? { theme: host.theme } : {}),
     ...(host.timeZone ? { timeZone: host.timeZone } : {}),
