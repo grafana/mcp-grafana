@@ -74,15 +74,21 @@ const objects = (queries: unknown[]): Array<Record<string, unknown>> =>
     (query): query is Record<string, unknown> => typeof query === 'object' && query !== null && !Array.isArray(query),
   );
 
-/** The series of the result: the number fields of all frames, as the Renderer counts them (state.19). */
+type FrameSchema = { meta?: { dataTopic?: unknown }; fields?: unknown };
+
+/**
+ * The series of the result: the number fields of the frames. Annotation frames, such as Prometheus exemplars, are not
+ * series: the Renderer draws them as annotations and the summary of the Source skips them.
+ */
 export function seriesCount(viz: VizResult): number {
   let count = 0;
   for (const result of Object.values(viz.data.results)) {
     const frames = (result as { frames?: unknown } | null)?.frames;
     if (!Array.isArray(frames)) continue;
     for (const frame of frames) {
-      const fields = (frame as { schema?: { fields?: unknown } } | null)?.schema?.fields;
-      if (Array.isArray(fields)) count += fields.filter((field) => field?.type === 'number').length;
+      const schema = (frame as { schema?: FrameSchema } | null)?.schema;
+      if (schema?.meta?.dataTopic === 'annotations' || !Array.isArray(schema?.fields)) continue;
+      for (const field of schema.fields) if (field?.type === 'number') count++;
     }
   }
   return count;

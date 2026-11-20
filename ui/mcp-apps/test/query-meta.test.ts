@@ -88,6 +88,11 @@ describe('seriesCount', () => {
     expect(seriesCount(result(results))).toBe(3);
   });
 
+  it('skips annotation frames, such as Prometheus exemplars', () => {
+    const exemplars = { schema: { meta: { dataTopic: 'annotations' }, ...frame('time', 'number').schema } };
+    expect(seriesCount(result({ A: { frames: [frame('time', 'number'), exemplars] } }))).toBe(1);
+  });
+
   it('counts nothing in results with no frames', () => {
     expect(seriesCount(result({ A: { error: 'bad query' }, B: null, C: { frames: [{}] } }))).toBe(0);
   });
