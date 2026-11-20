@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "types": ["vite/client", "node"], "allowImportingTsExtensions": true },
+  "include": ["./**/*", "../.storybook/**/*", "../app/*.d.ts", "../app/**/*", "../src", "../test/metricsFixtures.ts", "../preview/traceFixture.ts"]
+}

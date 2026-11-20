@@ -15,6 +15,22 @@ npm run build
 
 Run `npm run dev` for component and host previews. The preview fixtures are synthetic and do not query a Grafana server.
 
+Run `npm run storybook` (port 6006) to browse every view of `render_grafana_app`: the shell, the metrics views, the
+trace waterfall, and the `query_datasource` viz view, each in light and dark (toolbar). The stories in `stories/` use
+the same synthetic fixtures as the tests and need no Grafana server. The App stories (`GrafanaApp`, `VizApplication`)
+run the real `GrafanaApplication` against a scripted fake MCP host (`stories/fakeHost.tsx`), so the waiting, error,
+cancelled and closed states are the real ones. The viz stories draw with the committed `dist/viz-renderer.js`. Storybook
+is a local tool: `npm run build` does not run it and its config in `.storybook/` is separate from the bundle builds,
+so it cannot change the committed `dist/` files. `npm run build-storybook` writes `storybook-static/` (git-ignored).
+Check the stories' types with `npx tsc --noEmit -p stories/tsconfig.json`.
+
+The **Design delta** section compares the App with the design canvas (Freya, the Visual Refresh theme). *Tokens*
+reads the Freya theme from `@grafana/data` (`getThemeById('visual_refresh_dark' | 'visual_refresh_light')`) and the
+`--mcp-*` variables from the page, so it needs no copied values and cannot go stale. *Components* shows each component
+as it is today beside a table of what separates it from the design, and *Overview* rolls the tables up and lists the
+open design decisions. The tables are written by hand in `stories/design-delta/deltas.ts`: update it when a delta is
+closed or the design changes.
+
 `preview/localhost.html` runs a built app against a real host: an `AppBridge` over
 `PostMessageTransport`, with `dist/` served same-origin so the app's console and
 errors are reachable. Use it when an app misbehaves inside a real host, which

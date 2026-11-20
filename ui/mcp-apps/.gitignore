@@ -9,3 +9,5 @@
 /renderer/*
 !/renderer/RENDERER
 !/renderer/README.md
+/storybook-static/
+*storybook.log
