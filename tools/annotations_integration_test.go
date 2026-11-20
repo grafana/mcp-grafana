@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/grafana-openapi-client-go/client/annotations"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +56,7 @@ func TestAnnotationTools(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
-		created, ok := resp.(*annotations.PostAnnotationOK)
+		created, ok := resp.(*CreateAnnotationResult)
 		require.True(t, ok)
 		id := created.Payload.ID // *int64
 
@@ -84,7 +83,7 @@ func TestAnnotationTools(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 
-		created, ok := resp.(*annotations.PostAnnotationOK)
+		created, ok := resp.(*CreateAnnotationResult)
 		require.True(t, ok)
 		id := created.Payload.ID // *int64
 
