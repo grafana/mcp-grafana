@@ -17,6 +17,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+          # Push filtering compares against the previous commit locally;
+          # PR filtering uses the API and only needs a shallow checkout.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
       - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
         id: filter
         with:
