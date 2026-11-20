@@ -21,7 +21,7 @@ Your job is step 1 only. Do NOT create tags manually.
 
 1. Get the latest semver tag:
    ```
-   git tag --sort=-version:refname | head -1
+   git tag --list 'v*' --sort=-version:refname | head -1
    ```
 2. Parse the tag as `vMAJOR.MINOR.PATCH` and bump according to the argument:
    - `major` → increment MAJOR, reset MINOR and PATCH to 0

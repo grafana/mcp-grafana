@@ -2,6 +2,8 @@
 
 Reusable React shell, a visualization library, and the shared, self-contained Grafana MCP App. The package uses public npm dependencies only. Its standalone theme values are scoped to each app root, so light and dark previews can appear together.
 
+The shell and the visualization library are on npm as `@grafana/mcp-shell`. The Grafana MCP App is not in the npm package: the Go server embeds it.
+
 ## Build and check
 
 ```sh
@@ -23,9 +25,16 @@ selects the bundle and `?mode=dark` the colour mode.
 
 ## Use the shell
 
+```sh
+npm install @grafana/mcp-shell
+```
+
+The package root exports only the shell: `McpAppShell`, `McpAppSection` and their types. It needs React 19 and does
+not load ECharts.
+
 ```tsx
-import { McpAppSection, McpAppShell } from '@mcp-grafana/mcp-apps';
-import '@mcp-grafana/mcp-apps/styles.css';
+import { McpAppSection, McpAppShell } from '@grafana/mcp-shell';
+import '@grafana/mcp-shell/styles.css';
 
 <McpAppShell
   product="Grafana IRM"
@@ -41,6 +50,11 @@ import '@mcp-grafana/mcp-apps/styles.css';
 The consumer owns data, tool calls, permissions, sharing controls, and MCP host connection. `colorMode` is required and should be updated when host context changes. `openInGrafana` renders a link and accepts an optional click handler for `app.openLink`. Action callbacks are real controls; `pending` disables repeat clicks while preserving the label. Errors are announced as alerts. Pass the stylesheet once at the app entry. The library build externalizes public dependencies; an app build must bundle them into its final HTML resource.
 
 ## Visualization library
+
+The visualization library and the trace and metrics views are experimental. Import them from
+`@grafana/mcp-shell/experimental`. Their API can change in a minor version, so pin an exact version of the package if
+you use them. The chart components need `echarts`, which is an optional peer dependency: install it in your project.
+The library build fails if the package root loads `echarts` (`entryPoints.config.ts`).
 
 `src/viz` holds the chart components and the pieces they share: value formatting
 with units and thresholds (`format.ts`), a Grafana ECharts theme derived from the
@@ -78,3 +92,21 @@ can miss them.
 ## Trace app
 
 `render_grafana_app` with `toolName: "get_tempo_trace"` displays a Tempo trace with span search, error filtering, a focused ancestor path, and a virtualized waterfall. Selecting a span shows attributes and events, with exception information first. Wide layouts show the inspector beside the waterfall; narrow layouts switch between Trace and Span views. The MCP host supplies result data, color mode, and navigation. The browser does not query Grafana directly.
+
+## Publish the npm package
+
+The `Publish MCP shell` workflow publishes `@grafana/mcp-shell` to npm with provenance (a signed record of the
+workflow that built the package). It runs for a tag `mcp-shell/v<version>`. The version of the package is not the
+version of the server, and a server release does not publish the package.
+
+1. Change `version` in `package.json`, run `npm install --package-lock-only --ignore-scripts`, and merge the change
+   to `main`. A change that breaks an export of the package root needs a new major version, or a new minor version
+   before `1.0.0`.
+2. Create the tag `mcp-shell/v<version>` on the merge commit and push the tag to `origin`.
+
+The workflow fails if the tag is not on `main` or if its version is not the version in `package.json`. It runs the
+type check, the tests and the build before it publishes. A version with a pre-release part, for example
+`0.2.0-rc.1`, gets the npm tag `next` and does not become the latest version.
+
+The workflow has no npm token. npm trusted publishing gives access to the `publish-mcp-shell.yml` workflow in the
+`npm-publish` environment of this repository, so do not rename the workflow file or the environment.
