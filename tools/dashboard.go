@@ -1215,6 +1215,10 @@ type PanelSummary struct {
 	Type        string `json:"type"`
 	Description string `json:"description,omitempty"`
 	QueryCount  int    `json:"queryCount"`
+	// Path is the JSON path of the panel in the dashboard (e.g.
+	// "$.panels[3].panels[1]" for a panel nested in a row), usable with
+	// update_dashboard patches.
+	Path string `json:"path,omitempty"`
 }
 
 type VariableSummary struct {
@@ -1257,8 +1261,10 @@ func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*
 
 	// Extract panel summaries, including panels collapsed into a row and
 	// legacy schemaVersion <= 14 "rows":[{panels:[...]}] dashboards.
-	for _, panel := range collectAllPanels(db) {
-		summary.Panels = append(summary.Panels, extractPanelSummary(panel))
+	for _, lp := range collectAllPanelsWithPaths(db) {
+		ps := extractPanelSummary(lp.panel)
+		ps.Path = lp.path
+		summary.Panels = append(summary.Panels, ps)
 	}
 	summary.PanelCount = len(summary.Panels)
 

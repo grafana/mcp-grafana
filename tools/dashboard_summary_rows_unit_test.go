@@ -47,4 +47,11 @@ func TestGetDashboardSummary_IncludesRowNestedPanels(t *testing.T) {
 	assert.Equal(t, 4, summary.PanelCount)
 	require.Len(t, summary.Panels, 4)
 	assert.Equal(t, 2, summary.Panels[3].QueryCount)
+
+	var paths []string
+	for _, p := range summary.Panels {
+		paths = append(paths, p.Path)
+	}
+	assert.Equal(t, []string{"$.panels[0]", "$.panels[1]", "$.panels[1].panels[0]", "$.panels[1].panels[1]"}, paths,
+		"each panel must carry the JSON path update_dashboard patches use")
 }
