@@ -298,7 +298,14 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}
 	panelData.Interval = panelData.Interval.withLowerLimit(interp, datasourceType, datasourceJSONData)
 	// Executors receive the expression with frontend macros and variables substituted.
-	query := preparePanelExpression(interp, panelData.Query, datasourceType, startTime, endTime, panelData.Interval)
+	options := panelData.Interval
+	if normalizeDatasourceType(datasourceType) == "prometheus" {
+		// The Prometheus executor runs at panelPrometheusStep, so $__interval
+		// is substituted with that step rather than the calculateInterval
+		// value the panel options produce.
+		options = options.withExecutionStep(ctx, startTime, endTime)
+	}
+	query := preparePanelExpression(interp, panelData.Query, datasourceType, startTime, endTime, options)
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -986,6 +993,10 @@ func dsQueryResponsesError(responses backend.Responses) error {
 type intervalOptions struct {
 	maxDataPoints float64
 	minInterval   string
+	// executionStep, when positive, is the step the executor will run the
+	// query at; substituteGrafanaMacros then uses it for $__interval instead
+	// of the calculateInterval value.
+	executionStep time.Duration
 }
 
 // defaultMaxDataPoints stands in for the panel width in pixels, which Grafana
@@ -1011,6 +1022,17 @@ func (o intervalOptions) withLowerLimit(interp *variableInterpolator, datasource
 	} else {
 		o.minInterval = datasourceMinInterval(datasourceType, jsonData)
 	}
+	return o
+}
+
+// withExecutionStep records the step the Prometheus executor will run a query
+// over [start, end] at. The executor's step is panelPrometheusStep, not
+// Grafana's calculateInterval value, so $__interval must be substituted with
+// the step, as Grafana's own backend substitutes the step it runs: the
+// calculateInterval value is smaller than the step on short ranges, and a
+// rate() window at the scrape interval silently returns no data.
+func (o intervalOptions) withExecutionStep(ctx context.Context, start, end time.Time) intervalOptions {
+	o.executionStep = time.Duration(panelPrometheusStep(ctx, end.Sub(start))) * time.Second
 	return o
 }
 
@@ -1050,6 +1072,15 @@ func substituteGrafanaMacros(query string, start, end time.Time, options interva
 	duration := end.Sub(start)
 	interval := macroInterval(start, end, options)
 	intervalStr := grafanaSecondsToHms(interval.Seconds())
+	if options.executionStep > 0 {
+		interval = options.executionStep
+		// The step is a raw range/max-points division, not a roundInterval
+		// value, so grafanaSecondsToHms would truncate it to its largest
+		// whole unit (236s -> "3m") while $__interval_ms carries the exact
+		// step. Format it exactly, the way $__range is formatted, so the
+		// string and millisecond forms of the interval agree.
+		intervalStr = formatPrometheusDuration(interval)
+	}
 	values := map[string]string{
 		"__range_ms":         fmt.Sprintf("%d", duration.Milliseconds()),
 		"__range_s":          fmt.Sprintf("%d", int64(duration.Seconds())),
