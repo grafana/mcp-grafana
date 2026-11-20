@@ -116,7 +116,7 @@ func (p ManageRulesWriteParams) validateDatasourceRule() error {
 	if strings.TrimSpace(p.Title) == "" || strings.TrimSpace(p.Namespace) == "" || strings.TrimSpace(p.RuleGroup) == "" || strings.TrimSpace(p.Expression) == "" {
 		return fmt.Errorf("title, namespace, rule_group and expression are required for datasource-managed creation")
 	}
-	if p.FolderUID != "" || p.RuleUID != "" || p.Condition != "" || len(p.Data) != 0 || p.NoDataState != "" || p.ExecErrState != "" || p.IsPaused || p.NotificationSettings != nil || p.Record != nil || p.MissingSeriesEvalsToResolve != 0 || p.OrgID != 0 || p.DisableProvenance != nil {
+	if p.FolderUID != "" || p.RuleUID != "" || p.Condition != "" || len(p.Data) != 0 || p.NoDataState != "" || p.ExecErrState != "" || p.IsPaused != nil || p.NotificationSettings != nil || p.Record != nil || p.MissingSeriesEvalsToResolve != nil || p.OrgID != 0 || p.DisableProvenance != nil {
 		return fmt.Errorf("datasource-managed creation does not accept Grafana-only rule fields (folder_uid, rule_uid, condition, data, states, pause, notification_settings, record, missing_series_evals_to_resolve, org_id or disable_provenance)")
 	}
 	for name, value := range map[string]string{"for": p.For, "keep_firing_for": p.KeepFiringFor, "evaluation_interval": p.EvaluationInterval} {

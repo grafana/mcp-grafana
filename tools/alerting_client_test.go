@@ -111,9 +111,9 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 		expected url.Values
 	}{
 		{
-			name:     "empty opts produces empty values",
+			name:     "empty opts sends only limit_alerts=0",
 			opts:     GetRulesOpts{},
-			expected: url.Values{},
+			expected: url.Values{"limit_alerts": {"0"}},
 		},
 		{
 			name: "all fields populated",
@@ -146,16 +146,17 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 				FolderUID: "abc",
 			},
 			expected: url.Values{
-				"folder_uid": {"abc"},
+				"folder_uid":   {"abc"},
+				"limit_alerts": {"0"},
 			},
 		},
 		{
-			name: "zero limit is omitted",
+			name: "zero rule_limit omitted; limit_alerts explicitly 0",
 			opts: GetRulesOpts{
 				RuleLimit:   0,
 				LimitAlerts: 0,
 			},
-			expected: url.Values{},
+			expected: url.Values{"limit_alerts": {"0"}},
 		},
 		{
 			name: "search_folder is mapped",
@@ -164,6 +165,7 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 			},
 			expected: url.Values{
 				"search.folder": {"Grafana/Alerts"},
+				"limit_alerts":  {"0"},
 			},
 		},
 		{
@@ -172,7 +174,8 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 				RuleLimit: 500,
 			},
 			expected: url.Values{
-				"rule_limit": {"200"},
+				"rule_limit":   {"200"},
+				"limit_alerts": {"0"},
 			},
 		},
 		{
@@ -191,6 +194,7 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 			},
 			expected: url.Values{
 				"includeInternalLabels": {"true"},
+				"limit_alerts":          {"0"},
 			},
 		},
 	}

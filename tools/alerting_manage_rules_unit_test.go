@@ -286,7 +286,24 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 		}
 		err := params.validate()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "org_id is required and must be greater than 0")
+		require.Contains(t, err.Error(), "org_id must be greater than 0 when supplied")
+	})
+
+	t.Run("only UID is required", func(t *testing.T) {
+		paused := true
+		require.NoError(t, UpdateAlertRuleParams{UID: "test-uid"}.validate())
+		require.NoError(t, UpdateAlertRuleParams{UID: "test-uid", IsPaused: &paused}.validate())
+	})
+
+	t.Run("supplied data must not be empty", func(t *testing.T) {
+		err := UpdateAlertRuleParams{UID: "test-uid", Data: []*AlertQuery{}}.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "data must contain at least one query")
+	})
+
+	t.Run("a partial record is accepted and merged with the stored one later", func(t *testing.T) {
+		metric := "m"
+		require.NoError(t, UpdateAlertRuleParams{UID: "test-uid", Record: &Record{Metric: &metric}}.validate())
 	})
 
 	t.Run("with disableProvenance true", func(t *testing.T) {
@@ -348,10 +365,17 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 
 func TestUpdateAlertRule_ConflictSaysWhy(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodPut, r.Method)
 		require.Equal(t, "/api/v1/provisioning/alert-rules/test-uid", r.URL.Path)
-		require.Equal(t, "true", r.Header.Get("X-Disable-Provenance"))
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			// A partial update reads the stored rule first, then PUTs the merged rule.
+			_, _ = w.Write([]byte(`{"uid":"test-uid","orgID":1,"folderUID":"test-folder","ruleGroup":"test-group","title":"Test Rule","condition":"A",` +
+				`"data":[{"refId":"A","relativeTimeRange":{"from":600,"to":0},"datasourceUid":"prom-uid","model":{"expr":"up","refId":"A"}}],` +
+				`"noDataState":"OK","execErrState":"OK","for":"5m"}`))
+			return
+		}
+		require.Equal(t, http.MethodPut, r.Method)
+		require.Equal(t, "true", r.Header.Get("X-Disable-Provenance"))
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"message":"cannot update with provided provenance '', needs 'api'"}`))
 	}))
