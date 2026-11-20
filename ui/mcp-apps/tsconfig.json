@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
@@ -10,7 +14,17 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["vite/client", "node"]
+    "types": [
+      "vite/client",
+      "node"
+    ]
   },
-  "include": ["src", "app", "preview", "test", "*.config.ts"]
+  "include": [
+    "src",
+    "app",
+    "preview",
+    "test",
+    "*.config.ts",
+    "harness/*.ts"
+  ]
 }

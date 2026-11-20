@@ -13,6 +13,7 @@ wheels/
 
 # UI app build artifacts
 ui/*/node_modules/
+ui/**/coverage/
 
 # Virtual environments
 .venv
@@ -23,3 +24,9 @@ ui/*/node_modules/
 
 # Superpowers agent artifacts (implementation plans, etc.)
 docs/superpowers/
+
+# Playwright browser artifacts
+ui/mcp-apps/playwright-report/
+ui/mcp-apps/test-results/
+ui/mcp-apps/harness/basic-host/.cache/
+ui/mcp-apps/harness/basic-host/upstream-cache/
