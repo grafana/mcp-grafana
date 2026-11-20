@@ -240,6 +240,27 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 			},
 		},
 		{
+			name:         "write categories describe only reads when write disabled",
+			enabledTools: "incident,dashboard,oncall,annotations,snapshot,agento11y",
+			disableFlags: map[string]bool{"write": true},
+			wantContains: []string{
+				"Incidents: Search incidents",
+				"Dashboards: Retrieve dashboards",
+				"OnCall: View on-call schedules",
+				"Annotations: List dashboard annotations",
+				"Snapshots: List and get dashboard snapshots.",
+				"Read its eval configuration",
+			},
+			wantNotContains: []string{
+				"create, update, and resolve incidents",
+				"update, and create dashboards",
+				"View and manage",
+				"Create and manage dashboard annotations",
+				"create, and delete dashboard snapshots",
+				"Read or manage",
+			},
+		},
+		{
 			name:         "raw-SQL categories restored by enable-query",
 			enabledTools: "sql,influxdb",
 			disableFlags: map[string]bool{"write": true, "enableQuery": true},
