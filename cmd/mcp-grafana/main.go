@@ -113,19 +113,31 @@ func (dt *disabledTools) policy() tools.Policy {
 	}
 	p.ReadOnly = dt.write
 	p.NoQuery = dt.query
-	for _, name := range strings.Split(dt.writeToolOverrides, ",") {
-		p.Allow = append(p.Allow, strings.TrimSpace(name))
-	}
-	if dt.enableQuery {
-		p.Allow = append(p.Allow, tools.MutatingQueryToolNames()...)
-	}
+	p.Allow = append(dt.flagAllow(), dt.fileAllow...)
+	p.Deny = dt.deny()
 	return p
 }
+
+func (dt *disabledTools) flagAllow() []string {
+	var allow []string
+	for _, name := range strings.Split(dt.writeToolOverrides, ",") {
+		allow = append(allow, strings.TrimSpace(name))
+	}
+	if dt.enableQuery {
+		allow = append(allow, tools.MutatingQueryToolNames()...)
+	}
+	return allow
+}
+
+const defaultEnabledTools = "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user"
 
 type disabledTools struct {
 	enabledTools string
 
 	writeToolOverrides string
+
+	// fileAllow and fileDeny come from the --config file.
+	fileAllow, fileDeny []string
 
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
@@ -179,7 +191,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", defaultEnabledTools, "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -1445,6 +1457,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
+	configPath := flag.String("config", "", "Path to a YAML file that selects tools. Tool flags that are set explicitly override the file, except --enable-write-tools and --enable-query, which add to its allow list. Overrides the "+configEnvVar+" environment variable.")
 	usageStatsMode := flag.String("usage-stats", "", "Anonymous usage statistics reporting: 'enabled', 'disabled', or 'log' to print the report that would be sent to stderr and send nothing. Overrides the "+usagestats.ModeEnvVar+" environment variable, which in turn overrides "+usagestats.DoNotTrackEnvVar+"; any unrecognised value disables reporting. See https://grafana.com/docs/grafana/latest/developer-resources/mcp/anonymous-usage-statistics/")
 	var dt disabledTools
 	dt.addFlags()
@@ -1510,6 +1523,18 @@ func main() {
 		Endpoint: usagestats.ResolveEndpoint(os.Getenv(usagestats.EndpointEnvVar)),
 		Version:  mcpgrafana.Version(),
 		Flags:    setFlagNames,
+	}
+
+	if !setFlags["config"] {
+		*configPath = os.Getenv(configEnvVar)
+	}
+	if *configPath != "" {
+		cfg, err := loadConfigFile(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid config file: %v\n", err)
+			os.Exit(2)
+		}
+		dt.applyConfig(cfg.Tools, setFlags)
 	}
 
 	if err := gc.applyLokiGuardrailEnv(setFlags); err != nil {

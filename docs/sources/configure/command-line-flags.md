@@ -111,6 +111,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 
 ## Configure tool categories
 
+- `--config`: Path to a YAML file that selects tools. Tool flags that you set explicitly override the file, except `--enable-write-tools` and `--enable-query`, which add to the file's `allow` list. Overrides the `GRAFANA_MCP_CONFIG` environment variable. Refer to [Select tools with a configuration file](../enable-and-disable-tools/#select-tools-with-a-configuration-file).
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
