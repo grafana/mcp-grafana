@@ -1,0 +1,10 @@
+{
+  "repository": "modelcontextprotocol/ext-apps",
+  "revision": "ea3e9d0e624a20bc1c51310292f09d9b8ed17161",
+  "files": {
+    "examples/basic-host/serve.ts": "f011ddcd56a33022e2c6c5a173fb03eb59ebbb81310f0cc4a6fd57cbd6ff2629",
+    "examples/basic-host/sandbox.html": "97c0b4a0e9097d5a01d5d1c63b48f27bd6f8e636ddc5bd5052cc7e1a934ea87a",
+    "examples/basic-host/src/sandbox.ts": "41badf3e939ff62e952d30ebe3a5731d7f8c54f2f6021f47ef759ea857d0d88a",
+    "LICENSE": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+  }
+}

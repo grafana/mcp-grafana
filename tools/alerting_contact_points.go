@@ -172,7 +172,7 @@ func convertReceiversToContactPoints(receivers []config.Receiver) []contactPoint
 }
 
 func filterContactPointsByName(cps []contactPointSummary, name string) []contactPointSummary {
-	var filtered []contactPointSummary
+	filtered := make([]contactPointSummary, 0, len(cps))
 	for _, cp := range cps {
 		if cp.Name == name {
 			filtered = append(filtered, cp)

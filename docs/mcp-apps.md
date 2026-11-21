@@ -36,6 +36,8 @@ resource domains; trace sharing requests host-controlled clipboard permission.
 
 The `query_datasource` view draws with the viz Renderer, which is not in the App HTML. On its first chart the App reads the Renderer resource through the host (`resources/read`) and runs it as an inline script, so metrics and trace views never load it. This needs a host that passes resource reads to the server (the `serverResources` host capability). Claude Desktop, Cursor and VS Code do. In a host without it, the view shows an error and keeps the link to open the query in Grafana.
 
+A host can pass such a read only for a URI that a tool declares in `_meta.ui.resourceUri`. The Code tab of Claude Desktop does. So the server registers one more tool, `grafana_app_viz_renderer`, that declares the Renderer resource. It registers the tool only when `query_datasource` is a source of `render_grafana_app`, so a server without that view does not list it. The tool has `_meta.ui.visibility: ["app"]`, so a host of MCP Apps hides it from the model. The server leaves it out of `tools/list` for a client that does not list the MCP Apps extension. The tool takes no arguments and returns no data.
+
 ## Embed in another MCP server
 
 The Go module exports the same tools and UI used by the standalone server:
@@ -53,7 +55,7 @@ tools.Resolve(tools.Policy{Categories: []string{"prometheus", "tempo"}}).Registe
 tools.AddAppTool(s, tools.QueryPrometheus, tools.GetTempoTraceTool)
 ```
 
-`RegisterGrafanaAppResource` registers the shared `GrafanaAppResourceURI` and the viz Renderer script that the App reads to draw `query_datasource` results. The script URI holds a hash of the script, so it changes with each build. An App from one build cannot read the Renderer of another, and asks the user to try again. The resource has the `user` audience, because it is for the App, not the model. Pass only enabled sources to `AddAppTool`; the standalone server applies its category, query and write gates before registration. The App tool is read-only only when every source is read-only, so a source such as `query_datasource` makes it destructive. The metrics view refreshes through `query_prometheus` in its existing App instance. The viz view refreshes when the user clicks Refresh or picks a time range in the chart: the App calls `render_grafana_app` again with `query_datasource` and the last arguments, and a picked range replaces `from` and `to` ([viz contract 5-refresh.md](https://github.com/grafana/viz-contract/blob/main/5-refresh.md)). When the chart is not `ready`, shows notices, or gets a new time range, the App tells the model through MCP Apps model context, which the host uses in a later turn ([4-states-and-notices.md](https://github.com/grafana/viz-contract/blob/main/4-states-and-notices.md)).
+`RegisterGrafanaAppResource` registers the shared `GrafanaAppResourceURI` and the viz Renderer script that the App reads to draw `query_datasource` results. The script URI holds a hash of the script, so it changes with each build. An App from one build cannot read the Renderer of another, and asks the user to try again. The resource has the `user` audience, because it is for the App, not the model. `AddAppTool` and `Selection.Register` add the `grafana_app_viz_renderer` tool that declares the script, and the `tools/list` middleware that hides it from clients without MCP Apps, when `query_datasource` is a source. An embedder that registers `Selection.Tools` itself calls `RegisterVizRendererTool`. Pass only enabled sources to `AddAppTool`; the standalone server applies its category, query and write gates before registration. The App tool is read-only only when every source is read-only, so a source such as `query_datasource` makes it destructive. The metrics view refreshes through `query_prometheus` in its existing App instance. The viz view refreshes when the user clicks Refresh, picks a time range, zooms, zooms out, pans or resets the time range in the chart: the App calls `render_grafana_app` again with `query_datasource` and the last arguments, and the new range replaces `from` and `to`. The viz spec gives the range of the arguments as `timeRange`: Reset goes back to it, or to the last pick of the time picker, and a relative range stays relative ([viz contract 5-refresh.md](https://github.com/grafana/viz-contract/blob/main/5-refresh.md)). A picker in the header switches to another chart that fits the data, from the `alternatives` of the result; a refresh then asks for that chart, and the Source picks again only when it no longer fits. When the chart is not `ready`, shows notices, gets a new time range, changes to another chart, or does not load, the App tells the model through MCP Apps model context, which the host uses in a later turn ([4-states-and-notices.md](https://github.com/grafana/viz-contract/blob/main/4-states-and-notices.md)).
 
 The module embeds the built HTML and the Renderer script. Go consumers serve the bundled App without a Node toolchain and receive UI updates through the module version.
 
@@ -84,7 +86,7 @@ One constraint is easy to miss when adding an app:
   `app/appHostState.ts`, created alongside the `App` and consumed with
   `useSyncExternalStore`.
 
-`preview/localhost.html` runs an app against a real `AppBridge` host with the
-iframe same-origin, so its console and errors are reachable. Hosts sandbox apps
-and may refuse to expose a debugger, which makes an in-host failure otherwise
-invisible; `npm run dev` serves this page.
+`npm run dev` starts the shared sandboxed development/test host. It serves the
+built app through the Go server and uses the same upstream basic-host sandbox
+and fixture scenarios as Playwright. See the [UI guide](../ui/mcp-apps/README.md)
+and [browser test guide](../ui/mcp-apps/e2e/README.md).

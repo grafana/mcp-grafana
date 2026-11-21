@@ -327,6 +327,21 @@ func TestQueryLokiLogsFormatValidation(t *testing.T) {
 	}
 }
 
+func TestQueryLokiLogsQueryTypeValidation(t *testing.T) {
+	// Unknown queryType values must be rejected before any backend call, so a
+	// typo can't silently run as a range query. Datasource resolution happens
+	// after validation, so an invalid queryType fails fast without a live backend.
+	for _, bad := range []string{"instnat", "Instant", "ranged", "metric"} {
+		_, err := queryLokiLogs(context.Background(), QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{app="x"}`,
+			QueryType:     bad,
+		})
+		require.Error(t, err, "queryType %q should be rejected", bad)
+		assert.Contains(t, err.Error(), "invalid queryType")
+	}
+}
+
 func TestQueryLokiRequiresLogQL(t *testing.T) {
 	for _, logql := range []string{"", "  "} {
 		_, err := queryLokiLogs(context.Background(), QueryLokiLogsParams{

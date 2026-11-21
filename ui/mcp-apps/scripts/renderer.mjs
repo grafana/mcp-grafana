@@ -19,8 +19,9 @@ export const PIN_FILE = 'RENDERER';
 
 // The trust anchor. RENDERER repeats these two values so a reader sees them, but the script does not take them from
 // RENDERER: a pin that names another repository or signer fails. To trust another one, change them here, in a file
-// that CODEOWNERS gives to the viz Renderer owners.
-export const REPOSITORY = 'grafana/dataViz';
+// that CODEOWNERS gives to the viz Renderer owners. The repository is now grafana/dataviz (same id, 1301820546), and
+// GitHub signs with the name as it is now, so releases from v0.5.0 on name it in lower case.
+export const REPOSITORY = 'grafana/dataviz';
 export const SIGNER = `https://github.com/${REPOSITORY}/.github/workflows/release-please.yml@refs/heads/main`;
 
 export const ISSUER = 'https://token.actions.githubusercontent.com';

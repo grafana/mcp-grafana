@@ -59,6 +59,17 @@ func AddAppTool(s *mcp.Server, sources ...mcpgrafana.Tool) {
 	}
 	tool := newAppTool(sources...)
 	tool.Register(s)
+	if readsVizRenderer(sources) {
+		mcpgrafana.RegisterVizRendererTool(s)
+	}
+}
+
+// readsVizRenderer reports whether the App draws one of the sources with the viz Renderer. Only query_datasource
+// does, so only then does the server need the tool that declares the Renderer (#1654).
+func readsVizRenderer(sources []mcpgrafana.Tool) bool {
+	return slices.ContainsFunc(sources, func(source mcpgrafana.Tool) bool {
+		return source.Tool.Name == QueryDatasource.Tool.Name
+	})
 }
 
 func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {
@@ -145,7 +156,7 @@ func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {
 }
 
 // appsExtensionID is the client capability of MCP Apps (EXTENSION_ID of ext-apps).
-const appsExtensionID = "io.modelcontextprotocol/ui"
+const appsExtensionID = mcpgrafana.AppsExtensionID
 
 // requireAppHost refuses a call from a client that cannot show the App, before the query runs, so the view data
 // does not reach the model as the tool result. Unknown capabilities, as in a stateless request of an older

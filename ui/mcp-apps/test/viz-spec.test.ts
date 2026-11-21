@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { buildVizSpec, parseVizArgs, parseVizResult } from '../app/vizSpec';
+import chartTypes from '@grafana/viz-contract/registry/chart-types.json';
+
+import { chartLabel } from '../app/ChartPicker';
+import { buildVizSpec, parseVizArgs, parseVizResult, shownChart, type VizArgs, vizCharts } from '../app/vizSpec';
 import { readVizFixture as read, vizAppFixtureSets as sets } from './vizFixtures';
 
 // The App test of the viz contract (fixtures.9).
@@ -43,8 +46,65 @@ describe('viz spec', () => {
     expect(spec.timeZone).toBe('Europe/Paris');
   });
 
+  it('copies the range of the arguments, or gives the defaults of the Source with none (spec.17)', () => {
+    const result = parseVizResult(read(set, 'result.json'))!;
+    const { from: _from, to: _to, ...noRange } = parseVizArgs(read(set, 'args.json'))!;
+    expect(buildVizSpec(noRange as VizArgs, result).timeRange).toEqual({ from: 'now-1h', to: 'now' });
+    expect(buildVizSpec({ ...noRange, from: 1790352577294 } as VizArgs, result).timeRange).toEqual({
+      from: 1790352577294,
+      to: 'now',
+    });
+  });
+
   it('reads no result from a payload of another tool', () => {
     expect(parseVizResult({ resultType: 'matrix', result: [] })).toBeUndefined();
     expect(parseVizArgs({ expr: 'up' })).toBeUndefined();
+  });
+});
+
+describe('shownChart', () => {
+  const result = parseVizResult(read('prometheus-line', 'result.json'))!;
+
+  it('lists the chart of the result, then its alternatives', () => {
+    expect(vizCharts(result)).toEqual([
+      'timeseries',
+      'barchart',
+      'histogram',
+      'piechart',
+      'funnel',
+      'heatmap',
+      'state-timeline',
+      'status-history',
+      'streamgraph',
+      'bubble',
+    ]);
+  });
+
+  it('gives the alternative that the user picked, or the chart of the result', () => {
+    expect(shownChart(result)).toBe('timeseries');
+    expect(shownChart(result, 'barchart')).toBe('barchart');
+    expect(shownChart(result, 'timeseries')).toBe('timeseries');
+  });
+
+  it('gives the chart of the result when the result no longer has the pick', () => {
+    expect(shownChart(result, 'nodeGraph')).toBe('timeseries');
+  });
+
+  it('draws the same chart as buildVizSpec (spec.2)', () => {
+    const args = parseVizArgs(read('prometheus-line', 'args.json'))!;
+    const bar = result.alternatives.find((a) => a.chart === 'barchart')!.panel;
+    expect(buildVizSpec(args, result, {}, 'barchart').panel.options).toEqual(bar.options);
+  });
+});
+
+describe('chartLabel', () => {
+  it('has a label for each chart of the registry', () => {
+    // A chart with no label shows its registry ID; a new contract chart should get a label.
+    const unlabeled = chartTypes.charts.map((c) => c.name).filter((name) => chartLabel(name) === name);
+    expect(unlabeled).toEqual([]);
+  });
+
+  it('shows the registry ID of an unknown chart', () => {
+    expect(chartLabel('pie')).toBe('pie');
   });
 });

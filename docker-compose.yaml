@@ -1,7 +1,15 @@
+# Each published port has a <SERVICE>_HOST_PORT variable, so the stack can start
+# when another process holds a default port. Set the variables in the shell or
+# in a .env file next to this file. The services reach each other over the
+# compose network, so they do not use these ports. The integration and E2E
+# tests expect the defaults. See "Running locally" in DEVELOPING.md.
 services:
   grafana:
     image: ${GRAFANA_IMAGE:-grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf}
     environment:
+      # Grafana builds its links from this URL, so it follows the published port.
+      # With no override it is the default of Grafana, http://localhost:3000/.
+      GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_HOST_PORT:-3000}/
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,googlecloud-logging-datasource,elasticsearch 12.9.3,kniepdennis-neo4j-datasource 1.3.2
       GF_PLUGINS_PREINSTALL_SYNC: quickwit-quickwit-datasource@0.6.0@https://github.com/quickwit-oss/quickwit-datasource/releases/download/v0.6.0/quickwit-quickwit-datasource-0.6.0.zip
@@ -12,7 +20,7 @@ services:
       GF_RENDERING_RENDERER_TOKEN: integration-test-renderer-token
       GF_PROVISIONING_ALLOWED_GIT_URLS: "http://gitserver/**"
     ports:
-      - 3000:3000/tcp
+      - "${GRAFANA_HOST_PORT:-3000}:3000/tcp"
     volumes:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
@@ -36,7 +44,7 @@ services:
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
     ports:
-      - 3002:3000/tcp
+      - "${GRAFANA_LEGACY_HOST_PORT:-3002}:3000/tcp"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
       interval: 5s
@@ -55,7 +63,7 @@ services:
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
     ports:
-      - 3003:3000/tcp
+      - "${GRAFANA_LEGACY_8_HOST_PORT:-3003}:3000/tcp"
     volumes:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
@@ -69,7 +77,7 @@ services:
   gitserver:
     build: ./testdata/gitserver
     ports:
-      - "8888:80"
+      - "${GITSERVER_HOST_PORT:-8888}:80"
     volumes:
       - ./testdata/provisioning-repo:/srv/seed:ro
     # The entrypoint seeds the repo before exec'ing httpd, so a live server
@@ -115,7 +123,7 @@ services:
   prometheus:
     image: prom/prometheus@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
     volumes:
       - ./testdata/prometheus.yml:/etc/prometheus/prometheus.yml
@@ -125,7 +133,7 @@ services:
   loki:
     image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
     ports:
-      - "3100:3100"
+      - "${LOKI_HOST_PORT:-3100}:3100"
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ./testdata/loki-config.yml:/etc/loki/loki-config.yml
@@ -143,7 +151,7 @@ services:
   pyroscope:
     image: grafana/pyroscope:2.4.3@sha256:bf667534cd403320573063894e3faba20a5a5d1bfb92eddaecfabeb2446c502b
     ports:
-      - 4040:4040
+      - "${PYROSCOPE_HOST_PORT:-4040}:4040"
 
   tempo:
     image: grafana/tempo:2.10.0-rc.0@sha256:ab73a4fa3586e866be3322507491b66d49c9607592128b72b3aad80e3b355a12
@@ -151,14 +159,14 @@ services:
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
     ports:
-      - "3200:3200"   # tempo HTTP API
-      - "4317:4317"   # OTLP gRPC receiver
-      - "4318:4318"   # OTLP HTTP receiver
+      - "${TEMPO_HOST_PORT:-3200}:3200"   # tempo HTTP API
+      - "${TEMPO_OTLP_GRPC_HOST_PORT:-4317}:4317"   # OTLP gRPC receiver
+      - "${TEMPO_OTLP_HTTP_HOST_PORT:-4318}:4318"   # OTLP HTTP receiver
 
   alertmanager:
     image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
     ports:
-      - "9093:9093"
+      - "${ALERTMANAGER_HOST_PORT:-9093}:9093"
     volumes:
       - ./testdata/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
@@ -172,7 +180,7 @@ services:
       - xpack.security.enabled=false
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     ports:
-      - "9200:9200"
+      - "${ELASTICSEARCH_HOST_PORT:-9200}:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
       interval: 10s
@@ -195,7 +203,7 @@ services:
       - DISABLE_SECURITY_PLUGIN=true
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
     ports:
-      - "9201:9200"
+      - "${OPENSEARCH_HOST_PORT:-9201}:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
       interval: 10s
@@ -215,7 +223,7 @@ services:
     image: quickwit/quickwit:v0.9.3@sha256:7c3f5061ea7c00921205c295833f152871d057ec1a9e4c9b1d36131dacc420bd
     command: ["run"]
     ports:
-      - "7280:7280"
+      - "${QUICKWIT_HOST_PORT:-7280}:7280"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/7280 && echo -e \"GET /health/livez HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q true <&3'"]
       interval: 10s
@@ -234,7 +242,7 @@ services:
   localstack:
     image: localstack/localstack:4.14@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
     ports:
-      - "4566:4566"
+      - "${LOCALSTACK_HOST_PORT:-4566}:4566"
     environment:
       SERVICES: cloudwatch,logs
       AWS_DEFAULT_REGION: us-east-1
@@ -250,7 +258,7 @@ services:
   influxdb:
     image: influxdb:2.9@sha256:e4572d094ac3272f06528ea904ce6b4cb3bb19be2db3b3b1acbd27ba5c3a73e2
     ports:
-      - "8086:8086"
+      - "${INFLUXDB_HOST_PORT:-8086}:8086"
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME: admin
@@ -276,8 +284,8 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
     volumes:
       - ./testdata/clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
       - ./testdata/clickhouse-users.xml:/etc/clickhouse-server/users.d/default-user.xml
@@ -293,7 +301,7 @@ services:
       MYSQL_ROOT_PASSWORD: rootroot
       MYSQL_DATABASE: test
     ports:
-      - "3306:3306"
+      - "${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
       - ./testdata/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
@@ -308,7 +316,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: test
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - ./testdata/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:

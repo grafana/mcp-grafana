@@ -34,6 +34,9 @@ type ActiveCategory struct {
 type Selection struct {
 	Tools      []mcpgrafana.Tool
 	Categories []ActiveCategory
+	// vizRenderer is set when the App tool has query_datasource as a source, so Register adds the tool that
+	// declares the viz Renderer. It is not in Tools: it is for the App, not for the model.
+	vizRenderer bool
 }
 
 type resolvedCategory struct {
@@ -82,6 +85,7 @@ func Resolve(p Policy) Selection {
 	viewerBuilt := len(sources) > 0 && slices.ContainsFunc(resolved, func(r resolvedCategory) bool { return r.hostsViewer })
 	if viewerBuilt {
 		sel.Tools = append(sel.Tools, newAppTool(sources...))
+		sel.vizRenderer = readsVizRenderer(sources)
 	}
 	for _, r := range resolved {
 		exposed := r.listed || viewerBuilt && (r.hostsViewer || r.appSourceOnly)
@@ -111,5 +115,8 @@ func (p Policy) allows(v variant) bool {
 func (s Selection) Register(srv *mcp.Server) {
 	for _, t := range s.Tools {
 		t.Register(srv)
+	}
+	if s.vizRenderer {
+		mcpgrafana.RegisterVizRendererTool(srv)
 	}
 }

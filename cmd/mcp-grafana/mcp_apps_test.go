@@ -117,3 +117,41 @@ func TestDSQueryCategoryFollowsItsSource(t *testing.T) {
 		})
 	}
 }
+
+// The tool that declares the viz Renderer is for the query_datasource view, so it follows that source (#1654).
+func TestVizRendererToolFollowsQueryDatasource(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config disabledTools
+		listed bool
+	}{
+		{"dsquery", disabledTools{enabledTools: "prometheus,rendering,dsquery"}, true},
+		{"rendering disabled", disabledTools{enabledTools: "prometheus,rendering,dsquery", rendering: true}, false},
+		{"query disabled", disabledTools{enabledTools: "prometheus,rendering,dsquery", query: true}, false},
+		{"dsquery disabled", disabledTools{enabledTools: "prometheus,rendering,dsquery", dsquery: true}, false},
+		{"read only", disabledTools{enabledTools: "prometheus,rendering,dsquery", write: true}, false},
+		{"no dsquery", disabledTools{enabledTools: "prometheus,rendering"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			tc.config.processTools(s)
+			// As newServer does: the App resources are registered outside the category flags.
+			mcpgrafana.RegisterAppResources(s)
+			serverTransport, clientTransport := mcp.NewInMemoryTransports()
+			go func() { _ = s.Run(t.Context(), serverTransport) }()
+			// A client of MCP Apps: tools/list hides the tool from any other client.
+			client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, &mcp.ClientOptions{
+				Capabilities: &mcp.ClientCapabilities{Extensions: map[string]any{mcpgrafana.AppsExtensionID: map[string]any{}}},
+			})
+			session, err := client.Connect(t.Context(), clientTransport, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = session.Close() })
+			result, err := session.ListTools(t.Context(), nil)
+			require.NoError(t, err)
+			listed := slices.ContainsFunc(result.Tools, func(tool *mcp.Tool) bool {
+				return tool.Name == "grafana_app_viz_renderer"
+			})
+			require.Equal(t, tc.listed, listed)
+		})
+	}
+}

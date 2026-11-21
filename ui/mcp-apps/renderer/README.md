@@ -33,7 +33,7 @@ network for the first of these commands. After that, if the files on disk match 
 - When `RENDERER`, the script or the lockfile changes: the `viz Renderer provenance` workflow runs
   `node scripts/renderer.mjs --verify`. It makes sure that the `commit` of `RENDERER` is the commit of the tag. For
   each file, it gets the SLSA provenance attestations from the GitHub attestations API (all pages) and verifies them
-  with Sigstore. An attestation must be signed by the `grafana/dataViz/.github/workflows/release-please.yml` workflow
+  with Sigstore. An attestation must be signed by the `grafana/dataviz/.github/workflows/release-please.yml` workflow
   on `main`, its subject must be the file, the build must have run on a GitHub-hosted runner, and it must be the build
   of that commit. A file that is the same in several releases (for example `icons.json`) has one attestation per
   build, so the commit selects the right one.

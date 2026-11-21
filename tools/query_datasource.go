@@ -367,6 +367,13 @@ func resolveDSRange(from, to dsTime, now time.Time) (time.Time, time.Time, error
 	return start, end, nil
 }
 
+// dsIntervalMs is the range divided by maxDataPoints, rounded as Grafana rounds the interval of a panel query. tool.12
+// asks for whole milliseconds, but a data source can expand $__rate_interval of an unrounded interval to a duration
+// that PromQL rejects, for example 10m19.8s over 7 days.
+func dsIntervalMs(rangeMs int64, maxDataPoints float64) int64 {
+	return int64(grafanaRoundInterval(float64(rangeMs) / maxDataPoints))
+}
+
 // prepareDSQueries checks the queries and gives each one the defaults of tool.9 to tool.12. The input is not changed.
 func prepareDSQueries(uid string, queries []map[string]any, from, to time.Time) ([]map[string]any, error) {
 	if len(queries) == 0 {
@@ -407,7 +414,7 @@ func prepareDSQueries(uid string, queries []map[string]any, from, to time.Time) 
 			query["maxDataPoints"] = defaultDSMaxDataPoints
 		}
 		if _, ok := in["intervalMs"]; !ok {
-			query["intervalMs"] = max(int64(float64(rangeMs)/maxDataPoints), 1)
+			query["intervalMs"] = dsIntervalMs(rangeMs, maxDataPoints)
 		}
 		out = append(out, query)
 	}

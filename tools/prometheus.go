@@ -47,6 +47,9 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	if limit == 0 {
 		limit = 10
 	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must not be negative, got %d", limit)
+	}
 
 	metadata, err := backend.MetricMetadata(ctx, args.Metric, limit)
 	if err != nil {
@@ -527,6 +530,9 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 	if limit == 0 {
 		limit = 100
 	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must not be negative, got %d", limit)
+	}
 
 	startTime, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
@@ -583,6 +589,9 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 	limit := args.Limit
 	if limit == 0 {
 		limit = 100
+	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must not be negative, got %d", limit)
 	}
 
 	startTime, err := parseStartTime(args.StartRFC3339)

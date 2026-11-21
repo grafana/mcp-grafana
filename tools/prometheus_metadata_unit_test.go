@@ -60,3 +60,28 @@ func TestListPrometheusMetricMetadataLimitPerMetric(t *testing.T) {
 		})
 	}
 }
+
+func TestListPrometheusMetricMetadataRejectsNegativeLimit(t *testing.T) {
+	var metadataRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/datasources/uid/test":
+			_ = json.NewEncoder(w).Encode(&models.DataSource{UID: "test", Type: "prometheus"})
+		case "/api/datasources/uid/test/resources/api/v1/metadata":
+			metadataRequests++
+			_, _ = w.Write([]byte(`{"status":"success","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := listPrometheusMetricMetadata(mockDatasourcesCtx(server), ListPrometheusMetricMetadataParams{
+		DatasourceUID: "test",
+		Limit:         -1,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "limit")
+	assert.Zero(t, metadataRequests, "a negative limit must not reach the datasource, where it means unlimited")
+}

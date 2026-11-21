@@ -145,21 +145,39 @@ func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface
 // The legacy fallback only triggers when "panels" is absent, mirroring
 // getDashboardSummary so dashboards carrying both keys don't yield duplicates.
 func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
-	var result []map[string]interface{}
+	located := collectAllPanelsWithPaths(db)
+	result := make([]map[string]interface{}, len(located))
+	for i, lp := range located {
+		result[i] = lp.panel
+	}
+	return result
+}
+
+// locatedPanel is a panel together with the JSON path of its position in the
+// dashboard, in the form accepted by update_dashboard patches.
+type locatedPanel struct {
+	panel map[string]interface{}
+	path  string
+}
+
+// collectAllPanelsWithPaths is collectAllPanels that also records each panel's
+// JSON path (e.g. "$.panels[3].panels[1]" for a panel nested in a row).
+func collectAllPanelsWithPaths(db map[string]interface{}) []locatedPanel {
+	var result []locatedPanel
 
 	if panels := safeArray(db, "panels"); panels != nil {
-		for _, p := range panels {
+		for i, p := range panels {
 			panel, ok := p.(map[string]interface{})
 			if !ok {
 				continue
 			}
-
-			result = append(result, panel)
+			path := fmt.Sprintf("$.panels[%d]", i)
+			result = append(result, locatedPanel{panel, path})
 
 			if safeString(panel, "type") == "row" {
-				for _, np := range safeArray(panel, "panels") {
+				for j, np := range safeArray(panel, "panels") {
 					if nested, ok := np.(map[string]interface{}); ok {
-						result = append(result, nested)
+						result = append(result, locatedPanel{nested, fmt.Sprintf("%s.panels[%d]", path, j)})
 					}
 				}
 			}
@@ -167,14 +185,14 @@ func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 		return result
 	}
 
-	for _, r := range safeArray(db, "rows") {
+	for i, r := range safeArray(db, "rows") {
 		row, ok := r.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		for _, np := range safeArray(row, "panels") {
+		for j, np := range safeArray(row, "panels") {
 			if nested, ok := np.(map[string]interface{}); ok {
-				result = append(result, nested)
+				result = append(result, locatedPanel{nested, fmt.Sprintf("$.rows[%d].panels[%d]", i, j)})
 			}
 		}
 	}

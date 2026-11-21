@@ -1203,3 +1203,10 @@ func TestTempoGetTrace_TimeRangeRequiresBoth(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Equal(t, `arguments "start" and "end" must be provided together`, result.Content[0].(*mcp.TextContent).Text)
 }
+
+func TestTempoTimeRange_EndOnlyStartsAnHourBeforeEnd(t *testing.T) {
+	from, to, err := tempoTimeRange("", "2024-01-01T12:00:00Z")
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC), to.UTC())
+	assert.Equal(t, time.Date(2024, 1, 1, 11, 0, 0, 0, time.UTC), from.UTC())
+}

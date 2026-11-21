@@ -22,3 +22,14 @@
   --mcp-success: #56c785; --mcp-success-text: #79d9a0; --mcp-error: #ff7384;
   --mcp-error-text: #ff9aa6; --mcp-info: #75adf0; --mcp-info-text: #a2c7f5;
 }
+/* The viz Renderer draws with @grafana/ui, which expects Grafana's GlobalStyles. These are the parts it needs:
+   GlobalStyles itself would restyle the whole page. The App's own styles size in px, so the root size changes only
+   @grafana/ui, which sizes in rem from a 14px root. Its overlays portal outside the shell, so they get the font here. */
+html { font-size: 14px; }
+#grafana-portal-container { color: var(--mcp-foreground); font-family: Inter, system-ui, sans-serif; line-height: 1.5; font-variant-ligatures: no-contextual; }
+#grafana-portal-container, #grafana-portal-container *, #grafana-portal-container *::before, #grafana-portal-container *::after { box-sizing: border-box; }
+#grafana-portal-container [tabindex='-1']:focus { outline: none !important; }
+#grafana-portal-container fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
+/* Below the lg breakpoint, the time picker menu of @grafana/ui is 262px wide, wider than its From and To fields.
+   Until the viz Renderer has its own picker, the menu takes the width of its content. */
+@media (max-width: 1199.98px) { #grafana-portal-container section[role='dialog'] > div { width: fit-content; } }

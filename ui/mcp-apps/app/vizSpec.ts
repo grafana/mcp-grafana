@@ -1,3 +1,5 @@
+import constants from '@grafana/viz-contract/registry/constants.json';
+
 import type { McpAppColorMode } from '../src/McpAppShell';
 
 // The viz spec that the App gives the Renderer (viz-contract 2-viz-spec.md, schemas/viz-spec.schema.json).
@@ -38,6 +40,7 @@ export type VizSpec = {
   specVersion: number;
   panel: VizPanel & { datasource: { uid: string }; targets: VizArgs['queries'] };
   data: VizResult['data'];
+  timeRange: { from: string | number; to: string | number };
   theme?: McpAppColorMode;
   timeZone?: string;
   grafanaUrl?: string;
@@ -62,6 +65,16 @@ export function parseVizResult(payload: unknown): VizResult | undefined {
 export function parseVizArgs(args: unknown): VizArgs | undefined {
   if (!isObject(args) || typeof args.datasourceUid !== 'string' || !Array.isArray(args.queries)) return undefined;
   return args as VizArgs;
+}
+
+/** The charts a user can pick: the result's chart, then its alternatives (tool.23). */
+export function vizCharts(result: VizResult): string[] {
+  return [result.chart, ...result.alternatives.map((a) => a.chart)];
+}
+
+/** The chart on screen, as buildVizSpec draws it: the pick if the result has it, else the result's chart. */
+export function shownChart(result: VizResult, picked?: string): string {
+  return picked && vizCharts(result).includes(picked) ? picked : result.chart;
 }
 
 /**
@@ -92,6 +105,8 @@ export function buildVizSpec(
     },
     // spec.4: the data of the result, with no change.
     data: result.data,
+    // spec.17: the range of the arguments, relative or not, for Reset. With none, the defaults of the Source.
+    timeRange: { from: args.from ?? constants.defaultFrom.value, to: args.to ?? constants.defaultTo.value },
     // spec.5, spec.6: the theme and the time zone of the host context. With none, the Renderer uses its default.
     ...(host.theme ? { theme: host.theme } : {}),
     ...(host.timeZone ? { timeZone: host.timeZone } : {}),
