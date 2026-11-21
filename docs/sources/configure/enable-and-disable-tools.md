@@ -93,7 +93,7 @@ Every key is optional:
 - `allow` keeps tools that `mode: read-only` removes, like `--enable-write-tools`. For a tool with a read-only variant, such as `grafana_api_request` or `generate_deeplink`, it keeps the full variant. It doesn't bring back tools that `query: false` removes.
 - `deny` removes tools even when their category is enabled. It removes every variant of the tool.
 
-The server doesn't start if the file has an unknown key, an unknown category or tool name, a tool in both `allow` and `deny`, or a tool in `allow` that no enabled category registers. The error names each problem.
+The server doesn't start if the file has an unknown key, an unknown category or tool name, a tool in both `allow` and `deny`, or a tool in `allow` whose own category isn't enabled. The error names each problem.
 
 Tool flags that you set explicitly override the file for the setting they map to, even when you set them to their default, such as `--disable-write=false`:
 

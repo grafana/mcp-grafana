@@ -28,20 +28,20 @@ type Policy struct {
 
 // Validate reports every name in p that would have no effect: an unknown
 // category, an unknown tool in Allow or Deny, a tool in Allow that no
-// enabled category can register, and a tool in both Allow and Deny.
+// enabled category can register, and a tool in both Allow and Deny. A tool
+// in Allow must be in an enabled category itself, even when it also lifts a
+// variant of a tool in another category.
 // Resolve itself ignores such names, so only callers that want strict
 // input call this.
 func (p Policy) Validate() error {
 	home := map[string]string{}
-	liftable := map[string]bool{}
 	for _, c := range catalog {
-		enabled := slices.Contains(p.Categories, c.name)
 		for _, spec := range c.tools {
+			if spec.kind == appViewer {
+				home[appToolName] = c.name
+			}
 			for _, v := range spec.variants {
 				home[v.tool.Tool.Name] = c.name
-				for _, name := range v.liftedBy {
-					liftable[name] = liftable[name] || enabled
-				}
 			}
 		}
 	}
@@ -56,7 +56,7 @@ func (p Policy) Validate() error {
 		switch {
 		case home[name] == "":
 			errs = append(errs, fmt.Errorf("allow: unknown tool %q", name))
-		case !liftable[name]:
+		case !slices.Contains(p.Categories, home[name]):
 			errs = append(errs, fmt.Errorf("allow: tool %q is in a category that is not enabled (%s)", name, home[name]))
 		case slices.Contains(p.Deny, name):
 			errs = append(errs, fmt.Errorf("tool %q is in both allow and deny", name))
@@ -106,17 +106,22 @@ func Resolve(p Policy) Selection {
 			continue
 		}
 		r := resolvedCategory{category: &catalog[i]}
+		// A denied tool shortens the description only once no tool behind
+		// a gate is left, as when the gate itself removes them.
+		deniedGated, keptGated := false, false
 		for _, spec := range r.tools {
 			if spec.kind == appViewer {
 				r.hostsViewer = true
 				continue
 			}
+			gated := spec.variants[0].gate != 0
 			if slices.Contains(p.Deny, spec.variants[0].tool.Tool.Name) {
-				r.reduced = true
+				deniedGated = deniedGated || gated
 				continue
 			}
 			picked := slices.IndexFunc(spec.variants, p.allows)
 			r.reduced = r.reduced || picked != 0
+			keptGated = keptGated || gated && picked == 0
 			if picked < 0 {
 				continue
 			}
@@ -131,10 +136,11 @@ func Resolve(p Policy) Selection {
 			sel.Tools = append(sel.Tools, tool)
 			r.listed = true
 		}
+		r.reduced = r.reduced || deniedGated && !keptGated
 		resolved = append(resolved, r)
 	}
 
-	viewerBuilt := len(sources) > 0 && slices.ContainsFunc(resolved, func(r resolvedCategory) bool { return r.hostsViewer })
+	viewerBuilt := !slices.Contains(p.Deny, appToolName) && len(sources) > 0 && slices.ContainsFunc(resolved, func(r resolvedCategory) bool { return r.hostsViewer })
 	if viewerBuilt {
 		sel.Tools = append(sel.Tools, newAppTool(sources...))
 		sel.vizRenderer = readsVizRenderer(sources)

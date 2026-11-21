@@ -27,6 +27,13 @@ func writeConfig(t *testing.T, body string) string {
 // a client sees in tools/list.
 func toolsWithConfig(t *testing.T, body string, dt disabledTools, set ...string) map[string]*mcp.Tool {
 	t.Helper()
+	return listTools(t, withConfig(t, body, dt, set...))
+}
+
+// withConfig loads body as the --config file under the flags in dt, where set
+// names the flags given on the command line.
+func withConfig(t *testing.T, body string, dt disabledTools, set ...string) disabledTools {
+	t.Helper()
 	cfg, err := loadConfigFile(writeConfig(t, body))
 	require.NoError(t, err)
 
@@ -38,7 +45,7 @@ func toolsWithConfig(t *testing.T, body string, dt disabledTools, set ...string)
 		setFlags[name] = true
 	}
 	dt.applyConfig(cfg.Tools, setFlags)
-	return listTools(t, dt)
+	return dt
 }
 
 func listTools(t *testing.T, dt disabledTools) map[string]*mcp.Tool {
@@ -68,6 +75,7 @@ func TestLoadConfigFile_RejectsInvalidFiles(t *testing.T) {
 		{"unknown allow tool", "tools:\n  allow: [update_dashbord]\n", `allow: unknown tool "update_dashbord"`},
 		{"unknown deny tool", "tools:\n  deny: [query_sequel]\n", `deny: unknown tool "query_sequel"`},
 		{"allow outside enabled categories", "tools:\n  categories: [search]\n  allow: [update_dashboard]\n", `allow: tool "update_dashboard" is in a category that is not enabled (dashboard)`},
+		{"allow outside its own category", "tools:\n  categories: [api]\n  mode: read-only\n  allow: [query_sql]\n", `allow: tool "query_sql" is in a category that is not enabled (sql)`},
 		{"allow and deny", "tools:\n  allow: [update_dashboard]\n  deny: [update_dashboard]\n", `tool "update_dashboard" is in both allow and deny`},
 		{"two documents", "tools:\n  mode: read-only\n---\ntools:\n  mode: read-write\n", "only one YAML document is allowed"},
 	} {
@@ -114,9 +122,37 @@ func TestConfig_DenyRemovesToolAndItsVariants(t *testing.T) {
 	assert.Contains(t, listed, "get_dashboard_by_uid")
 }
 
+func TestConfig_DenyRemovesAppTool(t *testing.T) {
+	require.Contains(t, toolsWithConfig(t, "", disabledTools{}), "render_grafana_app")
+
+	listed := toolsWithConfig(t, "tools:\n  deny: [render_grafana_app]\n", disabledTools{})
+	assert.NotContains(t, listed, "render_grafana_app")
+	assert.Contains(t, listed, "query_prometheus")
+	assert.Contains(t, listed, "get_panel_image")
+}
+
+func TestConfig_DenyKeepsFullDescriptionWhileQueryToolsRemain(t *testing.T) {
+	const full = "Prometheus: Run PromQL queries"
+	for _, tc := range []struct {
+		deny        string
+		wantReduced bool
+	}{
+		{"list_prometheus_metric_names", false},
+		{"query_prometheus_histogram", false},
+		{"query_prometheus, query_prometheus_histogram", true},
+	} {
+		t.Run(tc.deny, func(t *testing.T) {
+			dt := withConfig(t, "tools:\n  deny: ["+tc.deny+"]\n", disabledTools{})
+			instructions := dt.buildInstructions()
+			assert.Equal(t, !tc.wantReduced, strings.Contains(instructions, full), instructions)
+			assert.Equal(t, tc.wantReduced, strings.Contains(instructions, "Query execution is disabled"), instructions)
+		})
+	}
+}
+
 func TestConfig_StrictCategoryCheckIsFileOnly(t *testing.T) {
 	_, err := loadConfigFile(writeConfig(t, "tools:\n  categories: [search]\n  mode: read-only\n  allow: [query_sql]\n"))
-	require.Error(t, err, "neither sql nor api is enabled, so allow: [query_sql] does nothing")
+	require.Error(t, err, "sql is not enabled, so allow: [query_sql] is rejected")
 
 	listed := toolsWithConfig(t, "tools:\n  categories: [search]\n  mode: read-only\n", disabledTools{enableQuery: true}, "enable-query")
 	assert.NotContains(t, listed, "query_sql", "--enable-query still skips tools in disabled categories silently")
