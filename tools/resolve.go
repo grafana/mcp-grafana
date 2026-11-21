@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -20,6 +22,52 @@ type Policy struct {
 	// Allow names the tools ReadOnly keeps. For a tool with read-only
 	// variants, naming it keeps the variant that writes.
 	Allow []string
+	// Deny names tools to remove, with all their variants.
+	Deny []string
+}
+
+// Validate reports every name in p that would have no effect: an unknown
+// category, an unknown tool in Allow or Deny, a tool in Allow that no
+// enabled category can register, and a tool in both Allow and Deny.
+// Resolve itself ignores such names, so only callers that want strict
+// input call this.
+func (p Policy) Validate() error {
+	home := map[string]string{}
+	liftable := map[string]bool{}
+	for _, c := range catalog {
+		enabled := slices.Contains(p.Categories, c.name)
+		for _, spec := range c.tools {
+			for _, v := range spec.variants {
+				home[v.tool.Tool.Name] = c.name
+				for _, name := range v.liftedBy {
+					liftable[name] = liftable[name] || enabled
+				}
+			}
+		}
+	}
+
+	var errs []error
+	for _, name := range p.Categories {
+		if !slices.Contains(CategoryNames(), name) {
+			errs = append(errs, fmt.Errorf("unknown category %q", name))
+		}
+	}
+	for _, name := range p.Allow {
+		switch {
+		case home[name] == "":
+			errs = append(errs, fmt.Errorf("allow: unknown tool %q", name))
+		case !liftable[name]:
+			errs = append(errs, fmt.Errorf("allow: tool %q is in a category that is not enabled (%s)", name, home[name]))
+		case slices.Contains(p.Deny, name):
+			errs = append(errs, fmt.Errorf("tool %q is in both allow and deny", name))
+		}
+	}
+	for _, name := range p.Deny {
+		if home[name] == "" {
+			errs = append(errs, fmt.Errorf("deny: unknown tool %q", name))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ActiveCategory is an enabled category that registers at least one tool.
@@ -61,6 +109,10 @@ func Resolve(p Policy) Selection {
 		for _, spec := range r.tools {
 			if spec.kind == appViewer {
 				r.hostsViewer = true
+				continue
+			}
+			if slices.Contains(p.Deny, spec.variants[0].tool.Tool.Name) {
+				r.reduced = true
 				continue
 			}
 			picked := slices.IndexFunc(spec.variants, p.allows)
