@@ -489,8 +489,9 @@ When `--address` uses port `0`, the operating system allocates a free port and t
 Optionally require MCP clients to authenticate *to the server*. This is separate from the credentials the server uses to reach Grafana. Stdio is unaffected.
 
 - `--server-auth-token`: Bearer token callers must send as `Authorization: Bearer <token>`. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the env var so the secret isn't visible in the process arguments.
+- `--server-auth-header`: Header the caller token is read from. Falls back to the `MCP_GRAFANA_SERVER_AUTH_HEADER` environment variable, then to `Authorization`. `Authorization` takes `Bearer <token>` only. Any other header takes the raw token or `Bearer <token>`, which leaves `Authorization` free for a user's own credential. The header must not be in `GRAFANA_FORWARD_HEADERS`, and it must be sent once (a repeated custom header gets `401`).
 
-Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
+Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup. With `--server-auth-header`, the same rule applies to that header instead.
 
 **Grafana URL overrides (streamable-http only):**
 
@@ -510,7 +511,7 @@ X-Grafana-URL: https://one.example.com
 X-Grafana-Service-Account-Token: <token for one.example.com>
 ```
 
-If `--server-auth-token` is configured, also send `Authorization: Bearer <MCP caller token>`. This authenticates to the MCP server and is separate from `X-Grafana-Service-Account-Token`, which is for the selected Grafana instance. Your proxy can send a different Grafana token for each instance; the server never shares one configured token across them. The deprecated `X-Grafana-API-Key` header also works. A URL header without a request Grafana token is rejected. Use TLS for incoming requests because they carry tokens.
+If `--server-auth-token` is configured, also send `Authorization: Bearer <MCP caller token>`, or the token in the header set with `--server-auth-header`. This authenticates to the MCP server and is separate from `X-Grafana-Service-Account-Token`, which is for the selected Grafana instance. Your proxy can send a different Grafana token for each instance; the server never shares one configured token across them. The deprecated `X-Grafana-API-Key` header also works. A URL header without a request Grafana token is rejected. Use TLS for incoming requests because they carry tokens.
 
 The allowlist matches exact base URLs, including scheme, port, and path; wildcards are not supported. Grafana authentication is not an SSRF defense.
 

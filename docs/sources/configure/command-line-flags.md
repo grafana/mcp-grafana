@@ -50,6 +50,7 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 The SSE and streamable-http transports can authenticate the **caller** (the MCP client connecting to `mcp-grafana`). This is separate from the credentials the server uses to reach Grafana: it controls _who may invoke the server_, so an unauthenticated client can't borrow the server's Grafana identity or run tools. Stdio is a local pipe and is never affected.
 
 - `--server-auth-token`: Bearer token that callers must present in the `Authorization: Bearer <token>` header. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the environment variable over the flag so the secret doesn't appear in the process argument list.
+- `--server-auth-header`: Header the caller token is read from. Falls back to the `MCP_GRAFANA_SERVER_AUTH_HEADER` environment variable, then to `Authorization`. `Authorization` takes `Bearer <token>` only. Any other header takes the raw token or `Bearer <token>`. Use it when a proxy needs `Authorization` for the user's own credential. A request that sends a custom header more than once is rejected with `401`; `Authorization` behaves as before.
 
 ### Bind policy
 
@@ -68,6 +69,8 @@ The permissive default preserves backward compatibility for existing deployments
 Bearer authentication only protects the token in transit if the connection is encrypted. Terminate TLS in front of the server, or use [server TLS for streamable-http](../server-tls-streamable-http/), whenever you set `--server-auth-token` on a non-loopback address.
 
 When caller authentication is enabled, the `Authorization` header is reserved for the caller token and is stripped after validation, so it is never forwarded to Grafana. Setting `--server-auth-token` together with `GRAFANA_FORWARD_HEADERS=Authorization` is contradictory and the server refuses to start; remove `Authorization` from `GRAFANA_FORWARD_HEADERS`, or unset the caller token to run in proxy-forwarding mode.
+
+With `--server-auth-header`, that header is reserved and stripped instead, `Authorization` is left alone, and the server refuses to start if the header is in `GRAFANA_FORWARD_HEADERS`. The header is not added to the CORS allowed headers, so browser clients cannot send it cross-origin.
 
 ## Select a Grafana URL per request
 
