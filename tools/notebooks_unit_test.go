@@ -181,6 +181,50 @@ func TestNotebookLinksUsePublicURL(t *testing.T) {
 	assert.Equal(t, publicURL+"/notebooks/nb-1", found[0].URL)
 }
 
+// TestNotebookLinksOmittedForDifferentViewerOrg covers the org half of the link
+// problem: a notebook URL carries no org, so a browser opening it lands in the
+// viewer's own persisted org, not whatever org the call was scoped to. Since
+// notebook UIDs are unique only within an org, a mismatch would 404 or open a
+// different notebook - so the link is omitted instead, the way get_panel_image
+// omits its deeplink in the same situation.
+func TestNotebookLinksOmittedForDifferentViewerOrg(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/frontend/settings":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"namespace": "default"})
+		case r.URL.Path == "/api/user":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"orgId": 3})
+		case strings.HasSuffix(r.URL.Path, "/search"):
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{
+				"resource": map[string]any{"name": "nb-1"},
+				"fields":   map[string]any{"title": "CPU saturation", "tags": []string{"sre"}},
+			}}})
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{notebooksTestResource("nb-1", "CPU saturation", []string{"sre"}, 1)}})
+		}
+	}))
+	defer ts.Close()
+
+	// The call is scoped to org 7, but the viewer's own identity persists at
+	// org 3 - a plain link would open there, not org 7.
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL, OrgID: 7})
+	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, ts.URL, "grafana-token", nil))
+
+	listed, err := listNotebooks(ctx, ListNotebooksParams{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Empty(t, listed[0].URL, "a link that would open in the wrong org must be omitted, not point at it")
+
+	found, err := searchNotebooks(ctx, SearchNotebooksParams{Query: "saturation"})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Empty(t, found[0].URL)
+}
+
 func TestGetNotebookByUID(t *testing.T) {
 	ts := notebooksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -710,6 +754,41 @@ func TestRenderNotebookPDF(t *testing.T) {
 	assert.Equal(t, "grafana://notebooks/nb-1.pdf", resource.Resource.URI)
 	assert.Equal(t, "application/pdf", resource.Resource.MIMEType)
 	assert.Equal(t, pdf, resource.Resource.Blob)
+}
+
+// TestRenderNotebookPDF_DefaultTimeRangeReportsNotebookTimeSettings covers a
+// summary that lied about what was rendered: when from/to aren't passed,
+// notebookRenderURL leaves them unset so the page opens with its own saved
+// timeSettings, not the now-6h/now a brand new notebook defaults to. The
+// summary must say what the notebook actually used.
+func TestRenderNotebookPDF_DefaultTimeRangeReportsNotebookTimeSettings(t *testing.T) {
+	pdf := []byte("%PDF-1.4 fake notebook pdf")
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/render/") {
+			query := r.URL.Query()
+			assert.Empty(t, query.Get("from"), "no range was passed, so none should be sent to the renderer")
+			assert.Empty(t, query.Get("to"))
+			w.Header().Set("Content-Type", "application/pdf")
+			_, err := w.Write(pdf)
+			require.NoError(t, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		nb := notebooksTestResource("nb-1", "Dex build info", []string{"sre"}, 1)
+		nb["spec"].(map[string]any)["timeSettings"] = map[string]any{"from": "now-24h", "to": "now-1h"}
+		require.NoError(t, json.NewEncoder(w).Encode(nb))
+	}))
+	defer ts.Close()
+
+	result, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{UID: "nb-1"})
+	require.NoError(t, err)
+
+	summary, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, summary.Text, "now-24h to now-1h",
+		"the summary should report the notebook's own saved range, not the new-notebook default")
+	assert.NotContains(t, summary.Text, "now-6h to now")
 }
 
 func TestRenderNotebookPDF_RequiresUID(t *testing.T) {

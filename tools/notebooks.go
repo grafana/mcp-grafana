@@ -167,9 +167,12 @@ type notebookSummary struct {
 }
 
 type notebookSpecFields struct {
-	Title  string   `json:"title"`
-	Tags   []string `json:"tags"`
-	Layout struct {
+	Title string   `json:"title"`
+	Tags  []string `json:"tags"`
+	// TimeSettings is only read by render_notebook_pdf, to report the range a
+	// render actually used when the caller didn't override it.
+	TimeSettings notebookTimeSettings `json:"timeSettings"`
+	Layout       struct {
 		Spec struct {
 			Cells []json.RawMessage `json:"cells"`
 		} `json:"spec"`
@@ -210,12 +213,23 @@ func notebookPageURL(baseURL, uid string) string {
 // Falls back to the configured URL when the instance publishes no appUrl (the
 // same order every other tool that emits user-facing links uses, via
 // grafanaBaseURLFromContext).
+//
+// Returns "" when the call was scoped to an org other than the one a plain link
+// would open in for this identity (deeplinkResolvesInRenderOrg): notebook UIDs
+// are unique only within an org, so a link with no org in it would land on the
+// wrong notebook, or a 404, in the viewer's own org. get_panel_image omits its
+// deeplink for the same reason.
 func notebookPageBaseURL(ctx context.Context) string {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	if !deeplinkResolvesInRenderOrg(ctx, cfg.OrgID) {
+		return ""
+	}
+
 	baseURL, err := grafanaBaseURLFromContext(ctx)
 	if err != nil {
 		// A malformed appUrl must not fail the tool; the configured URL is
 		// still better than no link at all.
-		return strings.TrimRight(mcpgrafana.GrafanaConfigFromContext(ctx).URL, "/")
+		return strings.TrimRight(cfg.URL, "/")
 	}
 	return baseURL
 }
@@ -759,7 +773,14 @@ func renderNotebookPDF(ctx context.Context, args RenderNotebookPDFParams) (*mcp.
 		return nil, fmt.Errorf("read notebook %s PDF: %w", args.UID, err)
 	}
 
-	timeRange := fmt.Sprintf("%s to %s", orDefault(args.From, "now-6h"), orDefault(args.To, "now"))
+	// When from/to aren't passed, none is sent to the renderer (notebookRenderURL
+	// leaves them unset), so the page opens with its own saved timeSettings
+	// rather than the now-6h/now the notebook UI defaults a *new* notebook to.
+	// Report the range that was actually sent, falling back to the notebook's
+	// saved range rather than that unrelated default.
+	timeRange := fmt.Sprintf("%s to %s",
+		orDefault(args.From, orDefault(spec.TimeSettings.From, "now-6h")),
+		orDefault(args.To, orDefault(spec.TimeSettings.To, "now")))
 	if args.TimeZone != "" {
 		timeRange += " (" + args.TimeZone + ")"
 	}
