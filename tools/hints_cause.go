@@ -108,7 +108,11 @@ func promEmptyCause(ctx context.Context, b promBackend, expr string, start, end 
 		}
 	}
 
-	if cause := promLabelCause(ctx, b, selectors, start, end); cause != nil {
+	cause, ok := promLabelCause(ctx, b, selectors, start, end)
+	if !ok {
+		return nil // lookup failed: no reason beats a wrong one
+	}
+	if cause != nil {
 		return cause
 	}
 	return &EmptyCause{
@@ -120,7 +124,8 @@ func promEmptyCause(ctx context.Context, b promBackend, expr string, start, end 
 
 // promLabelCause reports a label the first selector requires but its metric
 // does not have. Matchers that accept "" are skipped: a missing label passes them.
-func promLabelCause(ctx context.Context, b promBackend, selectors []promSelector, start, end time.Time) *EmptyCause {
+// ok is false when the lookup fails.
+func promLabelCause(ctx context.Context, b promBackend, selectors []promSelector, start, end time.Time) (cause *EmptyCause, ok bool) {
 	for _, s := range selectors {
 		var required []string
 		for _, m := range s.matchers {
@@ -134,7 +139,7 @@ func promLabelCause(ctx context.Context, b promBackend, selectors []promSelector
 		nameMatcher := labels.MustNewMatcher(labels.MatchEqual, model.MetricNameLabel, s.name)
 		have, err := b.LabelNames(ctx, []string{"{" + nameMatcher.String() + "}"}, start, end)
 		if err != nil {
-			return nil
+			return nil, false
 		}
 		for _, l := range required {
 			if slices.Contains(have, l) {
@@ -145,11 +150,11 @@ func promLabelCause(ctx context.Context, b promBackend, selectors []promSelector
 				Reason:  ReasonLabelNotFound,
 				Summary: fmt.Sprintf("Metric %s has no label %s.", s.name, l),
 				Action:  "Its labels are: " + strings.Join(have[:min(len(have), maxCauseLabels)], ", ") + ".",
-			}
+			}, true
 		}
-		return nil // one lookup only, for the first selector with required labels
+		return nil, true // one lookup only, for the first selector with required labels
 	}
-	return nil
+	return nil, true
 }
 
 // promSelectors returns the named selectors in expr, deduplicated and capped,

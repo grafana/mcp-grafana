@@ -111,6 +111,17 @@ func TestPromEmptyCauseUnknown(t *testing.T) {
 	t.Run("lookup fails", func(t *testing.T) {
 		assert.Nil(t, promEmptyCause(context.Background(), newTestPrometheusBackend(t, failing), `up`, start, causeEnd, 60))
 	})
+	t.Run("label lookup fails", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/api/v1/labels") {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = io.WriteString(w, `{"status":"success","data":["up"]}`)
+		}))
+		defer srv.Close()
+		assert.Nil(t, promEmptyCause(context.Background(), newTestPrometheusBackend(t, srv), `up{job="api"}`, start, causeEnd, 60))
+	})
 	t.Run("no metric name makes no request", func(t *testing.T) {
 		srv, paths := promCauseServer(t, nil)
 		assert.Nil(t, promEmptyCause(context.Background(), newTestPrometheusBackend(t, srv), `{job="api"}`, start, causeEnd, 60))
