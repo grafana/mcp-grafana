@@ -8,16 +8,36 @@ import (
 
 // HintContext provides context for generating helpful hints
 type HintContext struct {
-	DatasourceType string    // "prometheus", "loki", "clickhouse", "cloudwatch"
-	Query          string    // The original query
-	ProcessedQuery string    // The query after macro/variable substitution (if different)
-	StartTime      time.Time // Parsed start time
-	EndTime        time.Time // Parsed end time
-	Error          error     // Any error that occurred (optional)
+	DatasourceType string      // "prometheus", "loki", "clickhouse", "cloudwatch"
+	Query          string      // The original query
+	ProcessedQuery string      // The query after macro/variable substitution (if different)
+	StartTime      time.Time   // Parsed start time
+	EndTime        time.Time   // Parsed end time
+	Error          error       // Any error that occurred (optional)
+	Cause          *EmptyCause // Detected cause; replaces the generic lists (optional)
+}
+
+// Values of EmptyResultHints.Reason. Scripts branch on these, so keep them stable.
+const (
+	ReasonMetricNotFound    = "metric_not_found"
+	ReasonNativeHistogram   = "native_histogram"
+	ReasonLabelNotFound     = "label_not_found"
+	ReasonNoMatchingSeries  = "no_matching_series"
+	ReasonNoMatchingStreams = "no_matching_streams"
+	ReasonLinesFiltered     = "lines_filtered"
+	ReasonNoDataInRange     = "no_data_in_range"
+)
+
+// EmptyCause is a detected reason for an empty result, with one fix.
+type EmptyCause struct {
+	Reason  string
+	Summary string
+	Action  string
 }
 
 // EmptyResultHints contains hints for debugging empty results
 type EmptyResultHints struct {
+	Reason           string     `json:"reason,omitempty"` // set only when the cause was detected
 	Summary          string     `json:"summary"`
 	PossibleCauses   []string   `json:"possibleCauses"`
 	SuggestedActions []string   `json:"suggestedActions"`
@@ -49,6 +69,13 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 	}
 	if debug.ProcessedQuery != "" || debug.TimeRange != "" {
 		hints.Debug = debug
+	}
+
+	if c := ctx.Cause; c != nil {
+		hints.Reason = c.Reason
+		hints.Summary = c.Summary
+		hints.SuggestedActions = []string{c.Action}
+		return hints
 	}
 
 	// Generate datasource-specific hints
