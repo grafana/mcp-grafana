@@ -494,7 +494,10 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 
 **Per-user mode and tool call log:**
 
-- `--require-user-credentials`: Every call must run as its own Grafana user. Falls back to `GRAFANA_REQUIRE_USER_CREDENTIALS`. The server refuses to start if `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, `GRAFANA_USERNAME` or `GRAFANA_PASSWORD` is set, and rejects with `401` any request that carries no credential of its own: `X-Grafana-Service-Account-Token`, basic auth, or a header listed in `GRAFANA_FORWARD_HEADERS`. Streamable-http only. `GRAFANA_EXTRA_HEADERS` is still sent on every request, so keep credentials out of it.
+- `--require-user-credentials`: Every call must run as its own Grafana user. Falls back to `GRAFANA_REQUIRE_USER_CREDENTIALS`. Streamable-http only.
+  - The server refuses to start if `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, `GRAFANA_USERNAME` or `GRAFANA_PASSWORD` is set, or if `GRAFANA_EXTRA_HEADERS` sets `Authorization`, `Cookie`, a Grafana token header or one of `--user-identity-headers`. The error names the variable or header, never the value.
+  - A request is rejected with `401` unless it carries its own credential: `X-Grafana-Service-Account-Token`, basic auth, or a forwarded (listed in `GRAFANA_FORWARD_HEADERS`) `Authorization`, `Cookie` or `--user-identity-headers` header. Other forwarded headers, such as `traceparent`, do not count.
+- `--user-identity-headers`: Comma-separated forwarded headers that identify the user in per-user mode, for example your Grafana auth proxy header `X-WEBAUTH-USER`. Each must also be in `GRAFANA_FORWARD_HEADERS`. Falls back to `GRAFANA_USER_IDENTITY_HEADERS`.
 - `--log-tool-calls`: Log one line at `info` per tool call, including failed ones, with the caller's Grafana identity from `/api/user`. Falls back to `GRAFANA_LOG_TOOL_CALLS`. The identity is cached for 5 minutes on the cached client, so it is per credential and forwarded headers. Tool arguments and credentials are never logged; `datasource_uid` is added when the tool takes a `datasourceUid`.
 
 ```text

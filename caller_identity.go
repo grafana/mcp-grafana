@@ -7,6 +7,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,25 +27,62 @@ var sharedCredentialEnvVars = []string{
 	grafanaPasswordEnvVar,
 }
 
-// SharedCredentialsFromEnv returns the names of the set environment variables
-// that hold a shared Grafana credential. Values are never returned.
-func SharedCredentialsFromEnv() []string {
+// grafanaAuthHeaders authenticate a request to Grafana when they are sent.
+var grafanaAuthHeaders = []string{"Authorization", "Cookie"}
+
+// SharedCredentialsFromEnv names every shared Grafana credential in the
+// environment, including credential headers in GRAFANA_EXTRA_HEADERS. Values are never returned.
+func SharedCredentialsFromEnv(identityHeaders []string) []string {
 	var set []string
 	for _, name := range sharedCredentialEnvVars {
 		if getEnv(name) != "" {
 			set = append(set, name)
 		}
 	}
+	var extra map[string]string
+	if json.Unmarshal([]byte(os.Getenv(grafanaExtraHeadersEnvVar)), &extra) != nil {
+		return set // invalid JSON is ignored at runtime too, so nothing is sent
+	}
+	credential := slices.Concat(grafanaAuthHeaders, identityHeaders,
+		[]string{grafanaServiceAccountTokenHeader, grafanaAPIKeyHeader})
+	for name := range extra {
+		if containsFold(credential, name) {
+			set = append(set, grafanaExtraHeadersEnvVar+"["+name+"]")
+		}
+	}
+	sort.Strings(set)
 	return set
 }
 
-// RequireUserCredentials rejects with 401 any request without its own Grafana
-// credential: token header, basic auth, or a GRAFANA_FORWARD_HEADERS header.
-func RequireUserCredentials(logger *slog.Logger) func(http.Handler) http.Handler {
+// UnforwardedHeaders returns the names not listed in GRAFANA_FORWARD_HEADERS.
+func UnforwardedHeaders(names []string) []string {
+	forwarded := forwardHeaderNamesFromEnv()
+	var missing []string
+	for _, name := range names {
+		if !containsFold(forwarded, name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+func containsFold(list []string, name string) bool {
+	return slices.ContainsFunc(list, func(s string) bool { return strings.EqualFold(s, name) })
+}
+
+// RequireUserCredentials rejects with 401 any request without its own Grafana credential.
+// Forwarded headers count only if they are Authorization, Cookie or in identityHeaders.
+func RequireUserCredentials(identityHeaders []string, logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	forwarded := forwardHeaderNamesFromEnv()
+	credential := slices.Concat(grafanaAuthHeaders, identityHeaders)
+	var forwarded []string
+	for _, name := range forwardHeaderNamesFromEnv() {
+		if containsFold(credential, name) {
+			forwarded = append(forwarded, name)
+		}
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodOptions || hasUserCredentials(r, forwarded) {
@@ -53,6 +94,8 @@ func RequireUserCredentials(logger *slog.Logger) func(http.Handler) http.Handler
 	}
 }
 
+// hasUserCredentials checks the request's own credentials; forwarded holds
+// only the forwarded header names that authenticate to Grafana.
 func hasUserCredentials(r *http.Request, forwarded []string) bool {
 	if apiKeyFromHeaders(r) != "" {
 		return true

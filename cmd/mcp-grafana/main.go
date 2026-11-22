@@ -685,17 +685,20 @@ const (
 	serverAuthTokenEnvVar        = "MCP_GRAFANA_SERVER_TOKEN"
 	requireUserCredentialsEnvVar = "GRAFANA_REQUIRE_USER_CREDENTIALS"
 	logToolCallsEnvVar           = "GRAFANA_LOG_TOOL_CALLS"
+	userIdentityHeadersEnvVar    = "GRAFANA_USER_IDENTITY_HEADERS"
 )
 
 type callerAuthConfig struct {
 	token                  string
 	requireUserCredentials bool
+	userIdentityHeaders    string
 	logToolCalls           bool
 }
 
 func (ca *callerAuthConfig) addFlags() {
 	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
-	flag.BoolVar(&ca.requireUserCredentials, "require-user-credentials", false, "Per-user mode for streamable-http: every call must carry its own Grafana credential (X-Grafana-Service-Account-Token, basic auth, or a header listed in GRAFANA_FORWARD_HEADERS) or it is rejected with 401, and the server refuses to start if a shared credential (GRAFANA_SERVICE_ACCOUNT_TOKEN, GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, GRAFANA_API_KEY, GRAFANA_USERNAME, GRAFANA_PASSWORD) is set. Falls back to "+requireUserCredentialsEnvVar+".")
+	flag.BoolVar(&ca.requireUserCredentials, "require-user-credentials", false, "Per-user mode for streamable-http: every call must carry its own Grafana credential (X-Grafana-Service-Account-Token, basic auth, or a forwarded Authorization, Cookie or --user-identity-headers header) or it is rejected with 401, and the server refuses to start if a shared credential is configured (GRAFANA_SERVICE_ACCOUNT_TOKEN, GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, GRAFANA_API_KEY, GRAFANA_USERNAME, GRAFANA_PASSWORD, or a credential header in GRAFANA_EXTRA_HEADERS). Falls back to "+requireUserCredentialsEnvVar+".")
+	flag.StringVar(&ca.userIdentityHeaders, "user-identity-headers", "", "Comma-separated forwarded headers that identify the Grafana user in --require-user-credentials mode, such as the auth proxy header X-WEBAUTH-USER. Each must also be in GRAFANA_FORWARD_HEADERS. Authorization and Cookie always count. Falls back to "+userIdentityHeadersEnvVar+".")
 	flag.BoolVar(&ca.logToolCalls, "log-tool-calls", false, "Log one info line per tool call with the caller's Grafana user (from /api/user, cached per credential for 5m), tool name, datasource UID, result, status and duration. Tool arguments are never logged. Falls back to "+logToolCallsEnvVar+".")
 }
 
@@ -719,6 +722,9 @@ func (ca *callerAuthConfig) applyEnv(setFlags map[string]bool) error {
 		}
 		*o.dst = value
 	}
+	if v, ok := os.LookupEnv(userIdentityHeadersEnvVar); ok && !setFlags["user-identity-headers"] {
+		ca.userIdentityHeaders = v
+	}
 	return nil
 }
 
@@ -730,8 +736,12 @@ func (ca callerAuthConfig) validateUserMode(transport string) error {
 	if transport != "streamable-http" {
 		return fmt.Errorf("--require-user-credentials needs --transport streamable-http; %s does not pass per-request credentials to tool calls", transport)
 	}
-	if set := mcpgrafana.SharedCredentialsFromEnv(); len(set) > 0 {
+	identity := splitAndTrim(ca.userIdentityHeaders)
+	if set := mcpgrafana.SharedCredentialsFromEnv(identity); len(set) > 0 {
 		return fmt.Errorf("refusing to start: --require-user-credentials is set but shared Grafana credentials are configured (%s); unset them so every call runs as its caller", strings.Join(set, ", "))
+	}
+	if missing := mcpgrafana.UnforwardedHeaders(identity); len(missing) > 0 {
+		return fmt.Errorf("--user-identity-headers lists %s, which GRAFANA_FORWARD_HEADERS does not forward", strings.Join(missing, ", "))
 	}
 	return nil
 }
@@ -1465,7 +1475,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mcpHandler := mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, streamHandler)
 		if ca.requireUserCredentials {
 			// Inside caller auth, which strips its own Authorization header first.
-			mcpHandler = mcpgrafana.RequireUserCredentials(slog.Default())(mcpHandler)
+			mcpHandler = mcpgrafana.RequireUserCredentials(splitAndTrim(ca.userIdentityHeaders), slog.Default())(mcpHandler)
 		}
 		mux := newStreamableHTTPMux(
 			mcpHandler,

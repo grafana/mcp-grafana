@@ -73,10 +73,10 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 
 When `mcp-grafana` sits behind an authenticating proxy that forwards each user's credential, `--require-user-credentials` makes sure no call falls back to a shared service account. It falls back to the `GRAFANA_REQUIRE_USER_CREDENTIALS` environment variable and works with the streamable-http transport only.
 
-- The server refuses to start if `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, `GRAFANA_USERNAME` or `GRAFANA_PASSWORD` is set.
-- A request with no credential of its own (`X-Grafana-Service-Account-Token`, basic auth, or a header listed in `GRAFANA_FORWARD_HEADERS`) is rejected with `401` before any tool runs. When caller authentication is also on, its `Authorization` header is removed first and does not count.
+- The server refuses to start if `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, `GRAFANA_USERNAME` or `GRAFANA_PASSWORD` is set, or if `GRAFANA_EXTRA_HEADERS` sets `Authorization`, `Cookie`, `X-Grafana-Service-Account-Token`, `X-Grafana-API-Key` or one of `--user-identity-headers`. The error names the variable or header, never the value.
+- A request is rejected with `401` before any tool runs unless it carries its own credential: `X-Grafana-Service-Account-Token`, basic auth, or a forwarded `Authorization`, `Cookie` or `--user-identity-headers` header. A forwarded header is one listed in `GRAFANA_FORWARD_HEADERS`. Other forwarded headers, such as `traceparent`, `tracestate` or `baggage`, do not count. When caller authentication is also on, its `Authorization` header is removed first and does not count.
 
-`GRAFANA_EXTRA_HEADERS` is still sent on every request, so keep credentials out of it.
+If Grafana identifies users through auth proxy, name that header with `--user-identity-headers` (or `GRAFANA_USER_IDENTITY_HEADERS`), for example `X-WEBAUTH-USER`. Each listed header must also be in `GRAFANA_FORWARD_HEADERS`, or the server refuses to start.
 
 ## Log tool calls
 

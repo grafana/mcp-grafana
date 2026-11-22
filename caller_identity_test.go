@@ -21,27 +21,54 @@ func clearSharedCredentialEnv(t *testing.T) {
 	for _, name := range sharedCredentialEnvVars {
 		t.Setenv(name, "")
 	}
+	t.Setenv(grafanaExtraHeadersEnvVar, "")
 }
 
 func TestSharedCredentialsFromEnv(t *testing.T) {
 	clearSharedCredentialEnv(t)
-	assert.Empty(t, SharedCredentialsFromEnv())
+	assert.Empty(t, SharedCredentialsFromEnv(nil))
 
 	t.Setenv(grafanaServiceAccountTokenEnvVar, "sa-secret")
 	t.Setenv(grafanaUsernameEnvVar, "admin")
-	assert.Equal(t, []string{grafanaServiceAccountTokenEnvVar, grafanaUsernameEnvVar}, SharedCredentialsFromEnv())
+	assert.Equal(t, []string{grafanaServiceAccountTokenEnvVar, grafanaUsernameEnvVar}, SharedCredentialsFromEnv(nil))
+}
+
+func TestSharedCredentialsFromEnv_ExtraHeaders(t *testing.T) {
+	cases := []struct {
+		name     string
+		extra    string
+		identity []string
+		want     []string
+	}{
+		{name: "authorization", extra: `{"Authorization":"Bearer sa-secret"}`, want: []string{"GRAFANA_EXTRA_HEADERS[Authorization]"}},
+		{name: "cookie any case", extra: `{"cookie":"grafana_session=sa-secret"}`, want: []string{"GRAFANA_EXTRA_HEADERS[cookie]"}},
+		{name: "token header", extra: `{"X-Grafana-Service-Account-Token":"sa-secret"}`, want: []string{"GRAFANA_EXTRA_HEADERS[X-Grafana-Service-Account-Token]"}},
+		{name: "identity header", extra: `{"X-Webauth-User":"admin"}`, identity: []string{"X-WEBAUTH-USER"}, want: []string{"GRAFANA_EXTRA_HEADERS[X-Webauth-User]"}},
+		{name: "non-credential header", extra: `{"X-Scope-OrgID":"tenant"}`},
+		{name: "invalid json is ignored", extra: `not json`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearSharedCredentialEnv(t)
+			t.Setenv(grafanaExtraHeadersEnvVar, tc.extra)
+			got := SharedCredentialsFromEnv(tc.identity)
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, strings.Join(got, ","), "sa-secret")
+		})
+	}
+}
+
+func TestUnforwardedHeaders(t *testing.T) {
+	t.Setenv(grafanaForwardHeadersEnvVar, "Authorization,x-webauth-user")
+	assert.Empty(t, UnforwardedHeaders([]string{"X-WEBAUTH-USER"}))
+	assert.Equal(t, []string{"X-Remote-User"}, UnforwardedHeaders([]string{"X-Remote-User"}))
 }
 
 func TestRequireUserCredentials(t *testing.T) {
-	t.Setenv(grafanaForwardHeadersEnvVar, "X-Webauth-User")
-	reached := false
-	handler := RequireUserCredentials(slog.Default())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		reached = true
-		w.WriteHeader(http.StatusOK)
-	}))
-
 	cases := []struct {
 		name       string
+		forward    string
+		identity   []string
 		method     string
 		header     http.Header
 		basicAuth  bool
@@ -49,15 +76,25 @@ func TestRequireUserCredentials(t *testing.T) {
 	}{
 		{name: "no credential", header: http.Header{}, wantStatus: http.StatusUnauthorized},
 		{name: "unlisted header", header: http.Header{"X-Other": {"alice"}}, wantStatus: http.StatusUnauthorized},
+		{name: "forwarded traceparent only", forward: "traceparent,tracestate,baggage", header: http.Header{"Traceparent": {"00-abc-def-01"}, "Baggage": {"k=v"}}, wantStatus: http.StatusUnauthorized},
+		{name: "forwarded non-auth header", forward: "X-Webauth-User", header: http.Header{"X-Webauth-User": {"alice"}}, wantStatus: http.StatusUnauthorized},
+		{name: "bearer not forwarded", header: http.Header{"Authorization": {"Bearer jwt"}}, wantStatus: http.StatusUnauthorized},
+		{name: "forwarded authorization", forward: "traceparent,Authorization", header: http.Header{"Authorization": {"Bearer jwt"}}, wantStatus: http.StatusOK},
+		{name: "forwarded cookie", forward: "Cookie", header: http.Header{"Cookie": {"grafana_session=x"}}, wantStatus: http.StatusOK},
+		{name: "opted-in identity header", forward: "X-Webauth-User", identity: []string{"X-WEBAUTH-USER"}, header: http.Header{"X-Webauth-User": {"alice"}}, wantStatus: http.StatusOK},
 		{name: "token header", header: http.Header{grafanaServiceAccountTokenHeader: {"t"}}, wantStatus: http.StatusOK},
 		{name: "deprecated api key header", header: http.Header{grafanaAPIKeyHeader: {"t"}}, wantStatus: http.StatusOK},
-		{name: "forwarded header", header: http.Header{"X-Webauth-User": {"alice"}}, wantStatus: http.StatusOK},
 		{name: "basic auth", header: http.Header{}, basicAuth: true, wantStatus: http.StatusOK},
 		{name: "preflight", method: http.MethodOptions, header: http.Header{}, wantStatus: http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			reached = false
+			t.Setenv(grafanaForwardHeadersEnvVar, tc.forward)
+			reached := false
+			handler := RequireUserCredentials(tc.identity, slog.Default())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			}))
 			method := tc.method
 			if method == "" {
 				method = http.MethodPost
