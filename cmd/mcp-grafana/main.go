@@ -73,6 +73,7 @@ func (dt *disabledTools) disabledByFlag() map[string]bool {
 		"alerting":      dt.alerting,
 		"dashboard":     dt.dashboard,
 		"folder":        dt.folder,
+		"notebooks":     dt.notebooks,
 		"oncall":        dt.oncall,
 		"asserts":       dt.asserts,
 		"admin":         dt.admin,
@@ -141,7 +142,7 @@ type disabledTools struct {
 
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
-	dashboard, folder, oncall, asserts, admin,
+	dashboard, folder, notebooks, oncall, asserts, admin,
 	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, xray, cloudlogging, azuremonitor, write, query, enableQuery,
 	snapshot, examples, sql, graphite, dsquery,
 	runpanelquery, plugin, api, config, provisioning,
@@ -203,6 +204,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
+	flag.BoolVar(&dt.notebooks, "disable-notebooks", false, "Disable notebook tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
 	flag.BoolVar(&dt.asserts, "disable-asserts", false, "Disable asserts tools")
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
