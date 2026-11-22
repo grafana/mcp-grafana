@@ -1307,6 +1307,9 @@ type GrafanaClient struct {
 	// settingsConfig is the configuration used to fetch /api/frontend/settings
 	// lazily, on the first read of the public URL or version.
 	settingsConfig *GrafanaConfig
+
+	// identity caches /api/user for the tool call log; nil means no cache.
+	identity *identityCache
 }
 
 // loadSharedSettings returns the org-independent frontend settings for this
@@ -1865,6 +1868,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	gc := &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
 		settingsConfig: fetchCfg,
+		identity:       &identityCache{},
 	}
 	// Fill the fields from the cache only; a miss is fetched on first use.
 	if cached, ok := sharedSettingsCache.Load(grafanaURL); ok {

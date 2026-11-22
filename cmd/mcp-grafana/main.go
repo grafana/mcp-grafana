@@ -681,14 +681,67 @@ func (hsc *httpSecurityConfig) addFlags() {
 	flag.StringVar(&hsc.allowedOrigins, "allowed-origins", "", "Comma-separated allowlist of Origin header values for the HTTP/SSE transports. Empty (the default) rejects any request that carries an Origin header — appropriate for non-browser MCP clients. Use \"*\" to disable validation.")
 }
 
-const serverAuthTokenEnvVar = "MCP_GRAFANA_SERVER_TOKEN"
+const (
+	serverAuthTokenEnvVar        = "MCP_GRAFANA_SERVER_TOKEN"
+	requireUserCredentialsEnvVar = "GRAFANA_REQUIRE_USER_CREDENTIALS"
+	logToolCallsEnvVar           = "GRAFANA_LOG_TOOL_CALLS"
+)
 
 type callerAuthConfig struct {
-	token string
+	token                  string
+	requireUserCredentials bool
+	logToolCalls           bool
 }
 
 func (ca *callerAuthConfig) addFlags() {
 	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
+	flag.BoolVar(&ca.requireUserCredentials, "require-user-credentials", false, "Per-user mode for streamable-http: every call must carry its own Grafana credential (X-Grafana-Service-Account-Token, basic auth, or a header listed in GRAFANA_FORWARD_HEADERS) or it is rejected with 401, and the server refuses to start if a shared credential (GRAFANA_SERVICE_ACCOUNT_TOKEN, GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, GRAFANA_API_KEY, GRAFANA_USERNAME, GRAFANA_PASSWORD) is set. Falls back to "+requireUserCredentialsEnvVar+".")
+	flag.BoolVar(&ca.logToolCalls, "log-tool-calls", false, "Log one info line per tool call with the caller's Grafana user (from /api/user, cached per credential for 5m), tool name, datasource UID, result, status and duration. Tool arguments are never logged. Falls back to "+logToolCallsEnvVar+".")
+}
+
+// applyEnv fills the boolean options from their environment variables when
+// the flag was not set on the command line.
+func (ca *callerAuthConfig) applyEnv(setFlags map[string]bool) error {
+	for _, o := range []struct {
+		flag, env string
+		dst       *bool
+	}{
+		{"require-user-credentials", requireUserCredentialsEnvVar, &ca.requireUserCredentials},
+		{"log-tool-calls", logToolCallsEnvVar, &ca.logToolCalls},
+	} {
+		raw, ok := os.LookupEnv(o.env)
+		if setFlags[o.flag] || !ok {
+			continue
+		}
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("invalid %s: %w", o.env, err)
+		}
+		*o.dst = value
+	}
+	return nil
+}
+
+// validateUserMode enforces --require-user-credentials at startup.
+func (ca callerAuthConfig) validateUserMode(transport string) error {
+	if !ca.requireUserCredentials {
+		return nil
+	}
+	if transport != "streamable-http" {
+		return fmt.Errorf("--require-user-credentials needs --transport streamable-http; %s does not pass per-request credentials to tool calls", transport)
+	}
+	if set := mcpgrafana.SharedCredentialsFromEnv(); len(set) > 0 {
+		return fmt.Errorf("refusing to start: --require-user-credentials is set but shared Grafana credentials are configured (%s); unset them so every call runs as its caller", strings.Join(set, ", "))
+	}
+	return nil
+}
+
+// addToolCallLog registers the tool call log as the innermost middleware, so
+// it sees the per-call config and client. Call it before any other middleware.
+func addToolCallLog(s *mcp.Server, ca callerAuthConfig) {
+	if ca.logToolCalls {
+		s.AddReceivingMiddleware(mcpgrafana.ToolCallLogMiddleware(slog.Default()))
+	}
 }
 
 func (ca callerAuthConfig) resolveToken() string {
@@ -1206,6 +1259,9 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	if err := validateGrafanaURLOverridePolicy(transport, gc); err != nil {
 		return err
 	}
+	if err := ca.validateUserMode(transport); err != nil {
+		return err
+	}
 
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
@@ -1323,6 +1379,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "stdio":
 		cf := mcpgrafana.ComposedStdioContextFunc(gc)
 		ctx = cf(ctx)
+		addToolCallLog(s, ca)
 		if mcpgrafana.DynamicMultiOrgEnabled {
 			s.AddReceivingMiddleware(mcpgrafana.OrgIDOverrideMiddleware())
 		}
@@ -1354,6 +1411,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		// wraps the previous handler, so the last-registered middleware is outermost
 		// (runs first). OrgID needs to run after GrafanaContext has populated the
 		// config, so it must be innermost (registered first).
+		addToolCallLog(s, ca)
 		if mcpgrafana.DynamicMultiOrgEnabled {
 			s.AddReceivingMiddleware(mcpgrafana.OrgIDOverrideMiddleware())
 		}
@@ -1388,6 +1446,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 
 	case "streamable-http":
 		httpFn := mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)
+		addToolCallLog(s, ca)
 		if mcpgrafana.DynamicMultiOrgEnabled {
 			s.AddReceivingMiddleware(mcpgrafana.OrgIDOverrideMiddleware())
 		}
@@ -1403,8 +1462,13 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		// --base-path is documented for this transport too, so fold it into the
 		// endpoint the server listens on.
 		mcpEndpoint := streamableEndpointPath(basePath, endpointPath)
+		mcpHandler := mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, streamHandler)
+		if ca.requireUserCredentials {
+			// Inside caller auth, which strips its own Authorization header first.
+			mcpHandler = mcpgrafana.RequireUserCredentials(slog.Default())(mcpHandler)
+		}
 		mux := newStreamableHTTPMux(
-			mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, streamHandler),
+			mcpHandler,
 			mcpEndpoint,
 			callerToken,
 			hsc.corsOrigins(),
@@ -1529,6 +1593,10 @@ func main() {
 		os.Exit(2)
 	}
 	if err := gc.applyRedirectEnv(setFlags); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if err := ca.applyEnv(setFlags); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}

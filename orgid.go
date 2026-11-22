@@ -219,7 +219,17 @@ func grafanaGetJSON(ctx context.Context, cfg *GrafanaConfig, path string, out an
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
+		return &grafanaStatusError{path: path, status: resp.StatusCode}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// grafanaStatusError is a non-200 response from grafanaGetJSON.
+type grafanaStatusError struct {
+	path   string
+	status int
+}
+
+func (e *grafanaStatusError) Error() string {
+	return fmt.Sprintf("GET %s: HTTP %d", e.path, e.status)
 }

@@ -69,6 +69,29 @@ Bearer authentication only protects the token in transit if the connection is en
 
 When caller authentication is enabled, the `Authorization` header is reserved for the caller token and is stripped after validation, so it is never forwarded to Grafana. Setting `--server-auth-token` together with `GRAFANA_FORWARD_HEADERS=Authorization` is contradictory and the server refuses to start; remove `Authorization` from `GRAFANA_FORWARD_HEADERS`, or unset the caller token to run in proxy-forwarding mode.
 
+## Run in per-user mode
+
+When `mcp-grafana` sits behind an authenticating proxy that forwards each user's credential, `--require-user-credentials` makes sure no call falls back to a shared service account. It falls back to the `GRAFANA_REQUIRE_USER_CREDENTIALS` environment variable and works with the streamable-http transport only.
+
+- The server refuses to start if `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, `GRAFANA_USERNAME` or `GRAFANA_PASSWORD` is set.
+- A request with no credential of its own (`X-Grafana-Service-Account-Token`, basic auth, or a header listed in `GRAFANA_FORWARD_HEADERS`) is rejected with `401` before any tool runs. When caller authentication is also on, its `Authorization` header is removed first and does not count.
+
+`GRAFANA_EXTRA_HEADERS` is still sent on every request, so keep credentials out of it.
+
+## Log tool calls
+
+`--log-tool-calls` (or `GRAFANA_LOG_TOOL_CALLS`) logs one line at the `info` level per tool call, including failed calls:
+
+```text
+level=INFO msg="Tool call" tool=query_prometheus grafana_user=jane user_id=42 org_id=1 result=ok status=200 duration=84ms datasource_uid=prom-main
+```
+
+- `grafana_user` and `user_id` come from Grafana's `/api/user` for the caller's credential. The result is cached for 5 minutes on the cached Grafana client, which is keyed by credential and forwarded headers, so callers that differ only by a forwarded header get their own identity. Failed lookups are not cached.
+- `status` is the HTTP status of that lookup: `401` with an empty `grafana_user` when Grafana rejects the caller, `0` when Grafana could not be reached.
+- `result` is `ok` or `error` for the tool call itself.
+- `datasource_uid` is added when the tool takes a `datasourceUid` argument. No other argument is logged, and neither are credentials or error messages.
+- `session` is added when the transport has a session ID.
+
 ## Select a Grafana URL per request
 
 {{< admonition type="warning" >}}

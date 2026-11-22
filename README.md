@@ -492,6 +492,17 @@ Optionally require MCP clients to authenticate *to the server*. This is separate
 
 Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
 
+**Per-user mode and tool call log:**
+
+- `--require-user-credentials`: Every call must run as its own Grafana user. Falls back to `GRAFANA_REQUIRE_USER_CREDENTIALS`. The server refuses to start if `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, `GRAFANA_USERNAME` or `GRAFANA_PASSWORD` is set, and rejects with `401` any request that carries no credential of its own: `X-Grafana-Service-Account-Token`, basic auth, or a header listed in `GRAFANA_FORWARD_HEADERS`. Streamable-http only. `GRAFANA_EXTRA_HEADERS` is still sent on every request, so keep credentials out of it.
+- `--log-tool-calls`: Log one line at `info` per tool call, including failed ones, with the caller's Grafana identity from `/api/user`. Falls back to `GRAFANA_LOG_TOOL_CALLS`. The identity is cached for 5 minutes on the cached client, so it is per credential and forwarded headers. Tool arguments and credentials are never logged; `datasource_uid` is added when the tool takes a `datasourceUid`.
+
+```text
+level=INFO msg="Tool call" tool=query_prometheus grafana_user=jane user_id=42 org_id=1 result=ok status=200 duration=84ms datasource_uid=prom-main
+```
+
+`status` is the HTTP status of the `/api/user` lookup (`401` with an empty `grafana_user` when Grafana rejects the caller, `0` when Grafana could not be reached). `result` is `ok` or `error` for the tool call itself.
+
 **Grafana URL overrides (streamable-http only):**
 
 > [!WARNING]
