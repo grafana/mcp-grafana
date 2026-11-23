@@ -72,6 +72,8 @@ func readsVizRenderer(sources []mcpgrafana.Tool) bool {
 	})
 }
 
+const appToolName = "render_grafana_app"
+
 func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {
 	var names []any
 	var schemas []*jsonschema.Schema
@@ -99,7 +101,7 @@ func newAppTool(sources ...mcpgrafana.Tool) mcpgrafana.Tool {
 		}
 	}
 	tool := mcpgrafana.MustTool(
-		"render_grafana_app",
+		appToolName,
 		"Run a query tool and display its result in the interactive Grafana App. Use for an explicit visualization request; call the query tool directly for analysis. Supply the selected tool's inputs in arguments. The view is derived from the returned data.",
 		func(ctx context.Context, args renderAppParams) (*mcp.CallToolResult, error) {
 			for _, source := range sources {
