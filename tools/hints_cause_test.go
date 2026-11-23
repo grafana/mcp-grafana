@@ -79,6 +79,8 @@ func TestPromEmptyCause(t *testing.T) {
 		{"at modifier", `up @ 1770000000`, ReasonShifted, nil, 0},
 		{"at start()", `up @ start()`, ReasonShifted, nil, 0},
 		{"subquery offset", `max_over_time(up[1h:1m] offset 1h)`, ReasonShifted, nil, 0},
+		{"duration expression offset", `up offset (1h+5m)`, ReasonShifted, nil, 0},
+		{"duration expression subquery offset", `max_over_time(up[1h:1m] offset (1h*2))`, ReasonShifted, nil, 0},
 		{"zero offset is not shifted", `nope_metric offset 0s`, ReasonMetricNotFound, nil, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
