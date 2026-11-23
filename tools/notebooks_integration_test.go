@@ -78,11 +78,11 @@ func TestNotebookTools(t *testing.T) {
 	})
 
 	t.Run("list includes the notebook", func(t *testing.T) {
-		summaries, err := listNotebooks(ctx, ListNotebooksParams{})
+		result, err := listNotebooks(ctx, ListNotebooksParams{})
 		require.NoError(t, err)
 
 		found := false
-		for _, summary := range summaries {
+		for _, summary := range result.Notebooks {
 			if summary.UID == uid {
 				found = true
 				assert.Equal(t, title, summary.Title)

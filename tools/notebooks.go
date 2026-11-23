@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,8 +53,9 @@ func notebooksCollectionURL(ctx context.Context) (string, error) {
 
 // notebooksRequest performs a request against the notebooks collection, with
 // path appended to it (empty for the collection itself), and returns the body of
-// a 2xx response.
-func notebooksRequest(ctx context.Context, method, path string, query url.Values, body any) ([]byte, error) {
+// a 2xx response. action is the legacy notebooks:* permission this particular
+// call needs, named only in a 403's error message.
+func notebooksRequest(ctx context.Context, method, path string, query url.Values, body any, action string) ([]byte, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	collection, err := notebooksCollectionURL(ctx)
 	if err != nil {
@@ -106,14 +108,14 @@ func notebooksRequest(ctx context.Context, method, path string, query url.Values
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, notebooksAPIError(method, resp.StatusCode, respBody)
+		return nil, notebooksAPIError(method, resp.StatusCode, respBody, action)
 	}
 	return respBody, nil
 }
 
 // notebooksAPIError turns a non-2xx response into an error, adding the two
 // things most likely to be wrong when calling this API.
-func notebooksAPIError(method string, statusCode int, body []byte) error {
+func notebooksAPIError(method string, statusCode int, body []byte, action string) error {
 	detail := strings.TrimSpace(string(body))
 	if detail == "" {
 		detail = http.StatusText(statusCode)
@@ -124,7 +126,7 @@ func notebooksAPIError(method string, statusCode int, body []byte) error {
 		if strings.Contains(detail, "notebooks feature is not enabled") {
 			return fmt.Errorf("%s notebooks: HTTP %d - %s (enable the dashboard.notebooks feature toggle in Grafana)", method, statusCode, detail)
 		}
-		return fmt.Errorf("%s notebooks: HTTP %d - %s (the caller needs the notebooks:read, notebooks:create, notebooks:write and notebooks:delete actions, or the notebooks:create/write/delete one this tool needs)", method, statusCode, detail)
+		return fmt.Errorf("%s notebooks: HTTP %d - %s (the caller needs the %s action)", method, statusCode, detail, action)
 	case http.StatusNotFound:
 		return fmt.Errorf("%s notebooks: HTTP %d - %s (check the UID, and that the Grafana version serves the notebooks API)", method, statusCode, detail)
 	default:
@@ -150,8 +152,22 @@ type notebookMetadata struct {
 	Annotations       map[string]string `json:"annotations,omitempty"`
 }
 
+// notebookList is the collection response. Metadata.Continue is Kubernetes'
+// pagination token: non-empty when more notebooks exist beyond this page.
 type notebookList struct {
-	Items []notebookResource `json:"items"`
+	Items    []notebookResource `json:"items"`
+	Metadata struct {
+		Continue string `json:"continue"`
+	} `json:"metadata"`
+}
+
+// listNotebooksResult reports whether the list was truncated, since
+// notebookList.Metadata.Continue is not itself usable for a further request
+// (list_notebooks takes no page cursor), so a caller at least needs to know
+// more notebooks exist.
+type listNotebooksResult struct {
+	Notebooks []notebookSummary `json:"notebooks"`
+	Truncated bool              `json:"truncated,omitempty"`
 }
 
 // notebookSummary is the compact form returned by the list and search tools, so
@@ -238,20 +254,20 @@ type ListNotebooksParams struct {
 	Limit int `json:"limit,omitempty" jsonschema:"description=Maximum number of notebooks to return. Omit to use the Grafana default."`
 }
 
-func listNotebooks(ctx context.Context, args ListNotebooksParams) ([]notebookSummary, error) {
+func listNotebooks(ctx context.Context, args ListNotebooksParams) (listNotebooksResult, error) {
 	query := url.Values{}
 	if args.Limit > 0 {
 		query.Set("limit", strconv.Itoa(args.Limit))
 	}
 
-	body, err := notebooksRequest(ctx, http.MethodGet, "", query, nil)
+	body, err := notebooksRequest(ctx, http.MethodGet, "", query, nil, "notebooks:read")
 	if err != nil {
-		return nil, err
+		return listNotebooksResult{}, err
 	}
 
 	var list notebookList
 	if err := json.Unmarshal(body, &list); err != nil {
-		return nil, fmt.Errorf("decode notebook list: %w", err)
+		return listNotebooksResult{}, fmt.Errorf("decode notebook list: %w", err)
 	}
 
 	baseURL := notebookPageBaseURL(ctx)
@@ -259,12 +275,13 @@ func listNotebooks(ctx context.Context, args ListNotebooksParams) ([]notebookSum
 	for _, nb := range list.Items {
 		summaries = append(summaries, summarizeNotebook(baseURL, nb))
 	}
-	return summaries, nil
+	return listNotebooksResult{Notebooks: summaries, Truncated: list.Metadata.Continue != ""}, nil
 }
 
 var ListNotebooks = mcpgrafana.MustTool(
 	"list_notebooks",
 	"List Grafana notebooks with their UID, title, tags, cell count and URL. Returns compact summaries without the full spec. "+
+		"truncated is true when more notebooks exist than were returned in this page. "+
 		"Requires the dashboard.notebooks feature toggle to be enabled in Grafana.",
 	listNotebooks,
 	mcpgrafana.WithTitleAnnotation("List notebooks"),
@@ -313,7 +330,7 @@ func searchNotebooks(ctx context.Context, args SearchNotebooksParams) ([]noteboo
 		searchQuery["limit"] = args.Limit
 	}
 
-	body, err := notebooksRequest(ctx, http.MethodPost, "search", nil, searchQuery)
+	body, err := notebooksRequest(ctx, http.MethodPost, "search", nil, searchQuery, "notebooks:read")
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +374,7 @@ func getNotebookByUID(ctx context.Context, args GetNotebookByUIDParams) (json.Ra
 		return nil, fmt.Errorf("uid is required")
 	}
 
-	body, err := notebooksRequest(ctx, http.MethodGet, args.UID, nil, nil)
+	body, err := notebooksRequest(ctx, http.MethodGet, args.UID, nil, nil, "notebooks:read")
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +445,7 @@ func (c notebookCell) content() (map[string]any, error) {
 	switch strings.ToLower(c.Kind) {
 	case "markdown":
 		if strings.TrimSpace(c.Text) == "" {
-			return nil, fmt.Errorf("markdown cell %q has no text", c.Kind)
+			return nil, fmt.Errorf("markdown cell has no text")
 		}
 		return map[string]any{"kind": "Markdown", "spec": map[string]any{"text": c.Text}}, nil
 	case "code":
@@ -515,7 +532,7 @@ func createNotebook(ctx context.Context, args CreateNotebookParams) (json.RawMes
 		"kind":       notebooksKind,
 		"metadata":   map[string]any{"generateName": "notebook-"},
 		"spec":       spec,
-	})
+	}, "notebooks:create")
 	if err != nil {
 		return nil, err
 	}
@@ -550,44 +567,62 @@ func updateNotebook(ctx context.Context, args UpdateNotebookParams) (json.RawMes
 	if args.Spec == nil {
 		return nil, fmt.Errorf("spec is required")
 	}
+	if err := validateNotebookSpec(args.Spec); err != nil {
+		return nil, err
+	}
 
 	// The API replaces the whole resource, so read the current one and send its
 	// metadata back untouched: that keeps labels and annotations (a notebook's
 	// tags aside, this is where Grafana records who created it) and its resource
 	// version, which lets Grafana reject a write made against a stale read.
-	current, err := notebooksRequest(ctx, http.MethodGet, args.UID, nil, nil)
+	current, err := notebooksRequest(ctx, http.MethodGet, args.UID, nil, nil, "notebooks:read")
 	if err != nil {
 		return nil, err
 	}
 
-	var existing struct {
-		Metadata notebookMetadata `json:"metadata"`
-		Raw      json.RawMessage  `json:"-"`
-	}
-	var raw struct {
+	var resource struct {
 		Metadata json.RawMessage `json:"metadata"`
 	}
-	if err := json.Unmarshal(current, &raw); err != nil {
+	if err := json.Unmarshal(current, &resource); err != nil {
 		return nil, fmt.Errorf("decode notebook %s: %w", args.UID, err)
 	}
-	if err := json.Unmarshal(current, &existing); err != nil {
-		return nil, fmt.Errorf("decode notebook %s: %w", args.UID, err)
+	var metadata notebookMetadata
+	if err := json.Unmarshal(resource.Metadata, &metadata); err != nil {
+		return nil, fmt.Errorf("decode notebook %s metadata: %w", args.UID, err)
 	}
-	if args.ExpectedResourceVersion != "" && args.ExpectedResourceVersion != existing.Metadata.ResourceVersion {
+	if args.ExpectedResourceVersion != "" && args.ExpectedResourceVersion != metadata.ResourceVersion {
 		return nil, fmt.Errorf("notebook %s changed since it was read: at resourceVersion %s, expected %s",
-			args.UID, existing.Metadata.ResourceVersion, args.ExpectedResourceVersion)
+			args.UID, metadata.ResourceVersion, args.ExpectedResourceVersion)
 	}
 
 	body, err := notebooksRequest(ctx, http.MethodPut, args.UID, nil, map[string]any{
 		"apiVersion": notebooksAPIVersion,
 		"kind":       notebooksKind,
-		"metadata":   raw.Metadata,
+		"metadata":   resource.Metadata,
 		"spec":       args.Spec,
-	})
+	}, "notebooks:write")
 	if err != nil {
 		return nil, err
 	}
 	return body, nil
+}
+
+// validateNotebookSpec rejects a spec before it reaches the PUT, which would
+// otherwise replace the whole resource with whatever was sent. An empty spec or
+// one whose layout isn't a NotebookLayout is never a notebook the UI or these
+// tools would have produced.
+func validateNotebookSpec(spec map[string]any) error {
+	if len(spec) == 0 {
+		return fmt.Errorf("spec must not be empty")
+	}
+	layout, ok := spec["layout"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("spec.layout is required and must be an object")
+	}
+	if kind, _ := layout["kind"].(string); kind != notebookLayoutKind {
+		return fmt.Errorf("spec.layout.kind must be %q, got %q", notebookLayoutKind, layout["kind"])
+	}
+	return nil
 }
 
 var UpdateNotebook = mcpgrafana.MustTool(
@@ -615,7 +650,7 @@ func deleteNotebook(ctx context.Context, args DeleteNotebookParams) (string, err
 		return "", fmt.Errorf("uid is required")
 	}
 
-	if _, err := notebooksRequest(ctx, http.MethodDelete, args.UID, nil, nil); err != nil {
+	if _, err := notebooksRequest(ctx, http.MethodDelete, args.UID, nil, nil, "notebooks:delete"); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Notebook %s deleted successfully", args.UID), nil
@@ -713,7 +748,7 @@ func renderNotebookPDF(ctx context.Context, args RenderNotebookPDFParams) (*mcp.
 	// cannot find is not a 404 on that route: it renders an error page into the
 	// PDF and still answers 200. Resolve the notebook through the API first so a
 	// bad UID fails loudly, and to have its title for the result summary.
-	current, err := notebooksRequest(ctx, http.MethodGet, args.UID, nil, nil)
+	current, err := notebooksRequest(ctx, http.MethodGet, args.UID, nil, nil, "notebooks:read")
 	if err != nil {
 		return nil, err
 	}
@@ -754,7 +789,10 @@ func renderNotebookPDF(ctx context.Context, args RenderNotebookPDFParams) (*mcp.
 	if resp.StatusCode != http.StatusOK {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("image renderer not available: HTTP 404 - %s (ensure the Grafana Image Renderer service is installed and configured)", strings.TrimSpace(string(detail)))
+			// The notebook itself was already resolved above, so this 404 is the
+			// /render route itself: either no Image Renderer is configured, or this
+			// Grafana version doesn't serve notebook rendering at all.
+			return nil, fmt.Errorf("image renderer not available: HTTP 404 - %s (ensure the Grafana Image Renderer service is installed and configured, and that this Grafana version serves the notebook render route)", strings.TrimSpace(string(detail)))
 		}
 		return nil, fmt.Errorf("render notebook %s: HTTP %d - %s", args.UID, resp.StatusCode, strings.TrimSpace(string(detail)))
 	}
@@ -770,6 +808,9 @@ func renderNotebookPDF(ctx context.Context, args RenderNotebookPDFParams) (*mcp.
 
 	pdf, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
+		if errors.Is(err, errResponseBodyTooLarge) {
+			err = fmt.Errorf("%w of %d bytes; try a shorter time range or fewer cells", errResponseBodyTooLarge, defaultResponseLimitBytes)
+		}
 		return nil, fmt.Errorf("read notebook %s PDF: %w", args.UID, err)
 	}
 

@@ -80,6 +80,16 @@ func notebooksTestResource(uid, title string, tags []string, cells int) map[stri
 	}
 }
 
+// validNotebookSpec is the smallest spec validateNotebookSpec accepts: a title
+// and a NotebookLayout layout, which is what every update_notebook test below
+// sends now that the tool rejects a spec without one.
+func validNotebookSpec(title string) map[string]any {
+	return map[string]any{
+		"title":  title,
+		"layout": map[string]any{"kind": notebookLayoutKind},
+	}
+}
+
 func TestListNotebooks(t *testing.T) {
 	ts := notebooksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -96,9 +106,11 @@ func TestListNotebooks(t *testing.T) {
 		}))
 	})
 
-	summaries, err := listNotebooks(notebooksTestContext(ts), ListNotebooksParams{Limit: 50})
+	result, err := listNotebooks(notebooksTestContext(ts), ListNotebooksParams{Limit: 50})
 	require.NoError(t, err)
+	summaries := result.Notebooks
 	require.Len(t, summaries, 2)
+	assert.False(t, result.Truncated, "the response carried no continue token")
 
 	assert.Equal(t, "nb-1", summaries[0].UID)
 	assert.Equal(t, "CPU saturation", summaries[0].Title)
@@ -111,14 +123,35 @@ func TestListNotebooks(t *testing.T) {
 	assert.Equal(t, 0, *summaries[1].CellCount)
 }
 
+// TestListNotebooks_Truncated covers the pagination half of the bug: Grafana's
+// list response carries a metadata.continue token when more notebooks exist
+// than one page returned, and list_notebooks has no cursor argument to fetch
+// the rest - so a caller needs at least a signal that the list is incomplete,
+// rather than silently believing it is everything.
+func TestListNotebooks_Truncated(t *testing.T) {
+	ts := notebooksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"kind":     "NotebookList",
+			"items":    []any{notebooksTestResource("nb-1", "CPU saturation", nil, 0)},
+			"metadata": map[string]any{"continue": "eyJvZmZzZXQiOjEwfQ"},
+		}))
+	})
+
+	result, err := listNotebooks(notebooksTestContext(ts), ListNotebooksParams{})
+	require.NoError(t, err)
+	assert.True(t, result.Truncated, "a continue token means more notebooks exist than this page returned")
+}
+
 func TestListNotebooks_Empty(t *testing.T) {
 	ts := notebooksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"kind": "NotebookList", "items": []any{}}))
 	})
 
-	summaries, err := listNotebooks(notebooksTestContext(ts), ListNotebooksParams{})
+	result, err := listNotebooks(notebooksTestContext(ts), ListNotebooksParams{})
 	require.NoError(t, err)
+	summaries := result.Notebooks
 	require.NotNil(t, summaries)
 	assert.Empty(t, summaries)
 }
@@ -171,8 +204,8 @@ func TestNotebookLinksUsePublicURL(t *testing.T) {
 
 	listed, err := listNotebooks(ctx, ListNotebooksParams{})
 	require.NoError(t, err)
-	require.Len(t, listed, 1)
-	assert.Equal(t, publicURL+"/notebooks/nb-1", listed[0].URL,
+	require.Len(t, listed.Notebooks, 1)
+	assert.Equal(t, publicURL+"/notebooks/nb-1", listed.Notebooks[0].URL,
 		"list links must use appUrl, not the internal URL the MCP server talks to")
 
 	found, err := searchNotebooks(ctx, SearchNotebooksParams{Query: "saturation"})
@@ -216,8 +249,8 @@ func TestNotebookLinksOmittedForDifferentViewerOrg(t *testing.T) {
 
 	listed, err := listNotebooks(ctx, ListNotebooksParams{})
 	require.NoError(t, err)
-	require.Len(t, listed, 1)
-	assert.Empty(t, listed[0].URL, "a link that would open in the wrong org must be omitted, not point at it")
+	require.Len(t, listed.Notebooks, 1)
+	assert.Empty(t, listed.Notebooks[0].URL, "a link that would open in the wrong org must be omitted, not point at it")
 
 	found, err := searchNotebooks(ctx, SearchNotebooksParams{Query: "saturation"})
 	require.NoError(t, err)
@@ -469,7 +502,7 @@ func TestUpdateNotebook_PreservesMetadata(t *testing.T) {
 
 	body, err := updateNotebook(notebooksTestContext(ts), UpdateNotebookParams{
 		UID:  "nb-1",
-		Spec: map[string]any{"title": "New title"},
+		Spec: validNotebookSpec("New title"),
 	})
 	require.NoError(t, err)
 
@@ -493,7 +526,7 @@ func TestUpdateNotebook_RejectsStaleResourceVersion(t *testing.T) {
 
 	_, err := updateNotebook(notebooksTestContext(ts), UpdateNotebookParams{
 		UID:                     "nb-1",
-		Spec:                    map[string]any{"title": "New title"},
+		Spec:                    validNotebookSpec("New title"),
 		ExpectedResourceVersion: "7",
 	})
 	require.ErrorContains(t, err, "changed since it was read")
@@ -517,7 +550,7 @@ func TestUpdateNotebook_AcceptsMatchingResourceVersion(t *testing.T) {
 
 	body, err := updateNotebook(notebooksTestContext(ts), UpdateNotebookParams{
 		UID:                     "nb-1",
-		Spec:                    map[string]any{"title": "New title"},
+		Spec:                    validNotebookSpec("New title"),
 		ExpectedResourceVersion: "42",
 	})
 	require.NoError(t, err)
@@ -531,6 +564,42 @@ func TestUpdateNotebook_AcceptsMatchingResourceVersion(t *testing.T) {
 func TestUpdateNotebook_RequiresSpec(t *testing.T) {
 	_, err := updateNotebook(context.Background(), UpdateNotebookParams{UID: "nb-1"})
 	require.ErrorContains(t, err, "spec is required")
+}
+
+// A spec is only ever meant to replace an existing notebook's spec, so an
+// empty one or one with a layout kind other than NotebookLayout is never
+// something the UI or these tools would have produced - and reaches the PUT,
+// which replaces the whole resource, before this check existed.
+func TestUpdateNotebook_RejectsInvalidSpec(t *testing.T) {
+	cases := []struct {
+		name string
+		spec map[string]any
+		want string
+	}{
+		{name: "empty spec", spec: map[string]any{}, want: "spec must not be empty"},
+		{name: "no layout", spec: map[string]any{"title": "x"}, want: "spec.layout is required"},
+		{
+			name: "wrong layout kind",
+			spec: map[string]any{"title": "x", "layout": map[string]any{"kind": "SomeOtherLayout"}},
+			want: `spec.layout.kind must be "NotebookLayout", got "SomeOtherLayout"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var wrote bool
+			ts := notebooksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut {
+					wrote = true
+				}
+				w.Header().Set("Content-Type", "application/json")
+				require.NoError(t, json.NewEncoder(w).Encode(notebooksTestResource("nb-1", "Current title", nil, 1)))
+			})
+
+			_, err := updateNotebook(notebooksTestContext(ts), UpdateNotebookParams{UID: "nb-1", Spec: tc.spec})
+			require.ErrorContains(t, err, tc.want)
+			assert.False(t, wrote, "an invalid spec must be rejected before it reaches the PUT")
+		})
+	}
 }
 
 // update_notebook reads the notebook before writing it, so a token holding only
@@ -567,6 +636,32 @@ func TestNotebooks_FeatureDisabled(t *testing.T) {
 	_, err := listNotebooks(notebooksTestContext(ts), ListNotebooksParams{})
 	require.ErrorContains(t, err, "notebooks feature is not enabled")
 	require.ErrorContains(t, err, "dashboard.notebooks feature toggle")
+}
+
+// A 403 used to list all four notebooks:* actions regardless of which one the
+// call actually needed, so a read-only caller hitting get_notebook_by_uid was
+// told it needed create and delete too. Each call now names only the action it
+// needs.
+func TestNotebooks_ForbiddenNamesOnlyTheActionTheCallNeeded(t *testing.T) {
+	forbidden := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, err := w.Write([]byte(`{"kind":"Status","message":"forbidden"}`))
+		require.NoError(t, err)
+	}
+
+	t.Run("read", func(t *testing.T) {
+		ts := notebooksTestServer(t, forbidden)
+		_, err := getNotebookByUID(notebooksTestContext(ts), GetNotebookByUIDParams{UID: "nb-1"})
+		require.ErrorContains(t, err, "the caller needs the notebooks:read action")
+		require.NotContains(t, err.Error(), "notebooks:delete")
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		ts := notebooksTestServer(t, forbidden)
+		_, err := deleteNotebook(notebooksTestContext(ts), DeleteNotebookParams{UID: "nb-1"})
+		require.ErrorContains(t, err, "the caller needs the notebooks:delete action")
+		require.NotContains(t, err.Error(), "notebooks:create")
+	})
 }
 
 func TestNotebooks_NotFound(t *testing.T) {
@@ -884,6 +979,26 @@ func TestRenderNotebookPDF_RendererMissing(t *testing.T) {
 
 	_, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{UID: "nb-1"})
 	require.ErrorContains(t, err, "image renderer not available")
+	// The notebook GET above already resolved the UID, so a 404 on /render
+	// itself means either no renderer, or (on an older Grafana) no render route
+	// at all - the message has to cover both rather than just the renderer.
+	require.ErrorContains(t, err, "render route")
+}
+
+// readResponseBody's generic "try narrowing your query" advice does not apply
+// to a render: there is no query to narrow. The message must say what would
+// actually shrink a notebook PDF.
+func TestRenderNotebookPDF_TooLarge(t *testing.T) {
+	ts, _ := renderNotebookTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, err := w.Write(make([]byte, defaultResponseLimitBytes+1))
+		require.NoError(t, err)
+	})
+
+	_, err := renderNotebookPDF(notebooksTestContext(ts), RenderNotebookPDFParams{UID: "nb-1"})
+	require.ErrorIs(t, err, errResponseBodyTooLarge)
+	require.ErrorContains(t, err, "shorter time range or fewer cells")
+	require.NotContains(t, err.Error(), "narrowing your query")
 }
 
 // The export runs in a headless browser, so it needs its own budget instead of
