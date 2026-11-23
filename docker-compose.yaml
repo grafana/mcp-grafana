@@ -197,7 +197,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   opensearch:
-    image: opensearchproject/opensearch:3.9.0@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
+    image: opensearchproject/opensearch:3.9.0@sha256:3bf4fe26aeb9f7b03c0ebcb1302bb24e855ee6b89fd926d26a71a83ef6f7e076
     environment:
       - discovery.type=single-node
       - DISABLE_SECURITY_PLUGIN=true
@@ -311,7 +311,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    image: postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: test
