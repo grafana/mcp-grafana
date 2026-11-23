@@ -664,6 +664,33 @@ func TestQueryTargetFields(t *testing.T) {
 	}, fields)
 }
 
+func TestExtractPanelQueriesLegendFormat(t *testing.T) {
+	panel := map[string]interface{}{
+		"title":      "Requests",
+		"datasource": map[string]interface{}{"uid": "prom-uid", "type": "prometheus"},
+		"targets": []interface{}{
+			map[string]interface{}{"refId": "A", "expr": "up", "legendFormat": "{{job}}"},
+			map[string]interface{}{"refId": "B", "expr": "up"},
+			map[string]interface{}{
+				"refId":        "C",
+				"namespace":    "AWS/EC2",
+				"metricName":   "CPUUtilization",
+				"legendFormat": "{{InstanceId}}",
+				"datasource":   map[string]interface{}{"uid": "cw-uid", "type": "cloudwatch"},
+			},
+		},
+	}
+
+	queries := extractPanelQueries(panel)
+
+	require.Len(t, queries, 3)
+	assert.Equal(t, "{{job}}", queries[0].LegendFormat)
+	assert.Empty(t, queries[1].LegendFormat)
+	// A structured target keeps the legend format in target only.
+	assert.Empty(t, queries[2].LegendFormat)
+	assert.Equal(t, "{{InstanceId}}", queries[2].Target["legendFormat"])
+}
+
 func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
 	t.Run("returns cloudwatch metric search panels", func(t *testing.T) {
 		panel := map[string]interface{}{

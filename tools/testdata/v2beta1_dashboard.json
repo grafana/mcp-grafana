@@ -69,7 +69,7 @@
                       "group": "prometheus",
                       "version": "v0",
                       "datasource": { "name": "prom-uid" },
-                      "spec": { "expr": "rate(cpu_seconds_total{job=\"$job\"}[5m])" }
+                      "spec": { "expr": "rate(cpu_seconds_total{job=\"$job\"}[5m])", "legendFormat": "{{instance}}" }
                     }
                   }
                 }

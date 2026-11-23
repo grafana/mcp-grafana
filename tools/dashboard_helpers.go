@@ -256,6 +256,8 @@ func extractPanelQueries(panel map[string]interface{}) []panelQuery {
 				continue
 			}
 			pq.Target = queryTargetFields(target)
+		} else {
+			pq.LegendFormat = safeString(target, "legendFormat")
 		}
 
 		queries = append(queries, pq)
