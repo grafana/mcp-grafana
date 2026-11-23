@@ -251,7 +251,7 @@ func assertAppDisplayResult(t *testing.T, source string, query, view *mcp.CallTo
 	require.Len(t, view.Content, 1)
 	text, ok := view.Content[0].(*mcp.TextContent)
 	require.True(t, ok)
-	assert.Equal(t, fmt.Sprintf("Displayed %s result in the Grafana App.", source), text.Text)
+	assert.Equal(t, fmt.Sprintf("Sent the %s result to the Grafana App. The view draws after this result.", source), text.Text)
 }
 
 func TestAppRejectsUnavailableSourcesAndInvalidArguments(t *testing.T) {

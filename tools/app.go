@@ -28,8 +28,10 @@ type appNoter interface {
 	AppNotes() []string
 }
 
+// appText is the text line of the tool result, then the notes of the source (tool.28, tool.30). The view draws after
+// the result, so the line does not say that it drew (#1655).
 func appText(toolName string, content any) string {
-	text := fmt.Sprintf("Displayed %s result in the Grafana App.", toolName)
+	text := fmt.Sprintf("Sent the %s result to the Grafana App. The view draws after this result.", toolName)
 	noter, ok := content.(appNoter)
 	if !ok {
 		return text
