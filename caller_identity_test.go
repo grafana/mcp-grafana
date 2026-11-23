@@ -181,6 +181,7 @@ func (f *fakeGrafana) hitsFor(login string) int {
 
 type callLogHarness struct {
 	grafana *fakeGrafana
+	url     string
 	logs    *bytes.Buffer
 	handler mcp.MethodHandler
 }
@@ -200,7 +201,7 @@ func newCallLogHarness(t *testing.T, toolResult *mcp.CallToolResult) *callLogHar
 	tool := func(context.Context, string, mcp.Request) (mcp.Result, error) { return toolResult, nil }
 	h := ToolCallLogMiddleware(slog.New(slog.NewJSONHandler(logs, nil)))(tool)
 	h = GrafanaContextMiddleware(ComposedHTTPContextFunc(GrafanaConfig{}, cache))(h)
-	return &callLogHarness{grafana: g, logs: logs, handler: h}
+	return &callLogHarness{grafana: g, url: ts.URL, logs: logs, handler: h}
 }
 
 func (h *callLogHarness) call(t *testing.T, header http.Header, args string) {
@@ -309,7 +310,7 @@ func TestToolCallLog_SkipsOtherMethods(t *testing.T) {
 func TestToolCallLog_OverrideIsMarked(t *testing.T) {
 	h := newCallLogHarness(t, &mcp.CallToolResult{})
 	h.call(t, http.Header{"X-Webauth-User": {"alice"}}, `{}`)
-	h.callCtx(t, context.WithValue(context.Background(), grafanaOverrideKey{}, "https://other.example.com"),
+	h.callCtx(t, context.WithValue(context.Background(), grafanaOverrideKey{}, h.url),
 		http.Header{"X-Webauth-User": {"alice"}}, `{}`)
 
 	lines := h.lines(t)
