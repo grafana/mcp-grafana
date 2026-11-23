@@ -34,6 +34,8 @@ describe('createAppHostState', () => {
       app.ontoolinput?.({ arguments: { toolName: 'query_prometheus', arguments: args } });
       app.ontoolresult?.(ok(vectorSingleUnbounded));
     }
+    // The handshake sets the host capabilities.
+    await new Promise((resolve) => setTimeout(resolve));
     const previousOther = otherView.getSnapshot();
 
     const refreshing = currentView.refresh();
