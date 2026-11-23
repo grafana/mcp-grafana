@@ -146,7 +146,7 @@ func TestAppAppendsSourceNotes(t *testing.T) {
 	require.False(t, view.IsError)
 	require.Len(t, view.Content, 1)
 	want := []string{
-		"Displayed noted_source result in the Grafana App.",
+		"Sent the noted_source result to the Grafana App. The view draws after this result.",
 		"Query B failed: bad_data",
 		strings.Repeat("x", maxAppNoteChars-1) + "…",
 		"3", "4", "5",
