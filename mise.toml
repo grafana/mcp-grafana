@@ -18,12 +18,12 @@ min_version = "2026.9.5"
 # to RST the connection. Renovate is limited to patch bumps here for the same reason.
 go = "1.26.11"
 golangci-lint = "2.15.0"
-goreleaser = "2.20.2"
+goreleaser = "2.20.3"
 # Used by goreleaser in release.yml: cosign signs the checksums, syft writes SBOMs.
 cosign = "3.1.4"
-syft = "1.57.1"
+syft = "1.57.2"
 node = "26.13.1"
-uv = "0.13.8"
+uv = "0.13.9"
 "github:sd2k/mcp-tokens" = "0.2.5"
 
 [vars]

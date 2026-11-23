@@ -131,7 +131,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
     ports:
       - "${LOKI_HOST_PORT:-3100}:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -149,7 +149,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:2.4.3@sha256:bf667534cd403320573063894e3faba20a5a5d1bfb92eddaecfabeb2446c502b
+    image: grafana/pyroscope:2.4.4@sha256:288da0b9b73193b5aee0843b6f1f5d033ee697d4afa280efb95de338d1409870
     ports:
       - "${PYROSCOPE_HOST_PORT:-4040}:4040"
 
@@ -197,7 +197,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   opensearch:
-    image: opensearchproject/opensearch:3.9.0@sha256:3bf4fe26aeb9f7b03c0ebcb1302bb24e855ee6b89fd926d26a71a83ef6f7e076
+    image: opensearchproject/opensearch:3.10.0@sha256:02d6d6e40c820ae08233b60540aa5d3d9364d64e2dc724e38d6c8c794879b2a0
     environment:
       - discovery.type=single-node
       - DISABLE_SECURITY_PLUGIN=true
@@ -256,7 +256,7 @@ services:
       retries: 5
 
   influxdb:
-    image: influxdb:2.9@sha256:e4572d094ac3272f06528ea904ce6b4cb3bb19be2db3b3b1acbd27ba5c3a73e2
+    image: influxdb:2.10@sha256:33f4eef7ca7859f3c24021c5fa20a4ca7d1d34f049bb011c32787a35cf096b85
     ports:
       - "${INFLUXDB_HOST_PORT:-8086}:8086"
     environment:

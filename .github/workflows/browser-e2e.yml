@@ -20,7 +20,7 @@ jobs:
           # Push filtering compares against the previous commit locally;
           # PR filtering uses the API and only needs a shallow checkout.
           fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
-      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
           # Shared server concerns have Go coverage. Focus browser tests on
