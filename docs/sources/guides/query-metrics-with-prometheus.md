@@ -43,6 +43,7 @@ When a query returns no data, the response includes `hints`. If the server can t
 - `native_histogram`: the query asks for `foo_count`, `foo_sum` or `foo_bucket`, but `foo` is a native histogram. Use `histogram_count()`, `histogram_sum()` or `histogram_quantile()` on `foo`.
 - `label_not_found`: the metric does not have a label the selector requires. The hint lists the labels it has.
 - `no_matching_series`: every metric exists, but the label values or vector matching removed all series.
+- `shifted`: the query uses `offset` or the `@` modifier, so it reads a different window than the one requested. The server does not diagnose these, because its lookups would check the wrong time range. Run the query without the modifier or check the shifted range.
 
 To find the cause, the server makes at most two label lookups, and only for empty results. When it cannot tell, `reason` is left out and the hint lists the common causes.
 

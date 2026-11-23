@@ -71,6 +71,15 @@ func TestPromEmptyCause(t *testing.T) {
 		{"label not found", `up{jbo="api"}`, ReasonLabelNotFound, []string{"up has no label jbo", "instance, job."}, 2},
 		{"label value matches nothing", `up{job="nope"}`, ReasonNoMatchingSeries, []string{"list_prometheus_label_values"}, 2},
 		{"matcher accepting empty skips label lookup", `up{job!="api"}`, ReasonNoMatchingSeries, nil, 1},
+		{"offset", `up offset 1h`, ReasonShifted, []string{"offset or @", "without the offset"}, 0},
+		{"offset on nonexistent metric", `nope_metric offset 5m`, ReasonShifted, nil, 0},
+		{"offset on one selector of several", `up / nope_metric offset 1d`, ReasonShifted, nil, 0},
+		{"offset inside range selector", `rate(up[5m] offset 1h)`, ReasonShifted, nil, 0},
+		{"negative offset", `up offset -10m`, ReasonShifted, nil, 0},
+		{"at modifier", `up @ 1770000000`, ReasonShifted, nil, 0},
+		{"at start()", `up @ start()`, ReasonShifted, nil, 0},
+		{"subquery offset", `max_over_time(up[1h:1m] offset 1h)`, ReasonShifted, nil, 0},
+		{"zero offset is not shifted", `nope_metric offset 0s`, ReasonMetricNotFound, nil, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, paths := promCauseServer(t, metrics)

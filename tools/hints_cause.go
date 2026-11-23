@@ -54,7 +54,15 @@ func promEmptyCause(ctx context.Context, b promBackend, expr string, start, end 
 	if err != nil {
 		return nil
 	}
-	selectors, lookback := promSelectors(ast)
+	selectors, lookback, shifted := promSelectors(ast)
+	if shifted {
+		// Lookups at the unshifted range would diagnose the wrong window.
+		return &EmptyCause{
+			Reason:  ReasonShifted,
+			Summary: "The query uses an offset or @ modifier, so the empty result may only mean the shifted window has no data.",
+			Action:  "Run it without the offset or @ modifier, or check that the shifted time range has data.",
+		}
+	}
 	if len(selectors) == 0 {
 		return nil
 	}
@@ -158,18 +166,20 @@ func promLabelCause(ctx context.Context, b promBackend, selectors []promSelector
 }
 
 // promSelectors returns the named selectors in expr, deduplicated and capped,
-// and how far back an instant query at the end time reads.
-func promSelectors(ast parser.Expr) ([]promSelector, time.Duration) {
-	var out []promSelector
+// how far back an instant query at the end time reads, and whether any
+// selector or subquery uses offset or @ and so reads outside the query range.
+func promSelectors(ast parser.Expr) (out []promSelector, lookback time.Duration, shifted bool) {
 	seen := map[string]bool{}
-	lookback := promLookbackDelta
+	lookback = promLookbackDelta
 	parser.Inspect(ast, func(node parser.Node, _ []parser.Node) error {
 		switch n := node.(type) {
 		case *parser.MatrixSelector:
 			lookback = max(lookback, n.Range)
 		case *parser.SubqueryExpr:
 			lookback = max(lookback, n.Range)
+			shifted = shifted || n.OriginalOffset != 0 || n.Timestamp != nil || n.StartOrEnd != 0
 		case *parser.VectorSelector:
+			shifted = shifted || n.OriginalOffset != 0 || n.Timestamp != nil || n.StartOrEnd != 0
 			name := n.Name
 			for _, m := range n.LabelMatchers {
 				if m.Name == model.MetricNameLabel && m.Type == labels.MatchEqual {
@@ -185,7 +195,7 @@ func promSelectors(ast parser.Expr) ([]promSelector, time.Duration) {
 		}
 		return nil
 	})
-	return out, lookback
+	return out, lookback, shifted
 }
 
 // nativeHistogramBase returns the base name and native-histogram function for

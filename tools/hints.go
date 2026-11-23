@@ -26,6 +26,7 @@ const (
 	ReasonNoMatchingStreams = "no_matching_streams"
 	ReasonLinesFiltered     = "lines_filtered"
 	ReasonNoDataInRange     = "no_data_in_range"
+	ReasonShifted           = "shifted"
 )
 
 // EmptyCause is a detected reason for an empty result, with one fix.
