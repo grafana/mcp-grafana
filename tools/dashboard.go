@@ -1215,6 +1215,10 @@ type PanelSummary struct {
 	Type        string `json:"type"`
 	Description string `json:"description,omitempty"`
 	QueryCount  int    `json:"queryCount"`
+	// Path is the JSON path of the panel in the dashboard (e.g.
+	// "$.panels[3].panels[1]" for a panel nested in a row), usable with
+	// update_dashboard patches.
+	Path string `json:"path,omitempty"`
 }
 
 type VariableSummary struct {
@@ -1255,30 +1259,14 @@ func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*
 	// Extract time range
 	summary.TimeRange = extractTimeRange(db)
 
-	// Extract panel summaries. Modern dashboards put panels at the top
-	// level; legacy schemaVersion <= 14 dashboards put them under
-	// "rows":[{panels:[...]}] with no top-level "panels".
-	if panels := safeArray(db, "panels"); panels != nil {
-		summary.PanelCount = len(panels)
-		for _, p := range panels {
-			if panelObj, ok := p.(map[string]interface{}); ok {
-				summary.Panels = append(summary.Panels, extractPanelSummary(panelObj))
-			}
-		}
-	} else if rows := safeArray(db, "rows"); rows != nil {
-		for _, r := range rows {
-			row, ok := r.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			for _, p := range safeArray(row, "panels") {
-				if panelObj, ok := p.(map[string]interface{}); ok {
-					summary.Panels = append(summary.Panels, extractPanelSummary(panelObj))
-				}
-			}
-		}
-		summary.PanelCount = len(summary.Panels)
+	// Extract panel summaries, including panels collapsed into a row and
+	// legacy schemaVersion <= 14 "rows":[{panels:[...]}] dashboards.
+	for _, lp := range collectAllPanelsWithPaths(db) {
+		ps := extractPanelSummary(lp.panel)
+		ps.Path = lp.path
+		summary.Panels = append(summary.Panels, ps)
 	}
+	summary.PanelCount = len(summary.Panels)
 
 	// Extract variable summaries
 	if templating := safeObject(db, "templating"); templating != nil {

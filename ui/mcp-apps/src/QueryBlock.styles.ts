@@ -86,6 +86,13 @@ export const getQueryBlockStyles = () => {
       wordBreak: 'break-all',
     }),
 
+    /** Under the queries, its text in line with theirs: the code boxes pad their text by the same. */
+    meta: css({
+      paddingInline: spacing[2],
+      color: colors.interactive.mutedForeground,
+      fontSize: typography.fontSize.ui.sm,
+    }),
+
     /** Read by assistive technology only. */
     srOnly: css({
       position: 'absolute',

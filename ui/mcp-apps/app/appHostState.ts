@@ -1,6 +1,8 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
 
-import type { RefreshRequest, RenderState } from '../renderer/renderer.js';
+import constants from '@grafana/viz-contract/registry/constants.json';
+
+import type { MessageRequest, RefreshRequest, RenderState } from '../renderer/renderer.js';
 import type { McpAppColorMode, McpAppFeedback } from '../src/McpAppShell';
 import type { ParsedMetrics } from '../src/metrics/pickViz';
 import type { TraceViewResult } from '../src/trace/types';
@@ -8,6 +10,7 @@ import { applyHostContext } from './hostContext';
 import { loadRenderer, type Renderer } from './loadRenderer';
 import { extractToolPayload, parsePrometheusResult } from './parsePrometheusResult';
 import { parseTraceResult } from './parseTraceResult';
+import { vizMessageText } from './vizMessage';
 import { vizFailureContext, vizModelContext } from './vizModelContext';
 import { runVizRefresh, withType } from './vizRefresh';
 import {
@@ -18,6 +21,7 @@ import {
   type VizArgs,
   type VizNotice,
   type VizResult,
+  type VizSpec,
 } from './vizSpec';
 
 // Attach handlers before connecting: hosts may deliver results before React's first commit.
@@ -55,6 +59,10 @@ export type AppHostSnapshot = {
   refreshing: boolean;
   /** The host passes tool calls to the server (serverTools), so the viz view can refresh. */
   serverTools: boolean;
+  /** The host takes text messages, or does not say (state.20), so the viz view can give Ask in chat. */
+  messages: boolean;
+  /** The last Ask in chat: not answered yet, or failed, with the text to copy if any (state.25 to state.27). */
+  vizMessage?: { sending: true } | { error: string; text?: string };
   /**
    * Bumped on each tool input, result and cancellation from the host, never on
    * refresh. Keys the view, so state the user set up for one response does not
@@ -80,6 +88,10 @@ export type AppHostState = {
   reportVizState: (state: RenderState, generation: number) => void;
   /** Takes the message of a Renderer that did not load or whose render threw, for the model context (state.14). */
   reportVizFailure: (message: string, generation: number) => void;
+  /** Sends a point of the chart to the conversation (state.21 to state.27). */
+  askVizPoint: (spec: VizSpec, request: MessageRequest) => void;
+  /** Closes the error and the text box of a failed Ask in chat (state.27). */
+  closeVizMessage: () => void;
   /** Shows another chart of the result and tells the model (state.14). */
   pickVizChart: (chart: string) => void;
   /** Hand a brushed window back to the agent as a question. */
@@ -92,6 +104,8 @@ export type AppHostState = {
 };
 
 const WAITING = 'Waiting for query results…';
+const MESSAGE_FAILED = 'The chat did not take the message. Copy the text into the chat.';
+const MESSAGE_TOO_LONG = 'This point has too much text to send to the chat.';
 const UNAVAILABLE = 'Interactive view unavailable; data remains available in the tool output.';
 
 /** The fields that hold a view. A new call or a failure clears all of them, so no old view stays under the new one. */
@@ -101,6 +115,7 @@ const NO_VIEW = {
   viz: undefined,
   vizNotices: undefined,
   vizChart: undefined,
+  vizMessage: undefined,
 } as const;
 
 const error = (message: string): McpAppFeedback => ({ tone: 'error', message });
@@ -112,6 +127,7 @@ export function createAppHostState(app: App): AppHostState {
     isError: false,
     refreshing: false,
     serverTools: false,
+    messages: false,
     generation: 0,
   };
   const listeners = new Set<() => void>();
@@ -181,6 +197,8 @@ export function createAppHostState(app: App): AppHostState {
   // went to the model. Once one did, each new state replaces it, so the model never keeps an old one.
   let vizState: RenderState | undefined;
   let contextSent = false;
+  // The id of the last message to the chat. Only its answer counts (state.26, state.27).
+  let lastMessage = 0;
 
   const sendModelContext = (build: () => string) => {
     if (!app.getHostCapabilities()?.updateModelContext) return;
@@ -236,6 +254,8 @@ export function createAppHostState(app: App): AppHostState {
     if (contextSent) void app.updateModelContext({ content: [] }).catch(() => {});
     vizState = undefined;
     contextSent = false;
+    // The answer to a message about the last chart changes nothing.
+    lastMessage++;
     return { generation: snapshot.generation + 1, notice: undefined, refreshing: false };
   };
 
@@ -290,7 +310,10 @@ export function createAppHostState(app: App): AppHostState {
   const connected = app.connect();
   connected
     .then(() => {
-      if (app.getHostCapabilities()?.serverTools) set({ serverTools: true });
+      const capabilities = app.getHostCapabilities();
+      // A Host with no message capability can still take ui/message (state.20).
+      const messages = !capabilities?.message || !!capabilities.message.text;
+      set({ serverTools: !!capabilities?.serverTools, messages });
       // The host context arrives during the handshake; replay it once connected.
       const context = app.getHostContext();
       if (context) app.onhostcontextchanged?.(context);
@@ -369,6 +392,34 @@ export function createAppHostState(app: App): AppHostState {
     }
   };
 
+  const askVizPoint = (spec: VizSpec, request: MessageRequest) => {
+    if (snapshot.vizMessage && 'sending' in snapshot.vizMessage) return;
+    const text = vizMessageText(spec, request);
+    if (text === undefined) {
+      set({ vizMessage: { error: MESSAGE_TOO_LONG } });
+      return;
+    }
+    const id = ++lastMessage;
+    const answer = (failed: boolean) => {
+      clearTimeout(timeout);
+      // A late answer, or one about an older chart, changes nothing.
+      if (id !== lastMessage) return;
+      lastMessage++;
+      set({ vizMessage: failed ? { error: MESSAGE_FAILED, text } : undefined });
+    };
+    // With no answer, the Host can still have the message, so the App shows no error (state.27).
+    const timeout = setTimeout(() => answer(false), constants.messageTimeoutMs.value);
+    set({ vizMessage: { sending: true } });
+    app.sendMessage({ role: 'user', content: [{ type: 'text', text }] }).then(
+      (result) => answer(!!result.isError),
+      () => answer(true),
+    );
+  };
+
+  const closeVizMessage = () => {
+    if (snapshot.vizMessage && 'error' in snapshot.vizMessage) set({ vizMessage: undefined });
+  };
+
   const askAboutRange = (fromMs: number, toMs: number) => {
     const expr = snapshot.args?.expr ?? 'this query';
     const from = new Date(fromMs).toISOString();
@@ -408,6 +459,8 @@ export function createAppHostState(app: App): AppHostState {
     refreshViz,
     reportVizState,
     reportVizFailure,
+    askVizPoint,
+    closeVizMessage,
     pickVizChart,
     askAboutRange,
     openInGrafana,

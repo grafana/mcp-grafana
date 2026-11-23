@@ -78,10 +78,15 @@ var catalog = []category{
 		read(ListDatasources), read(GetDatasource), read(CheckDatasourcesHealth),
 		write(CreateDatasource), write(UpdateDatasource),
 	}},
-	{name: "incident", description: "Incidents: Search, create, update, and resolve incidents in Grafana Incident.", tools: []toolSpec{
-		read(ListIncidents), read(GetIncident), read(ListIncidentCustomFields),
-		write(CreateIncident), write(AddActivityToIncident), write(UpdateIncident),
-	}},
+	{
+		name:               "incident",
+		description:        "Incidents: Search, create, update, and resolve incidents in Grafana Incident.",
+		reducedDescription: "Incidents: Search incidents and fetch their details and custom fields in Grafana Incident.",
+		tools: []toolSpec{
+			read(ListIncidents), read(GetIncident), read(ListIncidentCustomFields),
+			write(CreateIncident), write(AddActivityToIncident), write(UpdateIncident),
+		},
+	},
 	{
 		name:               "prometheus",
 		description:        "Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.",
@@ -113,17 +118,36 @@ var catalog = []category{
 		read(AlertRulesRead), read(ManageRouting), read(AlertSilencesRead),
 		write(AlertRulesWrite), write(AlertRoutingWrite), write(AlertSilencesWrite),
 	}},
-	{name: "dashboard", description: "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.", tools: []toolSpec{
-		read(GetDashboardByUID), read(ListDashboardVersions), read(GetDashboardPanelQueries), read(GetDashboardProperty), read(GetDashboardSummary),
-		write(UpdateDashboard),
-	}},
+	{
+		name:               "dashboard",
+		description:        "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.",
+		reducedDescription: "Dashboards: Retrieve dashboards and list their versions. Extract panel queries and datasource information.",
+		tools: []toolSpec{
+			read(GetDashboardByUID), read(ListDashboardVersions), read(GetDashboardPanelQueries), read(GetDashboardProperty), read(GetDashboardSummary),
+			write(UpdateDashboard),
+		},
+	},
 	{name: "folder", description: "Folders: Manage dashboard folders.", tools: []toolSpec{
 		write(CreateFolder),
 	}},
-	{name: "oncall", description: "OnCall: View and manage on-call schedules, shifts, teams, and users.", tools: []toolSpec{
-		read(ListOnCallSchedules), read(GetOnCallShift), read(GetCurrentOnCallUsers), read(ListOnCallTeams), read(ListOnCallUsers), read(ListAlertGroups), read(GetAlertGroup),
-		write(UpdateAlertGroup),
-	}},
+	{
+		name:               "notebooks",
+		description:        "Notebooks: List, search, read, create, update, and delete notebooks.",
+		reducedDescription: "Notebooks: List, search, read, and export notebooks.",
+		tools: []toolSpec{
+			read(ListNotebooks), read(SearchNotebooks), read(GetNotebookByUID), read(RenderNotebookPDF),
+			write(CreateNotebook), write(UpdateNotebook), write(DeleteNotebook),
+		},
+	},
+	{
+		name:               "oncall",
+		description:        "OnCall: View and manage on-call schedules, shifts, teams, and users.",
+		reducedDescription: "OnCall: View on-call schedules, shifts, teams, users, and alert groups.",
+		tools: []toolSpec{
+			read(ListOnCallSchedules), read(GetOnCallShift), read(GetCurrentOnCallUsers), read(ListOnCallTeams), read(ListOnCallUsers), read(ListAlertGroups), read(GetAlertGroup),
+			write(UpdateAlertGroup),
+		},
+	},
 	{name: "asserts", description: "Asserts: Query and analyze assertion data.", tools: []toolSpec{
 		read(GetAssertions),
 	}},
@@ -152,17 +176,27 @@ var catalog = []category{
 		query(SearchTempoTracesTool), query(QueryTempoMetricsTool), asAppSource(query(GetTempoTraceTool)), query(DiffTempoTracesTool),
 		query(ListTempoAttributeNamesTool), query(ListTempoAttributeValuesTool), query(GetTempoTraceQLDocsTool),
 	}},
-	{name: "annotations", description: "Annotations: Create and manage dashboard annotations.", tools: []toolSpec{
-		read(GetAnnotationsTool), read(GetAnnotationTagsTool),
-		write(CreateAnnotationTool), write(UpdateAnnotationTool), write(DeleteAnnotationTool),
-	}},
+	{
+		name:               "annotations",
+		description:        "Annotations: Create and manage dashboard annotations.",
+		reducedDescription: "Annotations: List dashboard annotations and their tags.",
+		tools: []toolSpec{
+			read(GetAnnotationsTool), read(GetAnnotationTagsTool),
+			write(CreateAnnotationTool), write(UpdateAnnotationTool), write(DeleteAnnotationTool),
+		},
+	},
 	{name: "rendering", description: "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).", tools: []toolSpec{
 		read(GetPanelImage), {kind: appViewer},
 	}},
-	{name: "snapshot", description: "Snapshots: List, get, create, and delete dashboard snapshots.", tools: []toolSpec{
-		read(ListSnapshotsTool), read(GetSnapshotTool),
-		write(CreateSnapshotTool), write(DeleteSnapshotTool),
-	}},
+	{
+		name:               "snapshot",
+		description:        "Snapshots: List, get, create, and delete dashboard snapshots.",
+		reducedDescription: "Snapshots: List and get dashboard snapshots.",
+		tools: []toolSpec{
+			read(ListSnapshotsTool), read(GetSnapshotTool),
+			write(CreateSnapshotTool), write(DeleteSnapshotTool),
+		},
+	},
 	{
 		name:               "cloudwatch",
 		description:        "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
@@ -173,6 +207,9 @@ var catalog = []category{
 			query(QueryCloudWatch), query(QueryCloudWatchLogs),
 		},
 	},
+	{name: "xray", description: "X-Ray: Search AWS X-Ray traces with filter expressions and fetch a trace as a tree of segments.", tools: []toolSpec{
+		query(SearchXRayTraces), query(GetXRayTrace),
+	}},
 	{
 		name:               "cloudlogging",
 		description:        "Google Cloud Logging: Query logs with the Cloud Logging query language and list projects, log buckets, and views.",
@@ -225,14 +262,19 @@ var catalog = []category{
 	{name: "provisioning", description: "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.", tools: []toolSpec{
 		read(ListProvisioningRepositories), read(ValidateProvisioningFile),
 	}},
-	{name: "agento11y", description: "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability. Read its agent catalog (system prompts, tools, version history, and per-version scores). Read or manage its eval configuration (evaluators, templates, eval rules, and guards), its curated saved conversations and collections, its offline experiments with their trials and scores, and the versioned test suites those experiments run against.", tools: []toolSpec{
-		read(ManageAgento11yConversations), read(ManageAgento11yGenerations), read(ManageAgento11yAgents),
-		withFallbacks(write(ManageAgento11yEvaluatorsReadWrite), read(ManageAgento11yEvaluatorsRead)),
-		withFallbacks(write(ManageAgento11yEvalRulesReadWrite), read(ManageAgento11yEvalRulesRead)),
-		withFallbacks(write(ManageAgento11yEvalCollectionsReadWrite), read(ManageAgento11yEvalCollectionsRead)),
-		withFallbacks(write(ManageAgento11yExperimentsReadWrite), read(ManageAgento11yExperimentsRead)),
-		withFallbacks(write(ManageAgento11yTestSuitesReadWrite), read(ManageAgento11yTestSuitesRead)),
-	}},
+	{
+		name:               "agento11y",
+		description:        "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability. Read its agent catalog (system prompts, tools, version history, and per-version scores). Read or manage its eval configuration (evaluators, templates, eval rules, and guards), its curated saved conversations and collections, its offline experiments with their trials and scores, and the versioned test suites those experiments run against.",
+		reducedDescription: "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability. Read its agent catalog (system prompts, tools, version history, and per-version scores). Read its eval configuration (evaluators, templates, eval rules, and guards), its curated saved conversations and collections, its offline experiments with their trials and scores, and the versioned test suites those experiments run against.",
+		tools: []toolSpec{
+			read(ManageAgento11yConversations), read(ManageAgento11yGenerations), read(ManageAgento11yAgents),
+			withFallbacks(write(ManageAgento11yEvaluatorsReadWrite), read(ManageAgento11yEvaluatorsRead)),
+			withFallbacks(write(ManageAgento11yEvalRulesReadWrite), read(ManageAgento11yEvalRulesRead)),
+			withFallbacks(write(ManageAgento11yEvalCollectionsReadWrite), read(ManageAgento11yEvalCollectionsRead)),
+			withFallbacks(write(ManageAgento11yExperimentsReadWrite), read(ManageAgento11yExperimentsRead)),
+			withFallbacks(write(ManageAgento11yTestSuitesReadWrite), read(ManageAgento11yTestSuitesRead)),
+		},
+	},
 	{name: "assistant", description: "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).", tools: []toolSpec{
 		write(AskAssistant),
 	}},

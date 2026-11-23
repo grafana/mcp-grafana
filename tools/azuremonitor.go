@@ -144,25 +144,9 @@ func buildAzureLogAnalyticsQuery(args AzureLogAnalyticsQueryParams, limit int) m
 }
 
 func parseAzureLogAnalyticsTimeRange(start, end string) (time.Time, time.Time, error) {
-	now := time.Now()
-	from, to := now.Add(-time.Hour), now
-	if start != "" {
-		parsed, err := parseStartTime(start)
-		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("parsing start time: %w", err)
-		}
-		if !parsed.IsZero() {
-			from = parsed
-		}
-	}
-	if end != "" {
-		parsed, err := parseEndTime(end)
-		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("parsing end time: %w", err)
-		}
-		if !parsed.IsZero() {
-			to = parsed
-		}
+	from, to, err := resolveTimeRange(start, end)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
 	}
 	if !to.After(from) {
 		return time.Time{}, time.Time{}, fmt.Errorf("end time must be after start time")

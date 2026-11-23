@@ -35,6 +35,18 @@ Ask the assistant to list metric names, label names, or label values for a given
 
 `list_prometheus_metric_names` defaults to 10 results per page. The product of `page` and `limit` must not exceed 10,000. If it does and you need to explore > 10,000 results, narrow the regex to get fewer results. For Prometheus-compatible backends, regex filtering and the fetch limit are sent to the datasource, which must support the `limit` parameter to bound the response. Cloud Monitoring continues to filter metric descriptors locally.
 
+## Empty results
+
+When a query returns no data, the response includes `hints`. If the server can tell why, `hints.reason` names the cause and `hints.suggestedActions` holds one fix:
+
+- `metric_not_found`: a metric in the query has no series in the time range. If the name with `_total` added or removed exists, the hint names it.
+- `native_histogram`: the query asks for `foo_count`, `foo_sum` or `foo_bucket`, but `foo` is a native histogram. Use `histogram_count()`, `histogram_sum()` or `histogram_quantile()` on `foo`.
+- `label_not_found`: the metric does not have a label the selector requires. The hint lists the labels it has.
+- `no_matching_series`: every metric exists, but the label values or vector matching removed all series.
+- `shifted`: the query uses `offset` or the `@` modifier, so it reads a different window than the one requested. The server does not diagnose these, because its lookups would check the wrong time range. Run the query without the modifier or check the shifted range.
+
+To find the cause, the server makes at most two label lookups, and only for empty results. When it cannot tell, `reason` is left out and the hint lists the common causes.
+
 ## Response size limit
 
 Prometheus API responses are limited to 10 MiB after decompression. Responses above this limit return an error instead of partial results. If a query exceeds the limit, select fewer series, shorten the time range, or increase the step for a range query. For metric and label discovery, narrow the filters or requested time range.

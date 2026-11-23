@@ -783,6 +783,10 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 		return "", fmt.Errorf("invalid format %q: must be \"table\" or \"dot\"", args.Format)
 	}
 
+	if args.MaxNodeDepth < 0 {
+		return "", fmt.Errorf("max_node_depth must not be negative, got %d", args.MaxNodeDepth)
+	}
+
 	// Common setup
 	matchers := pyroscopeMatchers(args.Matchers)
 

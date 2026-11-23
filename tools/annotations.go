@@ -152,6 +152,12 @@ type UpdateAnnotationInput struct {
 
 // updateAnnotation updates an annotation using PATCH semantics — only provided fields are modified.
 func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (*annotations.PatchAnnotationOK, error) {
+	// A call that omits id would patch /api/annotations/0, which Grafana
+	// answers with an error that reads as a real access problem.
+	if args.ID <= 0 {
+		return nil, fmt.Errorf("update annotation: id is required and must be positive, got %d", args.ID)
+	}
+
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	id := strconv.FormatInt(args.ID, 10)
 

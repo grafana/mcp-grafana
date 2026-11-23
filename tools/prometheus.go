@@ -47,6 +47,9 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	if limit == 0 {
 		limit = 10
 	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must not be negative, got %d", limit)
+	}
 
 	metadata, err := backend.MetricMetadata(ctx, args.Metric, limit)
 	if err != nil {
@@ -131,8 +134,15 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 // queryPrometheusWithWarnings is like queryPrometheus but also returns any
 // warnings the datasource reported, such as partial responses from Thanos.
 func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, error) {
+	result, warnings, _, err := queryPrometheusBackend(ctx, args)
+	return result, warnings, err
+}
+
+// queryPrometheusBackend is queryPrometheusWithWarnings that also returns the
+// backend it used, so empty-result hints can reuse it.
+func queryPrometheusBackend(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, promBackend, error) {
 	if strings.TrimSpace(args.EndTime) == "" {
-		return nil, nil, fmt.Errorf("endTime is required")
+		return nil, nil, nil, fmt.Errorf("endTime is required")
 	}
 
 	queryType := args.QueryType
@@ -142,21 +152,21 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 
 	endTime, err := parseTime(args.EndTime)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsing end time: %w", err)
+		return nil, nil, nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	var startTime time.Time
 
 	if queryType == "range" {
 		if args.StepSeconds == 0 {
-			return nil, nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
+			return nil, nil, nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
 		if strings.TrimSpace(args.StartTime) == "" {
-			return nil, nil, fmt.Errorf("startTime must be provided when queryType is 'range'")
+			return nil, nil, nil, fmt.Errorf("startTime must be provided when queryType is 'range'")
 		}
 		startTime, err = parseTime(args.StartTime)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parsing start time: %w", err)
+			return nil, nil, nil, fmt.Errorf("parsing start time: %w", err)
 		}
 	}
 
@@ -182,7 +192,7 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 			return b, nil
 		})
 	}); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	window := time.Duration(0)
@@ -191,20 +201,21 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 	}
 	expr, err := enforcePromQL(ctx, args.Expr, window, args.StepSeconds)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	if err := loadBackend(); err != nil {
-		return nil, nil, fmt.Errorf("getting backend: %w", err)
+		return nil, nil, nil, fmt.Errorf("getting backend: %w", err)
 	}
 
-	return backend.Query(ctx, expr, queryType, startTime, endTime, args.StepSeconds)
+	result, warnings, err := backend.Query(ctx, expr, queryType, startTime, endTime, args.StepSeconds)
+	return result, warnings, backend, err
 }
 
 // queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.
 // This is the MCP tool handler - hints are added at this layer, not in the internal function.
 func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
-	result, warnings, err := queryPrometheusWithWarnings(ctx, args)
+	result, warnings, backend, err := queryPrometheusBackend(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -218,11 +229,16 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 	if isPrometheusResultEmpty(result) {
 		startTime, _ := parseTime(args.StartTime)
 		endTime, _ := parseTime(args.EndTime)
+		probeStart := startTime
+		if args.QueryType == "instant" {
+			probeStart = time.Time{}
+		}
 		response.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: "prometheus",
 			Query:          args.Expr,
 			StartTime:      startTime,
 			EndTime:        endTime,
+			Cause:          promEmptyCause(ctx, backend, args.Expr, probeStart, endTime, args.StepSeconds),
 		})
 	}
 
@@ -527,6 +543,9 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 	if limit == 0 {
 		limit = 100
 	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must not be negative, got %d", limit)
+	}
 
 	startTime, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
@@ -583,6 +602,9 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 	limit := args.Limit
 	if limit == 0 {
 		limit = 100
+	}
+	if limit < 0 {
+		return nil, fmt.Errorf("limit must not be negative, got %d", limit)
 	}
 
 	startTime, err := parseStartTime(args.StartRFC3339)

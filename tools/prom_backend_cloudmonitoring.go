@@ -139,12 +139,7 @@ func (b *cloudMonitoringBackend) LabelNames(ctx context.Context, matchers []stri
 	if err != nil {
 		return nil, err
 	}
-	if start.IsZero() {
-		start = time.Now().Add(-1 * time.Hour)
-	}
-	if end.IsZero() {
-		end = time.Now()
-	}
+	start, end = defaultDiscoveryRange(start, end)
 
 	var filters []interface{}
 	nameFilter := extractNameMatcher(matchers)
@@ -265,12 +260,7 @@ func (b *cloudMonitoringBackend) labelValuesViaQuery(ctx context.Context, labelN
 	if err != nil {
 		return nil, err
 	}
-	if start.IsZero() {
-		start = time.Now().Add(-1 * time.Hour)
-	}
-	if end.IsZero() {
-		end = time.Now()
-	}
+	start, end = defaultDiscoveryRange(start, end)
 
 	var filters []interface{}
 	nameFilter := extractNameMatcher(matchers)
@@ -642,4 +632,16 @@ func mapGCPMetricKind(metricKind, valueType string) promv1.MetricType {
 	default:
 		return promv1.MetricTypeUnknown
 	}
+}
+
+// defaultDiscoveryRange fills in a missing end with now and a missing start
+// with one hour before the end, so an end-only range never starts after it.
+func defaultDiscoveryRange(start, end time.Time) (time.Time, time.Time) {
+	if end.IsZero() {
+		end = time.Now()
+	}
+	if start.IsZero() {
+		start = end.Add(-time.Hour)
+	}
+	return start, end
 }

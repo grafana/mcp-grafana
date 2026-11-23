@@ -179,28 +179,9 @@ func queryCloudWatchLogs(ctx context.Context, args QueryCloudWatchLogsParams) (*
 		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
 	}
 
-	now := time.Now()
-	fromTime := now.Add(-1 * time.Hour)
-	toTime := now
-
-	if args.Start != "" {
-		parsed, err := parseStartTime(args.Start)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		if !parsed.IsZero() {
-			fromTime = parsed
-		}
-	}
-
-	if args.End != "" {
-		parsed, err := parseEndTime(args.End)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		if !parsed.IsZero() {
-			toTime = parsed
-		}
+	fromTime, toTime, err := resolveTimeRange(args.Start, args.End)
+	if err != nil {
+		return nil, err
 	}
 
 	args.Limit = min(args.Limit, MaxCloudWatchLogsLimit)

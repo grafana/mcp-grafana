@@ -32,6 +32,7 @@ Some tool categories are disabled by default:
 - **examples** – Query examples for datasource types.
 - **sql** – SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL, BigQuery). Back-compat aliases `clickhouse`, `snowflake`, `athena` also work.
 - **cloudwatch** – CloudWatch tools.
+- **xray** – AWS X-Ray trace search and trace tools (requires the `grafana-x-ray-datasource` plugin).
 - **cloudlogging** – Google Cloud Logging tools (requires the `googlecloud-logging-datasource` plugin, version 1.8.0 or later).
 - **azuremonitor** – Azure Monitor tools for Log Analytics and Resource Graph KQL queries.
 - **elasticsearch** – Elasticsearch query tool.
@@ -70,6 +71,38 @@ Every other write tool can be opted back in individually the same way. For examp
 Use `--disable-query` to remove every tool that executes a query against a datasource, such as `query_prometheus`, `query_loki_logs`, `query_sql`, and `run_panel_query`. The server can still list datasources and dashboards, explore metric names, labels, and table schemas, and generate deeplinks, but it can't run the queries themselves.
 
 `--disable-query` is the strongest of the three query settings: it wins over `--enable-query`, and it removes the query tools that `--disable-write` leaves in place. Refer to [Command-line flags](../command-line-flags/) for the full list of affected tools.
+
+## Select tools with a configuration file
+
+Instead of tool flags, you can select tools in a YAML file and pass its path with `--config`, or set `GRAFANA_MCP_CONFIG`. For example, this file enables five categories, runs them read-only, keeps dashboard edits, and removes the SQL query tool:
+
+```yaml
+tools:
+  categories: [search, dashboard, prometheus, loki, sql]
+  mode: read-only
+  query: true
+  allow: [update_dashboard]
+  deny: [query_sql]
+```
+
+Every key is optional:
+
+- `categories` is the exact list of enabled categories, like `--enabled-tools`. If you leave it out, the default categories are enabled. Only current category names work, so use `sql` and `tempo`, not `clickhouse` or `proxied`.
+- `mode` is `read-write` (the default) or `read-only`. `read-only` is the same as `--disable-write`.
+- `query` is `true` (the default) or `false`. `false` is the same as `--disable-query`.
+- `allow` keeps tools that `mode: read-only` removes, like `--enable-write-tools`. For a tool with a read-only variant, such as `grafana_api_request` or `generate_deeplink`, it keeps the full variant. It doesn't bring back tools that `query: false` removes.
+- `deny` removes tools even when their category is enabled. It removes every variant of the tool.
+
+The server doesn't start if the file has an unknown key, an unknown category or tool name, a tool in both `allow` and `deny`, or a tool in `allow` whose own category isn't enabled. The error names each problem.
+
+Tool flags that you set explicitly override the file for the setting they map to, even when you set them to their default, such as `--disable-write=false`:
+
+- `--enabled-tools` replaces `categories`.
+- `--disable-<category>` removes that category.
+- `--disable-write` replaces `mode`.
+- `--disable-query` replaces `query`.
+
+`--enable-write-tools` and `--enable-query` work differently. They **add** to `allow` instead of replacing it, and a tool they name is kept even when the file lists it in `deny`. Unlike the file, these two flags silently skip a tool whose category isn't enabled.
 
 ## Next steps
 

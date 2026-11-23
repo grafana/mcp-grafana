@@ -356,3 +356,19 @@ func TestDeleteAnnotation_RejectsMissingID(t *testing.T) {
 		assert.Contains(t, err.Error(), "id is required")
 	}
 }
+
+func TestUpdateAnnotation_RejectsMissingID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request should reach Grafana, got %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	ctx := mockCtxWithClient(server)
+
+	text := "new text"
+	for _, id := range []int64{0, -1} {
+		_, err := updateAnnotation(ctx, UpdateAnnotationInput{ID: id, Text: &text})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "id is required")
+	}
+}

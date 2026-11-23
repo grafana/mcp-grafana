@@ -49,7 +49,8 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 
 The SSE and streamable-http transports can authenticate the **caller** (the MCP client connecting to `mcp-grafana`). This is separate from the credentials the server uses to reach Grafana: it controls _who may invoke the server_, so an unauthenticated client can't borrow the server's Grafana identity or run tools. Stdio is a local pipe and is never affected.
 
-- `--server-auth-token`: Bearer token that callers must present in the `Authorization: Bearer <token>` header. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the environment variable over the flag so the secret doesn't appear in the process argument list.
+- `--server-auth-token`: Bearer token that callers must present in the `Authorization: Bearer <token>` header (or in the header set with `--server-auth-header`). Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the environment variable over the flag so the secret doesn't appear in the process argument list.
+- `--server-auth-header`: Header the caller token is read from. Falls back to the `MCP_GRAFANA_SERVER_AUTH_HEADER` environment variable, then to `Authorization`. `Authorization` takes `Bearer <token>` only. Any other header takes the raw token or `Bearer <token>`. Use it when a proxy needs `Authorization` for the user's own credential. A request that sends a custom header more than once is rejected with `401`; `Authorization` behaves as before.
 
 ### Bind policy
 
@@ -68,6 +69,8 @@ The permissive default preserves backward compatibility for existing deployments
 Bearer authentication only protects the token in transit if the connection is encrypted. Terminate TLS in front of the server, or use [server TLS for streamable-http](../server-tls-streamable-http/), whenever you set `--server-auth-token` on a non-loopback address.
 
 When caller authentication is enabled, the `Authorization` header is reserved for the caller token and is stripped after validation, so it is never forwarded to Grafana. Setting `--server-auth-token` together with `GRAFANA_FORWARD_HEADERS=Authorization` is contradictory and the server refuses to start; remove `Authorization` from `GRAFANA_FORWARD_HEADERS`, or unset the caller token to run in proxy-forwarding mode.
+
+With `--server-auth-header`, that header is reserved and stripped instead, `Authorization` is left alone, and the server refuses to start if the header is in `GRAFANA_FORWARD_HEADERS`. The header is not added to the CORS allowed headers, so browser clients cannot send it cross-origin.
 
 ## Select a Grafana URL per request
 
@@ -111,11 +114,12 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 
 ## Configure tool categories
 
+- `--config`: Path to a YAML file that selects tools. Tool flags that you set explicitly override the file, except `--enable-write-tools` and `--enable-query`, which add to the file's `allow` list. Overrides the `GRAFANA_MCP_CONFIG` environment variable. Refer to [Select tools with a configuration file](../enable-and-disable-tools/#select-tools-with-a-configuration-file).
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `cloudlogging`, `azuremonitor`, `examples`, `sql`, `influxdb`, `quickwit`, `runpanelquery`, and `dsquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `xray`, `cloudlogging`, `azuremonitor`, `examples`, `sql`, `influxdb`, `quickwit`, `runpanelquery`, and `dsquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -140,6 +144,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-rendering`: Disable rendering tools (panel or dashboard image export).
 - `--disable-snapshot`: Disable snapshot tools.
 - `--disable-cloudwatch`: Disable CloudWatch tools.
+- `--disable-xray`: Disable AWS X-Ray tools.
 - `--disable-cloudlogging`: Disable Google Cloud Logging tools.
 - `--disable-azuremonitor`: Disable Azure Monitor tools.
 - `--disable-examples`: Disable query examples tools.
@@ -241,12 +246,13 @@ The following tools are not registered when the flag is set:
 - SQL datasources: `query_sql`, `query_influxdb`
 - Graphite: `query_graphite`, `query_graphite_density`
 - CloudWatch: `query_cloudwatch`, `query_cloudwatch_logs`
+- X-Ray: `search_xray_traces`, `get_xray_trace`
 - Google Cloud Logging: `query_cloud_logging`
 - Azure Monitor: `query_azure_log_analytics`, `query_azure_resource_graph`
 - Pyroscope: `query_pyroscope`
 - Panels: `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, and `azuremonitor` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and `list_cloud_logging_projects` remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, `azuremonitor`, and `xray` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and `list_cloud_logging_projects` remain available.
 
 The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but doesn't police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 

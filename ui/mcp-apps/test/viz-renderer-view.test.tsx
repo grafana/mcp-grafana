@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GrafanaApplication } from '../app/GrafanaApplication';
 import { createAppHostState } from '../app/appHostState';
+import { vizMessageText } from '../app/vizMessage';
 import { readVizFixture } from './vizFixtures';
 
 const renderer = vi.hoisted(() => ({
@@ -37,13 +38,20 @@ afterEach(() => {
 
 type Handlers = { onhostcontextchanged?: (context: unknown) => void };
 
-function view(callServerTool = vi.fn(), serverTools = true, withResult = true) {
+type FakeHost = { message?: object; sendMessage?: ReturnType<typeof vi.fn> };
+
+function view(callServerTool = vi.fn(), serverTools = true, withResult = true, fake: FakeHost = {}) {
   const app = {
     connect: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     getHostContext: () => undefined,
-    getHostCapabilities: () => ({ updateModelContext: {}, ...(serverTools ? { serverTools: {} } : {}) }),
+    getHostCapabilities: () => ({
+      updateModelContext: {},
+      ...(serverTools ? { serverTools: {} } : {}),
+      ...(fake.message ? { message: fake.message } : {}),
+    }),
     callServerTool,
+    sendMessage: fake.sendMessage ?? vi.fn(async () => ({})),
     updateModelContext: vi.fn(async () => ({})),
   } as unknown as App & Handlers;
   const host = createAppHostState(app);
@@ -156,7 +164,8 @@ describe('RendererView', () => {
 });
 
 describe('RendererView refresh', () => {
-  type Options = { onRefresh: (request: { id: string; cause: 'refresh' }) => void };
+  type Request = { id: string; cause: 'refresh' | 'timeRange'; from?: string; to?: string };
+  type Options = { onRefresh: (request: Request) => void };
   const onRefresh = () => (renderer.render.mock.calls[0][2] as Options).onRefresh;
 
   it('draws the result of a refresh with update (refresh.12)', async () => {
@@ -169,10 +178,33 @@ describe('RendererView refresh', () => {
     expect(renderer.setRefreshed).not.toHaveBeenCalled();
   });
 
+  it('queries the range of a zoom and gives it as the timeRange of the new spec (refresh.9, spec.17)', async () => {
+    const result = readVizFixture('prometheus-line', 'result.json');
+    const call = vi.fn(async () => ({ structuredContent: result, content: [] }));
+    view(call);
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    expect(renderer.render.mock.calls[0][1].timeRange).toEqual({ from: 'now-15m', to: 'now' });
+
+    // A zoom gives epoch milliseconds as decimal strings (renderer.43).
+    act(() => onRefresh()({ id: 'z1', cause: 'timeRange', from: '1790352877294', to: '1790353177294' }));
+    await waitFor(() =>
+      expect(renderer.update).toHaveBeenCalledWith(
+        expect.objectContaining({ timeRange: { from: '1790352877294', to: '1790353177294' } }),
+      ),
+    );
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: expect.objectContaining({
+          arguments: expect.objectContaining({ from: '1790352877294', to: '1790353177294' }),
+        }),
+      }),
+    );
+  });
+
   it('gives no onRefresh when the host does not pass tool calls to the server (refresh.1)', async () => {
     view(vi.fn(), false);
     await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
-    expect(renderer.render.mock.calls[0][2]).toEqual({ onState: expect.any(Function) });
+    expect(renderer.render.mock.calls[0][2]).not.toHaveProperty('onRefresh');
   });
 
   it('gives a failed refresh to setRefreshed (refresh.11)', async () => {
@@ -182,6 +214,136 @@ describe('RendererView refresh', () => {
     act(() => onRefresh()({ id: 'r1', cause: 'refresh' }));
     await waitFor(() => expect(renderer.setRefreshed).toHaveBeenCalledWith('r1', false, 'boom'));
     expect(renderer.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('Ask in chat', () => {
+  type Request = Parameters<typeof vizMessageText>[1];
+  const request: Request = readVizFixture('hostile-message', 'message.json').cases[3].request;
+  // A case whose text is too long even with no labels (state.25).
+  const tooLong: Request = readVizFixture('hostile-message', 'message.json').cases.find(
+    (c: { text: string | null }) => c.text === null,
+  ).request;
+  const options = () => renderer.render.mock.calls[0][2] as { onMessage?: (request: Request) => void };
+  const textBox = () => screen.queryByRole<HTMLTextAreaElement>('textbox', { name: 'Message text' });
+
+  async function ask(answer: () => Promise<unknown>, message?: object) {
+    const sendMessage = vi.fn(answer);
+    const { app } = view(vi.fn(), true, true, { sendMessage, message });
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    const text = vizMessageText(renderer.render.mock.calls[0][1], request);
+    return { app, sendMessage, text, onMessage: options().onMessage! };
+  }
+
+  it('sends the text of the point as a user message, with no model context (state.21, state.22)', async () => {
+    const { app, sendMessage, text, onMessage } = await ask(async () => ({}));
+    act(() => onMessage(request));
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith({ role: 'user', content: [{ type: 'text', text }] });
+    // prometheus-line has no title, so the text names the panel type (state.22).
+    expect(text).toMatch(
+      /^Explain the value "10 req\/s" of "plain" \{\} \(query "A"\) at the time .* in the chart "grafana-echartscartesian-panel"/,
+    );
+    expect(app.updateModelContext).not.toHaveBeenCalled();
+  });
+
+  it('gives onMessage unless the host takes messages with no text (state.20)', async () => {
+    view(vi.fn(), true, true, { message: { image: {} } });
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    expect(options()).not.toHaveProperty('onMessage');
+    cleanup();
+    renderer.render.mockClear();
+
+    view(vi.fn(), true, true, { message: { text: {} } });
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    expect(options().onMessage).toEqual(expect.any(Function));
+  });
+
+  it('shows nothing when the host takes the message (state.27)', async () => {
+    const { onMessage } = await ask(async () => ({}));
+    act(() => onMessage(request));
+    await waitFor(() => expect(screen.queryByText('Sending to the chat…')).toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(textBox()).toBeNull();
+  });
+
+  it.each([
+    ['isError true', async () => ({ isError: true })],
+    ['a JSON-RPC error', async () => Promise.reject(new Error('Method not found'))],
+  ])('shows an error and the selected text to copy for %s, until Close (state.27)', async (_, answer) => {
+    const { sendMessage, text, onMessage } = await ask(answer);
+    act(() => onMessage(request));
+    const box = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Message text' });
+    expect(screen.getByRole('alert').textContent).toContain('The chat did not take the message.');
+    expect(box.value).toBe(text);
+    expect(box.readOnly).toBe(true);
+    expect([box.selectionStart, box.selectionEnd]).toEqual([0, text!.length]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(textBox()).toBeNull();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the text box on the next Ask in chat (state.27)', async () => {
+    const { sendMessage, onMessage } = await ask(async () => ({ isError: true }));
+    act(() => onMessage(request));
+    await waitFor(() => expect(textBox()).not.toBeNull());
+    sendMessage.mockImplementation(() => new Promise(() => {}));
+    act(() => onMessage(request));
+    expect(textBox()).toBeNull();
+    expect(screen.getByText('Sending to the chat…')).toBeTruthy();
+  });
+
+  it('shows that it sends, and ignores Ask in chat until the host answers (state.26)', async () => {
+    let resolve!: (value: unknown) => void;
+    const { sendMessage, onMessage } = await ask(() => new Promise((r) => (resolve = r)));
+    act(() => onMessage(request));
+    expect(screen.getByText('Sending to the chat…')).toBeTruthy();
+    act(() => onMessage(request));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolve({}));
+    expect(screen.queryByText('Sending to the chat…')).toBeNull();
+  });
+
+  it('stops the wait with no error after messageTimeoutMs, and ignores a late answer (state.26, state.27)', async () => {
+    let resolve!: (value: unknown) => void;
+    const { sendMessage, onMessage } = await ask(() => new Promise((r) => (resolve = r)));
+    vi.useFakeTimers();
+    try {
+      act(() => onMessage(request));
+      act(() => vi.advanceTimersByTime(60_000));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(screen.queryByText('Sending to the chat…')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    sendMessage.mockImplementation(() => new Promise(() => {}));
+    act(() => onMessage(request));
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    await act(async () => resolve({ isError: true }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Sending to the chat…')).toBeTruthy();
+  });
+
+  it('sends nothing and shows an error with no text box for a text that is too long (state.25)', async () => {
+    // Quotes double in JSON, so a long title of quotes makes the text too long even with no labels.
+    const result = readVizFixture('prometheus-line', 'result.json');
+    const sendMessage = vi.fn(async () => ({}));
+    const { app } = view(vi.fn(), true, false, { sendMessage });
+    act(() => {
+      app.ontoolresult?.({
+        structuredContent: { ...result, panel: { ...result.panel, title: '"'.repeat(200) } },
+        content: [],
+      } as never);
+    });
+    await waitFor(() => expect(renderer.render).toHaveBeenCalledTimes(1));
+    const onMessage = (renderer.render.mock.calls[0][2] as ReturnType<typeof options>).onMessage!;
+    act(() => onMessage(tooLong));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('too much text');
+    expect(textBox()).toBeNull();
   });
 });
 
@@ -238,6 +400,13 @@ describe('query block', () => {
     expect(block.textContent).toBe(`lgtm-prometheus${expr}`);
     expect(screen.getByRole('article', { name: 'Grafana' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Query result' })).toBeNull();
+  });
+
+  it('gives the range and the series of the result under the expanded query', async () => {
+    view();
+    await waitFor(() => expect(renderer.render).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Expand query' }));
+    expect(screen.getByText('Last 15 minutes · 17 series')).toBeTruthy();
   });
 
   it('shows the query while the result is on its way', () => {

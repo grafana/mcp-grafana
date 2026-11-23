@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,4 +46,27 @@ func TestListAlertmanagerReceiversImplementationPath(t *testing.T) {
 			require.Equal(t, "team", receivers[0].Name)
 		})
 	}
+}
+
+func TestListAlertmanagerReceiversNoNameMatchReturnsEmptyList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/datasources/uid/am" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"uid":"am","type":"alertmanager","jsonData":{}}`))
+			return
+		}
+		_, _ = w.Write([]byte("alertmanager_config: |\n  route:\n    receiver: team\n  receivers:\n    - name: team\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	receivers, err := listAlertmanagerReceivers(mockDatasourcesCtx(server), ListContactPointsParams{
+		DatasourceUID: strPtr("am"),
+		Name:          strPtr("missing"),
+	})
+	require.NoError(t, err)
+	// A nil slice marshals to null; every other list path returns [].
+	require.NotNil(t, receivers)
+	out, err := json.Marshal(receivers)
+	require.NoError(t, err)
+	require.JSONEq(t, `[]`, string(out))
 }

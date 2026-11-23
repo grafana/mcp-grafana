@@ -13,14 +13,17 @@ npm run build
 
 `npm run build` creates the reusable library (`dist/index.js` and declarations) and the two resources embedded by Go: the shared `dist/app.html` and the viz Renderer script `dist/viz-renderer.js`, with `dist/viz-renderer.hash` for its URI. The App build reads the hash, so `build:apps` builds the Renderer first. Regenerate and commit all three after app source changes. `npm run build:apps` builds only the resources; `mise run build-ui` builds all UI packages.
 
-Run `npm run dev` for component and host previews. The preview fixtures are synthetic and do not query a Grafana server.
+Run `npm run dev` for the shared sandboxed host at http://127.0.0.1:5194.
+The host builds the Go server automatically, embedding the current UI bundles.
+After UI source edits, run `npm run build:apps` and restart the host. The host offers chart, trace, panel, and error scenarios,
+plus every visualization smoke fixture. Its fixtures do not query Grafana.
 
-`preview/localhost.html` runs a built app against a real host: an `AppBridge` over
-`PostMessageTransport`, with `dist/` served same-origin so the app's console and
-errors are reachable. Use it when an app misbehaves inside a real host, which
-sandboxes the iframe and may refuse to expose a debugger. `?app=app.html`
-selects the bundle and `?mode=dark` the colour mode. Serve it with
-`npx vite --config localhost.vite.config.ts`; `npm run dev` does not serve `dist/`.
+Preview and Playwright use the same `harness/` entry, bridge handlers, fixtures,
+and pinned upstream basic-host sandbox/CSP server. `npm run dev:components`
+retains the standalone React component gallery on port 5186. Legacy `host.html`
+and `localhost.html` links redirect to the shared host (start `npm run dev` first).
+The old localhost preview's automatic `drive` actions are replaced by Playwright
+journeys; Prometheus fixture selection remains available through `?scenario=metrics&fixture=...`.
 
 ## Use the shell
 
