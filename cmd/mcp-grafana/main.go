@@ -28,6 +28,7 @@ import (
 	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
+	"golang.org/x/net/http/httpguts"
 )
 
 const (
@@ -695,14 +696,19 @@ func (hsc *httpSecurityConfig) addFlags() {
 	flag.StringVar(&hsc.allowedOrigins, "allowed-origins", "", "Comma-separated allowlist of Origin header values for the HTTP/SSE transports. Empty (the default) rejects any request that carries an Origin header — appropriate for non-browser MCP clients. Use \"*\" to disable validation.")
 }
 
-const serverAuthTokenEnvVar = "MCP_GRAFANA_SERVER_TOKEN"
+const (
+	serverAuthTokenEnvVar  = "MCP_GRAFANA_SERVER_TOKEN"
+	serverAuthHeaderEnvVar = "MCP_GRAFANA_SERVER_AUTH_HEADER"
+)
 
 type callerAuthConfig struct {
-	token string
+	token  string
+	header string
 }
 
 func (ca *callerAuthConfig) addFlags() {
 	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
+	flag.StringVar(&ca.header, "server-auth-header", "", "Header callers send the --server-auth-token in. Falls back to the "+serverAuthHeaderEnvVar+" environment variable, then to "+mcpgrafana.DefaultCallerAuthHeader+". Any header other than Authorization takes the raw token or \"Bearer <token>\", and must not be listed in GRAFANA_FORWARD_HEADERS.")
 }
 
 func (ca callerAuthConfig) resolveToken() string {
@@ -710,6 +716,31 @@ func (ca callerAuthConfig) resolveToken() string {
 		return t
 	}
 	return strings.TrimSpace(os.Getenv(serverAuthTokenEnvVar))
+}
+
+func (ca callerAuthConfig) resolveHeader() string {
+	if h := strings.TrimSpace(ca.header); h != "" {
+		return h
+	}
+	if h := strings.TrimSpace(os.Getenv(serverAuthHeaderEnvVar)); h != "" {
+		return h
+	}
+	return mcpgrafana.DefaultCallerAuthHeader
+}
+
+// validateCallerAuthHeader refuses a caller header Grafana could also receive
+// or that cannot be a header name. It is a no-op without a caller token.
+func validateCallerAuthHeader(cred callerCredential) error {
+	if cred.token == "" {
+		return nil
+	}
+	if !httpguts.ValidHeaderFieldName(cred.header) {
+		return fmt.Errorf("invalid --server-auth-header / %s %q: not a valid HTTP header name", serverAuthHeaderEnvVar, cred.header)
+	}
+	if mcpgrafana.ForwardsHeader(cred.header) {
+		return fmt.Errorf("refusing to start: caller authentication is enabled (--server-auth-token / %s) while GRAFANA_FORWARD_HEADERS forwards the %s header. %s is reserved for MCP caller authentication and would leak to Grafana. Remove %s from GRAFANA_FORWARD_HEADERS, or unset the caller token to run in proxy-forwarding mode", serverAuthTokenEnvVar, cred.header, cred.header, cred.header)
+	}
+	return nil
 }
 
 func checkCallerAuthPolicy(transport, address, token string, logger *slog.Logger) {
@@ -737,14 +768,21 @@ func validateGrafanaURLOverridePolicy(transport string, cfg mcpgrafana.GrafanaCo
 	return nil
 }
 
-// withCallerAuth wraps h with bearer-token authentication when a token is
-// configured, and returns it unchanged otherwise. Only the MCP endpoint is
-// wrapped; health/metrics endpoints stay open.
-func withCallerAuth(token string, h http.Handler) http.Handler {
-	if token == "" {
+// callerCredential is the token callers must present and the header it is read
+// from. The zero value means no caller authentication.
+type callerCredential struct {
+	token  string
+	header string
+}
+
+// withCallerAuth wraps h with token authentication when a token is configured,
+// and returns it unchanged otherwise. Only the MCP endpoint is wrapped;
+// health/metrics endpoints stay open.
+func withCallerAuth(cred callerCredential, h http.Handler) http.Handler {
+	if cred.token == "" {
 		return h
 	}
-	return mcpgrafana.RequireBearerToken(token, slog.Default())(h)
+	return mcpgrafana.RequireCallerToken(cred.header, cred.token, slog.Default())(h)
 }
 
 func (hsc httpSecurityConfig) policy(addresses ...string) mcpgrafana.HostOriginPolicy {
@@ -1083,7 +1121,7 @@ func normalizeBasePath(basePath string) string {
 // moves to its own listener.
 //
 // mcpPattern is the ServeMux pattern the MCP handler is mounted on.
-// callerToken, when non-empty, gates the MCP handler behind bearer auth — the
+// caller, when it has a token, gates the MCP handler behind token auth — the
 // operational endpoints stay open so probes and scrapers keep working.
 // corsOrigins wraps the MCP handler in CORS handling outside the auth check,
 // so browser preflights are answered without a token.
@@ -1093,17 +1131,17 @@ func normalizeBasePath(basePath string) string {
 // registerOps mounts them at the server root only — never under --base-path.
 // Putting them on the same prefix as the application endpoints would make it
 // harder for a reverse proxy to expose the API while keeping these internal.
-func newHTTPMux(mcpPattern string, mcpHandler http.Handler, callerToken string, corsOrigins []string) *http.ServeMux {
+func newHTTPMux(mcpPattern string, mcpHandler http.Handler, caller callerCredential, corsOrigins []string) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle(mcpPattern, corsMiddleware(corsOrigins, withCallerAuth(callerToken, observability.WrapHandler(mcpHandler, mcpPattern))))
+	mux.Handle(mcpPattern, corsMiddleware(corsOrigins, withCallerAuth(caller, observability.WrapHandler(mcpHandler, mcpPattern))))
 	return mux
 }
 
 // newSSEMux mounts the SSE handler at <base>/sse.
 //
 // basePath must already be normalized by the caller (normalizeBasePath).
-func newSSEMux(mcpHandler http.Handler, basePath, callerToken string, corsOrigins []string) *http.ServeMux {
-	return newHTTPMux(sseEndpointPath(basePath), mcpHandler, callerToken, corsOrigins)
+func newSSEMux(mcpHandler http.Handler, basePath string, caller callerCredential, corsOrigins []string) *http.ServeMux {
+	return newHTTPMux(sseEndpointPath(basePath), mcpHandler, caller, corsOrigins)
 }
 
 // sseEndpointPath is where the SSE handler listens. The go-sdk SSEHandler
@@ -1117,8 +1155,8 @@ func sseEndpointPath(basePath string) string {
 // newStreamableHTTPMux mounts the streamable-http handler.
 //
 // mcpEndpoint must already be computed by the caller (streamableEndpointPath).
-func newStreamableHTTPMux(mcpHandler http.Handler, mcpEndpoint, callerToken string, corsOrigins []string) *http.ServeMux {
-	return newHTTPMux(mcpEndpoint, mcpHandler, callerToken, corsOrigins)
+func newStreamableHTTPMux(mcpHandler http.Handler, mcpEndpoint string, caller callerCredential, corsOrigins []string) *http.ServeMux {
+	return newHTTPMux(mcpEndpoint, mcpHandler, caller, corsOrigins)
 }
 
 // streamableEndpointPath is where the streamable-http server listens once
@@ -1217,6 +1255,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// these mounts could not serve.
 	basePath = normalizeBasePath(basePath)
 	callerToken := ca.resolveToken()
+	callerHeader := ca.resolveHeader()
+	caller := callerCredential{token: callerToken, header: callerHeader}
 	if err := validateGrafanaURLOverridePolicy(transport, gc); err != nil {
 		return err
 	}
@@ -1315,8 +1355,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if gc.AllowGrafanaURLOverride && len(gc.AllowedGrafanaURLs) == 0 {
 			slog.Error("SECURITY: unrestricted Grafana URL overrides are enabled. Every MCP caller can make requests to arbitrary HTTP(S) targets reachable by this server, including internal services. Use an authenticating proxy that authorizes targets and supplies matching tokens, and restrict outbound network access. An allowlist alone is not a substitute for these controls.")
 		}
-		if callerToken != "" && mcpgrafana.ForwardsAuthorizationHeader() {
-			return fmt.Errorf("refusing to start: caller authentication is enabled (--server-auth-token / %s) while GRAFANA_FORWARD_HEADERS forwards the Authorization header. Authorization is reserved for MCP caller authentication and would leak to Grafana. Remove Authorization from GRAFANA_FORWARD_HEADERS, or unset the caller token to run in proxy-forwarding mode", serverAuthTokenEnvVar)
+		if err := validateCallerAuthHeader(caller); err != nil {
+			return err
 		}
 	}
 
@@ -1382,7 +1422,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mux := newSSEMux(
 			mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, sseHandler),
 			basePath,
-			callerToken,
+			caller,
 			hsc.corsOrigins(),
 		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
@@ -1420,7 +1460,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mux := newStreamableHTTPMux(
 			mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, streamHandler),
 			mcpEndpoint,
-			callerToken,
+			caller,
 			hsc.corsOrigins(),
 		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))

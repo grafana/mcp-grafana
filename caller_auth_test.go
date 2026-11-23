@@ -2,9 +2,11 @@ package mcpgrafana
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -210,4 +212,197 @@ func TestIsLoopbackOnlyBind(t *testing.T) {
 			assert.Equal(t, tc.want, IsLoopbackOnlyBind(tc.address))
 		})
 	}
+}
+
+func TestRequireCallerToken(t *testing.T) {
+	const token = "s3cret-caller-token"
+	const header = "X-Mcp-Token"
+
+	cases := []struct {
+		name       string
+		header     string
+		values     []string
+		wantStatus int
+	}{
+		{"raw token", header, []string{token}, http.StatusOK},
+		{"bearer prefix", header, []string{"Bearer " + token}, http.StatusOK},
+		{"lowercase bearer prefix", header, []string{"bearer " + token}, http.StatusOK},
+		{"surrounding space", header, []string{"  " + token + " "}, http.StatusOK},
+		{"header name case-insensitive", "x-mcp-token", []string{token}, http.StatusOK},
+		{"wrong token", header, []string{"wrong"}, http.StatusUnauthorized},
+		{"wrong bearer token", header, []string{"Bearer wrong"}, http.StatusUnauthorized},
+		{"empty value", header, []string{""}, http.StatusUnauthorized},
+		{"empty bearer", header, []string{"Bearer "}, http.StatusUnauthorized},
+		{"missing header", "", nil, http.StatusUnauthorized},
+		{"token in Authorization instead", "Authorization", []string{"Bearer " + token}, http.StatusUnauthorized},
+		{"repeated header, first valid", header, []string{token, "other"}, http.StatusUnauthorized},
+		{"repeated header, second valid", header, []string{"other", token}, http.StatusUnauthorized},
+		{"repeated valid header", header, []string{token, token}, http.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reached := false
+			handler := RequireCallerToken(header, token, slog.Default())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				reached = true
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			for _, v := range tc.values {
+				req.Header.Add(tc.header, v)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			assert.Equal(t, tc.wantStatus == http.StatusOK, reached)
+			assert.Empty(t, rec.Header().Get("WWW-Authenticate"), "Bearer challenge is for the Authorization header only")
+		})
+	}
+}
+
+// The default header keeps its behaviour: Bearer only, first value wins.
+func TestRequireBearerToken_DefaultHeaderUnchanged(t *testing.T) {
+	const token = "s3cret-caller-token"
+	for _, tc := range []struct {
+		name       string
+		values     []string
+		wantStatus int
+	}{
+		{"raw token", []string{token}, http.StatusUnauthorized},
+		{"repeated, first valid", []string{"Bearer " + token, "Bearer other"}, http.StatusOK},
+		{"repeated, first wrong", []string{"Bearer other", "Bearer " + token}, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got http.Header
+			handler := RequireBearerToken(token, slog.Default())(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got = r.Header.Clone()
+			}))
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			for _, v := range tc.values {
+				req.Header.Add("Authorization", v)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			if tc.wantStatus == http.StatusOK {
+				assert.Empty(t, got.Values("Authorization"), "all values stripped")
+			} else {
+				assert.Equal(t, "Bearer", rec.Header().Get("WWW-Authenticate"))
+			}
+		})
+	}
+}
+
+func TestRequireCallerToken_EmptyHeaderNameFailsClosed(t *testing.T) {
+	handler := RequireCallerToken("", "s3cret", slog.Default())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler should not be reached")
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer s3cret")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestRequireCallerToken_LogsRejectionWithoutLeakingToken(t *testing.T) {
+	const secret = "the-expected-secret-token"
+	const presented = "the-wrong-presented-token"
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	handler := RequireCallerToken("X-Mcp-Token", secret, logger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("X-Mcp-Token", presented)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	logs := buf.String()
+	assert.Contains(t, logs, "invalid bearer token")
+	assert.NotContains(t, logs, secret)
+	assert.NotContains(t, logs, presented)
+}
+
+// A custom header leaves Authorization alone, so it can carry the user's own
+// credential, and removes only the caller token.
+func TestRequireCallerToken_StripsOnlyTheConfiguredHeader(t *testing.T) {
+	const token = "s3cret-caller-token"
+	var got http.Header
+	handler := RequireCallerToken("X-Mcp-Token", token, slog.Default())(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("X-Mcp-Token", token)
+	req.Header.Set("Authorization", "Bearer user-jwt")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.NotNil(t, got)
+	assert.Empty(t, got.Values("X-Mcp-Token"))
+	assert.Equal(t, "Bearer user-jwt", got.Get("Authorization"))
+}
+
+// After the middleware, the caller token reaches neither Grafana nor the client
+// cache key, even though the request carries it on a custom header.
+func TestRequireCallerToken_TokenNeverReachesGrafanaOrCacheKey(t *testing.T) {
+	const token = "s3cret-caller-token"
+	const header = "X-Mcp-Token"
+
+	var mu sync.Mutex
+	var seen []http.Header
+	grafana := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Clone())
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer grafana.Close()
+	t.Setenv(grafanaURLEnvVar, grafana.URL)
+	t.Setenv(grafanaServiceAccountTokenEnvVar, "")
+	t.Setenv(grafanaForwardHeadersEnvVar, "X-Tenant")
+
+	cache := NewClientCache(nil)
+	defer cache.Close()
+
+	run := func(callerToken string) clientCacheKey {
+		var key clientCacheKey
+		handler := RequireCallerToken(header, token, slog.Default())(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			ctx := ExtractGrafanaInfoFromHeaders(WithGrafanaConfig(r.Context(), GrafanaConfig{}), r)
+			ctx = extractGrafanaClientCached(cache)(ctx, r)
+			client := GrafanaClientFromContext(ctx)
+			require.NotNil(t, client)
+			_, _ = client.Health.GetHealth()
+			key = cacheKeyFromRequest(grafana.URL, GrafanaConfigFromContext(ctx).APIKey, nil, 0, r)
+		}))
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Header.Set(header, callerToken)
+		req.Header.Set(grafanaServiceAccountTokenHeader, "user-sa-token")
+		req.Header.Set("X-Tenant", "t1")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		return key
+	}
+
+	withBearer := run("Bearer " + token)
+	raw := run(token)
+	assert.Equal(t, withBearer, raw, "the caller header must not be part of the cache key")
+	assert.NotContains(t, withBearer.String(), token)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, seen, "Grafana was never called")
+	for _, h := range seen {
+		assert.Empty(t, h.Values(header))
+		for name, values := range h {
+			for _, v := range values {
+				assert.NotContains(t, v, token, "header %s", name)
+			}
+		}
+	}
+}
+
+func TestForwardsHeader(t *testing.T) {
+	t.Setenv(grafanaForwardHeadersEnvVar, " x-mcp-token , Cookie")
+	assert.True(t, ForwardsHeader("X-Mcp-Token"))
+	assert.True(t, ForwardsHeader("cookie"))
+	assert.False(t, ForwardsHeader("Authorization"))
+	assert.False(t, ForwardsAuthorizationHeader())
 }
