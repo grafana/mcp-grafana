@@ -697,9 +697,9 @@ type callerAuthConfig struct {
 
 func (ca *callerAuthConfig) addFlags() {
 	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
-	flag.BoolVar(&ca.requireUserCredentials, "require-user-credentials", false, "Per-user mode for streamable-http: every call must carry its own Grafana credential (X-Grafana-Service-Account-Token, basic auth, or a forwarded Authorization, Cookie or --user-identity-headers header) or it is rejected with 401, and the server refuses to start if a shared credential is configured (GRAFANA_SERVICE_ACCOUNT_TOKEN, GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, GRAFANA_API_KEY, GRAFANA_USERNAME, GRAFANA_PASSWORD, or a credential header in GRAFANA_EXTRA_HEADERS). Falls back to "+requireUserCredentialsEnvVar+".")
+	flag.BoolVar(&ca.requireUserCredentials, "require-user-credentials", false, "Per-user mode for streamable-http: every call must carry its own Grafana credential (X-Grafana-Service-Account-Token, basic auth, or a forwarded Authorization, Cookie or --user-identity-headers header) or it is rejected with 401, and the server refuses to start if a shared credential is configured (GRAFANA_SERVICE_ACCOUNT_TOKEN, GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, GRAFANA_API_KEY, GRAFANA_USERNAME, GRAFANA_PASSWORD, a credential or forwarded header in GRAFANA_EXTRA_HEADERS, userinfo in GRAFANA_URL, or --tls-cert-file/--tls-key-file). Falls back to "+requireUserCredentialsEnvVar+".")
 	flag.StringVar(&ca.userIdentityHeaders, "user-identity-headers", "", "Comma-separated forwarded headers that identify the Grafana user in --require-user-credentials mode, such as the auth proxy header X-WEBAUTH-USER. Each must also be in GRAFANA_FORWARD_HEADERS. Authorization and Cookie always count. Falls back to "+userIdentityHeadersEnvVar+".")
-	flag.BoolVar(&ca.logToolCalls, "log-tool-calls", false, "Log one info line per tool call with the caller's Grafana user (from /api/user, cached per credential for 5m), tool name, datasource UID, result, status and duration. Tool arguments are never logged. Falls back to "+logToolCallsEnvVar+".")
+	flag.BoolVar(&ca.logToolCalls, "log-tool-calls", false, "Log one info line per tool call with the caller's Grafana user (from /api/user, cached per credential for 5m), tool name, datasource UID, result, identity_status and duration. Tool arguments are never logged. Falls back to "+logToolCallsEnvVar+".")
 }
 
 // applyEnv fills the boolean options from their environment variables when
@@ -729,12 +729,15 @@ func (ca *callerAuthConfig) applyEnv(setFlags map[string]bool) error {
 }
 
 // validateUserMode enforces --require-user-credentials at startup.
-func (ca callerAuthConfig) validateUserMode(transport string) error {
+func (ca callerAuthConfig) validateUserMode(transport string, tlsCfg *mcpgrafana.TLSConfig) error {
 	if !ca.requireUserCredentials {
 		return nil
 	}
 	if transport != "streamable-http" {
 		return fmt.Errorf("--require-user-credentials needs --transport streamable-http; %s does not pass per-request credentials to tool calls", transport)
+	}
+	if tlsCfg != nil && (tlsCfg.CertFile != "" || tlsCfg.KeyFile != "") {
+		return errors.New("refusing to start: --require-user-credentials is set but --tls-cert-file/--tls-key-file give every call the same client certificate identity; remove them")
 	}
 	identity := splitAndTrim(ca.userIdentityHeaders)
 	if set := mcpgrafana.SharedCredentialsFromEnv(identity); len(set) > 0 {
@@ -1269,7 +1272,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	if err := validateGrafanaURLOverridePolicy(transport, gc); err != nil {
 		return err
 	}
-	if err := ca.validateUserMode(transport); err != nil {
+	if err := ca.validateUserMode(transport, gc.TLSConfig); err != nil {
 		return err
 	}
 

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,16 +24,16 @@ func TestValidateUserMode(t *testing.T) {
 	t.Setenv("GRAFANA_FORWARD_HEADERS", "")
 	on := callerAuthConfig{requireUserCredentials: true}
 
-	assert.NoError(t, callerAuthConfig{}.validateUserMode("stdio"), "off is a no-op")
-	assert.NoError(t, on.validateUserMode("streamable-http"))
+	assert.NoError(t, callerAuthConfig{}.validateUserMode("stdio", nil), "off is a no-op")
+	assert.NoError(t, on.validateUserMode("streamable-http", nil))
 	for _, transport := range []string{"stdio", "sse"} {
-		assert.ErrorContains(t, on.validateUserMode(transport), "streamable-http")
+		assert.ErrorContains(t, on.validateUserMode(transport, nil), "streamable-http")
 	}
 
 	for _, name := range sharedCredentialEnv {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(name, "shared-secret")
-			err := on.validateUserMode("streamable-http")
+			err := on.validateUserMode("streamable-http", nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), name)
 			assert.NotContains(t, err.Error(), "shared-secret")
@@ -48,15 +49,47 @@ func TestValidateUserMode_ExtraHeaders(t *testing.T) {
 	on := callerAuthConfig{requireUserCredentials: true, userIdentityHeaders: "X-Webauth-User"}
 
 	t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Scope-OrgID":"tenant"}`)
-	assert.NoError(t, on.validateUserMode("streamable-http"))
+	assert.NoError(t, on.validateUserMode("streamable-http", nil))
 
 	for _, extra := range []string{`{"Authorization":"Bearer sa-secret"}`, `{"Cookie":"sa-secret"}`, `{"X-Webauth-User":"sa-secret"}`} {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", extra)
-		err := on.validateUserMode("streamable-http")
+		err := on.validateUserMode("streamable-http", nil)
 		require.Error(t, err, extra)
 		assert.Contains(t, err.Error(), "GRAFANA_EXTRA_HEADERS[")
 		assert.NotContains(t, err.Error(), "sa-secret")
 	}
+}
+
+func TestValidateUserMode_ClientCertificate(t *testing.T) {
+	for _, name := range sharedCredentialEnv {
+		t.Setenv(name, "")
+	}
+	t.Setenv("GRAFANA_EXTRA_HEADERS", "")
+	t.Setenv("GRAFANA_FORWARD_HEADERS", "")
+	on := callerAuthConfig{requireUserCredentials: true}
+
+	for _, tc := range []*mcpgrafana.TLSConfig{{CertFile: "c.pem"}, {KeyFile: "k.pem"}, {CertFile: "c.pem", KeyFile: "k.pem"}} {
+		assert.ErrorContains(t, on.validateUserMode("streamable-http", tc), "--tls-cert-file")
+	}
+	// CA and skip-verify do not identify a caller.
+	assert.NoError(t, on.validateUserMode("streamable-http", &mcpgrafana.TLSConfig{CAFile: "ca.pem", SkipVerify: true}))
+	assert.NoError(t, on.validateUserMode("streamable-http", nil))
+	assert.NoError(t, callerAuthConfig{}.validateUserMode("stdio", &mcpgrafana.TLSConfig{CertFile: "c.pem"}), "off is a no-op")
+}
+
+func TestValidateUserMode_URLUserinfo(t *testing.T) {
+	for _, name := range sharedCredentialEnv {
+		t.Setenv(name, "")
+	}
+	t.Setenv("GRAFANA_EXTRA_HEADERS", "")
+	t.Setenv("GRAFANA_FORWARD_HEADERS", "")
+	on := callerAuthConfig{requireUserCredentials: true}
+
+	t.Setenv("GRAFANA_URL", "https://svc:pw-secret@grafana.example.com")
+	err := on.validateUserMode("streamable-http", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GRAFANA_URL")
+	assert.NotContains(t, err.Error(), "pw-secret")
 }
 
 func TestValidateUserMode_IdentityHeaderMustBeForwarded(t *testing.T) {
@@ -66,7 +99,7 @@ func TestValidateUserMode_IdentityHeaderMustBeForwarded(t *testing.T) {
 	t.Setenv("GRAFANA_EXTRA_HEADERS", "")
 	t.Setenv("GRAFANA_FORWARD_HEADERS", "Authorization")
 	on := callerAuthConfig{requireUserCredentials: true, userIdentityHeaders: "X-Webauth-User"}
-	assert.ErrorContains(t, on.validateUserMode("streamable-http"), "X-Webauth-User")
+	assert.ErrorContains(t, on.validateUserMode("streamable-http", nil), "X-Webauth-User")
 }
 
 func TestCallerAuthConfigApplyEnv(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"sort"
@@ -31,7 +32,8 @@ var sharedCredentialEnvVars = []string{
 var grafanaAuthHeaders = []string{"Authorization", "Cookie"}
 
 // SharedCredentialsFromEnv names every shared Grafana credential in the
-// environment, including credential headers in GRAFANA_EXTRA_HEADERS. Values are never returned.
+// environment: credential vars, user:password in GRAFANA_URL, and credential
+// or forwarded headers in GRAFANA_EXTRA_HEADERS. Values are never returned.
 func SharedCredentialsFromEnv(identityHeaders []string) []string {
 	var set []string
 	for _, name := range sharedCredentialEnvVars {
@@ -39,14 +41,19 @@ func SharedCredentialsFromEnv(identityHeaders []string) []string {
 			set = append(set, name)
 		}
 	}
+	// net/http turns URL userinfo into Authorization: Basic when none is set.
+	if u, err := url.Parse(normalizeGrafanaURL(getEnv(grafanaURLEnvVar))); err == nil && u.User != nil {
+		set = append(set, grafanaURLEnvVar+" userinfo")
+	}
 	var extra map[string]string
 	if json.Unmarshal([]byte(os.Getenv(grafanaExtraHeadersEnvVar)), &extra) != nil {
 		return set // invalid JSON is ignored at runtime too, so nothing is sent
 	}
 	credential := slices.Concat(grafanaAuthHeaders, identityHeaders,
 		[]string{grafanaServiceAccountTokenHeader, grafanaAPIKeyHeader})
+	forwarded := forwardHeaderNamesFromEnv()
 	for name := range extra {
-		if containsFold(credential, name) {
+		if containsFold(credential, name) || containsFold(forwarded, name) {
 			set = append(set, grafanaExtraHeadersEnvVar+"["+name+"]")
 		}
 	}
@@ -89,7 +96,10 @@ func RequireUserCredentials(identityHeaders []string, logger *slog.Logger) func(
 				next.ServeHTTP(w, r)
 				return
 			}
-			rejectUnauthorized(w, r, logger, "missing per-user Grafana credentials")
+			logger.Warn("Rejected request without per-user Grafana credentials",
+				"remote_addr", r.RemoteAddr, "method", r.Method, "path", r.URL.Path)
+			// No WWW-Authenticate: Bearer would start OAuth discovery for a Grafana problem.
+			http.Error(w, "unauthorized: missing per-user Grafana credentials", http.StatusUnauthorized)
 		})
 	}
 }
@@ -205,15 +215,42 @@ func ToolCallLogMiddleware(logger *slog.Logger) mcp.Middleware {
 				return next(ctx, method, req)
 			}
 			start := time.Now()
+			lookup := startIdentityLookup(ctx)
 			result, err := next(ctx, method, req)
-			logToolCall(ctx, logger, call, result, err, time.Since(start))
+			d := time.Since(start)
+			logToolCall(ctx, logger, call, result, err, d, lookup.wait(ctx))
 			return result, err
 		}
 	}
 }
 
-func logToolCall(ctx context.Context, logger *slog.Logger, call *mcp.CallToolRequest, result mcp.Result, err error, d time.Duration) {
-	id, status := callerIdentityFromContext(ctx)
+// identityLookup is an /api/user lookup running beside the tool call.
+type identityLookup struct{ done chan identityResult }
+
+// startIdentityLookup runs the lookup in a goroutine so a slow Grafana does not
+// delay the tool result. The goroutine ends within callerIdentityTimeout and
+// sends on a buffered channel, so it cannot leak if nobody waits.
+func startIdentityLookup(ctx context.Context) identityLookup {
+	done := make(chan identityResult, 1)
+	go func() {
+		id, status := callerIdentityFromContext(ctx)
+		done <- identityResult{identity: id, status: status}
+	}()
+	return identityLookup{done: done}
+}
+
+// wait returns the lookup result, or status 0 if ctx is done first.
+func (l identityLookup) wait(ctx context.Context) identityResult {
+	select {
+	case r := <-l.done:
+		return r
+	case <-ctx.Done():
+		return identityResult{}
+	}
+}
+
+func logToolCall(ctx context.Context, logger *slog.Logger, call *mcp.CallToolRequest, result mcp.Result, err error, d time.Duration, who identityResult) {
+	id, status := who.identity, who.status
 	orgID := GrafanaConfigFromContext(ctx).OrgID
 	if orgID == 0 {
 		orgID = id.OrgID
@@ -223,18 +260,22 @@ func logToolCall(ctx context.Context, logger *slog.Logger, call *mcp.CallToolReq
 		outcome = "error"
 	}
 
-	attrs := make([]slog.Attr, 0, 9)
+	attrs := make([]slog.Attr, 0, 10)
 	attrs = append(attrs,
 		slog.String("tool", call.Params.Name),
 		slog.String("grafana_user", id.Login),
 		slog.Int64("user_id", id.ID),
 		slog.Int64("org_id", orgID),
 		slog.String("result", outcome),
-		slog.Int("status", status),
+		slog.Int("identity_status", status),
 		slog.Duration("duration", d),
 	)
 	if uid := datasourceUIDFromArgs(call.Params.Arguments); uid != "" {
 		attrs = append(attrs, slog.String("datasource_uid", uid))
+	}
+	if u, _ := ctx.Value(grafanaOverrideKey{}).(string); u != "" {
+		// The caller chose the target, so grafana_user is whatever that target answered.
+		attrs = append(attrs, slog.Bool("override", true))
 	}
 	if call.Session != nil {
 		if sid := call.Session.ID(); sid != "" {
