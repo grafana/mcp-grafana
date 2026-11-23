@@ -686,11 +686,17 @@ type RenderNotebookPDFParams struct {
 func notebookRenderURL(cfg mcpgrafana.GrafanaConfig, args RenderNotebookPDFParams) string {
 	params := url.Values{}
 	params.Set("encoding", "pdf")
+	// The notebook page is a Scenes app, whose URL parser only recognizes ISO
+	// 8601 at exactly 24 characters (with milliseconds) and otherwise falls
+	// back to parseInt - so an absolute timestamp like the jsonschema
+	// description invites (e.g. "2026-04-28T12:45:00Z", 20 chars) would be
+	// silently read as epoch 2026ms and render January 1970. toGrafanaTimeParam
+	// is the same conversion get_panel_image uses for the same reason.
 	if args.From != "" {
-		params.Set("from", args.From)
+		params.Set("from", toGrafanaTimeParam(args.From, false))
 	}
 	if args.To != "" {
-		params.Set("to", args.To)
+		params.Set("to", toGrafanaTimeParam(args.To, true))
 	}
 	if args.TimeZone != "" {
 		// The notebook UI sends both: timezone is the time picker's parameter

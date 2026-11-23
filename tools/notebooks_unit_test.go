@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -900,6 +901,30 @@ func TestNotebookRenderURL(t *testing.T) {
 	url := notebookRenderURL(mcpgrafana.GrafanaConfig{URL: "https://gf.example.com/"}, RenderNotebookPDFParams{UID: "nb-1"})
 	assert.Equal(t, "https://gf.example.com/render/notebooks/nb-1/render?encoding=pdf", url,
 		"from/to/tz/theme stay unset when the caller does not pass them, so Grafana's defaults apply")
+}
+
+// The notebook page is a Scenes app, whose URL parser recognizes ISO 8601 only
+// at exactly 24 characters (with milliseconds) and otherwise falls back to
+// parseInt - so an absolute timestamp of the shape the jsonschema description
+// invites, e.g. "2026-04-28T12:45:00Z" (20 chars), would be silently read as
+// epoch 2026ms and render January 1970 instead of the requested time.
+func TestNotebookRenderURL_NormalizesAbsoluteTimestamps(t *testing.T) {
+	gotURL := notebookRenderURL(mcpgrafana.GrafanaConfig{URL: "https://gf.example.com"}, RenderNotebookPDFParams{
+		UID:  "nb-1",
+		From: "2026-04-28T12:45:00Z",
+		To:   "2026-04-28T13:45:00Z",
+	})
+	parsed, err := url.Parse(gotURL)
+	require.NoError(t, err)
+	query := parsed.Query()
+
+	from, err := strconv.ParseInt(query.Get("from"), 10, 64)
+	require.NoError(t, err, "from must become epoch millis, not the raw ISO string Scenes' parser mis-reads")
+	to, err := strconv.ParseInt(query.Get("to"), 10, 64)
+	require.NoError(t, err)
+
+	assert.Equal(t, time.Date(2026, 4, 28, 12, 45, 0, 0, time.UTC).UnixMilli(), from)
+	assert.Equal(t, time.Date(2026, 4, 28, 13, 45, 0, 0, time.UTC).UnixMilli(), to)
 }
 
 // TestRenderNotebookPDF_TargetOrgID pins the org routing end to end, because the
