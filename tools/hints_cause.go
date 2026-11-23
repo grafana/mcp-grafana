@@ -177,9 +177,9 @@ func promSelectors(ast parser.Expr) (out []promSelector, lookback time.Duration,
 			lookback = max(lookback, n.Range)
 		case *parser.SubqueryExpr:
 			lookback = max(lookback, n.Range)
-			shifted = shifted || n.OriginalOffset != 0 || n.Timestamp != nil || n.StartOrEnd != 0
+			shifted = shifted || n.OriginalOffset != 0 || n.OriginalOffsetExpr != nil || n.Timestamp != nil || n.StartOrEnd != 0
 		case *parser.VectorSelector:
-			shifted = shifted || n.OriginalOffset != 0 || n.Timestamp != nil || n.StartOrEnd != 0
+			shifted = shifted || n.OriginalOffset != 0 || n.OriginalOffsetExpr != nil || n.Timestamp != nil || n.StartOrEnd != 0
 			name := n.Name
 			for _, m := range n.LabelMatchers {
 				if m.Name == model.MetricNameLabel && m.Type == labels.MatchEqual {
