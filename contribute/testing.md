@@ -28,8 +28,21 @@ Use Vitest's `vi` APIs, not Jest globals. No skill read is needed merely to run 
 ## Reviewing MCP App changes
 
 Unit tests run in jsdom with a mock Renderer. They do not show a layout that breaks, a control that
-does not respond, or a host that refuses a call. A review of a PR that changes source under
-`ui/mcp-apps` runs the App before a verdict. A PR that changes only tests or docs there is exempt.
+does not respond, or a host that refuses a call. A browser does. Approval of a PR that changes
+source under `ui/mcp-apps` requires browser evidence of the changed behavior on the PR head.
+A PR that changes only tests or docs there is exempt.
+
+Two kinds of evidence qualify:
+
+- **Playwright results.** Tests of the Browser E2E Tests workflow that pass on the PR head and
+  use the changed behavior. See [Browser host contracts](#browser-host-contracts).
+  Tests that pass but do not use the changed behavior are not evidence.
+  For a visual change, look at the changed screenshots and the baseline diffs.
+  A new baseline that passes is not evidence by itself.
+- **A run of the App.** Where no test covers the changed behavior, add a focused Playwright test
+  where practical. Otherwise, run the App with the steps below and record the result.
+
+To run the App:
 
 1. Check out the PR head. Both hosts below show the committed bundles in `ui/mcp-apps/dist`.
    Run `mise run build-ui` first if the bundle drift check of the PR has not passed.
@@ -37,7 +50,9 @@ does not respond, or a host that refuses a call. A review of a PR that changes s
    - **Preview host.** From `ui/mcp-apps`, run `npm ci --ignore-scripts`, then `npm run dev`.
      Go must be on the PATH, because the host builds the Go server. Open http://127.0.0.1:5194
      and select a scenario: chart, trace, panel, error, or a visualization fixture.
-     The fixtures do not query Grafana.
+     The fixtures do not query Grafana. The preview host returns 404 for the App frame when
+     the path of the checkout has a directory that starts with a dot, such as `.claude/worktrees`.
+     Use a checkout at another path.
    - **Real host.** From the repository root, run `mise run run-app [port]`. The default port is 8000.
      Connect the host to `http://localhost:<port>/mcp`. The task enables each source of
      `render_grafana_app`, `query_datasource` included. It uses the test stack of
@@ -46,14 +61,22 @@ does not respond, or a host that refuses a call. A review of a PR that changes s
 3. Use the changed behavior. For example, pick another chart, zoom out, change the time range,
    or click Refresh.
 
-The preview host is enough for most changes. Use a real host when the PR changes
-a file that talks to the host:
-`ui/mcp-apps/app/loadRenderer.ts`, `ui/mcp-apps/app/appHostState.ts`, `ui_grafana.go`, `ui_apps.go`,
-or the `_meta.ui` values in `tools/app.go`.
+Playwright and the preview host use the same fixture harness. The harness models one host and
+does not query Grafana. They are enough for most changes. Validate in the relevant environment
+when the PR changes something the harness cannot establish:
 
-The review states what the reviewer ran in the App, in which host, and what the reviewer did not run.
-A review with no App run does not approve. It can still comment on the code. An agent reviewer can
-use a headless browser run of the preview host with a screenshot. The review then says so.
+- **The contract between the App and the host.** For example, resource reads, the `_meta.ui`
+  values in `tools/app.go`, tool calls from the App, host context, or messages to the chat.
+  Use the real host that the change affects.
+- **Behavior that depends on live Grafana data.** Use `run-app` against the test stack or
+  a live instance.
+
+Decide from the changed contract and the gaps in coverage, not from a list of files.
+
+The review states which behavior was checked, the evidence (test names or a run of the App),
+the environment, and what remains untested. A review with no browser evidence does not approve.
+It can still comment on the code. An agent reviewer can use a headless browser run of the
+preview host with a screenshot. The review then says so.
 
 ## Visualization adapter
 

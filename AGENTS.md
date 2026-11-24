@@ -9,7 +9,7 @@ Go server and tools live at the root. `ui/mcp-apps` uses React, Vitest, and Test
 - Existing frontend tests or UI source changes: "Frontend validation" in contribute/testing.md.
   UI bundles are committed for Go embedding and must be rebuilt after UI source changes.
 - Reviewing a PR that changes `ui/mcp-apps` source: "Reviewing MCP App changes" in contribute/testing.md.
-  Run the App before a verdict.
+  Approval needs browser evidence of the changed behavior: relevant Playwright results or a run of the App.
 - Writing or reviewing frontend tests: "Frontend test conventions" in contribute/testing.md.
 - Visualization tests: "Visualization adapter" in contribute/testing.md.
 - New tools or tool name/shape changes: "New tools need an issue first" and "The three tiers" in CONTRIBUTING.md.
