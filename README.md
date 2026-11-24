@@ -514,6 +514,20 @@ Optionally require MCP clients to authenticate *to the server*. This is separate
 
 Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup. With `--server-auth-header`, the same rule applies to that header instead.
 
+**Per-user mode and tool call log:**
+
+- `--require-user-credentials`: Every call must run as its own Grafana user. Falls back to `GRAFANA_REQUIRE_USER_CREDENTIALS`. Streamable-http only.
+  - The server refuses to start if `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`, `GRAFANA_API_KEY`, `GRAFANA_USERNAME` or `GRAFANA_PASSWORD` is set, or if `GRAFANA_EXTRA_HEADERS` sets `Authorization`, `Cookie`, a Grafana token header, one of `--user-identity-headers` or any header listed in `GRAFANA_FORWARD_HEADERS`. It also refuses `GRAFANA_URL` with `user:password@` (the HTTP client sends it as basic auth) and `--tls-cert-file` or `--tls-key-file` (a client certificate is one shared identity). The error names the variable or header, never the value.
+  - A request is rejected with `401` unless it carries its own credential: `X-Grafana-Service-Account-Token`, basic auth, or a forwarded (listed in `GRAFANA_FORWARD_HEADERS`) `Authorization`, `Cookie` or `--user-identity-headers` header. Other forwarded headers, such as `traceparent`, do not count. The `401` carries no `WWW-Authenticate` challenge.
+- `--user-identity-headers`: Comma-separated forwarded headers that identify the user in per-user mode, for example your Grafana auth proxy header `X-WEBAUTH-USER`. Each must also be in `GRAFANA_FORWARD_HEADERS`. Falls back to `GRAFANA_USER_IDENTITY_HEADERS`. The MCP port must be reachable only through the proxy that sets and overwrites these headers. If Grafana's `auth_proxy.whitelist` includes the MCP server, anyone who can reach the port directly can send `X-WEBAUTH-USER: admin` and act as admin. `--server-auth-token` helps.
+- `--log-tool-calls`: Log one line at `info` per tool call, including failed ones, with the caller's Grafana identity from `/api/user`. Falls back to `GRAFANA_LOG_TOOL_CALLS`. The identity is cached for 5 minutes on the cached client, so it is per credential and forwarded headers. Tool arguments and credentials are never logged; `datasource_uid` is added when the tool takes a `datasourceUid`, and `override=true` when the caller chose the target with `X-Grafana-URL` (then `grafana_user` is whatever that target answered).
+
+```text
+level=INFO msg="Tool call" tool=query_prometheus grafana_user=jane user_id=42 org_id=1 result=ok identity_status=200 duration=84ms datasource_uid=prom-main
+```
+
+`status` is the HTTP status of the `/api/user` lookup (`401` with an empty `grafana_user` when Grafana rejects the caller, `0` when Grafana could not be reached). `result` is `ok` or `error` for the tool call itself.
+
 **Grafana URL overrides (streamable-http only):**
 
 > [!WARNING]
