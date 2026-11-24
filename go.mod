@@ -17,7 +17,7 @@ require (
 	github.com/grafana/mcp-grafana/lokiguard v0.1.0
 	github.com/grafana/pyroscope/api v1.6.0
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853
-	github.com/grafana/viz-contract v1.12.0
+	github.com/grafana/viz-contract v1.11.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/invopop/jsonschema v0.14.0
 	github.com/itchyny/gojq v0.12.20
@@ -48,7 +48,6 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
-	github.com/andybalholm/brotli v1.2.8 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.47.5 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
@@ -79,7 +78,6 @@ require (
 	github.com/twmb/franz-go/pkg/kmsg v1.15.0 // indirect
 	github.com/twmb/franz-go/plugin/kslog v1.0.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0 // indirect
-	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	gopkg.in/telebot.v3 v3.3.8 // indirect
@@ -208,5 +206,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab // indirect
 	google.golang.org/grpc v1.85.0 // indirect
 	google.golang.org/protobuf v1.36.12
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
