@@ -278,6 +278,9 @@ var catalog = []category{
 	{name: "assistant", description: "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).", tools: []toolSpec{
 		write(AskAssistant),
 	}},
+	{name: "dbo11y", description: "Database Observability: Inspect monitored MySQL/PostgreSQL instances, their session state and wait events, their top queries by database load, per-query samples, explain plans, wait events, table schema, and timelines, and the recommendations raised about them.", tools: []toolSpec{
+		query(ListDbo11yInstances), query(GetDbo11yInstance), query(GetDbo11yInstanceDetail), query(ListDbo11yTopQueries), query(GetDbo11yQueryDetail), query(ListDbo11yRecommendations),
+	}},
 	{name: "docs", description: "Docs: Search and retrieve Grafana product documentation (powered by grafana.com/llms-full.txt).", tools: []toolSpec{
 		read(SearchDocsTool), read(GetDocTool),
 	}},

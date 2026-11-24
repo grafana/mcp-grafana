@@ -152,6 +152,62 @@ func rbacFirstRoleUID(t *testing.T, api rbacAPI) map[string]any {
 	return map[string]any{"roleUID": roles[0].UID}
 }
 
+// rbacDbo11yPath is the Database Observability API as Grafana serves it.
+const rbacDbo11yPath = "/api/plugins/grafana-dbo11y-app/resources/api/v1"
+
+// rbacDbo11yInstance returns the server_id of an instance Database
+// Observability monitors on the stack, skipping the test when there is none:
+// the instance tools need one to read.
+func rbacDbo11yInstance(t *testing.T, api rbacAPI) string {
+	var listed struct {
+		Data []struct {
+			ServerID string `json:"server_id"`
+		} `json:"data"`
+	}
+	if err := api("GET", rbacDbo11yPath+"/instances", nil, &listed); err != nil {
+		t.Skipf("can't list Database Observability instances: %v", err)
+	}
+	if len(listed.Data) == 0 {
+		t.Skip("mcptests has no monitored Database Observability instance")
+	}
+	return listed.Data[0].ServerID
+}
+
+// rbacDbo11yInstanceArgs points an instance tool at a monitored instance.
+func rbacDbo11yInstanceArgs(t *testing.T, api rbacAPI) map[string]any {
+	return map[string]any{"server_id": rbacDbo11yInstance(t, api)}
+}
+
+// rbacDbo11yQueryArgs points the query tool at a statement that ran on a
+// monitored instance in the last five minutes, skipping the test when none did.
+func rbacDbo11yQueryArgs(t *testing.T, api rbacAPI) map[string]any {
+	serverID := rbacDbo11yInstance(t, api)
+	var listed struct {
+		Data struct {
+			Queries []struct {
+				Digest   string `json:"digest"`
+				QueryID  string `json:"query_id"`
+				Database string `json:"database"`
+			} `json:"queries"`
+		} `json:"data"`
+	}
+	if err := api("GET", rbacDbo11yPath+"/instances/"+url.PathEscape(serverID)+"/queries?limit=1", nil, &listed); err != nil {
+		t.Skipf("can't list the queries of %s: %v", serverID, err)
+	}
+	if len(listed.Data.Queries) == 0 {
+		t.Skipf("%s ran no query in the last five minutes", serverID)
+	}
+	q := listed.Data.Queries[0]
+	args := map[string]any{"server_id": serverID, "query_id": q.Digest}
+	if q.QueryID != "" {
+		args["query_id"] = q.QueryID
+	}
+	if q.Database != "" {
+		args["database"] = q.Database
+	}
+	return args
+}
+
 var rbacFixtures = map[string]rbacFixture{
 	"add_activity_to_incident":    {skip: skipIncident},
 	"create_incident":             {skip: skipIncident},
@@ -401,7 +457,18 @@ var rbacFixtures = map[string]rbacFixture{
 
 	"grafana_api_request": {args: map[string]any{"endpoint": "/api/health"}},
 	"ask_assistant":       {args: map[string]any{"prompt": "Reply with the single word OK."}},
-	"search_docs":         {args: map[string]any{"query": "dashboards", "limit": 1}},
-	"get_doc":             {args: map[string]any{"url": "https://grafana.com/docs/grafana/latest/dashboards/", "outline_only": true}},
-	"user_info":           {args: map[string]any{}},
+
+	// The Database Observability tools read through Grafana, so a stack that
+	// can't serve them fails the admin baseline and is skipped, like
+	// ask_assistant. The instance and query tools also need one to read.
+	"list_dbo11y_instances":       {args: map[string]any{"limit": 1}},
+	"list_dbo11y_recommendations": {args: map[string]any{"limit": 1}},
+	"get_dbo11y_instance":         {setup: rbacDbo11yInstanceArgs},
+	"get_dbo11y_instance_detail":  {args: map[string]any{"operation": "sessions"}, setup: rbacDbo11yInstanceArgs},
+	"list_dbo11y_top_queries":     {args: map[string]any{"limit": 1}, setup: rbacDbo11yInstanceArgs},
+	"get_dbo11y_query_detail":     {args: map[string]any{"operation": "timeline"}, setup: rbacDbo11yQueryArgs},
+
+	"search_docs": {args: map[string]any{"query": "dashboards", "limit": 1}},
+	"get_doc":     {args: map[string]any{"url": "https://grafana.com/docs/grafana/latest/dashboards/", "outline_only": true}},
+	"user_info":   {args: map[string]any{}},
 }

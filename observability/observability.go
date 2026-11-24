@@ -417,6 +417,10 @@ var toolMetricDims = map[string]metricDimSet{
 		"get_notification_policies", "get_contact_points", "get_contact_point",
 		"get_time_intervals", "get_time_interval",
 	)},
+	"get_dbo11y_instance_detail": {operations: ValueSet("sessions", "wait_events")},
+	"get_dbo11y_query_detail": {operations: ValueSet(
+		"samples", "explain_plan", "wait_events", "schema", "timeline",
+	)},
 	"agento11y_manage_conversations": {operations: ValueSet("list", "search", "get")},
 	"agento11y_manage_generations":   {operations: ValueSet("get", "scores")},
 	"agento11y_manage_experiments": {operations: ValueSet(

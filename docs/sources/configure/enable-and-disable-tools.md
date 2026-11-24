@@ -40,6 +40,7 @@ Some tool categories are disabled by default:
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
 - **agento11y** – Agent Observability tools for LLM conversations, generations, evaluation scores, agents, evaluators, eval rules, guards, saved conversations, collections, offline experiments, and the test suites those experiments run against.
 - **assistant** – Grafana Assistant tool (`ask_assistant`); requires the Grafana Assistant plugin and is write-gated.
+- **dbo11y** – Database Observability tools for monitored MySQL and PostgreSQL instances: instances and their sessions and wait events, top queries, per-query samples, explain plans, wait events, schema and timelines, and the recommendations raised about them. They respect `--disable-query`.
 - **admin** – Admin tools (teams, users, roles, permissions).
 
 `--enabled-tools` **replaces** the default list, so to add an optional category you must pass the full set. For example, to keep the defaults and also enable `runpanelquery` and `examples`:

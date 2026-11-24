@@ -145,7 +145,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,docs`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `xray`, `cloudlogging`, `azuremonitor`, `examples`, `sql`, `influxdb`, `quickwit`, `runpanelquery`, and `dsquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `dbo11y`, `elasticsearch`, `cloudwatch`, `xray`, `cloudlogging`, `azuremonitor`, `examples`, `sql`, `influxdb`, `quickwit`, `runpanelquery`, and `dsquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` map to `sql`; `proxied` maps to `tempo`.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -186,6 +186,7 @@ Refer to [Anonymous usage statistics](../../anonymous-usage-statistics/) for the
 - `--disable-provisioning`: Disable provisioning tools.
 - `--disable-agento11y`: Disable Agent Observability tools.
 - `--disable-assistant`: Disable Grafana Assistant tools.
+- `--disable-dbo11y`: Disable Database Observability tools.
 - `--disable-docs`: Disable documentation tools.
 - `--disable-user`: Disable user info tools.
 
@@ -276,9 +277,10 @@ The following tools are not registered when the flag is set:
 - Google Cloud Logging: `query_cloud_logging`
 - Azure Monitor: `query_azure_log_analytics`, `query_azure_resource_graph`
 - Pyroscope: `query_pyroscope`
+- Database Observability: `list_dbo11y_instances`, `get_dbo11y_instance`, `get_dbo11y_instance_detail`, `list_dbo11y_top_queries`, `get_dbo11y_query_detail`, `list_dbo11y_recommendations`
 - Panels: `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, `azuremonitor`, and `xray` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and `list_cloud_logging_projects` remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, `azuremonitor`, `xray`, and `dbo11y` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and `list_cloud_logging_projects` remain available.
 
 The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but doesn't police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
@@ -306,6 +308,7 @@ Enforcement applies only to the Prometheus query tools. Other tools can reach Pr
 - `--disable-api`: `grafana_api_request` can query the Prometheus datasource proxy directly (full bypass).
 - `--disable-rendering`: `get_panel_image` can render unrestricted metric data. `render_grafana_app` can also use `query_datasource` to submit Prometheus queries without these matchers. `--disable-dsquery` closes the latter path only.
 - `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Prometheus server-side across all series. It is only registered when write tools are enabled, so `--disable-write` closes it too, unless `--enable-write-tools=ask_assistant` keeps it.
+- `--disable-dbo11y`: the Database Observability tools read Prometheus through the Database Observability API, which runs its own queries server-side without these matchers. The tools are opt-in, so they only apply if you enabled them. `--disable-query` closes them too.
 
 The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Prometheus datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Dashboard snapshots (`--disable-snapshot`) can embed panel data captured outside enforcement.
 {{< /admonition >}}
@@ -321,6 +324,7 @@ Enforcement applies only to the Loki query tools. Other tools can reach Loki log
 - `--disable-api`: `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 - `--disable-rendering`: `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
 - `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too, unless `--enable-write-tools=ask_assistant` keeps it.
+- `--disable-dbo11y`: the Database Observability tools read Loki through the Database Observability API (query text, samples, explain plans, schema and wait events), which runs its own queries server-side without these matchers. The tools are opt-in, so they only apply if you enabled them. `--disable-query` closes them too.
 
 The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe: it routes on the datasource's real type resolved from its UID, so a Loki datasource always runs through the enforced query path even if the panel or the caller declares a different `datasourceType`. Tempo tools expose only traces, not Loki logs, so they are not a bypass. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
 {{< /admonition >}}

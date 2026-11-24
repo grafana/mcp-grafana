@@ -198,6 +198,19 @@ BigQuery queries require qualified table references such as `` `my-project.my_da
 
 - **Ask the assistant:** Send a natural-language prompt to Grafana Assistant and wait for the full text reply. The assistant may use tools, metrics, logs, and other stack context—broader than firing one isolated data-source query. Pass the returned `contextId` back in a follow-up call to continue the same conversation. Complex tasks can take several minutes; the call blocks until the reply is done or the request times out (5 minutes).
 
+### Database Observability
+
+> **Note:** [Database Observability](https://grafana.com/docs/grafana-cloud/observe-and-act/monitor-infrastructure/database-observability/) tools are **disabled by default**. To enable them, add `dbo11y` to your `--enabled-tools` flag.
+
+- **List instances:** List the MySQL and PostgreSQL instances monitored by Database Observability — metadata only (server_id, engine, cloud provider identity, and the collector's own labels such as cluster, environment, service, or team), filterable by instance, engine, engine version, cloud provider, account, region, and any label. A large fleet is cut to a limit (50 by default, up to 200) and the result says how many matched and whether it was cut.
+- **Get an instance:** Fetch one instance's current RED rollup (request rate, error ratio, mean latency) plus CPU utilization for AWS instances.
+- **Get instance detail:** Fetch one of two kinds of detail for an instance, selected via an `operation` parameter — `sessions` (connection count, the engine's connection limit, and for Postgres a breakdown by session state and the age of the oldest open transaction) or `wait_events` (where the instance spent time waiting across all its queries, one row per category and event, dominant cause first).
+- **List top queries:** List an instance's statements ranked by database load, with normalized SQL text and per-query RED figures and rows examined. The time range sets how much the figures cover.
+- **Get query detail:** Fetch one of five kinds of detail for a query, selected via an `operation` parameter — `samples` (most recent captured executions, with engine-specific detail like rows examined and lock time; SQL text is redacted by the collector unless redaction was disabled on it), `explain_plan` (most recently captured execution plan; "not found" is an ordinary outcome for a healthy query, since plans are sampled, and a wider time range looks further back), `wait_events` (wait-time breakdown by category, dominant cause first), `schema` (columns, indexes, foreign keys, and CREATE DDL where captured, for every table the query touches), or `timeline` (calls, mean latency, and error rate across the time range, each point stamped with the end of its window, to show when a query changed).
+- **List recommendations:** List the recommendations raised about monitored instances and queries — what fired, where, how severe it is, whether it is still firing, and when — filterable by status, severity, category, type, scope, and by instance (service, server_id, account, region) or query. A recommendation has no id: it is found by its type and service. Optionally add authored guidance (`content`), the PromQL behind each one (`queries`), and tool calls that follow one up (`next_steps`).
+
+These tools read Prometheus and, for the log-backed ones (a statement's SQL text, query samples, explain plans, schema and wait events), Loki, through the default Grafana Cloud data sources (`grafanacloud-prom` and `grafanacloud-logs`); pass `datasource` or `loki` to read from different ones. Time ranges take RFC3339, Unix milliseconds, or a relative expression like `now-1h`.
+
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, adding activities, and reading or setting custom fields.
@@ -443,6 +456,12 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `agento11y_manage_experiments`      | Agent Observability*      | Read offline experiments, their trials, scores, artifact metadata, and filter facets; update and cancel an experiment                                         | `grafana-agento11y-app.conversations:read`, `grafana-agento11y-app.data:read`, `plugins.app:access`; with writes enabled also `grafana-agento11y-app.eval:write`                                                                                                                    | N/A                                                           |
 | `agento11y_manage_test_suites`      | Agent Observability*      | Manage the test suites that offline experiments run against, their versions, and their test cases (list, get, create, update, draft, publish, upsert, delete) | `grafana-agento11y-app.conversations:read`, `grafana-agento11y-app.data:read`, `plugins.app:access`; with writes enabled also `grafana-agento11y-app.eval:write`                                                                                                                    | N/A                                                           |
 | `ask_assistant`                     | Assistant*                | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)                                                                | `grafana-assistant-app.chats:access`, `plugins.app:access`                                                                                                                                                                                                                          | Plugin-specific scopes                                        |
+| `list_dbo11y_instances`             | Database Observability*   | List monitored MySQL/PostgreSQL instances with their collector labels (metadata only), filterable by label                                                    | `datasources:query`, `datasources:read`, `plugins.app:access`                                                                                                                                                                                                                       | `plugins:id:grafana-dbo11y-app`, `datasources:uid:*`          |
+| `get_dbo11y_instance`               | Database Observability*   | Get one instance's current RED rollup and AWS CPU utilization                                                                                                 | `datasources:query`, `datasources:read`, `plugins.app:access`                                                                                                                                                                                                                       | `plugins:id:grafana-dbo11y-app`, `datasources:uid:*`          |
+| `get_dbo11y_instance_detail`        | Database Observability*   | Get an instance's session state or its wait events (via `operation` param)                                                                                    | `datasources:query`, `datasources:read`, `plugins.app:access`                                                                                                                                                                                                                       | `plugins:id:grafana-dbo11y-app`, `datasources:uid:*`          |
+| `list_dbo11y_top_queries`           | Database Observability*   | List an instance's statements ranked by database load                                                                                                         | `datasources:query`, `datasources:read`, `plugins.app:access`                                                                                                                                                                                                                       | `plugins:id:grafana-dbo11y-app`, `datasources:uid:*`          |
+| `get_dbo11y_query_detail`           | Database Observability*   | Get samples, explain_plan, wait_events, schema, or timeline for one query (via `operation` param)                                                             | `datasources:query`, `datasources:read`, `plugins.app:access`                                                                                                                                                                                                                       | `plugins:id:grafana-dbo11y-app`, `datasources:uid:*`          |
+| `list_dbo11y_recommendations`       | Database Observability*   | List the recommendations raised about monitored instances and queries, filterable by status, severity, type and instance                                      | `datasources:query`, `datasources:read`, `plugins.app:access`                                                                                                                                                                                                                       | `plugins:id:grafana-dbo11y-app`, `datasources:uid:*`          |
 | `generate_deeplink`                 | Navigation                | Generate accurate deeplink URLs for Grafana resources                                                                                                         | None                                                                                                                                                                                                                                                                                | N/A                                                           |
 | `get_annotations`                   | Annotations               | Fetch annotations with filters                                                                                                                                | `annotations:read`                                                                                                                                                                                                                                                                  | `annotations:*` or `annotations:id:123`                       |
 | `create_annotation`                 | Annotations               | Create a new annotation (standard or Graphite format)                                                                                                         | `annotations:create`                                                                                                                                                                                                                                                                | `annotations:*`                                               |
@@ -573,7 +592,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 
 **Tool Configuration:**
 - `--config`: Path to a YAML file that selects tools, as an alternative to the tool flags below. Tool flags that you set explicitly override the file. `--enable-write-tools` and `--enable-query` are the exception: they add to the file's `allow` list instead of replacing it. Env fallback: `GRAFANA_MCP_CONFIG`. See [Select tools with a configuration file](docs/sources/configure/enable-and-disable-tools.md#select-tools-with-a-configuration-file).
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, `snowflake`, and `xray`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dbo11y`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, `snowflake`, and `xray`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
@@ -633,6 +652,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
+- `--disable-dbo11y`: Disable Database Observability tools
 - `--disable-docs`: Disable documentation tools
 - `--disable-user`: Disable user info tools
 
@@ -760,10 +780,18 @@ When `--disable-query` is enabled, the following tools are not registered:
 **Pyroscope Tools:**
 - `query_pyroscope`
 
+**Database Observability Tools:**
+- `list_dbo11y_instances`
+- `get_dbo11y_instance`
+- `get_dbo11y_instance_detail`
+- `list_dbo11y_top_queries`
+- `get_dbo11y_query_detail`
+- `list_dbo11y_recommendations`
+
 **Run Panel Query Tools:**
 - `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, `azuremonitor`, and `xray` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, `runpanelquery`, `azuremonitor`, `xray`, and `dbo11y` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, `list_cloud_logging_projects`, and so on — remain available.
 
 Note that `--disable-query` gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but does not police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
@@ -1563,7 +1591,8 @@ How it works:
 > Other enabled tools can bypass these matchers. Disable `grafana_api_request`
 > with `--disable-api`, rendering tools with `--disable-rendering`, and Grafana
 > Assistant with `--disable-assistant` (or `--disable-write`, unless
-> `--enable-write-tools` names `ask_assistant`). In particular,
+> `--enable-write-tools` names `ask_assistant`), and Database Observability
+> tools with `--disable-dbo11y`. In particular,
 > `render_grafana_app` can send unfiltered Prometheus queries through its
 > `query_datasource` source. `--disable-dsquery` closes that source, but does not
 > disable server-side panel rendering. Existing dashboard snapshots can also
@@ -1614,6 +1643,7 @@ How it works:
 > - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 > - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
 > - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too, unless `--enable-write-tools=ask_assistant` keeps it.
+> - `--disable-dbo11y` — the Database Observability tools read Loki through the Database Observability API (query text, samples, explain plans, schema and wait events), which runs its own queries server-side without these matchers. The tools are opt-in, so this only applies if you enabled them. `--disable-query` closes them too.
 >
 > The server logs a warning at startup naming each of these that is still enabled.
 > `run_panel_query` is safe (it reuses the enforced query path). Tempo tools
