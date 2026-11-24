@@ -14,3 +14,6 @@ export const vizAppFixtureSets = readdirSync(root).filter((set) =>
 
 // The sets with a viz spec that a Renderer draws.
 export const vizSpecFixtureSets = readdirSync(root).filter((set) => existsSync(join(root, set, 'spec.json')));
+
+// The sets with a message.json: the cases of Ask in chat (fixtures.15).
+export const vizMessageFixtureSets = readdirSync(root).filter((set) => existsSync(join(root, set, 'message.json')));

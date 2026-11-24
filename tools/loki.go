@@ -812,6 +812,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 			Query:          args.LogQL,
 			StartTime:      startTime,
 			EndTime:        endTime,
+			Cause:          lokiEmptyCause(ctx, backend, args.LogQL, startTime, endTime, time.Now(), result.TotalLinesScanned),
 		})
 	}
 

@@ -50,6 +50,20 @@ _The following features are currently available in MCP server. This list is for 
 - **Patch dashboard:** Apply specific changes to a dashboard without requiring the full JSON, significantly reducing context window usage for targeted modifications
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
 
+### Notebooks
+
+Grafana notebooks combine notes, queries, and visualizations in one investigation document. The notebook tools call the notebooks API in the dashboard API group, so they need the `notebooks:*` scope and the `dashboard.notebooks` feature toggle to be enabled in Grafana. Notebooks are a public preview in Grafana 13.3 and later.
+
+> **Note:** Notebook tools are **disabled by default** because they need a feature toggle most instances don't have on. To enable them, add `notebooks` to your `--enabled-tools` flag.
+
+- **List notebooks:** List notebooks with their UID, title, tags, cell count, and URL
+- **Search notebooks:** Find notebooks by title text
+- **Get notebook by UID:** Retrieve a full notebook resource, including its spec
+- **Export notebook as PDF:** Render a notebook the way the UI's export does, through Grafana's image renderer, and return the PDF (needs the image renderer service)
+- **Create notebook:** Create a notebook with a title, optional tags, and optional Markdown and code cells in document order
+- **Update notebook:** Replace a notebook's spec, keeping its labels and annotations, and optionally fail instead of overwriting a notebook that changed since it was read
+- **Delete notebook:** Delete a notebook by its UID
+
 ### Run Panel Query
 
 > **Note:** Run panel query tools are **disabled by default**. To enable them, add `runpanelquery` to your `--enabled-tools` flag.
@@ -345,6 +359,13 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_property`            | Dashboard                 | Extract specific parts of a dashboard using JSONPath expressions                                                                                              | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
 | `get_dashboard_summary`             | Dashboard                 | Get a compact summary of a dashboard without full JSON                                                                                                        | `dashboard.grafana.app/dashboards:get`, `dashboards:read`                                                                                                                                                                                                                           | `dashboards:uid:abc123`                                       |
 | `create_folder`                     | Dashboard                 | Create a folder                                                                                                                                               | `folders:create`, `folders:read`, `folders:write`                                                                                                                                                                                                                                   | `folders:*`                                                   |
+| `list_notebooks`                    | Notebook*                 | List notebooks with title, tags, cell count and URL                                                                                                           | `dashboard.grafana.app/notebooks:list`, `notebooks:read`                                                                                                                                                                                                                            | `notebooks:*`                                                 |
+| `search_notebooks`                  | Notebook*                 | Search notebooks by title text                                                                                                                                | `dashboard.grafana.app/notebooks:list`, `notebooks:read`                                                                                                                                                                                                                            | `notebooks:*`                                                 |
+| `get_notebook_by_uid`               | Notebook*                 | Get a notebook resource including its spec                                                                                                                    | `dashboard.grafana.app/notebooks:get`, `notebooks:read`                                                                                                                                                                                                                             | `notebooks:*`                                                 |
+| `render_notebook_pdf`               | Notebook*                 | Export a notebook as a PDF via Grafana's image renderer                                                                                                       | `dashboard.grafana.app/notebooks:get`, `notebooks:read`                                                                                                                                                                                                                             | `notebooks:*`                                                 |
+| `create_notebook`                   | Notebook*                 | Create a notebook with Markdown and code cells                                                                                                                | `dashboard.grafana.app/notebooks:create`, `notebooks:create`                                                                                                                                                                                                                        | `notebooks:*`                                                 |
+| `update_notebook`                   | Notebook*                 | Replace a notebook's spec, preserving labels and annotations, with optional conflict detection                                                                | `dashboard.grafana.app/notebooks:get`, `dashboard.grafana.app/notebooks:update`, `notebooks:read`, `notebooks:write`                                                                                                                                                                | `notebooks:*`                                                 |
+| `delete_notebook`                   | Notebook*                 | Delete a notebook by UID                                                                                                                                      | `dashboard.grafana.app/notebooks:delete`, `notebooks:delete`                                                                                                                                                                                                                        | `notebooks:*`                                                 |
 | `list_datasources`                  | Datasources               | List datasources                                                                                                                                              | `datasources:read`                                                                                                                                                                                                                                                                  | `datasources:*`                                               |
 | `get_datasource`                    | Datasources               | Get a datasource by UID or name                                                                                                                               | `datasources:read`                                                                                                                                                                                                                                                                  | `datasources:uid:prometheus-uid`                              |
 | `check_datasources_health`          | Datasources               | Check the health of one or more datasources                                                                                                                   | `datasources:query`, `datasources:read`                                                                                                                                                                                                                                             | `datasources:uid:*`                                           |
@@ -488,9 +509,10 @@ When `--address` uses port `0`, the operating system allocates a free port and t
 
 Optionally require MCP clients to authenticate *to the server*. This is separate from the credentials the server uses to reach Grafana. Stdio is unaffected.
 
-- `--server-auth-token`: Bearer token callers must send as `Authorization: Bearer <token>`. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the env var so the secret isn't visible in the process arguments.
+- `--server-auth-token`: Bearer token callers must send as `Authorization: Bearer <token>` (or in the header set with `--server-auth-header`). Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the env var so the secret isn't visible in the process arguments.
+- `--server-auth-header`: Header the caller token is read from. Falls back to the `MCP_GRAFANA_SERVER_AUTH_HEADER` environment variable, then to `Authorization`. `Authorization` takes `Bearer <token>` only. Any other header takes the raw token or `Bearer <token>`, which leaves `Authorization` free for a user's own credential. The header must not be in `GRAFANA_FORWARD_HEADERS`, and it must be sent once (a repeated custom header gets `401`).
 
-Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
+Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup. With `--server-auth-header`, the same rule applies to that header instead.
 
 **Per-user mode and tool call log:**
 
@@ -524,7 +546,7 @@ X-Grafana-URL: https://one.example.com
 X-Grafana-Service-Account-Token: <token for one.example.com>
 ```
 
-If `--server-auth-token` is configured, also send `Authorization: Bearer <MCP caller token>`. This authenticates to the MCP server and is separate from `X-Grafana-Service-Account-Token`, which is for the selected Grafana instance. Your proxy can send a different Grafana token for each instance; the server never shares one configured token across them. The deprecated `X-Grafana-API-Key` header also works. A URL header without a request Grafana token is rejected. Use TLS for incoming requests because they carry tokens.
+If `--server-auth-token` is configured, also send `Authorization: Bearer <MCP caller token>`, or the token in the header set with `--server-auth-header`. This authenticates to the MCP server and is separate from `X-Grafana-Service-Account-Token`, which is for the selected Grafana instance. Your proxy can send a different Grafana token for each instance; the server never shares one configured token across them. The deprecated `X-Grafana-API-Key` header also works. A URL header without a request Grafana token is rejected. Use TLS for incoming requests because they carry tokens.
 
 The allowlist matches exact base URLs, including scheme, port, and path; wildcards are not supported. Grafana authentication is not an SSRF defense.
 
@@ -550,6 +572,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--usage-stats`: Anonymous usage statistics reporting: `enabled`, `disabled`, or `log` (print the report that would be sent to stderr and send nothing). Overrides the `GRAFANA_USAGE_STATS` env var, which in turn overrides `DO_NOT_TRACK`; any unrecognised value disables reporting. See the [Anonymous usage statistics](#anonymous-usage-statistics) section.
 
 **Tool Configuration:**
+- `--config`: Path to a YAML file that selects tools, as an alternative to the tool flags below. Tool flags that you set explicitly override the file. `--enable-write-tools` and `--enable-query` are the exception: they add to the file's `allow` list instead of replacing it. Env fallback: `GRAFANA_MCP_CONFIG`. See [Select tools with a configuration file](docs/sources/configure/enable-and-disable-tools.md#select-tools-with-a-configuration-file).
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `azuremonitor`, `clickhouse`, `cloudlogging`, `cloudwatch`, `dsquery`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, `snowflake`, and `xray`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
@@ -585,6 +608,7 @@ For a selected URL, the server does not use `GRAFANA_SERVICE_ACCOUNT_TOKEN`, `GR
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-folder`: Disable folder tools
+- `--disable-notebooks`: Disable notebook tools
 - `--disable-oncall`: Disable oncall tools
 - `--disable-asserts`: Disable asserts tools
 - `--disable-admin`: Disable admin tools
@@ -650,6 +674,11 @@ When `--disable-write` is enabled, the following write operations are disabled. 
 **Snapshot Tools:**
 - `create_snapshot`
 - `delete_snapshot`
+
+**Notebook Tools:**
+- `create_notebook`
+- `update_notebook`
+- `delete_notebook`
 
 **Navigation Tools:**
 - `generate_deeplink` (`shorten=true` is ignored and the full URL is returned; pass `--enable-write-tools=generate_deeplink` to keep URL shortening)
@@ -918,7 +947,7 @@ Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception
      docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t stdio
      ```
 
-     > **Note — secure the networked modes:** In SSE and streamable-http modes the container binds a non-loopback address (`0.0.0.0:8000`). Without a caller token the server **starts but logs a security error** (at the `error` log level, so it isn't hidden by `--log-level`; and it will refuse to start in a future major release). Set `MCP_GRAFANA_SERVER_TOKEN` to require an `Authorization: Bearer <token>` from clients (recommended). STDIO mode is unaffected. See [Caller Authentication](#cli-flags-reference).
+     > **Note — secure the networked modes:** In SSE and streamable-http modes the container binds a non-loopback address (`0.0.0.0:8000`). Without a caller token the server **starts but logs a security error** (at the `error` log level, so it isn't hidden by `--log-level`; and it will refuse to start in a future major release). Set `MCP_GRAFANA_SERVER_TOKEN` to require an `Authorization: Bearer <token>` from clients (recommended). Use `MCP_GRAFANA_SERVER_AUTH_HEADER` to read the token from another header. STDIO mode is unaffected. See [Caller Authentication](#cli-flags-reference).
 
      2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
 

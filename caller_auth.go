@@ -9,21 +9,34 @@ import (
 	"strings"
 )
 
-// RequireBearerToken returns middleware that authenticates the *caller* of the
+// DefaultCallerAuthHeader is the header the caller token is read from unless
+// the operator picks another one.
+const DefaultCallerAuthHeader = "Authorization"
+
+// RequireBearerToken is RequireCallerToken on the Authorization header.
+func RequireBearerToken(expected string, logger *slog.Logger) func(http.Handler) http.Handler {
+	return RequireCallerToken(DefaultCallerAuthHeader, expected, logger)
+}
+
+// RequireCallerToken returns middleware that authenticates the *caller* of the
 // MCP server (not the credentials the server uses to reach Grafana). Requests
-// must carry "Authorization: Bearer <token>" matching expected, or they are
-// rejected with 401 before reaching the MCP handler.
+// must carry the token expected in header, or they are rejected with 401 before
+// reaching the MCP handler. Authorization takes "Bearer <token>" only. Any other
+// header takes the raw token or "Bearer <token>", so a proxy can keep
+// Authorization for the user's own credential.
 //
 // Both sides are SHA-256 hashed and compared in constant time, so neither the
-// token's value nor its length leaks via timing. On success the Authorization
-// header is stripped so the caller token can never be forwarded to Grafana or
-// folded into a cache key (Grafana auth uses its own X-Grafana-* headers).
+// token's value nor its length leaks via timing. A custom header that is sent
+// more than once is rejected; Authorization uses its first value, as before.
+// On success the header is stripped so the caller token can
+// never be forwarded to Grafana or folded into a cache key (Grafana auth uses
+// its own X-Grafana-* headers).
 //
 // CORS preflight (OPTIONS) passes through unauthenticated (no credentials, no
-// MCP operation). If expected is empty the middleware fails closed and rejects
-// every request. Rejections are logged at WARN with request metadata only,
-// never the token. A nil logger falls back to slog.Default().
-func RequireBearerToken(expected string, logger *slog.Logger) func(http.Handler) http.Handler {
+// MCP operation). If expected or header is empty the middleware fails closed and
+// rejects every request. Rejections are logged at WARN with request metadata
+// only, never the token. A nil logger falls back to slog.Default().
+func RequireCallerToken(header, expected string, logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -36,23 +49,23 @@ func RequireBearerToken(expected string, logger *slog.Logger) func(http.Handler)
 				next.ServeHTTP(w, r)
 				return
 			}
-			if expected == "" {
-				rejectUnauthorized(w, r, logger, "server misconfigured: empty auth token")
+			if expected == "" || header == "" {
+				rejectUnauthorized(w, r, header, logger, "server misconfigured: empty auth token")
 				return
 			}
-			token := bearerTokenFromRequest(r)
+			token, reason := callerTokenFromRequest(r, header)
 			if token == "" {
-				rejectUnauthorized(w, r, logger, "missing bearer token")
+				rejectUnauthorized(w, r, header, logger, reason)
 				return
 			}
 			presentedHash := sha256.Sum256([]byte(token))
 			if subtle.ConstantTimeCompare(presentedHash[:], expectedHash[:]) != 1 {
-				rejectUnauthorized(w, r, logger, "invalid bearer token")
+				rejectUnauthorized(w, r, header, logger, "invalid bearer token")
 				return
 			}
 			// Authentication succeeded. Strip the caller credential so it can
 			// never reach Grafana or a cache key downstream.
-			r.Header.Del("Authorization")
+			r.Header.Del(header)
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -60,27 +73,45 @@ func RequireBearerToken(expected string, logger *slog.Logger) func(http.Handler)
 
 // rejectUnauthorized logs a blocked request (metadata and reason only, never the
 // token) and writes a 401.
-func rejectUnauthorized(w http.ResponseWriter, r *http.Request, logger *slog.Logger, reason string) {
+func rejectUnauthorized(w http.ResponseWriter, r *http.Request, header string, logger *slog.Logger, reason string) {
 	logger.Warn("Rejected unauthenticated request to MCP endpoint",
 		"remote_addr", r.RemoteAddr,
 		"method", r.Method,
 		"path", r.URL.Path,
 		"reason", reason,
 	)
-	w.Header().Set("WWW-Authenticate", "Bearer")
+	if strings.EqualFold(header, DefaultCallerAuthHeader) {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+	}
 	http.Error(w, "unauthorized: "+reason, http.StatusUnauthorized)
 }
 
-// bearerTokenFromRequest extracts the token from an "Authorization: Bearer ..."
-// header. It returns an empty string when the header is absent or not a bearer
-// credential. The scheme match is case-insensitive per RFC 7235.
-func bearerTokenFromRequest(r *http.Request) string {
-	const prefix = "bearer "
-	h := r.Header.Get("Authorization")
-	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
-		return ""
+// callerTokenFromRequest extracts the token from header. It returns an empty
+// token and the reason when the header is absent, repeated (custom
+// header only), or (for Authorization) not a bearer credential. The scheme match is case-insensitive
+// per RFC 7235.
+func callerTokenFromRequest(r *http.Request, header string) (token, reason string) {
+	const missing = "missing bearer token"
+	values := r.Header.Values(header)
+	if len(values) == 0 {
+		return "", missing
 	}
-	return strings.TrimSpace(h[len(prefix):])
+	isDefault := strings.EqualFold(header, DefaultCallerAuthHeader)
+	if len(values) > 1 && !isDefault {
+		return "", "multiple auth headers"
+	}
+	const prefix = "bearer "
+	v := values[0]
+	switch {
+	case len(v) >= len(prefix) && strings.EqualFold(v[:len(prefix)], prefix):
+		v = v[len(prefix):]
+	case isDefault:
+		return "", missing
+	}
+	if v = strings.TrimSpace(v); v == "" {
+		return "", missing
+	}
+	return v, ""
 }
 
 // IsLoopbackOnlyBind reports whether a bind address is reachable only from the
@@ -117,8 +148,13 @@ func IsLoopbackOnlyBind(address string) bool {
 // auth (which reserves Authorization for the caller token), so the server refuses
 // to start when both are set. Proxy mode (no caller token) may keep forwarding it.
 func ForwardsAuthorizationHeader() bool {
-	for _, name := range forwardHeaderNamesFromEnv() {
-		if strings.EqualFold(name, "Authorization") {
+	return ForwardsHeader(DefaultCallerAuthHeader)
+}
+
+// ForwardsHeader reports whether GRAFANA_FORWARD_HEADERS lists name, ignoring case.
+func ForwardsHeader(name string) bool {
+	for _, forwarded := range forwardHeaderNamesFromEnv() {
+		if strings.EqualFold(forwarded, name) {
 			return true
 		}
 	}

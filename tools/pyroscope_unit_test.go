@@ -46,6 +46,38 @@ func TestQueryPyroscope_QueryTypeValidation(t *testing.T) {
 	}
 }
 
+func TestQueryPyroscope_NegativeMaxNodeDepth(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/datasources/uid/test-pyro", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"uid": "test-pyro", "type": "grafana-pyroscope-datasource", "id": 1})
+	})
+	mux.HandleFunc("/api/ds/query", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{Frames: data.Frames{testFlameFrame()}}}})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	u, _ := url.Parse(ts.URL)
+	cfg := client.DefaultTransportConfig()
+	cfg.Host = u.Host
+	cfg.Schemes = []string{"http"}
+	ctx := mcpgrafana.WithGrafanaClient(
+		mcpgrafana.WithGrafanaConfig(t.Context(), mcpgrafana.GrafanaConfig{URL: ts.URL}),
+		&mcpgrafana.GrafanaClient{GrafanaHTTPAPI: client.NewHTTPClientWithConfig(nil, cfg)},
+	)
+
+	_, err := queryPyroscope(ctx, QueryPyroscopeParams{
+		DataSourceUID: "test-pyro",
+		ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+		QueryType:     "profile",
+		MaxNodeDepth:  -1,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_node_depth must not be negative")
+}
+
 func TestQueryPyroscope_FormatValidation(t *testing.T) {
 	tests := []struct {
 		name    string

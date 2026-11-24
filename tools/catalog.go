@@ -131,6 +131,15 @@ var catalog = []category{
 		write(CreateFolder),
 	}},
 	{
+		name:               "notebooks",
+		description:        "Notebooks: List, search, read, create, update, and delete notebooks.",
+		reducedDescription: "Notebooks: List, search, read, and export notebooks.",
+		tools: []toolSpec{
+			read(ListNotebooks), read(SearchNotebooks), read(GetNotebookByUID), read(RenderNotebookPDF),
+			write(CreateNotebook), write(UpdateNotebook), write(DeleteNotebook),
+		},
+	},
+	{
 		name:               "oncall",
 		description:        "OnCall: View and manage on-call schedules, shifts, teams, and users.",
 		reducedDescription: "OnCall: View on-call schedules, shifts, teams, users, and alert groups.",

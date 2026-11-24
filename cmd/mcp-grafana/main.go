@@ -28,6 +28,7 @@ import (
 	"github.com/grafana/mcp-grafana/v2/usagestats"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
+	"golang.org/x/net/http/httpguts"
 )
 
 const (
@@ -73,6 +74,7 @@ func (dt *disabledTools) disabledByFlag() map[string]bool {
 		"alerting":      dt.alerting,
 		"dashboard":     dt.dashboard,
 		"folder":        dt.folder,
+		"notebooks":     dt.notebooks,
 		"oncall":        dt.oncall,
 		"asserts":       dt.asserts,
 		"admin":         dt.admin,
@@ -113,23 +115,35 @@ func (dt *disabledTools) policy() tools.Policy {
 	}
 	p.ReadOnly = dt.write
 	p.NoQuery = dt.query
-	for _, name := range strings.Split(dt.writeToolOverrides, ",") {
-		p.Allow = append(p.Allow, strings.TrimSpace(name))
-	}
-	if dt.enableQuery {
-		p.Allow = append(p.Allow, tools.MutatingQueryToolNames()...)
-	}
+	p.Allow = append(dt.flagAllow(), dt.fileAllow...)
+	p.Deny = dt.deny()
 	return p
 }
+
+func (dt *disabledTools) flagAllow() []string {
+	var allow []string
+	for _, name := range strings.Split(dt.writeToolOverrides, ",") {
+		allow = append(allow, strings.TrimSpace(name))
+	}
+	if dt.enableQuery {
+		allow = append(allow, tools.MutatingQueryToolNames()...)
+	}
+	return allow
+}
+
+const defaultEnabledTools = "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user"
 
 type disabledTools struct {
 	enabledTools string
 
 	writeToolOverrides string
 
+	// fileAllow and fileDeny come from the --config file.
+	fileAllow, fileDeny []string
+
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
-	dashboard, folder, oncall, asserts, admin,
+	dashboard, folder, notebooks, oncall, asserts, admin,
 	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, xray, cloudlogging, azuremonitor, write, query, enableQuery,
 	snapshot, examples, sql, graphite, dsquery,
 	runpanelquery, plugin, api, config, provisioning,
@@ -179,7 +193,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,snapshot,plugin,api,config,provisioning,docs,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", defaultEnabledTools, "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -191,6 +205,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
+	flag.BoolVar(&dt.notebooks, "disable-notebooks", false, "Disable notebook tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
 	flag.BoolVar(&dt.asserts, "disable-asserts", false, "Disable asserts tools")
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
@@ -683,6 +698,7 @@ func (hsc *httpSecurityConfig) addFlags() {
 
 const (
 	serverAuthTokenEnvVar        = "MCP_GRAFANA_SERVER_TOKEN"
+	serverAuthHeaderEnvVar       = "MCP_GRAFANA_SERVER_AUTH_HEADER"
 	requireUserCredentialsEnvVar = "GRAFANA_REQUIRE_USER_CREDENTIALS"
 	logToolCallsEnvVar           = "GRAFANA_LOG_TOOL_CALLS"
 	userIdentityHeadersEnvVar    = "GRAFANA_USER_IDENTITY_HEADERS"
@@ -690,6 +706,7 @@ const (
 
 type callerAuthConfig struct {
 	token                  string
+	header                 string
 	requireUserCredentials bool
 	userIdentityHeaders    string
 	logToolCalls           bool
@@ -697,6 +714,7 @@ type callerAuthConfig struct {
 
 func (ca *callerAuthConfig) addFlags() {
 	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
+	flag.StringVar(&ca.header, "server-auth-header", "", "Header callers send the --server-auth-token in. Falls back to the "+serverAuthHeaderEnvVar+" environment variable, then to "+mcpgrafana.DefaultCallerAuthHeader+". Any header other than Authorization takes the raw token or \"Bearer <token>\", and must not be listed in GRAFANA_FORWARD_HEADERS.")
 	flag.BoolVar(&ca.requireUserCredentials, "require-user-credentials", false, "Per-user mode for streamable-http: every call must carry its own Grafana credential (X-Grafana-Service-Account-Token, basic auth, or a forwarded Authorization, Cookie or --user-identity-headers header) or it is rejected with 401, and the server refuses to start if a shared credential is configured (GRAFANA_SERVICE_ACCOUNT_TOKEN, GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, GRAFANA_API_KEY, GRAFANA_USERNAME, GRAFANA_PASSWORD, a credential or forwarded header in GRAFANA_EXTRA_HEADERS, userinfo in GRAFANA_URL, or --tls-cert-file/--tls-key-file). Falls back to "+requireUserCredentialsEnvVar+".")
 	flag.StringVar(&ca.userIdentityHeaders, "user-identity-headers", "", "Comma-separated forwarded headers that identify the Grafana user in --require-user-credentials mode, such as the auth proxy header X-WEBAUTH-USER. Each must also be in GRAFANA_FORWARD_HEADERS. Authorization and Cookie always count. Falls back to "+userIdentityHeadersEnvVar+".")
 	flag.BoolVar(&ca.logToolCalls, "log-tool-calls", false, "Log one info line per tool call with the caller's Grafana user (from /api/user, cached per credential for 5m), tool name, datasource UID, result, identity_status and duration. Tool arguments are never logged. Falls back to "+logToolCallsEnvVar+".")
@@ -764,6 +782,31 @@ func (ca callerAuthConfig) resolveToken() string {
 	return strings.TrimSpace(os.Getenv(serverAuthTokenEnvVar))
 }
 
+func (ca callerAuthConfig) resolveHeader() string {
+	if h := strings.TrimSpace(ca.header); h != "" {
+		return h
+	}
+	if h := strings.TrimSpace(os.Getenv(serverAuthHeaderEnvVar)); h != "" {
+		return h
+	}
+	return mcpgrafana.DefaultCallerAuthHeader
+}
+
+// validateCallerAuthHeader refuses a caller header Grafana could also receive
+// or that cannot be a header name. It is a no-op without a caller token.
+func validateCallerAuthHeader(cred callerCredential) error {
+	if cred.token == "" {
+		return nil
+	}
+	if !httpguts.ValidHeaderFieldName(cred.header) {
+		return fmt.Errorf("invalid --server-auth-header / %s %q: not a valid HTTP header name", serverAuthHeaderEnvVar, cred.header)
+	}
+	if mcpgrafana.ForwardsHeader(cred.header) {
+		return fmt.Errorf("refusing to start: caller authentication is enabled (--server-auth-token / %s) while GRAFANA_FORWARD_HEADERS forwards the %s header. %s is reserved for MCP caller authentication and would leak to Grafana. Remove %s from GRAFANA_FORWARD_HEADERS, or unset the caller token to run in proxy-forwarding mode", serverAuthTokenEnvVar, cred.header, cred.header, cred.header)
+	}
+	return nil
+}
+
 func checkCallerAuthPolicy(transport, address, token string, logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.Default()
@@ -789,14 +832,21 @@ func validateGrafanaURLOverridePolicy(transport string, cfg mcpgrafana.GrafanaCo
 	return nil
 }
 
-// withCallerAuth wraps h with bearer-token authentication when a token is
-// configured, and returns it unchanged otherwise. Only the MCP endpoint is
-// wrapped; health/metrics endpoints stay open.
-func withCallerAuth(token string, h http.Handler) http.Handler {
-	if token == "" {
+// callerCredential is the token callers must present and the header it is read
+// from. The zero value means no caller authentication.
+type callerCredential struct {
+	token  string
+	header string
+}
+
+// withCallerAuth wraps h with token authentication when a token is configured,
+// and returns it unchanged otherwise. Only the MCP endpoint is wrapped;
+// health/metrics endpoints stay open.
+func withCallerAuth(cred callerCredential, h http.Handler) http.Handler {
+	if cred.token == "" {
 		return h
 	}
-	return mcpgrafana.RequireBearerToken(token, slog.Default())(h)
+	return mcpgrafana.RequireCallerToken(cred.header, cred.token, slog.Default())(h)
 }
 
 func (hsc httpSecurityConfig) policy(addresses ...string) mcpgrafana.HostOriginPolicy {
@@ -1135,7 +1185,7 @@ func normalizeBasePath(basePath string) string {
 // moves to its own listener.
 //
 // mcpPattern is the ServeMux pattern the MCP handler is mounted on.
-// callerToken, when non-empty, gates the MCP handler behind bearer auth — the
+// caller, when it has a token, gates the MCP handler behind token auth — the
 // operational endpoints stay open so probes and scrapers keep working.
 // corsOrigins wraps the MCP handler in CORS handling outside the auth check,
 // so browser preflights are answered without a token.
@@ -1145,17 +1195,17 @@ func normalizeBasePath(basePath string) string {
 // registerOps mounts them at the server root only — never under --base-path.
 // Putting them on the same prefix as the application endpoints would make it
 // harder for a reverse proxy to expose the API while keeping these internal.
-func newHTTPMux(mcpPattern string, mcpHandler http.Handler, callerToken string, corsOrigins []string) *http.ServeMux {
+func newHTTPMux(mcpPattern string, mcpHandler http.Handler, caller callerCredential, corsOrigins []string) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle(mcpPattern, corsMiddleware(corsOrigins, withCallerAuth(callerToken, observability.WrapHandler(mcpHandler, mcpPattern))))
+	mux.Handle(mcpPattern, corsMiddleware(corsOrigins, withCallerAuth(caller, observability.WrapHandler(mcpHandler, mcpPattern))))
 	return mux
 }
 
 // newSSEMux mounts the SSE handler at <base>/sse.
 //
 // basePath must already be normalized by the caller (normalizeBasePath).
-func newSSEMux(mcpHandler http.Handler, basePath, callerToken string, corsOrigins []string) *http.ServeMux {
-	return newHTTPMux(sseEndpointPath(basePath), mcpHandler, callerToken, corsOrigins)
+func newSSEMux(mcpHandler http.Handler, basePath string, caller callerCredential, corsOrigins []string) *http.ServeMux {
+	return newHTTPMux(sseEndpointPath(basePath), mcpHandler, caller, corsOrigins)
 }
 
 // sseEndpointPath is where the SSE handler listens. The go-sdk SSEHandler
@@ -1169,8 +1219,8 @@ func sseEndpointPath(basePath string) string {
 // newStreamableHTTPMux mounts the streamable-http handler.
 //
 // mcpEndpoint must already be computed by the caller (streamableEndpointPath).
-func newStreamableHTTPMux(mcpHandler http.Handler, mcpEndpoint, callerToken string, corsOrigins []string) *http.ServeMux {
-	return newHTTPMux(mcpEndpoint, mcpHandler, callerToken, corsOrigins)
+func newStreamableHTTPMux(mcpHandler http.Handler, mcpEndpoint string, caller callerCredential, corsOrigins []string) *http.ServeMux {
+	return newHTTPMux(mcpEndpoint, mcpHandler, caller, corsOrigins)
 }
 
 // streamableEndpointPath is where the streamable-http server listens once
@@ -1269,6 +1319,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// these mounts could not serve.
 	basePath = normalizeBasePath(basePath)
 	callerToken := ca.resolveToken()
+	callerHeader := ca.resolveHeader()
+	caller := callerCredential{token: callerToken, header: callerHeader}
 	if err := validateGrafanaURLOverridePolicy(transport, gc); err != nil {
 		return err
 	}
@@ -1370,8 +1422,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if gc.AllowGrafanaURLOverride && len(gc.AllowedGrafanaURLs) == 0 {
 			slog.Error("SECURITY: unrestricted Grafana URL overrides are enabled. Every MCP caller can make requests to arbitrary HTTP(S) targets reachable by this server, including internal services. Use an authenticating proxy that authorizes targets and supplies matching tokens, and restrict outbound network access. An allowlist alone is not a substitute for these controls.")
 		}
-		if callerToken != "" && mcpgrafana.ForwardsAuthorizationHeader() {
-			return fmt.Errorf("refusing to start: caller authentication is enabled (--server-auth-token / %s) while GRAFANA_FORWARD_HEADERS forwards the Authorization header. Authorization is reserved for MCP caller authentication and would leak to Grafana. Remove Authorization from GRAFANA_FORWARD_HEADERS, or unset the caller token to run in proxy-forwarding mode", serverAuthTokenEnvVar)
+		if err := validateCallerAuthHeader(caller); err != nil {
+			return err
 		}
 	}
 
@@ -1439,7 +1491,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mux := newSSEMux(
 			mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, sseHandler),
 			basePath,
-			callerToken,
+			caller,
 			hsc.corsOrigins(),
 		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
@@ -1477,13 +1529,13 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mcpEndpoint := streamableEndpointPath(basePath, endpointPath)
 		mcpHandler := mcpgrafana.GrafanaURLOverrideMiddleware(gc.AllowGrafanaURLOverride, gc.AllowedGrafanaURLs, streamHandler)
 		if ca.requireUserCredentials {
-			// Inside caller auth, which strips its own Authorization header first.
+			// Inside caller auth, which strips the caller token header first.
 			mcpHandler = mcpgrafana.RequireUserCredentials(splitAndTrim(ca.userIdentityHeaders), slog.Default())(mcpHandler)
 		}
 		mux := newStreamableHTTPMux(
 			mcpHandler,
 			mcpEndpoint,
-			callerToken,
+			caller,
 			hsc.corsOrigins(),
 		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
@@ -1522,6 +1574,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
+	configPath := flag.String("config", "", "Path to a YAML file that selects tools. Tool flags that are set explicitly override the file, except --enable-write-tools and --enable-query, which add to its allow list. Overrides the "+configEnvVar+" environment variable.")
 	usageStatsMode := flag.String("usage-stats", "", "Anonymous usage statistics reporting: 'enabled', 'disabled', or 'log' to print the report that would be sent to stderr and send nothing. Overrides the "+usagestats.ModeEnvVar+" environment variable, which in turn overrides "+usagestats.DoNotTrackEnvVar+"; any unrecognised value disables reporting. See https://grafana.com/docs/grafana/latest/developer-resources/mcp/anonymous-usage-statistics/")
 	var dt disabledTools
 	dt.addFlags()
@@ -1587,6 +1640,18 @@ func main() {
 		Endpoint: usagestats.ResolveEndpoint(os.Getenv(usagestats.EndpointEnvVar)),
 		Version:  mcpgrafana.Version(),
 		Flags:    setFlagNames,
+	}
+
+	if !setFlags["config"] {
+		*configPath = os.Getenv(configEnvVar)
+	}
+	if *configPath != "" {
+		cfg, err := loadConfigFile(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid config file: %v\n", err)
+			os.Exit(2)
+		}
+		dt.applyConfig(cfg.Tools, setFlags)
 	}
 
 	if err := gc.applyLokiGuardrailEnv(setFlags); err != nil {

@@ -1473,6 +1473,99 @@ func TestCallerAuthConfigResolveToken(t *testing.T) {
 	})
 }
 
+func TestCallerAuthConfigResolveHeader(t *testing.T) {
+	t.Run("defaults to Authorization", func(t *testing.T) {
+		t.Setenv(serverAuthHeaderEnvVar, "")
+		assert.Equal(t, "Authorization", callerAuthConfig{}.resolveHeader())
+	})
+
+	t.Run("blank flag and env fall back to the default", func(t *testing.T) {
+		t.Setenv(serverAuthHeaderEnvVar, "  ")
+		assert.Equal(t, "Authorization", callerAuthConfig{header: "  "}.resolveHeader())
+	})
+
+	t.Run("env is used when the flag is empty", func(t *testing.T) {
+		t.Setenv(serverAuthHeaderEnvVar, " X-From-Env ")
+		assert.Equal(t, "X-From-Env", callerAuthConfig{}.resolveHeader())
+	})
+
+	t.Run("flag takes precedence over env and is trimmed", func(t *testing.T) {
+		t.Setenv(serverAuthHeaderEnvVar, "X-From-Env")
+		assert.Equal(t, "X-From-Flag", callerAuthConfig{header: " X-From-Flag "}.resolveHeader())
+	})
+}
+
+func TestValidateCallerAuthHeader(t *testing.T) {
+	t.Run("custom header listed in GRAFANA_FORWARD_HEADERS is refused, ignoring case", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "X-Tenant, x-mcp-token")
+		err := validateCallerAuthHeader(callerCredential{token: "t", header: "X-Mcp-Token"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "refusing to start")
+		assert.Contains(t, err.Error(), "X-Mcp-Token")
+	})
+
+	t.Run("Authorization is still refused by default", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "authorization")
+		err := validateCallerAuthHeader(callerCredential{token: "t", header: "Authorization"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "refusing to start")
+	})
+
+	t.Run("Authorization may be forwarded when the token uses another header", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Authorization")
+		assert.NoError(t, validateCallerAuthHeader(callerCredential{token: "t", header: "X-Mcp-Token"}))
+	})
+
+	t.Run("no token is proxy-forwarding mode", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Authorization,X-Mcp-Token")
+		assert.NoError(t, validateCallerAuthHeader(callerCredential{header: "X-Mcp-Token"}))
+	})
+
+	t.Run("invalid header name is refused", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "")
+		for _, name := range []string{"", "X Bad", "X-Bad:", "X-Bad\n"} {
+			assert.Error(t, validateCallerAuthHeader(callerCredential{token: "t", header: name}), "%q", name)
+		}
+	})
+}
+
+func TestCallerAuthHeaderOverHTTP(t *testing.T) {
+	const token = "s3cret-caller-token"
+	reached := 0
+	mcp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		assert.Empty(t, r.Header.Get("X-Mcp-Token"))
+		w.WriteHeader(http.StatusOK)
+	})
+	mux := newStreamableHTTPMux(mcp, "/mcp", callerCredential{token: token, header: "X-Mcp-Token"}, nil)
+
+	for _, tc := range []struct {
+		name       string
+		set        func(*http.Request)
+		wantStatus int
+	}{
+		{"custom header", func(r *http.Request) { r.Header.Set("X-Mcp-Token", token) }, http.StatusOK},
+		{"custom header with Bearer", func(r *http.Request) { r.Header.Set("X-Mcp-Token", "Bearer "+token) }, http.StatusOK},
+		{"wrong token", func(r *http.Request) { r.Header.Set("X-Mcp-Token", "nope") }, http.StatusUnauthorized},
+		{"no header", func(*http.Request) {}, http.StatusUnauthorized},
+		{"token on Authorization only", func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := reached
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			tc.set(req)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			if tc.wantStatus == http.StatusOK {
+				assert.Equal(t, before+1, reached)
+			} else {
+				assert.Equal(t, before, reached)
+			}
+		})
+	}
+}
+
 func TestCheckCallerAuthPolicy(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -2191,7 +2284,7 @@ func TestHTTPMuxHonoursBasePath(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				mux := newSSEMux(mcpHandler, normalizeBasePath(tc.basePath), "", nil)
+				mux := newSSEMux(mcpHandler, normalizeBasePath(tc.basePath), callerCredential{}, nil)
 				require.Empty(t, registerOps(mux, obs, "", metricsCfg),
 					"ops share the MCP listener when no ops address is set")
 				for _, p := range tc.mcpPaths {
@@ -2240,7 +2333,7 @@ func TestHTTPMuxHonoursBasePath(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				mux := newStreamableHTTPMux(mcpHandler, streamableEndpointPath(tc.basePath, tc.endpointPath), "", nil)
+				mux := newStreamableHTTPMux(mcpHandler, streamableEndpointPath(tc.basePath, tc.endpointPath), callerCredential{}, nil)
 				require.Empty(t, registerOps(mux, obs, "", metricsCfg),
 					"ops share the MCP listener when no ops address is set")
 				assertBody(t, mux, tc.mcpPath, mcpBody)
@@ -2260,7 +2353,7 @@ func TestHTTPMuxHonoursBasePath(t *testing.T) {
 	})
 
 	t.Run("metrics are absent when disabled", func(t *testing.T) {
-		mux := newSSEMux(mcpHandler, normalizeBasePath("/my-custom-base"), "", nil)
+		mux := newSSEMux(mcpHandler, normalizeBasePath("/my-custom-base"), callerCredential{}, nil)
 		require.Empty(t, registerOps(mux, newTestObservability(t), "", observability.Config{}))
 		code, _ := get(t, mux, "/metrics")
 		assert.Equal(t, http.StatusNotFound, code, "GET /metrics with metrics disabled")
@@ -2338,7 +2431,7 @@ func TestValidateMountFlags(t *testing.T) {
 			require.NoError(t, setupErr)
 			t.Cleanup(func() { _ = o.Shutdown(context.Background()) })
 			mount := func() {
-				mux := newStreamableHTTPMux(noop, got, "", nil)
+				mux := newStreamableHTTPMux(noop, got, callerCredential{}, nil)
 				registerOps(mux, o, tc.healthzAddress, tc.obs)
 			}
 
@@ -2349,7 +2442,7 @@ func TestValidateMountFlags(t *testing.T) {
 					// "/" is a pattern ServeMux takes: the objection is that it
 					// answers every unclaimed path on the listener, not that it
 					// panics. Prove it is a catch-all rather than a crash.
-					mux := newStreamableHTTPMux(noop, got, "", nil)
+					mux := newStreamableHTTPMux(noop, got, callerCredential{}, nil)
 					registerOps(mux, o, tc.healthzAddress, tc.obs)
 					rec := httptest.NewRecorder()
 					mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/anything", nil))
@@ -2362,7 +2455,7 @@ func TestValidateMountFlags(t *testing.T) {
 					mcp := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 						_, _ = w.Write([]byte("mcp"))
 					})
-					mux := newStreamableHTTPMux(mcp, got, "", nil)
+					mux := newStreamableHTTPMux(mcp, got, callerCredential{}, nil)
 					registerOps(mux, o, tc.healthzAddress, tc.obs)
 					rec := httptest.NewRecorder()
 					mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/not-the-endpoint", nil))
@@ -2382,7 +2475,7 @@ func TestValidateMountFlags(t *testing.T) {
 				mcp := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					_, _ = w.Write([]byte("mcp"))
 				})
-				mux := newStreamableHTTPMux(mcp, got, "", nil)
+				mux := newStreamableHTTPMux(mcp, got, callerCredential{}, nil)
 				registerOps(mux, o, tc.healthzAddress, tc.obs)
 				rec := httptest.NewRecorder()
 				mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, got, nil))
