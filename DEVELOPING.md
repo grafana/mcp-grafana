@@ -28,6 +28,7 @@ Then run the server in your preferred transport mode:
 mise run run                 # stdio mode
 mise run run-sse             # SSE mode (with debug logging + metrics)
 mise run run-streamable-http # Streamable HTTP mode (with debug logging + metrics)
+mise run run-app [port]      # Streamable HTTP mode on a chosen port, for a review of an App change
 ```
 
 ### When a port is in use
