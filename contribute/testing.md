@@ -32,6 +32,10 @@ does not respond, or a host that refuses a call. A browser does. Approval of a P
 source under `ui/mcp-apps` requires browser evidence of the changed behavior on the PR head.
 A PR that changes only tests or docs there is exempt.
 
+A dependency change counts as source when it changes the committed bundles in `ui/mcp-apps/dist`.
+For a bump with no intended change of behavior, a pass of the Browser E2E Tests workflow
+on the PR head is the evidence. A dependency change that leaves the bundles unchanged is exempt.
+
 Two kinds of evidence qualify:
 
 - **Playwright results.** Tests of the Browser E2E Tests workflow that pass on the PR head and
@@ -45,17 +49,17 @@ Two kinds of evidence qualify:
 To run the App:
 
 1. Check out the PR head. Both hosts below show the committed bundles in `ui/mcp-apps/dist`.
-   Run `mise run build-ui` first if the bundle drift check of the PR has not passed.
+   If the Verify UI bundles check fails, the bundles do not match the source. That blocks
+   approval until the author pushes rebuilt bundles. Do not review a local rebuild in their place.
 2. Open the App in a host:
    - **Preview host.** From `ui/mcp-apps`, run `npm ci --ignore-scripts`, then `npm run dev`.
      Go must be on the PATH, because the host builds the Go server. Open http://127.0.0.1:5194
      and select a scenario: chart, trace, panel, error, or a visualization fixture.
-     The fixtures do not query Grafana. The preview host returns 404 for the App frame when
-     the path of the checkout has a directory that starts with a dot, such as `.claude/worktrees`.
-     Use a checkout at another path.
+     The fixtures do not query Grafana. Use a checkout whose path has no directory that starts
+     with a dot. See [the browser test guide](../ui/mcp-apps/e2e/README.md#when-the-checkout-is-under-a-dot-directory).
    - **Real host.** From the repository root, run `mise run run-app [port]`. The default port is 8000.
-     Connect the host to `http://localhost:<port>/mcp`. The task enables each source of
-     `render_grafana_app`, `query_datasource` included. It uses the test stack of
+     Connect the host to `http://localhost:<port>/mcp`. Like the other run tasks, it enables each
+     source of `render_grafana_app`, `query_datasource` included. It uses the test stack of
      `mise run run-test-services`. For another local Grafana, set `GRAFANA_URL` in the shell.
      For a live instance, set `GRAFANA_URL` and `GRAFANA_SERVICE_ACCOUNT_TOKEN`.
 3. Use the changed behavior. For example, pick another chart, zoom out, change the time range,
@@ -76,7 +80,9 @@ Decide from the changed contract and the gaps in coverage, not from a list of fi
 The review states which behavior was checked, the evidence (test names or a run of the App),
 the environment, and what remains untested. A review with no browser evidence does not approve.
 It can still comment on the code. An agent reviewer can use a headless browser run of the
-preview host with a screenshot. The review then says so.
+preview host with a screenshot. The review then says so. Agent worktrees are often under
+`.claude/worktrees`, where the preview host does not work. Use a checkout at another path,
+as the preview host step above says.
 
 ## Visualization adapter
 

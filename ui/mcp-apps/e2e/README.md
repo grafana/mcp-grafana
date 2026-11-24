@@ -261,3 +261,13 @@ for that example. Legacy preview bookmarks still redirect to the default port;
 open the configured host directly when overriding it. Ports must be distinct
 integers from 1 to 65535. Sandbox URLs and Playwright readiness checks follow
 the overrides automatically. The mock Grafana server always uses an ephemeral port.
+
+### When the checkout is under a dot directory
+
+The sandbox server returns 404 for `sandbox.html` when the path of the checkout has a
+directory that starts with a dot, such as `.claude/worktrees`. With `npm run dev`, the App
+frame then shows "Not Found". Playwright starts the same server. The cause is in the pinned
+upstream `serve.ts`: it serves the file with `res.sendFile` and an absolute path, and Express
+rejects a path that has a dot directory. We do not edit the downloaded sandbox code.
+Use a checkout at a path with no dot directory, for example
+`git worktree add --detach /tmp/mcp-grafana-review <ref>`.

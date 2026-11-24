@@ -40,6 +40,7 @@ so anything that helps them reproduce your setup is genuinely useful.
 
 Changing `ui/mcp-apps` source? Approval needs browser evidence of the changed behavior.
 Name the Playwright tests that cover it, or the view and the behavior to try.
+Add a screenshot of the change.
 See "Reviewing MCP App changes" in contribute/testing.md.
 -->
 
