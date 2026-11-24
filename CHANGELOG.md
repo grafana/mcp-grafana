@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-11-24
+
+### Added
+
+- Notebooks tools for Grafana 13.3's notebooks preview: `list_notebooks`, `search_notebooks`, `get_notebook_by_uid`, `render_notebook_pdf`, `create_notebook`, `update_notebook` and `delete_notebook`. `update_notebook` keeps the notebook's metadata and accepts the `resourceVersion` it was read at, so a concurrent edit fails instead of being overwritten, and `render_notebook_pdf` returns the notebook as a PDF ([#1454](https://github.com/grafana/mcp-grafana/pull/1454))
+- AWS X-Ray tools in the opt-in `xray` category: `search_xray_traces` lists traces matching a filter expression, newest first, and `get_xray_trace` returns a trace as a tree of segments with timings, HTTP status and errors ([#1653](https://github.com/grafana/mcp-grafana/pull/1653))
+- Azure Monitor tools in the opt-in `azuremonitor` category: `query_azure_log_analytics` runs KQL against Log Analytics resources over a time range, and `query_azure_resource_graph` queries Azure Resource Graph, both with a row limit ([#1582](https://github.com/grafana/mcp-grafana/pull/1582))
+- `render_grafana_app` has a `query_datasource` source, in the opt-in `dsquery` category, that runs a query on any datasource and draws it with Grafana's own visualization Renderer in MCP hosts that support MCP Apps:
+  - The chart is picked from the shape of the data, with `type`, `unit` and `title` arguments to override it, and a failed query in a batch adds a note while the others still draw ([#1493](https://github.com/grafana/mcp-grafana/pull/1493), [#1497](https://github.com/grafana/mcp-grafana/pull/1497), [#1498](https://github.com/grafana/mcp-grafana/pull/1498), [#1499](https://github.com/grafana/mcp-grafana/pull/1499), [#1549](https://github.com/grafana/mcp-grafana/pull/1549))
+  - The user can refresh the view, pick its time range, zoom and pan, and pick another chart, and the model is told what the view shows and when it fails to load ([#1623](https://github.com/grafana/mcp-grafana/pull/1623), [#1633](https://github.com/grafana/mcp-grafana/pull/1633), [#1638](https://github.com/grafana/mcp-grafana/pull/1638), [#1651](https://github.com/grafana/mcp-grafana/pull/1651))
+  - A query block above the chart shows the queries, their range and series count, with a copy button ([#1648](https://github.com/grafana/mcp-grafana/pull/1648), [#1657](https://github.com/grafana/mcp-grafana/pull/1657))
+  - **Ask in chat** on a pinned tooltip sends that point to the conversation ([#1701](https://github.com/grafana/mcp-grafana/pull/1701))
+  - The Renderer is served as its own MCP resource and loaded only when a chart needs it, so the App HTML shrinks from 4.9 MB to 1.3 MB ([#1596](https://github.com/grafana/mcp-grafana/pull/1596), [#1617](https://github.com/grafana/mcp-grafana/pull/1617))
+- Empty `query_prometheus` and `query_loki_logs` results name the likely cause, such as a metric that doesn't exist (with a `_total` suggestion), a native histogram, an unknown label or a line filter that removed every line, with a stable `hints.reason` ([#1691](https://github.com/grafana/mcp-grafana/pull/1691), [#1700](https://github.com/grafana/mcp-grafana/pull/1700))
+- `--config` (or `GRAFANA_MCP_CONFIG`) selects tools from a YAML file with categories, mode, query, allow and deny lists. Unknown keys and names that would have no effect fail at startup, and flags set explicitly override the file ([#1689](https://github.com/grafana/mcp-grafana/pull/1689))
+- `--enable-write-tools` can keep any write tool that `--disable-write` removes, such as `update_dashboard` or `create_folder`, instead of only the alerting write and query tools ([#1600](https://github.com/grafana/mcp-grafana/pull/1600))
+- Per-user mode for shared streamable HTTP servers: `--require-user-credentials` refuses to start with a shared Grafana credential configured and rejects requests that carry no credential of their own with a 401. `--user-identity-headers` names extra headers, such as an auth proxy's, that count as a credential ([#1690](https://github.com/grafana/mcp-grafana/pull/1690))
+- `--log-tool-calls` logs one line per tool call with the caller's Grafana user, tool, org, result and duration. Arguments are never logged ([#1690](https://github.com/grafana/mcp-grafana/pull/1690))
+- `--server-auth-header` reads the server auth token from a header other than `Authorization`, leaving `Authorization` free for the user's own Grafana credential behind a proxy ([#1699](https://github.com/grafana/mcp-grafana/pull/1699))
+- `--prometheus-enforced-matchers` ANDs operator-set label matchers into every Prometheus query and discovery call, like `--loki-enforced-matchers`, and fails closed on queries it can't parse ([#1475](https://github.com/grafana/mcp-grafana/pull/1475))
+- An opt-in TSDB cardinality check for the Prometheus guardrail, with a counter that says why a query was let through when its cardinality couldn't be found ([#1561](https://github.com/grafana/mcp-grafana/pull/1561), [#1583](https://github.com/grafana/mcp-grafana/pull/1583))
+- `--dashboard-schema=v2` makes `update_dashboard` refuse to create new dashboards in the classic v1 format when Grafana serves dashboard schema v2, and returns a minimal v2 body to retry with. Existing dashboards save as before ([#1555](https://github.com/grafana/mcp-grafana/pull/1555))
+- `query_loki_logs` accepts `format: "loki"`, which returns Loki's native `query_range` response shape. The default output is unchanged ([#1572](https://github.com/grafana/mcp-grafana/pull/1572))
+- Grafana requests rate-limited with a 429 (or a 503 with `Retry-After`) are retried up to twice, honouring `Retry-After` ([#1613](https://github.com/grafana/mcp-grafana/pull/1613))
+
+### Fixed
+
+- Time ranges with only an end time start an hour before that end, not an hour before now, in the CloudWatch, Cloud Logging, Azure Monitor, InfluxDB, SQL, Tempo, X-Ray and Cloud Monitoring tools, so a past end no longer gives an inverted range ([#1674](https://github.com/grafana/mcp-grafana/pull/1674), [#1675](https://github.com/grafana/mcp-grafana/pull/1675), [#1677](https://github.com/grafana/mcp-grafana/pull/1677), [#1685](https://github.com/grafana/mcp-grafana/pull/1685))
+- Alerting:
+  - `alerting_manage_routing` reads notification policy trees with string matchers such as `severity="critical"`, instead of failing to decode them ([#1627](https://github.com/grafana/mcp-grafana/pull/1627))
+  - `alerting_rules_read` pages through rules until label selectors fill the limit, instead of dropping matches in later groups ([#1591](https://github.com/grafana/mcp-grafana/pull/1591))
+  - `get_contact_point` finds receivers the provisioning API omits, such as those imported from Mimir or Alertmanager ([#1629](https://github.com/grafana/mcp-grafana/pull/1629))
+  - Contact points of an Alertmanager datasource with no implementation set are read as Mimir/Cortex, as Grafana does, and an empty match returns `[]` instead of `null` ([#1552](https://github.com/grafana/mcp-grafana/pull/1552), [#1678](https://github.com/grafana/mcp-grafana/pull/1678))
+  - Permission errors from the provisioning API name the permissions Grafana checks, instead of `(status 403): {}` ([#1630](https://github.com/grafana/mcp-grafana/pull/1630))
+  - `alerting_rules_write` describes and checks the `no_data_state` and `exec_err_state` values Grafana accepts, in any letter case ([#1628](https://github.com/grafana/mcp-grafana/pull/1628))
+  - A 409 on alert rule update explains that the rule is provisioned and asks the user before editing it ([#1599](https://github.com/grafana/mcp-grafana/pull/1599))
+- Dashboards:
+  - `get_dashboard_panel_queries` and `run_panel_query` resolve library panels, which they returned nothing for or failed on ([#1611](https://github.com/grafana/mcp-grafana/pull/1611))
+  - `get_dashboard_summary` includes panels inside rows, with each panel's JSON path for `update_dashboard` patches ([#1672](https://github.com/grafana/mcp-grafana/pull/1672))
+- `query_prometheus` instant queries on a range vector, such as `up[5m]`, return every sample in the window, not just the last ([#1562](https://github.com/grafana/mcp-grafana/pull/1562))
+- `query_cloudwatch` keeps series separate when a query returns several, such as a `*` dimension value, instead of merging them into one ([#1540](https://github.com/grafana/mcp-grafana/pull/1540))
+- Bad arguments get clear errors instead of panics or silent misbehaviour: a negative `limit` in the Prometheus label and metadata listing tools, a negative `max_node_depth` in `query_pyroscope`, an unknown `queryType` in `query_loki_logs` and a missing `id` in `update_annotation` ([#1673](https://github.com/grafana/mcp-grafana/pull/1673), [#1684](https://github.com/grafana/mcp-grafana/pull/1684), [#1697](https://github.com/grafana/mcp-grafana/pull/1697), [#1639](https://github.com/grafana/mcp-grafana/pull/1639), [#1698](https://github.com/grafana/mcp-grafana/pull/1698))
+- `--grafana-timeout` applies to the datasource query, alerting, Pyroscope and org lookup clients, and defaults to 30s for every client, matching Grafana's data proxy timeout ([#1563](https://github.com/grafana/mcp-grafana/pull/1563), [#1566](https://github.com/grafana/mcp-grafana/pull/1566))
+- The docs index fetch and usage stats go through `GRAFANA_SOCKS5_PROXY` when it is set ([#1567](https://github.com/grafana/mcp-grafana/pull/1567))
+- Server instructions under `--disable-write` describe only the tools that are left, and no longer list the folder category ([#1600](https://github.com/grafana/mcp-grafana/pull/1600), [#1671](https://github.com/grafana/mcp-grafana/pull/1671))
+- `query_datasource` rounds its default query interval as Grafana does, so `$__rate_interval` queries over long ranges no longer fail to parse ([#1686](https://github.com/grafana/mcp-grafana/pull/1686))
+- `render_grafana_app` says it sent the result to the App rather than that it was displayed, so the model doesn't tell the user a chart is up before it draws ([#1702](https://github.com/grafana/mcp-grafana/pull/1702))
+- Failed `search_dashboards`, `search_folders` and `list_teams` calls no longer dump the Grafana client struct into the error ([#1609](https://github.com/grafana/mcp-grafana/pull/1609))
+
+### Changed
+
+- **Breaking:** `alerting_rules_read` list returns `{rules, truncated, next_cursor}` instead of an array, and `query_cloudwatch` always returns results under `series`. Agents pick up the new shapes from the tool descriptions; only code that parses the output directly must change ([#1591](https://github.com/grafana/mcp-grafana/pull/1591), [#1540](https://github.com/grafana/mcp-grafana/pull/1540))
+- **Breaking:** the default `--grafana-timeout` for the main Grafana client rises from 10s to 30s ([#1566](https://github.com/grafana/mcp-grafana/pull/1566))
+- Every tool is registered from one catalog. Go embedders call `tools.Resolve(tools.Policy{...}).Register(s)` instead of the `Add*Tools` functions ([#1600](https://github.com/grafana/mcp-grafana/pull/1600))
+
+### Security
+
+- Build with Go 1.26.11, including in the Docker images, and update `golang.org/x/crypto` and the Go base image digest ([#1564](https://github.com/grafana/mcp-grafana/pull/1564), [#1571](https://github.com/grafana/mcp-grafana/pull/1571), [#1692](https://github.com/grafana/mcp-grafana/pull/1692))
+
 ## [2.3.0] - 2026-11-10
 
 ### Added
@@ -747,6 +806,7 @@ This is the last 1.x release; the next release will be 2.0.
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[2.4.0]: https://github.com/grafana/mcp-grafana/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/grafana/mcp-grafana/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/grafana/mcp-grafana/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/grafana/mcp-grafana/compare/v2.1.0...v2.1.1
