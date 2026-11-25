@@ -1150,4 +1150,9 @@ func TestDbo11yToolSchemas(t *testing.T) {
 	assert.NotContains(t, schemas["get_dbo11y_instance"], `"from"`, "the instance rollup has no start time")
 	assert.Contains(t, schemas["get_dbo11y_instance"], `"to"`)
 	assert.Contains(t, schemas["list_dbo11y_instances"], `"limit"`)
+
+	// The API answers a limit over 10 with include by rejecting it, so the
+	// descriptions must not promise that it is lowered.
+	assert.Contains(t, schemas["list_dbo11y_recommendations"], "rejected")
+	assert.NotContains(t, schemas["list_dbo11y_recommendations"], "caps limit")
 }
