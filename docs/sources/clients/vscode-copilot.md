@@ -124,10 +124,10 @@ mcp-grafana --transport streamable-http --address localhost:8000 -debug
 
 ## Verify configuration
 
-1. Run **MCP: List Servers** from the Command Palette and check that **grafana** is running. Select it to start it or show its output.
+1. Run **MCP: List Servers** from the Command Palette and check that **grafana** is listed.
 2. Open Copilot Chat (Ctrl+Alt+I) and switch to **Agent** mode.
-3. Open the tools picker and check that the Grafana tools are enabled.
-4. Ask: "List my Grafana dashboards"
+3. Send a message. VS Code starts MCP servers when a chat session begins, so starting **grafana** before you've sent a message fails with "Cannot start an MCP server before the session runtime has been created".
+4. Open the tools picker and check that the Grafana tools are enabled, then ask: "List my Grafana dashboards".
 
 ## Troubleshooting
 
@@ -135,7 +135,7 @@ mcp-grafana --transport streamable-http --address localhost:8000 -debug
 
 - For stdio, check that `mcp-grafana` is on your `PATH` or use its full path in `command`
 - For HTTP, verify the server is running and the URL path matches the transport (`/mcp` for streamable HTTP, `/sse` for SSE)
-- Run **MCP: List Servers**, select **grafana**, then **Show Output**
+- Send a chat message first, then run **MCP: List Servers**, select **grafana**, and choose **Show Output**
 
 **Tools not appearing:**
 
