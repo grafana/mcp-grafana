@@ -92,6 +92,15 @@ func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method st
 }
 
 func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error) {
+	// An empty time parses to the zero time, which would be sent as a
+	// negative epoch (year 1) instead of failing.
+	if args.StartTime == "" {
+		return "", fmt.Errorf("startTime is required")
+	}
+	if args.EndTime == "" {
+		return "", fmt.Errorf("endTime is required")
+	}
+
 	startTime, err := parseStartTime(args.StartTime)
 	if err != nil {
 		return "", fmt.Errorf("parsing start time: %w", err)
