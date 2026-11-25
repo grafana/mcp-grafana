@@ -1127,6 +1127,28 @@ func TestDbo11yErrorHints(t *testing.T) {
 	})
 }
 
+func TestDbo11yClientTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  time.Duration
+		want time.Duration
+	}{
+		{name: "unset keeps the 30s default", cfg: 0, want: 30 * time.Second},
+		{name: "longer --grafana-timeout is used", cfg: 300 * time.Second, want: 300 * time.Second},
+		{name: "shorter --grafana-timeout is used", cfg: 10 * time.Second, want: 10 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+				URL:     "http://grafana.example",
+				Timeout: tc.cfg,
+			})
+			client, err := newDbo11yClient(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, client.httpClient.Timeout)
+		})
+	}
+}
+
 func TestDbo11yToolSchemas(t *testing.T) {
 	tools := []mcpgrafana.Tool{
 		ListDbo11yInstances, GetDbo11yInstance, GetDbo11yInstanceDetail,
@@ -1155,4 +1177,9 @@ func TestDbo11yToolSchemas(t *testing.T) {
 	// descriptions must not promise that it is lowered.
 	assert.Contains(t, schemas["list_dbo11y_recommendations"], "rejected")
 	assert.NotContains(t, schemas["list_dbo11y_recommendations"], "caps limit")
+
+	// The top queries carry the engine, and a caller that drops it can't look up
+	// a Postgres query_id of sixteen digits.
+	assert.Contains(t, ListDbo11yTopQueries.Tool.Description, "pass the returned engine along")
+	assert.Contains(t, schemas["get_dbo11y_query_detail"], "sixteen digits")
 }
