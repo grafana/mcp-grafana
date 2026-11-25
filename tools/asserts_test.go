@@ -154,4 +154,26 @@ func TestAssertTools(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "parsing end time")
 	})
+
+	t.Run("get assertions without a time range", func(t *testing.T) {
+		_, ctx := setupMockAssertsServer(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("server should not be called without a time range")
+		})
+
+		_, err := getAssertions(ctx, GetAssertionsParams{
+			EndTime:    "2025-04-23T11:00:00Z",
+			EntityType: "Service",
+			EntityName: "mongodb",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "startTime is required")
+
+		_, err = getAssertions(ctx, GetAssertionsParams{
+			StartTime:  "2025-04-23T10:00:00Z",
+			EntityType: "Service",
+			EntityName: "mongodb",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "endTime is required")
+	})
 }
