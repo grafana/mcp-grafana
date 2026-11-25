@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/grafana/incident-go"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
@@ -177,6 +178,18 @@ type CreateIncidentParams struct {
 // the incident is the step that may notify people, and an error raised after it
 // would invite a retry that creates a second incident.
 func createIncident(ctx context.Context, args CreateIncidentParams) (*IncidentResult, error) {
+	// Creating an incident may notify or page people, so reject a call that
+	// omits a required field before anything is sent.
+	for _, f := range []struct{ name, value string }{
+		{"title", args.Title},
+		{"severity", args.Severity},
+		{"roomPrefix", args.RoomPrefix},
+	} {
+		if strings.TrimSpace(f.value) == "" {
+			return nil, fmt.Errorf("%s is required", f.name)
+		}
+	}
+
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 
 	customFields, err := prepareIncidentCustomFields(ctx, c, args.CustomFields)
