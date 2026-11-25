@@ -392,6 +392,40 @@ func TestAlertingClient_GetDatasourceRules(t *testing.T) {
 	}
 }
 
+func TestAlertingClient_GetRuleVersions_EscapesUID(t *testing.T) {
+	for _, uid := range []string{"../../../../api/admin/settings", "a/b", "a?x=1", "a#b"} {
+		t.Run(uid, func(t *testing.T) {
+			var gotPath, gotQuery string
+			server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.EscapedPath()
+				gotQuery = r.URL.RawQuery
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte("[]"))
+			})
+			defer server.Close()
+
+			_, err := client.GetRuleVersions(context.Background(), uid)
+			require.NoError(t, err)
+			require.Equal(t, "/api/ruler/grafana/api/v1/rule/"+url.PathEscape(uid)+"/versions", gotPath)
+			require.Empty(t, gotQuery)
+		})
+	}
+}
+
+func TestAlertingClient_GetRuleVersions_RejectsDotUID(t *testing.T) {
+	for _, uid := range []string{"", ".", ".."} {
+		t.Run("uid="+uid, func(t *testing.T) {
+			called := false
+			server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) { called = true })
+			defer server.Close()
+
+			_, err := client.GetRuleVersions(context.Background(), uid)
+			require.Error(t, err)
+			require.False(t, called)
+		})
+	}
+}
+
 func TestAlertingClient_GetRuleVersions(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
