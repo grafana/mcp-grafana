@@ -1076,31 +1076,22 @@ Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception
 
 **Using VSCode with remote MCP server**
 
-If you're using VSCode and running the MCP server in SSE mode (which is the default when using the Docker image without overriding the transport), make sure your `.vscode/settings.json` includes the following:
+If you're running the MCP server over HTTP, add it to `.vscode/mcp.json` (or your user `mcp.json`, via **MCP: Open User Configuration**). VS Code does not read MCP servers from `settings.json`. For streamable HTTP (`--transport streamable-http`):
 
 ```json
-"mcp": {
+{
   "servers": {
     "grafana": {
-      "type": "sse",
-      "url": "http://localhost:8000/sse"
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
 ```
 
-For HTTPS streamable HTTP mode with server TLS certificates:
+For SSE mode (the default when using the Docker image without overriding the transport), use `"type": "sse"` and `"url": "http://localhost:8000/sse"`. For HTTPS with server TLS certificates, use an `https://` URL, for example `https://localhost:8443/mcp`.
 
-```json
-"mcp": {
-  "servers": {
-    "grafana": {
-      "type": "sse",
-      "url": "https://localhost:8443/sse"
-    }
-  }
-}
-```
+See the [VS Code and GitHub Copilot guide](docs/sources/clients/vscode-copilot.md) for stdio setup.
 
 ### Debug Mode
 
