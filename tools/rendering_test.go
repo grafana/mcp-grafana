@@ -648,6 +648,27 @@ func TestBuildRenderURL(t *testing.T) {
 	}
 }
 
+func TestBuildRenderURLEscapesDashboardUID(t *testing.T) {
+	for _, panelID := range []*int{nil, intPtr(2)} {
+		got, err := buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{DashboardUID: "a/b?x=1#c", PanelID: panelID})
+		require.NoError(t, err)
+		u, err := url.Parse(got)
+		require.NoError(t, err)
+		route := "/render/d/"
+		if panelID != nil {
+			route = "/render/d-solo/"
+		}
+		require.Equal(t, route+"a%2Fb%3Fx=1%23c", u.EscapedPath())
+		require.Empty(t, u.Query().Get("x"))
+		require.Equal(t, "true", u.Query().Get("kiosk"))
+	}
+
+	for _, uid := range []string{".", ".."} {
+		_, err := buildRenderURL("http://localhost:3000", 0, GetPanelImageParams{DashboardUID: uid})
+		require.Error(t, err)
+	}
+}
+
 func TestBuildRenderURLDimensions(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string

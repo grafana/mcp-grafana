@@ -320,9 +320,15 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 			params.Set("viewPanel", strconv.Itoa(*args.PanelID))
 		}
 	} else {
-		renderPath = fmt.Sprintf("/render/d/%s", args.DashboardUID)
+		// PathEscape keeps "/", "?" and "#" inside the UID's path segment but
+		// leaves "." and ".." alone, which would address another render route.
+		if args.DashboardUID == "." || args.DashboardUID == ".." {
+			return "", fmt.Errorf("invalid dashboardUid %q", args.DashboardUID)
+		}
+		uid := url.PathEscape(args.DashboardUID)
+		renderPath = fmt.Sprintf("/render/d/%s", uid)
 		if args.PanelID != nil {
-			renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
+			renderPath = fmt.Sprintf("/render/d-solo/%s", uid)
 			params.Set("panelId", strconv.Itoa(*args.PanelID))
 		}
 	}
