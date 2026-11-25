@@ -24,31 +24,31 @@ This guide helps you set up the `mcp-grafana` server for VS Code with GitHub Cop
 
 ## Setup
 
-VS Code reads MCP servers from an `mcp.json` file, not from `settings.json`. Use `.vscode/mcp.json` in your workspace, or run **MCP: Open User Configuration** from the Command Palette for a config that applies to all workspaces.
+VS Code reads MCP servers from a config file, not from `settings.json`. There are two locations:
+
+| Scope                 | Path                                                                                                    |
+| :-------------------- | :------------------------------------------------------------------------------------------------------ |
+| User (all workspaces) | `~/.copilot/mcp-config.json` (or `$COPILOT_HOME/mcp-config.json`)                                       |
+| Workspace             | `.mcp.json` in the workspace root (requires the `chat.mcp.workspaceRootConfig.enabled` setting) |
+
+Put your service account token in the user file, not in a workspace file you might commit. You can also open **Chat: Open Customizations** from the Command Palette and choose **MCP Servers** to add or edit servers.
 
 ### Run the server over stdio
 
-VS Code starts `mcp-grafana` for you and prompts for the token the first time, so it isn't stored in the file:
+VS Code starts `mcp-grafana` for you:
 
 ```json
 {
-  "inputs": [
-    {
-      "type": "promptString",
-      "id": "grafana-token",
-      "description": "Grafana service account token",
-      "password": true
-    }
-  ],
-  "servers": {
+  "mcpServers": {
     "grafana": {
       "type": "stdio",
       "command": "mcp-grafana",
       "args": [],
       "env": {
         "GRAFANA_URL": "http://localhost:3000",
-        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${input:grafana-token}"
-      }
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your-token>"
+      },
+      "tools": ["*"]
     }
   }
 }
@@ -58,15 +58,7 @@ Or with Docker:
 
 ```json
 {
-  "inputs": [
-    {
-      "type": "promptString",
-      "id": "grafana-token",
-      "description": "Grafana service account token",
-      "password": true
-    }
-  ],
-  "servers": {
+  "mcpServers": {
     "grafana": {
       "type": "stdio",
       "command": "docker",
@@ -84,8 +76,9 @@ Or with Docker:
       ],
       "env": {
         "GRAFANA_URL": "http://host.docker.internal:3000",
-        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${input:grafana-token}"
-      }
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your-token>"
+      },
+      "tools": ["*"]
     }
   }
 }
@@ -105,10 +98,11 @@ Then point VS Code at it:
 
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "grafana": {
       "type": "http",
-      "url": "http://localhost:8000/mcp"
+      "url": "http://localhost:8000/mcp",
+      "tools": ["*"]
     }
   }
 }
@@ -116,9 +110,9 @@ Then point VS Code at it:
 
 The legacy SSE transport (`--transport sse`, URL `http://localhost:8000/sse`, `"type": "sse"`) also works.
 
-{{< admonition type="note" >}}
-VS Code is moving to a newer configuration format (`~/.copilot/mcp-config.json` for the user and `.mcp.json` for the workspace) that uses a top-level `mcpServers` key instead of `servers`. It has no `inputs`, so use environment variables for credentials. Check the [VS Code MCP documentation](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) for the current format.
-{{< /admonition >}}
+### Older `mcp.json` format
+
+Earlier VS Code versions use `.vscode/mcp.json` (or **MCP: Open User Configuration**) with a top-level `servers` key instead of `mcpServers`, and support `inputs` for prompting for the token. VS Code has deprecated this format. If you already have one, the server entries above work there with `servers` as the key. See the [VS Code MCP documentation](https://code.visualstudio.com/docs/copilot/customization/mcp-servers) for details.
 
 ## Debug mode
 
