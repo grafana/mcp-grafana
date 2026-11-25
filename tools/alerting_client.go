@@ -408,7 +408,13 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 // GetRuleVersions fetches the version history for a Grafana-managed alert rule.
 // The endpoint may not exist on older Grafana versions; callers should handle errors.
 func (c *alertingClient) GetRuleVersions(ctx context.Context, ruleUID string) ([]grafanaModels.GettableExtendedRuleNode, error) {
-	path := fmt.Sprintf("/api/ruler/grafana/api/v1/rule/%s/versions", ruleUID)
+	// PathEscape keeps "/", "?" and "#" in the UID inside its path segment, but
+	// leaves "." and ".." alone, and JoinPath would then resolve them against
+	// the rest of the path.
+	if ruleUID == "" || ruleUID == "." || ruleUID == ".." {
+		return nil, fmt.Errorf("invalid rule UID %q", ruleUID)
+	}
+	path := fmt.Sprintf("/api/ruler/grafana/api/v1/rule/%s/versions", url.PathEscape(ruleUID))
 	resp, err := c.makeRequest(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get rule versions: %w", err)
