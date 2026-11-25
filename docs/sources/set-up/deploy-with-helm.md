@@ -13,7 +13,7 @@ aliases:
 
 # Deploy with Helm
 
-Deploy the Grafana MCP server on Kubernetes using the Helm chart from the Grafana helm-charts repository.
+Deploy the Grafana MCP server on Kubernetes using the Helm chart from the grafana-community helm-charts repository.
 
 ## What you'll achieve
 
@@ -26,7 +26,7 @@ The server runs in your cluster and can be used by MCP clients that connect to i
 
 ## Install the chart
 
-Add the Grafana Helm repo and install the chart. Set `grafana.url` and `grafana.apiKey` (or the equivalent for your chart version) to your Grafana instance and token.
+Add the grafana-community Helm repo and install the chart. Set `grafana.url` and `grafana.apiKey` (or the equivalent for your chart version) to your Grafana instance and token.
 
 ```bash
 helm repo add grafana-community https://grafana-community.github.io/helm-charts
