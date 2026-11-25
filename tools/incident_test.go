@@ -31,6 +31,26 @@ func TestIncidentTools(t *testing.T) {
 		}
 	})
 
+	t.Run("create incident without required fields", func(t *testing.T) {
+		ctx := newIncidentTestContext()
+		valid := CreateIncidentParams{Title: "t", Severity: "minor", RoomPrefix: "test"}
+
+		for name, mutate := range map[string]func(*CreateIncidentParams){
+			"title":      func(p *CreateIncidentParams) { p.Title = "" },
+			"severity":   func(p *CreateIncidentParams) { p.Severity = " " },
+			"roomPrefix": func(p *CreateIncidentParams) { p.RoomPrefix = "" },
+		} {
+			args := valid
+			mutate(&args)
+			_, err := createIncident(ctx, args)
+			require.Error(t, err, name)
+			assert.Contains(t, err.Error(), name+" is required")
+		}
+
+		_, err := createIncident(ctx, valid)
+		require.NoError(t, err)
+	})
+
 	t.Run("create incident", func(t *testing.T) {
 		ctx := newIncidentTestContext()
 		result, err := createIncident(ctx, CreateIncidentParams{
