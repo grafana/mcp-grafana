@@ -15,6 +15,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	"github.com/grafana/mcp-grafana/v2/internal/datasource"
 	datasourceschemas "github.com/grafana/mcp-grafana/v2/tools/datasource_schemas"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -260,6 +261,44 @@ func TestGetDatasource_RoutesToName(t *testing.T) {
 	result, err := getDatasource(ctx, GetDatasourceParams{Name: "Test DS"})
 	require.NoError(t, err)
 	assert.Equal(t, "test-uid", result.UID)
+}
+
+// newNameMissServer serves a Grafana where the name lookup misses: the
+// name endpoint returns 404 and frontend settings list no datasources.
+// uidDS, when non-nil, is served from the UID endpoint.
+func newNameMissServer(t *testing.T, uidDS *models.DataSource) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/frontend/settings":
+			_ = json.NewEncoder(w).Encode(map[string]any{"datasources": map[string]any{}})
+		case uidDS != nil && r.URL.Path == "/api/datasources/uid/"+uidDS.UID:
+			_ = json.NewEncoder(w).Encode(uidDS)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source not found"})
+		}
+	}))
+}
+
+func TestGetDatasource_NameFallsBackToUID(t *testing.T) {
+	server := newNameMissServer(t, &models.DataSource{ID: 1, UID: "grafanacloud-prom", Name: "Prometheus", Type: "prometheus"})
+	defer server.Close()
+
+	result, err := getDatasource(mockDatasourcesCtx(server), GetDatasourceParams{Name: "grafanacloud-prom"})
+	require.NoError(t, err)
+	assert.Equal(t, "Prometheus", result.Name)
+}
+
+func TestGetDatasource_NameAndUIDMissReportsName(t *testing.T) {
+	server := newNameMissServer(t, nil)
+	defer server.Close()
+
+	result, err := getDatasource(mockDatasourcesCtx(server), GetDatasourceParams{Name: "missing"})
+	require.ErrorIs(t, err, datasource.ErrNotFound)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "datasource with name 'missing' not found")
 }
 
 func TestGetDatasource_UIDTakesPriority(t *testing.T) {
