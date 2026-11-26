@@ -52,6 +52,8 @@ Example:
 "GRAFANA_EXTRA_HEADERS": "{\"X-Custom-Header\": \"value\", \"X-Tenant-ID\": \"tenant-123\"}"
 ```
 
+A `Host` entry sets the Host header of the request to Grafana. Use it when the server reaches Grafana through an internal address but Grafana's `enforce_domain` setting expects the public domain, for example `{"Host": "grafana.example.com"}`.
+
 ## Next steps
 
 - [Authentication](../authentication/) for Grafana credentials.

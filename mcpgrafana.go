@@ -762,6 +762,14 @@ func (t *ExtraHeadersRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	if len(headers) > 0 {
 		propagated := propagatedHeaderFields()
 		for k, v := range headers {
+			// net/http ignores a "Host" entry in Request.Header and sends
+			// Request.Host instead, so set the field. This lets a deployment
+			// that reaches Grafana through an internal address present the
+			// public host name Grafana's enforce_domain check expects.
+			if textproto.CanonicalMIMEHeaderKey(k) == "Host" {
+				clonedReq.Host = v
+				continue
+			}
 			// Never overwrite a trace-context header the OTel propagator has
 			// already injected for this request. A traceparent forwarded from
 			// the incoming request (GRAFANA_FORWARD_HEADERS) names the caller's
