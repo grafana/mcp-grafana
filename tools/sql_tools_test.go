@@ -54,3 +54,35 @@ func TestQuerySQLVariableFormatting(t *testing.T) {
 		})
 	}
 }
+
+// An empty datasourceUid gets an error saying it is required, not a failed lookup.
+func TestSQLToolsRequireDatasourceUID(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request: %s", r.URL.Path)
+	}))
+	defer ts.Close()
+	ctx := mockDatasourcesCtx(ts)
+
+	for name, call := range map[string]func() error{
+		"query_sql": func() error {
+			_, err := querySQLHandler(ctx, sql.QuerySQLParams{Query: "SELECT 1"})
+			return err
+		},
+		"list_sql_databases": func() error {
+			_, err := listSQLDatabasesHandler(ctx, sql.ListSQLDatabasesParams{DatasourceUID: " "})
+			return err
+		},
+		"list_sql_tables": func() error {
+			_, err := listSQLTablesHandler(ctx, sql.ListSQLTablesParams{})
+			return err
+		},
+		"describe_sql_table": func() error {
+			_, err := describeSQLTableHandler(ctx, sql.DescribeSQLTableParams{})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.EqualError(t, call(), "datasourceUid is required; use list_datasources to find SQL datasources")
+		})
+	}
+}

@@ -153,10 +153,22 @@ func formatBigQueryTemplateVariable(values []string, format string) string {
 	return strings.Join(quoted, ",")
 }
 
-func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQueryResult, error) {
-	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
+// sqlDatasource resolves the datasource a SQL tool call names.
+func sqlDatasource(ctx context.Context, uid string) (*models.DataSource, error) {
+	if strings.TrimSpace(uid) == "" {
+		return nil, fmt.Errorf("datasourceUid is required; use list_datasources to find SQL datasources")
+	}
+	ds, err := datasource.ByUID(ctx, uid)
 	if err != nil {
 		return nil, fmt.Errorf("looking up datasource: %w", err)
+	}
+	return ds, nil
+}
+
+func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQueryResult, error) {
+	ds, err := sqlDatasource(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, err
 	}
 
 	dialect, err := sql.DialectFor(ds.Type)
@@ -214,9 +226,9 @@ func querySQLHandler(ctx context.Context, args sql.QuerySQLParams) (*sql.SQLQuer
 }
 
 func listSQLDatabasesHandler(ctx context.Context, args sql.ListSQLDatabasesParams) (*sql.ListSQLDatabasesResult, error) {
-	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
+	ds, err := sqlDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("looking up datasource: %w", err)
+		return nil, err
 	}
 
 	dialect, err := sql.DialectFor(ds.Type)
@@ -234,9 +246,9 @@ func listSQLDatabasesHandler(ctx context.Context, args sql.ListSQLDatabasesParam
 }
 
 func listSQLTablesHandler(ctx context.Context, args sql.ListSQLTablesParams) (*sql.ListSQLTablesResult, error) {
-	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
+	ds, err := sqlDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("looking up datasource: %w", err)
+		return nil, err
 	}
 
 	dialect, err := sql.DialectFor(ds.Type)
@@ -255,9 +267,9 @@ func listSQLTablesHandler(ctx context.Context, args sql.ListSQLTablesParams) (*s
 }
 
 func describeSQLTableHandler(ctx context.Context, args sql.DescribeSQLTableParams) (*sql.DescribeSQLTableResult, error) {
-	ds, err := datasource.ByUID(ctx, args.DatasourceUID)
+	ds, err := sqlDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("looking up datasource: %w", err)
+		return nil, err
 	}
 
 	dialect, err := sql.DialectFor(ds.Type)
