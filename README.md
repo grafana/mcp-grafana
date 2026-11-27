@@ -871,6 +871,8 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 }
 ```
 
+A `Host` entry sets the Host header of the request to Grafana. Use it when the server reaches Grafana through an internal address but Grafana's `enforce_domain` setting expects the public domain, for example `{"Host": "grafana.example.com"}`. `Host` is only read from `GRAFANA_EXTRA_HEADERS`, never from `GRAFANA_FORWARD_HEADERS`. TLS certificate verification still uses the host from `GRAFANA_URL`, so a certificate issued only for the public domain fails verification when you connect through an internal name.
+
 ### SOCKS5 Proxy
 
 You can route all requests this server makes to Grafana through a SOCKS5 proxy using the `GRAFANA_SOCKS5_PROXY` environment variable. The proxy is scoped to this server's Grafana traffic: it does not modify the global `HTTP_PROXY`/`HTTPS_PROXY` variables, and when set it overrides their proxy selection for Grafana transports only, without affecting other MCP servers or your shell session. When unset, behavior is unchanged.

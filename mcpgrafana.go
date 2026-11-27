@@ -156,6 +156,8 @@ func forwardHeaderNamesFromEnv() []string {
 
 // forwardedHeadersFromRequest reads GRAFANA_FORWARD_HEADERS and copies matching
 // headers from the incoming HTTP request. Returns nil when no headers match.
+// Host is never forwarded: it can only be set from the static
+// GRAFANA_EXTRA_HEADERS, not from an incoming request.
 func forwardedHeadersFromRequest(req *http.Request) map[string]string {
 	names := forwardHeaderNamesFromEnv()
 	if len(names) == 0 {
@@ -163,6 +165,9 @@ func forwardedHeadersFromRequest(req *http.Request) map[string]string {
 	}
 	var forwarded map[string]string
 	for _, name := range names {
+		if strings.EqualFold(name, "Host") {
+			continue
+		}
 		if v := req.Header.Get(name); v != "" {
 			if forwarded == nil {
 				forwarded = make(map[string]string, len(names))
@@ -762,6 +767,14 @@ func (t *ExtraHeadersRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	if len(headers) > 0 {
 		propagated := propagatedHeaderFields()
 		for k, v := range headers {
+			// net/http ignores a "Host" entry in Request.Header and sends
+			// Request.Host instead, so set the field. This lets a deployment
+			// that reaches Grafana through an internal address present the
+			// public host name Grafana's enforce_domain check expects.
+			if textproto.CanonicalMIMEHeaderKey(k) == "Host" {
+				clonedReq.Host = v
+				continue
+			}
 			// Never overwrite a trace-context header the OTel propagator has
 			// already injected for this request. A traceparent forwarded from
 			// the incoming request (GRAFANA_FORWARD_HEADERS) names the caller's

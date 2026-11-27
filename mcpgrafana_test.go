@@ -979,6 +979,69 @@ func TestExtraHeadersRoundTripper(t *testing.T) {
 		rt := NewExtraHeadersRoundTripper(nil, map[string]string{})
 		assert.NotNil(t, rt.underlying)
 	})
+
+	t.Run("Host entry sets the request Host, not a header", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewExtraHeadersRoundTripper(mockRT, map[string]string{
+			"host":     "grafana.example.com",
+			"X-Custom": "value",
+		})
+
+		req, _ := http.NewRequest("GET", "http://grafana.svc.cluster.local:3000/api/health", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "grafana.example.com", capturedReq.Host)
+		assert.Empty(t, capturedReq.Header.Values("Host"))
+		assert.Equal(t, "value", capturedReq.Header.Get("X-Custom"))
+		// The original request is left alone.
+		assert.Equal(t, "grafana.svc.cluster.local:3000", req.Host)
+	})
+
+	t.Run("Host from context headers overrides captured Host", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewExtraHeadersRoundTripper(mockRT, map[string]string{"Host": "static.example.com"})
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"HOST": "ctx.example.com"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://internal:3000/", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "ctx.example.com", capturedReq.Host)
+	})
+
+	t.Run("server sees the overridden Host on the wire", func(t *testing.T) {
+		var gotHost string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotHost = r.Host
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		httpClient := &http.Client{Transport: NewExtraHeadersRoundTripper(http.DefaultTransport, map[string]string{
+			"Host": "grafana.example.com",
+		})}
+		resp, err := httpClient.Get(srv.URL)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.Equal(t, "grafana.example.com", gotHost)
+	})
 }
 
 type capturingMockRT struct {
@@ -1518,6 +1581,26 @@ func TestForwardedHeadersFromRequest(t *testing.T) {
 		req.Header.Set("Cookie", "session=abc")
 		forwarded := forwardedHeadersFromRequest(req)
 		assert.Equal(t, map[string]string{"Cookie": "session=abc"}, forwarded)
+	})
+
+	t.Run("Host is never forwarded", func(t *testing.T) {
+		for _, name := range []string{"Host", "host", "HOST"} {
+			t.Run(name, func(t *testing.T) {
+				t.Setenv("GRAFANA_FORWARD_HEADERS", name+",Cookie")
+				req, _ := http.NewRequest("GET", "http://example.com", nil)
+				req.Header.Set("Host", "attacker.example.com")
+				req.Header.Set("Cookie", "session=abc")
+				forwarded := forwardedHeadersFromRequest(req)
+				assert.Equal(t, map[string]string{"Cookie": "session=abc"}, forwarded)
+			})
+		}
+	})
+
+	t.Run("Host only returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Host")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Host", "attacker.example.com")
+		assert.Nil(t, forwardedHeadersFromRequest(req))
 	})
 }
 
