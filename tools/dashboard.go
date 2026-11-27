@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/scanner"
 
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
@@ -1163,16 +1164,62 @@ func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) 
 		return nil, fmt.Errorf("unmarshal dashboard JSON: %w", err)
 	}
 
-	// Apply JSONPath expression
-	builder := gval.Full(jsonpath.Language())
-	path, err := builder.NewEvaluable(args.JSONPath)
+	return evalDashboardProperty(ctx, dashboardData, args.JSONPath, res.IsV2)
+}
+
+// dashboardPropertyLanguage is JSONPath plus single-quoted string literals
+// ('id', @.type=='row'), which gval otherwise rejects as invalid Go char
+// literals.
+var dashboardPropertyLanguage = gval.Full(jsonpath.Language(), gval.PrefixExtension(scanner.Char, parseSingleQuoted))
+
+func parseSingleQuoted(_ context.Context, p *gval.Parser) (gval.Evaluable, error) {
+	text := p.TokenText()
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 1; i < len(text)-1; i++ {
+		switch c := text[i]; {
+		case c == '\\' && i+1 < len(text)-1 && text[i+1] == '\'':
+			b.WriteByte('\'')
+			i++
+		case c == '\\' && i+1 < len(text)-1:
+			b.WriteByte(c)
+			b.WriteByte(text[i+1])
+			i++
+		case c == '"':
+			b.WriteString(`\"`)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
+	s, err := strconv.Unquote(b.String())
 	if err != nil {
-		return nil, fmt.Errorf("create JSONPath evaluable '%s': %w", args.JSONPath, err)
+		return nil, fmt.Errorf("could not parse string %s: %w", text, err)
+	}
+	return p.Const(s), nil
+}
+
+// evalDashboardProperty applies a JSONPath expression to a dashboard spec. A
+// path that does not match names the dashboard's schema and top-level keys,
+// since callers often use v1 paths on v2 dashboards and vice versa.
+func evalDashboardProperty(ctx context.Context, dashboardData interface{}, jsonPath string, isV2 bool) (interface{}, error) {
+	path, err := dashboardPropertyLanguage.NewEvaluable(jsonPath)
+	if err != nil {
+		return nil, fmt.Errorf("create JSONPath evaluable '%s': %w", jsonPath, err)
 	}
 
 	result, err := path(ctx, dashboardData)
 	if err != nil {
-		return nil, fmt.Errorf("apply JSONPath '%s': %w", args.JSONPath, err)
+		schema := "classic v1"
+		if isV2 {
+			schema = "v2"
+		}
+		var keys []string
+		if m, ok := dashboardData.(map[string]interface{}); ok {
+			keys = slices.Sorted(maps.Keys(m))
+		}
+		return nil, fmt.Errorf("apply JSONPath '%s': %w (this dashboard uses the %s schema; its top-level keys are: %s)",
+			jsonPath, err, schema, strings.Join(keys, ", "))
 	}
 
 	return result, nil
