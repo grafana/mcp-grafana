@@ -181,9 +181,12 @@ func (o *GetRulesOpts) queryValues() url.Values {
 	if limitAlerts > maxAlertsLimit {
 		limitAlerts = maxAlertsLimit
 	}
-	if limitAlerts > 0 {
-		params.Set("limit_alerts", strconv.Itoa(limitAlerts))
+	if limitAlerts < 0 {
+		limitAlerts = 0
 	}
+	// Always send limit_alerts (including 0) so limit_alerts=0 returns no
+	// instances instead of falling back to the 200-instance server default.
+	params.Set("limit_alerts", strconv.Itoa(limitAlerts))
 	if o.IncludeInternalLabels {
 		params.Set("includeInternalLabels", "true")
 	}
