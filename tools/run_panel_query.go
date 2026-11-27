@@ -201,11 +201,16 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	// Executors replace the target datasource with the resolved UID below.
 	referenceTarget := maps.Clone(panelData.RawTarget)
 	delete(referenceTarget, "datasource")
-	references := variableSearchText(panelQuery{Query: panelData.Query, Target: referenceTarget})
-	for _, variable := range findVariablesInQuery(references+" "+referenceDatasource, nil, nil) {
-		if warning := interp.allSelectionWarning(variable.Name); warning != "" {
-			return nil, errors.New(warning)
-		}
+	references := variableSearchText(panelQuery{Query: panelData.Query, Target: referenceTarget}) + " " + referenceDatasource
+	// $__conditionalAll drops its condition, and the variable with it, when
+	// the variable is set to All. A panel that doesn't declare its datasource
+	// type is checked again once the type is resolved below.
+	checkType := panelData.DatasourceType
+	if checkType == "" {
+		checkType = clickHouseDatasourceType
+	}
+	if err := interp.checkAllSelections(references, checkType); err != nil {
+		return nil, err
 	}
 
 	// Resolve datasource UID and type
@@ -297,6 +302,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 	panelData.Interval = panelData.Interval.withLowerLimit(interp, datasourceType, datasourceJSONData)
+	if err := interp.checkAllSelections(references, datasourceType); err != nil {
+		return nil, err
+	}
 	// Executors receive the expression with frontend macros and variables substituted.
 	query := preparePanelExpression(interp, panelData.Query, datasourceType, startTime, endTime, panelData.Interval)
 

@@ -25,6 +25,7 @@ type variableInterpolator struct {
 	values     templateVariableValues
 	multi      map[string]bool   // multi-value variables
 	includeAll map[string]bool   // include-All variables
+	all        map[string]bool   // variables set to All
 	warnings   map[string]string // variables set to All or without a value, by name
 	pattern    *regexp.Regexp    // nil when there is nothing to substitute
 }
@@ -40,8 +41,28 @@ func newDashboardInterpolator(db map[string]interface{}, overrides map[string]st
 	multi, includeAll := multiValueTemplateVariables(db)
 	v := newVariableInterpolator(values, multi)
 	v.includeAll = includeAll
+	v.all = allTemplateSelections(db, overrides)
 	v.warnings = allTemplateSelectionWarnings(db, overrides, values)
 	return v
+}
+
+// allTemplateSelections names the variables set to All, in the dashboard or by
+// the caller's overrides.
+func allTemplateSelections(db map[string]interface{}, overrides map[string]string) map[string]bool {
+	all := make(map[string]bool)
+	for _, item := range safeArray(safeObject(db, "templating"), "list") {
+		variable, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if name := safeString(variable, "name"); isAllTemplateSelection(safeObject(variable, "current")["value"]) {
+			all[name] = true
+		}
+	}
+	for name, value := range overrides {
+		all[name] = isAllTemplateSelection(value)
+	}
+	return all
 }
 
 // newVariableInterpolator substitutes the given values. multi names the
