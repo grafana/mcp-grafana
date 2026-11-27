@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -467,7 +468,7 @@ var UpdateDatasource = mcpgrafana.MustTool(
 // GetDatasourceParams accepts either a UID or Name to look up a datasource.
 type GetDatasourceParams struct {
 	UID  string `json:"uid,omitempty" jsonschema:"description=The UID of the datasource. If provided\\, takes priority over name."`
-	Name string `json:"name,omitempty" jsonschema:"description=The name of the datasource. Used if UID is not provided."`
+	Name string `json:"name,omitempty" jsonschema:"description=The name of the datasource. Used if UID is not provided. A UID given here also works."`
 }
 
 func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataSource, error) {
@@ -475,7 +476,14 @@ func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataS
 		return datasource.ByUID(ctx, args.UID)
 	}
 	if args.Name != "" {
-		return datasource.ByName(ctx, args.Name)
+		ds, err := datasource.ByName(ctx, args.Name)
+		if errors.Is(err, datasource.ErrNotFound) {
+			// Clients often pass a UID (such as grafanacloud-prom) as the name.
+			if byUID, uidErr := datasource.ByUID(ctx, args.Name); uidErr == nil {
+				return byUID, nil
+			}
+		}
+		return ds, err
 	}
 	return nil, fmt.Errorf("either uid or name must be provided")
 }

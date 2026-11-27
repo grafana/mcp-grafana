@@ -247,6 +247,36 @@ func TestQueryPrometheusEmptyResultReason(t *testing.T) {
 	}`, string(out))
 }
 
+// An omitted endTime defaults to now instead of failing the call.
+func TestQueryPrometheusDefaultsEndTimeToNow(t *testing.T) {
+	for _, endTime := range []string{"", "  "} {
+		var to int64
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/datasources/uid/prom":
+				_, _ = io.WriteString(w, `{"uid":"prom","type":"prometheus"}`)
+			case "/api/ds/query":
+				var body struct {
+					To string `json:"to"`
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				to, _ = strconv.ParseInt(body.To, 10, 64)
+				_ = json.NewEncoder(w).Encode(backend.QueryDataResponse{Responses: backend.Responses{"A": backend.DataResponse{}}})
+			default:
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}))
+		before := time.Now()
+		_, err := queryPrometheusWithHints(mockDatasourcesCtx(srv), QueryPrometheusParams{
+			DatasourceUID: "prom", Expr: "up", QueryType: "instant", EndTime: endTime,
+		})
+		srv.Close()
+		require.NoError(t, err)
+		assert.WithinDuration(t, before, time.UnixMilli(to), time.Minute)
+	}
+}
+
 func TestQueryLokiLogsEmptyResultReason(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

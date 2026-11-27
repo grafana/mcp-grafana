@@ -81,7 +81,7 @@ type QueryPrometheusParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
 	StartTime     string `json:"startTime,omitempty" jsonschema:"description=The start time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
-	EndTime       string `json:"endTime" jsonschema:"required,description=The end time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	EndTime       string `json:"endTime,omitempty" jsonschema:"description=The end time (default: now). Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
@@ -138,12 +138,18 @@ func queryPrometheusWithWarnings(ctx context.Context, args QueryPrometheusParams
 	return result, warnings, err
 }
 
+// withDefaultEndTime returns args with an empty endTime set to "now".
+func withDefaultEndTime(args QueryPrometheusParams) QueryPrometheusParams {
+	if strings.TrimSpace(args.EndTime) == "" {
+		args.EndTime = "now"
+	}
+	return args
+}
+
 // queryPrometheusBackend is queryPrometheusWithWarnings that also returns the
 // backend it used, so empty-result hints can reuse it.
 func queryPrometheusBackend(ctx context.Context, args QueryPrometheusParams) (model.Value, promv1.Warnings, promBackend, error) {
-	if strings.TrimSpace(args.EndTime) == "" {
-		return nil, nil, nil, fmt.Errorf("endTime is required")
-	}
+	args = withDefaultEndTime(args)
 
 	queryType := args.QueryType
 	if queryType == "" {
@@ -315,6 +321,9 @@ const maxMetricsViewBytes = 1 << 20
 
 // queryPrometheusTool returns text and structured data shared by query and chart calls.
 func queryPrometheusTool(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
+	// Default here too, so empty-result hints and the Explore link use the
+	// same end time as the query.
+	args = withDefaultEndTime(args)
 	result, err := queryPrometheusWithHints(ctx, args)
 	if err != nil {
 		return nil, err
