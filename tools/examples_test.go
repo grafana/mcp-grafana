@@ -187,6 +187,31 @@ func TestGetQueryExamples_InfluxDB(t *testing.T) {
 	assert.True(t, foundInfluxQL, "expected at least one InfluxQL example")
 }
 
+func TestGetQueryExamples_Tempo(t *testing.T) {
+	result, err := getQueryExamples(context.Background(), GetQueryExamplesParams{
+		DatasourceType: "tempo",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "tempo", result.DatasourceType)
+	assert.NotEmpty(t, result.Examples)
+
+	// Search and metrics examples serve search_tempo_traces and
+	// query_tempo_metrics respectively; both should be present.
+	var foundSearch, foundMetrics bool
+	for _, ex := range result.Examples {
+		assert.True(t, strings.HasPrefix(ex.Query, "{"), "TraceQL query should start with a spanset filter: %s", ex.Query)
+		if strings.Contains(ex.Query, "rate()") || strings.Contains(ex.Query, "quantile_over_time") {
+			foundMetrics = true
+		} else {
+			foundSearch = true
+		}
+	}
+	assert.True(t, foundSearch, "expected at least one search example")
+	assert.True(t, foundMetrics, "expected at least one metrics example")
+}
+
 func TestGetQueryExamples_CaseInsensitive(t *testing.T) {
 	testCases := []struct {
 		input    string
@@ -202,6 +227,7 @@ func TestGetQueryExamples_CaseInsensitive(t *testing.T) {
 		{"CloudWatch", "cloudwatch"},
 		{"INFLUXDB", "influxdb"},
 		{"InfluxDB", "influxdb"},
+		{"Tempo", "tempo"},
 		{"grafana-clickhouse-datasource", "clickhouse"},
 	}
 
@@ -246,7 +272,7 @@ func TestGetQueryExamples_UnsupportedDatasource(t *testing.T) {
 }
 
 func TestGetQueryExamples_ExamplesHaveRequiredFields(t *testing.T) {
-	datasourceTypes := []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb"}
+	datasourceTypes := []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb", "tempo"}
 
 	for _, dsType := range datasourceTypes {
 		t.Run(dsType, func(t *testing.T) {
@@ -280,4 +306,5 @@ func TestGetQueryExamples_ToolDefinition(t *testing.T) {
 	assert.Contains(t, GetQueryExamples.Tool.Description, "ClickHouse")
 	assert.Contains(t, GetQueryExamples.Tool.Description, "CloudWatch")
 	assert.Contains(t, GetQueryExamples.Tool.Description, "InfluxDB")
+	assert.Contains(t, GetQueryExamples.Tool.Description, "Tempo")
 }

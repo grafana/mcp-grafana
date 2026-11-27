@@ -10,7 +10,7 @@ import (
 
 // GetQueryExamplesParams defines the parameters for the get_query_examples tool.
 type GetQueryExamplesParams struct {
-	DatasourceType string `json:"datasourceType" jsonschema:"required,description=The datasource type to get examples for (e.g. 'prometheus'\\, 'loki'\\, 'clickhouse'\\, 'cloudwatch'\\, 'influxdb')"`
+	DatasourceType string `json:"datasourceType" jsonschema:"required,description=The datasource type to get examples for (e.g. 'prometheus'\\, 'loki'\\, 'clickhouse'\\, 'cloudwatch'\\, 'influxdb'\\, 'tempo')"`
 }
 
 // QueryExample represents a single example query for a datasource.
@@ -255,8 +255,46 @@ var influxDBExamples = []QueryExample{
 	},
 }
 
+var tempoExamples = []QueryExample{
+	{
+		Name:        "Errored spans for a service",
+		Description: "Find spans from one service that ended with an error status",
+		Query:       `{ resource.service.name = "checkout" && status = error }`,
+	},
+	{
+		Name:        "Slow server spans",
+		Description: "Find server spans slower than 2 seconds",
+		Query:       `{ resource.service.name = "checkout" && kind = server && duration > 2s }`,
+	},
+	{
+		Name:        "HTTP 5xx responses",
+		Description: "Find spans whose HTTP response status code is 500 or higher",
+		Query:       `{ span.http.response.status_code >= 500 }`,
+	},
+	{
+		Name:        "Errors downstream of a service",
+		Description: "Structural query: errored spans that are descendants of a frontend span",
+		Query:       `{ resource.service.name = "frontend" } >> { status = error }`,
+	},
+	{
+		Name:        "Select extra attributes",
+		Description: "Return the HTTP route alongside each errored span",
+		Query:       `{ status = error } | select(span.http.route)`,
+	},
+	{
+		Name:        "Request rate by route (metrics)",
+		Description: "TraceQL metrics query for query_tempo_metrics: span rate per HTTP route",
+		Query:       `{ resource.service.name = "checkout" && kind = server } | rate() by (span.http.route)`,
+	},
+	{
+		Name:        "p95 latency by route (metrics)",
+		Description: "TraceQL metrics query for query_tempo_metrics: 95th percentile span duration per HTTP route",
+		Query:       `{ resource.service.name = "checkout" && kind = server } | quantile_over_time(duration, .95) by (span.http.route)`,
+	},
+}
+
 // supportedDatasourceTypes contains the list of supported datasource types for examples.
-var supportedDatasourceTypes = []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb"}
+var supportedDatasourceTypes = []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb", "tempo"}
 
 func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQueryExamplesResult, error) {
 	// Accept plugin IDs such as grafana-clickhouse-datasource, which callers
@@ -276,6 +314,8 @@ func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQuery
 		examples = cloudwatchExamples
 	case "influxdb":
 		examples = influxDBExamples
+	case "tempo":
+		examples = tempoExamples
 	default:
 		return nil, fmt.Errorf("unsupported datasource type: %s. Supported types are: %s",
 			args.DatasourceType, strings.Join(supportedDatasourceTypes, ", "))
@@ -290,7 +330,7 @@ func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQuery
 // GetQueryExamples is the MCP tool that provides example queries for each datasource type.
 var GetQueryExamples = mcpgrafana.MustTool(
 	"get_query_examples",
-	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), CloudWatch (metric configurations), and InfluxDB (Flux and InfluxQL). Use this to understand query syntax and common patterns for each datasource.",
+	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), CloudWatch (metric configurations), InfluxDB (Flux and InfluxQL), and Tempo (TraceQL). Use this to understand query syntax and common patterns for each datasource.",
 	getQueryExamples,
 	mcpgrafana.WithTitleAnnotation("Get query examples"),
 	mcpgrafana.WithIdempotentHintAnnotation(true),
