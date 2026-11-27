@@ -32,19 +32,6 @@
             "groupName": "all non-major dependencies"
         },
         {
-            "description": "UI mcp-apps npm dependencies get their own group, reviewed by dataviz.",
-            "matchManagers": ["npm"],
-            "matchFileNames": ["ui/mcp-apps/**"],
-            "groupName": "mcp-apps UI dependencies",
-            "reviewers": ["team:dataviz-squad"]
-        },
-        {
-            "description": "viz-contract (npm and Go must move together) is its own group, reviewed by dataviz. Must come after the mcp-apps rule so its groupName wins.",
-            "matchPackageNames": ["@grafana/viz-contract", "github.com/grafana/viz-contract"],
-            "groupName": "viz-contract",
-            "reviewers": ["team:dataviz-squad"]
-        },
-        {
             "description": "Group Docker digest updates and automerge",
             "matchDatasources": ["docker"],
             "matchUpdateTypes": ["digest"],
@@ -83,6 +70,27 @@
             "matchDepNames": ["go", "golang"],
             "matchUpdateTypes": ["major", "minor"],
             "enabled": false
+        },
+        {
+            "description": "mcp-apps UI npm dependencies are reviewed by dataviz and never automerge: every bump needs make build-ui and the dist committed by hand. Kept last so the earlier patch automerge rule cannot override it.",
+            "matchManagers": ["npm"],
+            "matchFileNames": ["ui/mcp-apps/**"],
+            "reviewers": ["team:dataviz-squad"],
+            "automerge": false
+        },
+        {
+            "description": "Group non-major mcp-apps UI npm updates. Majors keep their own PR per package.",
+            "matchManagers": ["npm"],
+            "matchFileNames": ["ui/mcp-apps/**"],
+            "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+            "groupName": "mcp-apps UI dependencies"
+        },
+        {
+            "description": "viz-contract npm and Go packages must move together, in their own group, reviewed by dataviz and never automerged. Must come after the mcp-apps group rule so its groupName wins.",
+            "matchPackageNames": ["@grafana/viz-contract", "github.com/grafana/viz-contract"],
+            "groupName": "viz-contract",
+            "reviewers": ["team:dataviz-squad"],
+            "automerge": false
         }
     ]
 }
