@@ -39,7 +39,7 @@ func TestVariableInterpolatorReferences(t *testing.T) {
 		{"longer name wins", "$job $jobname ${jobname} [[jobname]]", "api checkout checkout checkout"},
 		{"word boundary", "$jobs $job_x $job-x", "$jobs $job_x api-x"},
 		{"all three syntaxes", "$env ${env} [[env]]", "prod prod prod"},
-		{"explicit format", "${job:csv} [[job:pipe]] ${env:sqlstring}", "{api,web} {api,web} 'prod'"},
+		{"explicit format", "${job:csv} [[job:pipe]] ${env:sqlstring}", "api,web api|web 'prod'"},
 		{"format with arguments", "${job:sqlstring:x}", "'api','web'"},
 		{"empty format after colon", "${env:}", "prod"},
 		{"field path is left alone", "${env.text} ${env.text:raw}", "${env.text} ${env.text:raw}"},
@@ -57,6 +57,57 @@ func TestVariableInterpolatorReferences(t *testing.T) {
 			assert.Equal(t, tt.want, in.interpolate(tt.in))
 		})
 	}
+}
+
+// The explicit formats follow Grafana's format registry. Unsupported and
+// unknown formats fall back to glob.
+func TestFormatTemplateVariable(t *testing.T) {
+	one := []string{"Error"}
+	two := []string{"Error", "Ok"}
+	tests := []struct {
+		name, format string
+		values       []string
+		want         string
+	}{
+		{"singlequote", "singlequote", one, "'Error'"},
+		{"singlequote multi", "singlequote", two, "'Error','Ok'"},
+		{"singlequote escapes quote", "singlequote", []string{"O'Brien"}, `'O\'Brien'`},
+		{"singlequote empty", "singlequote", []string{}, ""},
+		{"doublequote", "doublequote", one, `"Error"`},
+		{"doublequote multi", "doublequote", two, `"Error","Ok"`},
+		{"doublequote escapes quote", "doublequote", []string{`say "hi"`}, `"say \"hi\""`},
+		{"csv", "csv", one, "Error"},
+		{"csv multi", "csv", two, "Error,Ok"},
+		{"raw multi", "raw", two, "Error,Ok"},
+		{"raw keeps quotes", "raw", []string{"O'Brien"}, "O'Brien"},
+		{"pipe", "pipe", one, "Error"},
+		{"pipe multi", "pipe", two, "Error|Ok"},
+		{"join default separator", "join", two, "Error,Ok"},
+		{"join custom separator", "join: OR ", two, "Error OR Ok"},
+		{"regex", "regex", []string{"a.b"}, `a\.b`},
+		{"regex multi", "regex", []string{"a.b", "c/d"}, `(a\.b|c\/d)`},
+		{"sqlstring", "sqlstring", []string{"O'Brien"}, "'O''Brien'"},
+		{"glob multi", "glob", two, "{Error,Ok}"},
+		{"unknown falls back to glob", "nonexistent", two, "{Error,Ok}"},
+		{"unknown single", "nonexistent", one, "Error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatTemplateVariable(tt.values, tt.format))
+		})
+	}
+}
+
+// A ClickHouse panel query with explicit formats, as get_dashboard_panel_queries
+// prepares it.
+func TestVariableInterpolatorClickHouseFormats(t *testing.T) {
+	values := templateVariableValues{"service": {"demo-spring-app"}, "status_code": {"Error", "Unset"}}
+	in := newVariableInterpolator(values, map[string]bool{"status_code": true})
+	got := in.interpolateQuery(
+		"ServiceName = ${service:singlequote} AND StatusCode IN (${status_code:singlequote}) AND has([${status_code:doublequote}], x) AND y IN (${status_code:csv})",
+		"grafana-clickhouse-datasource",
+	)
+	assert.Equal(t, `ServiceName = 'demo-spring-app' AND StatusCode IN ('Error','Unset') AND has(["Error","Unset"], x) AND y IN (Error,Unset)`, got)
 }
 
 func TestVariableInterpolatorNoVariables(t *testing.T) {

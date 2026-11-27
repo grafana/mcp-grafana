@@ -33,7 +33,7 @@ func TestSubstituteQueryTemplateVariableValuesMultiValue(t *testing.T) {
 		{name: "PostgreSQL quotes each value", datasourceType: "grafana-postgresql-datasource", query: "WHERE job IN ($job)", values: []string{"api", "O'Reilly"}, multi: multi, want: "WHERE job IN ('api','O''Reilly')"},
 		{name: "legacy postgres type", datasourceType: "postgres", query: "WHERE job IN ($job)", values: []string{"api"}, multi: multi, want: "WHERE job IN ('api')"},
 		{name: "single-value variable keeps the raw value", datasourceType: "prometheus", query: `up{job=~"$job"}`, values: []string{"api.v1"}, want: `up{job=~"api.v1"}`},
-		{name: "explicit format wins", datasourceType: "prometheus", query: `up{job=~"${job:pipe}"}`, values: []string{"api", "web"}, multi: multi, want: `up{job=~"{api,web}"}`},
+		{name: "explicit format wins", datasourceType: "prometheus", query: `up{job=~"${job:pipe}"}`, values: []string{"api", "web"}, multi: multi, want: `up{job=~"api|web"}`},
 		{name: "other datasources keep the first value", datasourceType: "influxdb", query: `WHERE job = '$job'`, values: []string{"api", "web"}, multi: multi, want: `WHERE job = 'api'`},
 		{name: "other datasources keep the first value: stackdriver", datasourceType: "stackdriver", query: `x{a=~"$job"}`, values: []string{"a", "b"}, multi: multi, want: `x{a=~"a"}`},
 		{name: "empty selection keeps the empty value", datasourceType: "prometheus", query: `up{job=~"$job"}`, values: []string{}, multi: multi, want: `up{job=~""}`},

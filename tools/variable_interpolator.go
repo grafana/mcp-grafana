@@ -348,16 +348,34 @@ func firstTemplateVariableValue(values []string) string {
 	return values[0]
 }
 
-// formatTemplateVariable applies an explicit format. sqlstring follows
-// Grafana's formatter (lucene is handled in formatReference); unknown formats fall back to Grafana's glob.
+// formatTemplateVariable applies an explicit format as Grafana's format
+// registry does (lucene is handled in formatReference). The formats here give
+// the same result whether Grafana passes a single selection as a string or as a
+// one-element array, so the values slice is enough. Other formats, and unknown
+// ones, fall back to Grafana's glob.
 func formatTemplateVariable(values []string, format string) string {
-	formatName := format
-	if separator := strings.IndexByte(format, ':'); separator >= 0 {
-		formatName = format[:separator]
-	}
+	formatName, args, _ := strings.Cut(format, ":")
 
-	if formatName == "sqlstring" {
+	switch formatName {
+	case "sqlstring":
 		return formatSQLStringVariable(values)
+	case "singlequote":
+		return quoteTemplateVariable(values, "'")
+	case "doublequote":
+		return quoteTemplateVariable(values, `"`)
+	case "csv", "raw":
+		// raw keeps the value as is; Grafana's String() of an array joins with commas.
+		return strings.Join(values, ",")
+	case "pipe":
+		return strings.Join(values, "|")
+	case "join":
+		separator := ","
+		if args != "" {
+			separator, _, _ = strings.Cut(args, ":")
+		}
+		return strings.Join(values, separator)
+	case "regex":
+		return formatRegexTemplateVariable(values)
 	}
 
 	// Grafana uses glob as the fallback for unknown formatting options.
@@ -365,6 +383,33 @@ func formatTemplateVariable(values []string, format string) string {
 		return "{" + strings.Join(values, ",") + "}"
 	}
 	return firstTemplateVariableValue(values)
+}
+
+// quoteTemplateVariable is Grafana's singlequote and doublequote formats: each
+// value is wrapped in quote, with quote escaped by a backslash, and values are
+// joined with commas.
+func quoteTemplateVariable(values []string, quote string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = quote + strings.ReplaceAll(value, quote, `\`+quote) + quote
+	}
+	return strings.Join(quoted, ",")
+}
+
+// grafanaRegexMetacharacters are the characters Grafana's escapeRegex escapes.
+var grafanaRegexMetacharacters = regexp.MustCompile(`[\\^$*+?.()|\[\]{}/]`)
+
+// formatRegexTemplateVariable is Grafana's regex format: each value is regex
+// escaped, and several values form a (a|b) group.
+func formatRegexTemplateVariable(values []string) string {
+	escaped := make([]string, len(values))
+	for i, value := range values {
+		escaped[i] = grafanaRegexMetacharacters.ReplaceAllString(value, `\${0}`)
+	}
+	if len(escaped) == 1 {
+		return escaped[0]
+	}
+	return "(" + strings.Join(escaped, "|") + ")"
 }
 
 func formatSQLStringVariable(values []string) string {
