@@ -66,6 +66,7 @@ func TestGetPanelQueriesV2(t *testing.T) {
 	assert.Equal(t, "CPU usage", queries[0].Title)
 	assert.Equal(t, `rate(cpu_seconds_total{job="$job"}[5m])`, queries[0].Query)
 	assert.Equal(t, "A", queries[0].RefID)
+	assert.Equal(t, "{{instance}}", queries[0].LegendFormat)
 	// Datasource type comes from query.group, uid from datasource.name.
 	assert.Equal(t, "prometheus", queries[0].Datasource.Type)
 	assert.Equal(t, "prom-uid", queries[0].Datasource.UID)

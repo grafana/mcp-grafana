@@ -216,15 +216,12 @@ func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 			dsInfo.UID = safeString(dsRef, "name")
 		}
 
-		rawQuery := ""
-		if body := safeObject(query, "spec"); body != nil {
-			rawQuery = extractQueryExpression(body)
-		}
-
+		body := safeObject(query, "spec")
+		rawQuery := extractQueryExpression(body)
 		result := panelQuery{
 			Title:      title,
 			Query:      rawQuery,
-			rawTarget:  queryTargetFields(safeObject(query, "spec")),
+			rawTarget:  queryTargetFields(body),
 			Datasource: dsInfo,
 			RefID:      safeString(pqSpec, "refId"),
 			interval:   panelIntervalOptionsV2(panel),
@@ -233,11 +230,12 @@ func extractPanelQueriesV2(panel map[string]interface{}) []panelQuery {
 		// As in v1, a target built in a visual editor has no string expression;
 		// hand back the query body rather than dropping the panel.
 		if rawQuery == "" {
-			body := safeObject(query, "spec")
 			if body == nil || !targetDescribesQuery(body) {
 				continue
 			}
 			result.Target = queryTargetFields(body)
+		} else {
+			result.LegendFormat = safeString(body, "legendFormat")
 		}
 
 		queries = append(queries, result)
