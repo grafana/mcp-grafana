@@ -36,4 +36,6 @@ var (
 		"grafana-agento11y-app.data:read",
 	}
 	agento11yWrite = append(append([]string{}, agento11yRead...), "grafana-agento11y-app.eval:write")
+
+	dbo11yRead = append([]string{"plugins.app:access"}, datasourceQuery...)
 )

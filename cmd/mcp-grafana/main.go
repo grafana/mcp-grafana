@@ -99,6 +99,7 @@ func (dt *disabledTools) disabledByFlag() map[string]bool {
 		"provisioning":  dt.provisioning,
 		"agento11y":     dt.agento11y,
 		"assistant":     dt.assistant,
+		"dbo11y":        dt.dbo11y,
 		"docs":          dt.docs,
 		"user":          dt.user,
 	}
@@ -147,7 +148,7 @@ type disabledTools struct {
 	pyroscope, navigation, tempo, annotations, rendering, cloudwatch, xray, cloudlogging, azuremonitor, write, query, enableQuery,
 	snapshot, examples, sql, graphite, dsquery,
 	runpanelquery, plugin, api, config, provisioning,
-	agento11y, assistant, docs, user bool
+	agento11y, assistant, dbo11y, docs, user bool
 }
 
 type grafanaConfig struct {
@@ -238,6 +239,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
 	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
+	flag.BoolVar(&dt.dbo11y, "disable-dbo11y", false, "Disable Database Observability tools")
 	flag.BoolVar(&dt.docs, "disable-docs", false, "Disable documentation tools")
 	flag.BoolVar(&dt.user, "disable-user", false, "Disable user info tools")
 }
@@ -877,6 +879,7 @@ func warnPrometheusEnforcementBypasses(dt disabledTools) {
 		{"rendering", "--disable-rendering", "get_panel_image renders Prometheus panels server-side via the Grafana renderer, producing images that contain unrestricted metrics"},
 		{"dsquery", "--disable-dsquery", "render_grafana_app can use query_datasource to send unfiltered Prometheus queries"},
 		{"assistant", "--disable-assistant", "ask_assistant delegates to Grafana Assistant, which reads Prometheus server-side across all series; enforced matchers are not applied to what it reports back"},
+		{"dbo11y", "--disable-dbo11y", "the Database Observability tools read Prometheus through the Database Observability API, which runs its own queries server-side without these matchers"},
 	} {
 		if active[b.category] {
 			slog.Warn("Prometheus label-matcher enforcement can be bypassed by an enabled tool",
@@ -898,6 +901,7 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 		{"api", "--disable-api", "grafana_api_request can query the Loki datasource proxy directly, fully bypassing enforcement"},
 		{"rendering", "--disable-rendering", "get_panel_image renders Loki panels server-side via the Grafana renderer, producing images that contain unrestricted log lines"},
 		{"assistant", "--disable-assistant", "ask_assistant delegates to Grafana Assistant, which reads Loki server-side across all streams; enforced matchers are not applied to what it reports back"},
+		{"dbo11y", "--disable-dbo11y", "the Database Observability tools read Loki through the Database Observability API (query text, samples, explain plans, schema and wait events), which runs its own queries server-side without these matchers"},
 	} {
 		if active[b.category] {
 			slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",

@@ -199,6 +199,45 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 			},
 		},
 		{
+			name:         "dbo11y excluded unless opted in",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Database Observability:",
+			},
+		},
+		{
+			name:         "dbo11y included when opted in",
+			enabledTools: "search,dbo11y",
+			wantContains: []string{
+				"Database Observability:",
+			},
+		},
+		{
+			name:         "dbo11y disable flag overrides enabled list",
+			enabledTools: "search,dbo11y",
+			disableFlags: map[string]bool{"dbo11y": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Database Observability:",
+			},
+		},
+		{
+			name:         "dbo11y excluded when query disabled",
+			enabledTools: "search,dbo11y",
+			disableFlags: map[string]bool{"query": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Database Observability:",
+			},
+		},
+		{
 			name:         "query-only categories excluded when query disabled",
 			enabledTools: "search,elasticsearch,quickwit,influxdb,runpanelquery",
 			disableFlags: map[string]bool{"query": true},
@@ -314,6 +353,9 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["assistant"] {
 					dt.assistant = true
+				}
+				if tc.disableFlags["dbo11y"] {
+					dt.dbo11y = true
 				}
 				if tc.disableFlags["write"] {
 					dt.write = true
@@ -951,6 +993,39 @@ func TestWarnPrometheusEnforcementDatasourceApp(t *testing.T) {
 				assert.NotContains(t, buf.String(), "--disable-dsquery")
 			}
 		})
+	}
+}
+
+func TestWarnEnforcementBypassesDbo11y(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dt   disabledTools
+		want bool
+	}{
+		{name: "dbo11y enabled", dt: disabledTools{enabledTools: "prometheus,loki,dbo11y"}, want: true},
+		{name: "dbo11y disabled", dt: disabledTools{enabledTools: "prometheus,loki,dbo11y", dbo11y: true}},
+		{name: "dbo11y not opted in", dt: disabledTools{enabledTools: "prometheus,loki"}},
+		{name: "query tools disabled", dt: disabledTools{enabledTools: "prometheus,loki,dbo11y", query: true}},
+	} {
+		for name, warn := range map[string]func(disabledTools){
+			"prometheus": warnPrometheusEnforcementBypasses,
+			"loki":       warnLokiEnforcementBypasses,
+		} {
+			t.Run(tc.name+"/"+name, func(t *testing.T) {
+				var buf bytes.Buffer
+				orig := slog.Default()
+				slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+				defer slog.SetDefault(orig)
+
+				warn(tc.dt)
+				if tc.want {
+					assert.Contains(t, buf.String(), "--disable-dbo11y")
+					assert.Contains(t, buf.String(), "Database Observability API")
+				} else {
+					assert.NotContains(t, buf.String(), "--disable-dbo11y")
+				}
+			})
+		}
 	}
 }
 
@@ -1649,6 +1724,12 @@ var safeQueryToolNames = []string{
 	"query_azure_resource_graph",
 	"query_pyroscope",
 	"run_panel_query",
+	"list_dbo11y_instances",
+	"get_dbo11y_instance",
+	"get_dbo11y_instance_detail",
+	"list_dbo11y_top_queries",
+	"get_dbo11y_query_detail",
+	"list_dbo11y_recommendations",
 }
 
 // mutatingQueryToolNames pass raw SQL or InfluxQL through unfiltered, so they
@@ -2068,7 +2149,7 @@ func TestCategoryReportHonoursWriteAndQueryGates(t *testing.T) {
 	})
 
 	t.Run("query-only categories are empty without query tools", func(t *testing.T) {
-		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor", "xray"}
+		queryOnlyCategories := []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery", "tempo", "azuremonitor", "xray", "dbo11y"}
 		dt := disabledTools{enabledTools: strings.Join(queryOnlyCategories, ",") + ",search", query: true}
 		enabled, _ := dt.categoryReport()
 
