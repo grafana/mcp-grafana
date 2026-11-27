@@ -156,6 +156,8 @@ func forwardHeaderNamesFromEnv() []string {
 
 // forwardedHeadersFromRequest reads GRAFANA_FORWARD_HEADERS and copies matching
 // headers from the incoming HTTP request. Returns nil when no headers match.
+// Host is never forwarded: it can only be set from the static
+// GRAFANA_EXTRA_HEADERS, not from an incoming request.
 func forwardedHeadersFromRequest(req *http.Request) map[string]string {
 	names := forwardHeaderNamesFromEnv()
 	if len(names) == 0 {
@@ -163,6 +165,9 @@ func forwardedHeadersFromRequest(req *http.Request) map[string]string {
 	}
 	var forwarded map[string]string
 	for _, name := range names {
+		if strings.EqualFold(name, "Host") {
+			continue
+		}
 		if v := req.Header.Get(name); v != "" {
 			if forwarded == nil {
 				forwarded = make(map[string]string, len(names))

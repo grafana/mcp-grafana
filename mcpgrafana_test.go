@@ -1582,6 +1582,26 @@ func TestForwardedHeadersFromRequest(t *testing.T) {
 		forwarded := forwardedHeadersFromRequest(req)
 		assert.Equal(t, map[string]string{"Cookie": "session=abc"}, forwarded)
 	})
+
+	t.Run("Host is never forwarded", func(t *testing.T) {
+		for _, name := range []string{"Host", "host", "HOST"} {
+			t.Run(name, func(t *testing.T) {
+				t.Setenv("GRAFANA_FORWARD_HEADERS", name+",Cookie")
+				req, _ := http.NewRequest("GET", "http://example.com", nil)
+				req.Header.Set("Host", "attacker.example.com")
+				req.Header.Set("Cookie", "session=abc")
+				forwarded := forwardedHeadersFromRequest(req)
+				assert.Equal(t, map[string]string{"Cookie": "session=abc"}, forwarded)
+			})
+		}
+	})
+
+	t.Run("Host only returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Host")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Host", "attacker.example.com")
+		assert.Nil(t, forwardedHeadersFromRequest(req))
+	})
 }
 
 func TestMergeHeaders(t *testing.T) {
