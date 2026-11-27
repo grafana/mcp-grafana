@@ -32,6 +32,19 @@
             "groupName": "all non-major dependencies"
         },
         {
+            "description": "UI mcp-apps npm dependencies get their own group, reviewed by dataviz.",
+            "matchManagers": ["npm"],
+            "matchFileNames": ["ui/mcp-apps/**"],
+            "groupName": "mcp-apps UI dependencies",
+            "reviewers": ["team:dataviz-squad"]
+        },
+        {
+            "description": "viz-contract (npm and Go must move together) is its own group, reviewed by dataviz. Must come after the mcp-apps rule so its groupName wins.",
+            "matchPackageNames": ["@grafana/viz-contract", "github.com/grafana/viz-contract"],
+            "groupName": "viz-contract",
+            "reviewers": ["team:dataviz-squad"]
+        },
+        {
             "description": "Group Docker digest updates and automerge",
             "matchDatasources": ["docker"],
             "matchUpdateTypes": ["digest"],
