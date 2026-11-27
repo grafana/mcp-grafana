@@ -25,6 +25,7 @@ type variableInterpolator struct {
 	values     templateVariableValues
 	multi      map[string]bool   // multi-value variables
 	includeAll map[string]bool   // include-All variables
+	all        map[string]bool   // variables set to All
 	warnings   map[string]string // variables set to All or without a value, by name
 	pattern    *regexp.Regexp    // nil when there is nothing to substitute
 }
@@ -40,7 +41,7 @@ func newDashboardInterpolator(db map[string]interface{}, overrides map[string]st
 	multi, includeAll := multiValueTemplateVariables(db)
 	v := newVariableInterpolator(values, multi)
 	v.includeAll = includeAll
-	v.warnings = allTemplateSelectionWarnings(db, overrides, values)
+	v.warnings, v.all = allTemplateSelectionWarnings(db, overrides, values)
 	return v
 }
 
@@ -503,8 +504,11 @@ func extractTemplateVariableValues(db map[string]interface{}) templateVariableVa
 	return variables
 }
 
-func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[string]string, values templateVariableValues) map[string]string {
+// allTemplateSelectionWarnings returns a warning for each variable set to All
+// or without a value, and the names of the variables set to All.
+func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[string]string, values templateVariableValues) (map[string]string, map[string]bool) {
 	warnings := make(map[string]string)
+	all := make(map[string]bool)
 	const message = "Variable %q is set to All. Supply an explicit value in variables."
 	const noValueMessage = "Variable %q has no saved value. Supply an explicit value in variables."
 	for _, item := range safeArray(safeObject(db, "templating"), "list") {
@@ -523,6 +527,7 @@ func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[strin
 		switch {
 		case isAllTemplateSelection(selection) || (!hasValue && !resolved && safeString(current, "text") == "All"):
 			warnings[name] = fmt.Sprintf(message, name)
+			all[name] = true
 		case !resolved && name != "" && safeString(variable, "type") != "datasource":
 			// Datasource variables fall back to the default datasource instead.
 			warnings[name] = fmt.Sprintf(noValueMessage, name)
@@ -531,9 +536,10 @@ func allTemplateSelectionWarnings(db map[string]interface{}, overrides map[strin
 	for name, value := range overrides {
 		if isAllTemplateSelection(value) {
 			warnings[name] = fmt.Sprintf(message, name)
+			all[name] = true
 		}
 	}
-	return warnings
+	return warnings, all
 }
 
 func isAllTemplateSelection(value interface{}) bool {

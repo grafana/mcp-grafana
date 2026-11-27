@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,7 +37,7 @@ func preparePanelQueries(db map[string]interface{}, args DashboardPanelQueriesPa
 		// Frontend macros are not dashboard variables, even when the executor
 		// leaves them intact in the submitted expression.
 		options := query.interval.withLowerLimit(interp, query.Datasource.Type, nil)
-		references := substituteFrontendMacros(variableSearchText(*query), query.Datasource.Type, from, to, options)
+		references := substituteFrontendMacros(interp.applyConditionalAll(variableSearchText(*query), query.Datasource.Type), query.Datasource.Type, from, to, options)
 		references, err := substituteBackendMacros(references, query.Datasource.Type, from, to)
 		if err != nil {
 			return nil, err
@@ -107,7 +109,82 @@ func isPanelQueryMacro(name, datasourceType string) bool {
 // preparePanelExpression expands frontend macros before inserting variable
 // values, so a value is never rescanned, as in Grafana's single-pass replace.
 func preparePanelExpression(interp *variableInterpolator, query, datasourceType string, from, to time.Time, options intervalOptions) string {
+	query = interp.applyConditionalAll(query, datasourceType)
 	return interp.interpolateQuery(substituteFrontendMacros(query, datasourceType, from, to, options), datasourceType)
+}
+
+const (
+	clickHouseDatasourceType = "grafana-clickhouse-datasource"
+	conditionalAllMacro      = "$__conditionalAll("
+)
+
+// conditionalAllVariable is the first $name or ${name} reference in the
+// macro's second argument, as the ClickHouse plugin matches it.
+var conditionalAllVariable = regexp.MustCompile(`\$\{(\w+)\}|\$(\w+)`)
+
+// applyConditionalAll expands $__conditionalAll(condition, $variable) as the
+// ClickHouse plugin's frontend does before inserting variable values: the
+// macro becomes 1=1 when the variable is set to All or is empty, and the
+// condition otherwise. Like the plugin, it works from the last macro to the
+// first, and leaves the query unchanged when a macro doesn't have exactly two
+// arguments.
+func (v *variableInterpolator) applyConditionalAll(query, datasourceType string) string {
+	if !strings.EqualFold(datasourceType, clickHouseDatasourceType) {
+		return query
+	}
+	for i := strings.LastIndex(query, conditionalAllMacro); i >= 0; i = strings.LastIndex(query, conditionalAllMacro) {
+		args := macroArguments(query[i+len(conditionalAllMacro)-1:])
+		if len(args) != 2 {
+			return query
+		}
+		phrase := args[0]
+		if m := conditionalAllVariable.FindStringSubmatch(strings.TrimSpace(args[1])); m != nil {
+			name := m[1] + m[2]
+			values, known := v.values[name]
+			if v.all[name] || (known && strings.Join(values, ",") == "") {
+				phrase = "1=1"
+			}
+		}
+		query = strings.Replace(query, conditionalAllMacro+args[0]+","+args[1]+")", phrase, 1)
+	}
+	return query
+}
+
+// checkAllSelections returns the warning for the first variable that the
+// references, with $__conditionalAll expanded, use while it is set to All or
+// has no value.
+func (v *variableInterpolator) checkAllSelections(references, datasourceType string) error {
+	for _, variable := range findVariablesInQuery(v.applyConditionalAll(references, datasourceType), nil, nil) {
+		if warning := v.allSelectionWarning(variable.Name); warning != "" {
+			return errors.New(warning)
+		}
+	}
+	return nil
+}
+
+// macroArguments splits the parenthesized arguments at the start of s on
+// top-level commas, as the ClickHouse plugin's getMacroArgs does. It returns
+// nil when the parentheses are not closed.
+func macroArguments(s string) []string {
+	var args []string
+	depth, start := 0, 1
+	for i, c := range s {
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 1 {
+				args = append(args, s[start:i])
+				start = i + 1
+			}
+		}
+		if depth == 0 {
+			return append(args, s[start:i])
+		}
+	}
+	return nil
 }
 
 // substituteFrontendMacros mirrors the executors. InfluxDB forwards macros

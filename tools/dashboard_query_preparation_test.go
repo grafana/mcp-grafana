@@ -120,6 +120,11 @@ func TestDashboardInspectionExecutionPreparationParity(t *testing.T) {
 			{name: "CloudWatch macros", query: "SELECT $__interval_ms", datasourceType: "cloudwatch", want: "SELECT 30000"},
 			{name: "ClickHouse interval macros", query: "SELECT $__interval, $__interval_ms, $__interval_s LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 3s, 3000, $__interval_s LIMIT 100"},
 			{name: "ClickHouse time macros", query: "SELECT $__from, $__to FROM logs WHERE $__timeFilter(ts) LIMIT 100", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1704067200000, 1704070800000 FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100"},
+			{name: "ClickHouse conditionalAll All", query: "SELECT 1 FROM logs WHERE $__conditionalAll(ServiceName IN (${choice:singlequote}), $choice) LIMIT 100", current: "$__all", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1 FROM logs WHERE 1=1 LIMIT 100"},
+			{name: "ClickHouse conditionalAll All override", query: "SELECT 1 FROM logs WHERE $__conditionalAll(ServiceName IN (${choice:sqlstring}), $choice) LIMIT 100", current: "east", overrides: map[string]string{"choice": "$__all"}, datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1 FROM logs WHERE 1=1 LIMIT 100"},
+			{name: "ClickHouse conditionalAll text-only All", query: "SELECT 1 FROM logs WHERE $__conditionalAll(ServiceName IN (${choice:sqlstring}), $choice) LIMIT 100", currentText: "All", omitCurrentValue: true, datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1 FROM logs WHERE 1=1 LIMIT 100"},
+			{name: "ClickHouse conditionalAll value", query: "SELECT 1 FROM logs WHERE $__conditionalAll(ServiceName IN (${choice:sqlstring}), $choice) LIMIT 100", current: "east", datasourceType: "grafana-clickhouse-datasource", want: "SELECT 1 FROM logs WHERE ServiceName IN ('east') LIMIT 100", requiredNames: []string{"choice"}},
+			{name: "ClickHouse conditionalAll All referenced elsewhere", query: "SELECT '$choice' FROM logs WHERE $__conditionalAll(ServiceName IN (${choice:sqlstring}), $choice) LIMIT 100", current: "$__all", datasourceType: "grafana-clickhouse-datasource", all: true},
 			{name: "ClickHouse macro and variable", query: "SELECT $choice, $__interval FROM logs WHERE $__timeFilter(ts) LIMIT 100", current: "value", datasourceType: "grafana-clickhouse-datasource", want: "SELECT value, 3s FROM logs WHERE ts >= toDateTime(1704067200) AND ts <= toDateTime(1704070800) LIMIT 100", requiredNames: []string{"choice"}},
 			{name: "raw inspection", query: "SELECT ${choice:sqlstring}", current: "$__all", raw: true},
 		} {
@@ -374,6 +379,39 @@ func TestRunPanelQueryAllDatasourceOverride(t *testing.T) {
 			require.EqualError(t, err, `Variable "source" is set to All. Supply an explicit value in variables.`)
 			assert.Equal(t, 1, queryCalls, "datasource overrides must not skip All checks in other target fields")
 		})
+	}
+}
+
+// $__conditionalAll is expanded as the ClickHouse plugin's applyConditionalAll
+// does, before variables are inserted. The first cases are the plugin's own.
+func TestApplyConditionalAll(t *testing.T) {
+	const ds = "grafana-clickhouse-datasource"
+	values := templateVariableValues{"fieldVal": {"val1", "val2"}, "empty": {}, "blank": {""}, "one": {"x"}}
+	in := newVariableInterpolator(values, nil)
+	in.all = map[string]bool{"fieldVal2": true}
+	tests := []struct{ name, query, want string }{
+		{"All", "select stuff from table where $__conditionalAll(fieldVal in ($fieldVal2), $fieldVal2);", "select stuff from table where 1=1;"},
+		{"value", "select stuff from table where $__conditionalAll(fieldVal in ($fieldVal), $fieldVal);", "select stuff from table where fieldVal in ($fieldVal);"},
+		{"several", "select stuff from table where $__conditionalAll(fieldVal in ($fieldVal), $fieldVal) and $__conditionalAll(fieldVal in ($fieldVal2), $fieldVal2);", "select stuff from table where fieldVal in ($fieldVal) and 1=1;"},
+		{"braced variable", "$__conditionalAll(x IN (${one:singlequote}), ${fieldVal2})", "1=1"},
+		{"empty selection", "$__conditionalAll(x IN ($empty), $empty)", "1=1"},
+		{"empty string", "$__conditionalAll(x = '$blank', $blank)", "1=1"},
+		{"nested parentheses and commas", "$__conditionalAll(has(arr, tuple(1, 2)) AND x IN ($one), $one)", "has(arr, tuple(1, 2)) AND x IN ($one)"},
+		{"unknown variable", "$__conditionalAll(x IN ($missing), $missing)", "x IN ($missing)"},
+		{"no variable", "$__conditionalAll(x = 1, 1)", "x = 1"},
+		{"formatted reference is not matched", "$__conditionalAll(x, ${fieldVal2:csv})", "x"},
+		{"wrong argument count", "$__conditionalAll(x) AND $__conditionalAll(y, $fieldVal2)", "$__conditionalAll(x) AND 1=1"},
+		{"unclosed", "$__conditionalAll(x, $fieldVal2", "$__conditionalAll(x, $fieldVal2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, in.applyConditionalAll(tt.query, ds))
+		})
+	}
+	// Other datasources, including other ClickHouse plugins, are unchanged.
+	query := "$__conditionalAll(x, $fieldVal2)"
+	for _, datasourceType := range []string{"vertamedia-clickhouse-datasource", "postgres", ""} {
+		assert.Equal(t, query, in.applyConditionalAll(query, datasourceType))
 	}
 }
 
