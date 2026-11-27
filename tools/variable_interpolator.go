@@ -242,7 +242,8 @@ var genericFormat = datasourceFormat{explicit: formatTemplateVariable}
 // case-insensitively. BigQuery has its own sqlstring quoting; Prometheus, Loki
 // and the SQL datasources format multi-value variables, and Prometheus and the
 // SQL datasources escape single-value ones. Elasticsearch formats every
-// variable in the lucene format, as its interpolateLuceneQuery does.
+// variable in the lucene format, as its interpolateLuceneQuery does, and
+// ClickHouse quotes multi-value variables as its format function does.
 func formatForDatasource(datasourceType string) datasourceFormat {
 	lower := strings.ToLower(datasourceType)
 	f := genericFormat
@@ -260,8 +261,21 @@ func formatForDatasource(datasourceType string) datasourceFormat {
 		f.single = func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	case elasticsearchDatasourceType:
 		f.unformatted = formatLucene
+	case "grafana-clickhouse-datasource":
+		f.unformatted = formatClickHouse
 	}
 	return f
+}
+
+// formatClickHouse formats an unformatted reference as the ClickHouse plugin's
+// format function does. Grafana passes a multi-value selection as an array,
+// even with one value, and the plugin writes it as 'a','b' without escaping;
+// any other value is inserted raw.
+func formatClickHouse(values []string, list bool) string {
+	if !list {
+		return firstTemplateVariableValue(values)
+	}
+	return "'" + strings.Join(values, "','") + "'"
 }
 
 // prometheusRegularEscape is Grafana's classic escaping of a single-value

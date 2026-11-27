@@ -86,7 +86,8 @@ func TestFormatForDatasource(t *testing.T) {
 		{"stackdriver", `a.b`, `'a.b','O''Brien'`},
 		{"influxdb", `a.b`, `'a.b','O''Brien'`},
 		{"cloudwatch", `a.b`, `'a.b','O''Brien'`},
-		{"grafana-clickhouse-datasource", `a.b`, `'a.b','O''Brien'`},
+		{"grafana-clickhouse-datasource", `'a.b','O'Brien'`, `'a.b','O''Brien'`},
+		{"vertamedia-clickhouse-datasource", `a.b`, `'a.b','O''Brien'`},
 		{"", `a.b`, `'a.b','O''Brien'`},
 	}
 	in := newVariableInterpolator(values, multi)
@@ -98,6 +99,40 @@ func TestFormatForDatasource(t *testing.T) {
 	}
 	// Routing is unchanged: stackdriver still runs on the Prometheus executor.
 	assert.Equal(t, "prometheus", normalizeDatasourceType("stackdriver"))
+}
+
+// The ClickHouse plugin quotes a multi-value selection, even with one value or
+// none, without escaping, and leaves any other variable raw.
+func TestVariableInterpolatorClickHouseUnformatted(t *testing.T) {
+	const ds = "grafana-clickhouse-datasource"
+	values := templateVariableValues{
+		"service": {"demo-app"},
+		"status":  {"Error", "Unset"},
+		"one":     {"Error"},
+		"none":    {},
+		"quote":   {"O'Brien"},
+	}
+	multi := map[string]bool{"status": true, "one": true, "none": true, "quote": true}
+	in := newVariableInterpolator(values, multi)
+	tests := []struct{ query, want string }{
+		{"ServiceName = '$service'", "ServiceName = 'demo-app'"},
+		{"StatusCode IN ($status)", "StatusCode IN ('Error','Unset')"},
+		{"StatusCode IN (${status})", "StatusCode IN ('Error','Unset')"},
+		{"StatusCode IN ([[status]])", "StatusCode IN ('Error','Unset')"},
+		{"StatusCode IN ($one)", "StatusCode IN ('Error')"},
+		{"StatusCode IN ($none)", "StatusCode IN ('')"},
+		{"Name IN ($quote)", "Name IN ('O'Brien')"},
+		{"Name IN (${quote:sqlstring})", "Name IN ('O''Brien')"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			assert.Equal(t, tt.want, in.interpolateQuery(tt.query, ds))
+		})
+	}
+
+	// query_sql has no dashboard variables, so its values are inserted raw.
+	querySQL := newVariableInterpolator(templateVariableValues{"status": {"Error"}}, nil)
+	assert.Equal(t, "StatusCode IN (Error)", querySQL.interpolateQuery("StatusCode IN ($status)", ds))
 }
 
 // Grafana escapes an unformatted single-value dashboard variable too: SQL
