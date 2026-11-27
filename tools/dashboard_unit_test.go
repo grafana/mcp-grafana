@@ -18,7 +18,7 @@ func TestApplyJSONPath_TrailingWhitespace(t *testing.T) {
 			"panels": []interface{}{"a", "b"},
 		}
 		// Path with trailing space - should be trimmed
-		err := applyJSONPath(data, "$.panels/- ", "c", false)
+		err := applyJSONPath(data, "$.panels/- ", "c", false, false)
 		require.NoError(t, err)
 		assert.Equal(t, []interface{}{"a", "b", "c"}, data["panels"])
 	})
@@ -27,7 +27,7 @@ func TestApplyJSONPath_TrailingWhitespace(t *testing.T) {
 		data := map[string]interface{}{
 			"title": "old",
 		}
-		err := applyJSONPath(data, "  $.title  ", "new", false)
+		err := applyJSONPath(data, "  $.title  ", "new", false, false)
 		require.NoError(t, err)
 		assert.Equal(t, "new", data["title"])
 	})
@@ -59,7 +59,7 @@ func TestProperty_ArrayRemovalProducesCorrectResult(t *testing.T) {
 		segment := JSONPathSegment{Key: "items", IsArray: true, Index: idx}
 
 		// Execute
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		if err != nil {
 			return false
 		}
@@ -107,7 +107,7 @@ func TestProperty_OutOfBoundsIndexReturnsError(t *testing.T) {
 		segment := JSONPathSegment{Key: "items", IsArray: true, Index: idx}
 
 		// Execute
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 
 		// Must return error
 		if err == nil {
@@ -155,7 +155,7 @@ func TestProperty_ObjectPropertyRemovalPreserved(t *testing.T) {
 
 		// Execute removal (non-array segment)
 		segment := JSONPathSegment{Key: targetKey, IsArray: false}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		if err != nil {
 			return false
 		}
@@ -186,7 +186,7 @@ func TestRemoveAtSegment_EdgeCases(t *testing.T) {
 	t.Run("remove first element", func(t *testing.T) {
 		current := map[string]interface{}{"items": []interface{}{"a", "b", "c"}}
 		segment := JSONPathSegment{Key: "items", IsArray: true, Index: 0}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		require.NoError(t, err)
 		assert.Equal(t, []interface{}{"b", "c"}, current["items"])
 	})
@@ -194,7 +194,7 @@ func TestRemoveAtSegment_EdgeCases(t *testing.T) {
 	t.Run("remove middle element", func(t *testing.T) {
 		current := map[string]interface{}{"items": []interface{}{"a", "b", "c"}}
 		segment := JSONPathSegment{Key: "items", IsArray: true, Index: 1}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		require.NoError(t, err)
 		assert.Equal(t, []interface{}{"a", "c"}, current["items"])
 	})
@@ -202,7 +202,7 @@ func TestRemoveAtSegment_EdgeCases(t *testing.T) {
 	t.Run("remove last element", func(t *testing.T) {
 		current := map[string]interface{}{"items": []interface{}{"a", "b", "c"}}
 		segment := JSONPathSegment{Key: "items", IsArray: true, Index: 2}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		require.NoError(t, err)
 		assert.Equal(t, []interface{}{"a", "b"}, current["items"])
 	})
@@ -210,7 +210,7 @@ func TestRemoveAtSegment_EdgeCases(t *testing.T) {
 	t.Run("remove from single-element array", func(t *testing.T) {
 		current := map[string]interface{}{"items": []interface{}{"only"}}
 		segment := JSONPathSegment{Key: "items", IsArray: true, Index: 0}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		require.NoError(t, err)
 		assert.Equal(t, []interface{}{}, current["items"])
 	})
@@ -218,7 +218,7 @@ func TestRemoveAtSegment_EdgeCases(t *testing.T) {
 	t.Run("remove with append syntax returns error", func(t *testing.T) {
 		current := map[string]interface{}{"items": []interface{}{"a", "b"}}
 		segment := JSONPathSegment{Key: "items", IsAppend: true}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "append syntax")
 	})
@@ -226,7 +226,7 @@ func TestRemoveAtSegment_EdgeCases(t *testing.T) {
 	t.Run("remove from non-array field returns error", func(t *testing.T) {
 		current := map[string]interface{}{"title": "hello"}
 		segment := JSONPathSegment{Key: "title", IsArray: true, Index: 0}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not an array")
 	})
@@ -250,7 +250,7 @@ func TestProperty_SequentialRemovalShiftsIndices(t *testing.T) {
 
 		// Remove index 0 (removes original element 0)
 		segment := JSONPathSegment{Key: "items", IsArray: true, Index: 0}
-		err := removeAtSegment(current, segment)
+		err := removeAtSegment(current, segment, false)
 		if err != nil {
 			return false
 		}
@@ -262,7 +262,7 @@ func TestProperty_SequentialRemovalShiftsIndices(t *testing.T) {
 		}
 
 		// Remove index 0 again (removes what was originally element 1)
-		err = removeAtSegment(current, segment)
+		err = removeAtSegment(current, segment, false)
 		if err != nil {
 			return false
 		}
@@ -299,7 +299,7 @@ func TestApplyJSONPath_NestedArrayRemoval(t *testing.T) {
 		}
 
 		// Remove targets[1] from panels[0]
-		err := applyJSONPath(data, "$.panels[0].targets[1]", nil, true)
+		err := applyJSONPath(data, "$.panels[0].targets[1]", nil, true, false)
 		require.NoError(t, err)
 
 		// Verify outer structure is intact
@@ -331,7 +331,7 @@ func TestApplyJSONPath_NestedArrayRemoval(t *testing.T) {
 		}
 
 		// Remove targets[0] from panels[1]
-		err := applyJSONPath(data, "$.panels[1].targets[0]", nil, true)
+		err := applyJSONPath(data, "$.panels[1].targets[0]", nil, true, false)
 		require.NoError(t, err)
 
 		// Verify panels[0] is untouched
@@ -353,7 +353,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 		ops := []PatchOperation{
 			{Op: "remove", Path: "$.panels[2]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[2]", result[0].Path)
 	})
@@ -364,7 +364,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[2]"},
 			{Op: "remove", Path: "$.panels[0]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[4]", result[0].Path)
 		assert.Equal(t, "$.panels[2]", result[1].Path)
@@ -376,7 +376,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[1]"},
 			{Op: "remove", Path: "$.panels[3]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[3]", result[0].Path)
 		assert.Equal(t, "$.panels[1]", result[1].Path)
@@ -387,7 +387,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[1]"},
 			{Op: "remove", Path: "$.annotations[3]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[1]", result[0].Path)
 		assert.Equal(t, "$.annotations[3]", result[1].Path)
@@ -398,7 +398,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.panels[0].targets[1]"},
 			{Op: "remove", Path: "$.panels[0].targets[3]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.panels[0].targets[3]", result[0].Path)
 		assert.Equal(t, "$.panels[0].targets[1]", result[1].Path)
@@ -411,7 +411,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "add", Path: "$.panels/-", Value: map[string]interface{}{"id": 1}},
 			{Op: "remove", Path: "$.panels[2]"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		// Non-remove ops stay in place
 		assert.Equal(t, "replace", result[0].Op)
@@ -427,7 +427,7 @@ func TestSortArrayRemovesDescending(t *testing.T) {
 			{Op: "remove", Path: "$.description"},
 			{Op: "remove", Path: "$.tags"},
 		}
-		result, err := sortArrayRemovesDescending(ops)
+		result, err := sortArrayRemovesDescending(ops, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "$.description", result[0].Path)
 		assert.Equal(t, "$.tags", result[1].Path)
@@ -441,7 +441,7 @@ func TestSortArrayRemovesDescending_SameIndexMultipleTimes(t *testing.T) {
 		{Op: "remove", Path: "$.panels[11]"},
 		{Op: "remove", Path: "$.panels[11]"},
 	}
-	_, err := sortArrayRemovesDescending(ops)
+	_, err := sortArrayRemovesDescending(ops, nil)
 	require.Error(t, err, "Same index multiple times should be rejected")
 	assert.Contains(t, err.Error(), "duplicate remove")
 }
@@ -481,25 +481,127 @@ func TestApplyJSONPath_UnsupportedSyntax(t *testing.T) {
 		},
 	}
 
-	t.Run("filter expression returns actionable error", func(t *testing.T) {
-		err := applyJSONPath(data, `$.panels[?(@.id==2)].title`, "New Title", false)
+	t.Run("unsupported (non-equality) filter returns actionable error", func(t *testing.T) {
+		err := applyJSONPath(data, `$.panels[?(@.id>2)].title`, "New Title", false, false)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "filter expressions")
-		assert.Contains(t, err.Error(), "not supported")
-		assert.Contains(t, err.Error(), "numeric array indices")
+		assert.Contains(t, err.Error(), "filter")
+		assert.Contains(t, err.Error(), "not")
 	})
 
 	t.Run("wildcard expression returns actionable error", func(t *testing.T) {
-		err := applyJSONPath(data, `$.panels[*].title`, "New Title", false)
+		err := applyJSONPath(data, `$.panels[*].title`, "New Title", false, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "wildcard")
 		assert.Contains(t, err.Error(), "not supported")
 	})
 
 	t.Run("valid numeric index still works", func(t *testing.T) {
-		err := applyJSONPath(data, "$.panels[1].title", "New Title", false)
+		err := applyJSONPath(data, "$.panels[1].title", "New Title", false, false)
 		require.NoError(t, err)
 		panel := data["panels"].([]interface{})[1].(map[string]interface{})
 		assert.Equal(t, "New Title", panel["title"])
+	})
+}
+
+// Equality selectors target an array element by a stable field
+// (id/title) instead of a fragile numeric index.
+func TestApplyJSONPath_Selectors(t *testing.T) {
+	newData := func() map[string]interface{} {
+		return map[string]interface{}{
+			"panels": []interface{}{
+				map[string]interface{}{"id": float64(10), "title": "CPU"},
+				map[string]interface{}{"id": float64(20), "title": "Mem"},
+				map[string]interface{}{"id": float64(30), "title": "Disk"},
+			},
+		}
+	}
+
+	t.Run("select by numeric id", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.id==20)].title`, "Memory", false, true)
+		require.NoError(t, err)
+		assert.Equal(t, "Memory", data["panels"].([]interface{})[1].(map[string]interface{})["title"])
+	})
+
+	t.Run("select by quoted title", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.title=='Disk')].id`, float64(99), false, true)
+		require.NoError(t, err)
+		assert.Equal(t, float64(99), data["panels"].([]interface{})[2].(map[string]interface{})["id"])
+	})
+
+	t.Run("bare selector form without @.", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?id==10].title`, "Processor", false, true)
+		require.NoError(t, err)
+		assert.Equal(t, "Processor", data["panels"].([]interface{})[0].(map[string]interface{})["title"])
+	})
+
+	t.Run("no match errors", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.id==999)].title`, "x", false, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no array element")
+	})
+
+	t.Run("remove by selector", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, `$.panels[?(@.id==20)]`, nil, true, true)
+		require.NoError(t, err)
+		panels := data["panels"].([]interface{})
+		require.Len(t, panels, 2)
+		assert.Equal(t, float64(10), panels[0].(map[string]interface{})["id"])
+		assert.Equal(t, float64(30), panels[1].(map[string]interface{})["id"])
+	})
+}
+
+// replace/remove on a missing final key must error in strict mode
+// instead of silently creating or no-opping, while add still creates.
+func TestApplyJSONPath_StrictPaths(t *testing.T) {
+	newData := func() map[string]interface{} {
+		return map[string]interface{}{
+			"title": "Dash",
+			"panels": []interface{}{
+				map[string]interface{}{"id": float64(1), "title": "Panel 1"},
+			},
+		}
+	}
+
+	t.Run("replace on missing key errors (strict)", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, "$.description", "hi", false, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not exist")
+		_, present := data["description"]
+		assert.False(t, present, "strict replace must not create the key")
+	})
+
+	t.Run("add on missing key creates it", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, "$.description", "hi", false, false)
+		require.NoError(t, err)
+		assert.Equal(t, "hi", data["description"])
+	})
+
+	t.Run("replace on existing key succeeds (strict)", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, "$.title", "Renamed", false, true)
+		require.NoError(t, err)
+		assert.Equal(t, "Renamed", data["title"])
+	})
+
+	t.Run("remove on missing key errors (strict)", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, "$.nope", nil, true, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not exist")
+	})
+
+	t.Run("remove on existing key succeeds (strict)", func(t *testing.T) {
+		data := newData()
+		err := applyJSONPath(data, "$.title", nil, true, true)
+		require.NoError(t, err)
+		_, present := data["title"]
+		assert.False(t, present)
 	})
 }
